@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -15,6 +16,7 @@ export interface NpmRelease {
 export const npmReleaseAtom = Atom.family((spec: string) =>
   Atom.make(
     Effect.gen(function* () {
+      if (!earlyscriptFlags.updateChecks) return null;
       const response = yield* HttpClient.get(
         `https://registry.npmjs.org/t3/${encodeURIComponent(spec)}`,
       );
