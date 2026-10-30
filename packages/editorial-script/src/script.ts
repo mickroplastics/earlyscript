@@ -47,6 +47,10 @@ export interface ScriptCheckReport {
   readonly claimsMap: readonly Claim[];
 }
 
+const ABBREVIATION = /(?:^|[^\p{L}.])(?:Inc|Dr|vs|e\.g|i\.e|U\.S)$/u;
+// URLs keep their trailing sentence punctuation outside the match.
+const URL = /\b[a-z][a-z0-9+.-]*:\/\/\S*?(?=[.!?"'”’»)*_~`]*(?:\s|$))/gi;
+const QUESTION = /\?[!?\s"'”’»)*_~`]*$/;
 const ITEM = /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_-]+)|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
 
 function citationsIn(text: string): Array<{ offset: number; raw: string; ids: string[] }> {
@@ -71,10 +75,17 @@ function positionAt(text: string, offset: number, startLine: number): Position {
 
 function parseParagraph(text: string, line: number): Paragraph {
   const citations = citationsIn(text);
-  // Mask citations so punctuation inside identifiers cannot split sentences.
+  // Mask citations and inline code so their punctuation cannot split sentences.
   const masked = text.split("");
-  for (const citation of citations) {
-    for (let i = citation.offset; i < citation.offset + citation.raw.length; i++) masked[i] = " ";
+  const spans = [
+    ...citations.map(({ offset, raw }) => ({ offset, length: raw.length })),
+    ...[...text.matchAll(/`[^`\n]*`/g)].map(({ index, 0: raw }) => ({
+      offset: index,
+      length: raw.length,
+    })),
+  ];
+  for (const { offset, length } of spans) {
+    for (let i = offset; i < offset + length; i++) masked[i] = " ";
   }
   const sentences: Array<{ text: string; offset: number; citations: string[] }> = [];
   let start = 0;
@@ -90,6 +101,8 @@ function parseParagraph(text: string, line: number): Paragraph {
   for (let i = 0; i < masked.length; i++) {
     if (!/[.!?]/.test(masked[i] ?? "")) continue;
     if (/\d/.test(masked[i - 1] ?? "") && /\d/.test(masked[i + 1] ?? "")) continue;
+    if (masked[i] === "." && ABBREVIATION.test(masked.slice(Math.max(0, i - 4), i).join("")))
+      continue;
     let end = i + 1;
     // Closing quotes, brackets and Markdown emphasis or code markers stay with the sentence.
     while (/[.!?"'”’»)*_~`]/.test(text[end] ?? " ")) end++;
@@ -110,7 +123,8 @@ function parseParagraph(text: string, line: number): Paragraph {
   const claims = sentences.flatMap((sentence): Claim[] => {
     const prose = sentence.text.replace(/\[[^\]]*\]/g, "");
     const words = prose.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) ?? [];
-    if (prose.includes("?") || words.length < 4) return [];
+    if (QUESTION.test(prose.replace(/`[^`]*`/g, "").replace(URL, "")) || words.length < 4)
+      return [];
     return [
       {
         text: sentence.text,

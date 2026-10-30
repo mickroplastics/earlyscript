@@ -125,6 +125,25 @@ describe("script checking", () => {
     NodeFS.rmSync(dir, { recursive: true });
   });
 
+  it.each([
+    "The documentation is at https://example.com/?version=1 [hn:50078937].",
+    "The flag `--mode=?` selects interactive mode [hn:50078937].",
+    "Models from Acme Inc. support local inference [hn:50078937].",
+    "Small models, e.g. local ones, run offline [hn:50078937].",
+    "Teams in the U.S. compare local models [hn:50078937].",
+  ])("keeps one declarative claim despite URLs, code and abbreviations: %s", (hook) => {
+    const report = checkScript(`# Hook\n${hook}\n# Block 1\nx\n# Close\nx`);
+    expect(report.ok).toBe(true);
+    expect(report.claimsMap.map(({ text }) => text)).toEqual([hook]);
+  });
+
+  it("still excludes questions that end outside URLs", () => {
+    const report = checkScript(
+      "# Hook\nHave you read https://example.com/?version=1 yet?\n# Block 1\nx\n# Close\nx",
+    );
+    expect(report.claimsMap).toEqual([]);
+  });
+
   it("checks the actual README example and CLI exit codes", () => {
     const readme = NodeFS.readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const example = /```markdown\n([\s\S]*?)```/.exec(readme)?.[1];
