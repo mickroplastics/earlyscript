@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay, githubSearchUrl } from "./github.ts";
-import { createHttpClient } from "./http.ts";
+import { createHttpClient, MAX_RESPONSE_BYTES } from "./http.ts";
 import { liveSources, fixtureSources } from "./index.ts";
 import { collectCorpus } from "../collect.ts";
 import { hashCorpus, readCorpus } from "../corpus.ts";
@@ -82,6 +82,74 @@ describe("live sources", () => {
     await adapter!.collectDay(day);
     await adapter!.collectDay(until);
     expect(waits).toEqual([250]);
+  });
+  it("keeps a Retry-After block across days even without x-ratelimit-remaining", async () => {
+    let clock = 0;
+    const calls: Array<number> = [];
+    let limit = true;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+      calls.push(clock);
+      const refused = limit;
+      limit = false;
+      return refused
+        ? response({}, 429, { "retry-after": "600" })
+        : response({ hits: [], nbHits: 0 });
+    });
+    const options = {
+      fetch: fetcher,
+      now: () => clock,
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+    };
+    const [blocked] = liveSources(["hn"], options);
+    const first = await blocked!.collectDay(day);
+    expect(first.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(first.coverage?.note).toContain("rate_limited");
+    const second = await blocked!.collectDay(until);
+    expect(second.coverage?.status).toBe("unavailable");
+    expect(second.coverage?.note).toContain("rate_limited");
+    expect(calls).toEqual([0]);
+    limit = true;
+    const [waiting] = liveSources(["hn"], options);
+    expect((await waiting!.collectDay(day)).coverage?.status).toBe("unavailable");
+    clock += 400_000;
+    expect((await waiting!.collectDay(until)).coverage?.status).toBe("complete");
+    expect(calls).toEqual([0, 0, 600_000]);
+  });
+  it("reads status and Retry-After before parsing a non-JSON body", async () => {
+    let clock = 0;
+    const calls: Array<number> = [];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+      calls.push(clock);
+      return calls.length === 1
+        ? new Response("Too many requests", { status: 429, headers: { "retry-after": "70" } })
+        : response({ hits: [], nbHits: 0 });
+    });
+    const get = createHttpClient("hn", {
+      fetch: fetcher,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    expect((await collectHnDay(day, get)).coverage?.status).toBe("complete");
+    expect(calls).toEqual([0, 70_000]);
+  });
+  it("aborts a body over MAX_RESPONSE_BYTES and marks the day response_too_large", async () => {
+    let aborted = false;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      init?.signal?.addEventListener("abort", () => {
+        aborted = true;
+      });
+      return response({ hits: [], nbHits: 0, padding: "x".repeat(8 * 1024 * 1024) });
+    });
+    const result = await collectHnDay(day, createHttpClient("hn", { fetch: fetcher }));
+    expect(MAX_RESPONSE_BYTES.hn).toBe(4 * 1024 * 1024);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(aborted).toBe(true);
+    expect(result.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(result.coverage?.note).toContain("response_too_large");
   });
   it("keeps one subdivided window when the other times out", async () => {
     const items = await reference();

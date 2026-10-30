@@ -77,6 +77,7 @@ export async function collectGithubDay(
     };
   } catch (error) {
     if (!(error instanceof SourceFailure)) throw error;
+    // corpus/1 coverage has no reason field: quota and size failures keep their reason in note.
     return {
       items: [],
       coverage: {

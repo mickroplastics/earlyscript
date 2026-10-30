@@ -41,11 +41,11 @@ export function liveSources(
   options: HttpOptions = {},
 ): Array<SourceAdapter> {
   return ids.map((id) => {
-    const pacing = { nextStart: 0 };
+    const state = { nextStart: 0, blockedUntil: 0 };
     return {
       descriptor: SOURCES[id],
       collectDay: (day) =>
-        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, pacing)),
+        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, state)),
     };
   });
 }
