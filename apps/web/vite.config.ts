@@ -25,9 +25,25 @@ import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 
-// Static HTML cannot import the shared brand values. Vite expands these placeholders.
-process.env.EARLYSCRIPT_ICON_PATH = EarlyscriptBrand.webIconPath;
-process.env.EARLYSCRIPT_TOUCH_ICON_PATH = EarlyscriptBrand.webTouchIconPath;
+// Static HTML cannot import the shared brand values. Vite only expands `%VITE_*%` env
+// placeholders in index.html, so the brand icon paths are injected by a small plugin.
+const BRAND_HTML_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  "%EARLYSCRIPT_ICON_PATH%": EarlyscriptBrand.webIconPath,
+  "%EARLYSCRIPT_TOUCH_ICON_PATH%": EarlyscriptBrand.webTouchIconPath,
+};
+
+function earlyscriptBrandHtmlPlugin(): Plugin {
+  return {
+    name: "earlyscript:brand-html",
+    transformIndexHtml(html) {
+      let result = html;
+      for (const [placeholder, value] of Object.entries(BRAND_HTML_PLACEHOLDERS)) {
+        result = result.replaceAll(placeholder, value);
+      }
+      return result;
+    },
+  };
+}
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -280,6 +296,7 @@ export default defineConfig(() => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      earlyscriptBrandHtmlPlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       builtDev
