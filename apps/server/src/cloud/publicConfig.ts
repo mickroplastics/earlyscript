@@ -6,6 +6,7 @@ import {
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
+import * as EarlyscriptRelay from "../earlyscript/relay.ts";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -108,7 +109,7 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
   );
 }
 
-export const relayUrlConfig = makeRelayUrlConfig();
+export const relayUrlConfig = EarlyscriptRelay.relayUrlConfig(makeRelayUrlConfig());
 
 export const hostedAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",

@@ -20,7 +20,8 @@ export function LabsSettingsPanel() {
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
-        {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
+        {earlyscriptFlags.relay &&
+          (hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />)}
         {earlyscriptFlags.remoteAccess && <LinkedEnvironmentsRow />}
         <SimlockHostsRow />
       </SettingsSection>
