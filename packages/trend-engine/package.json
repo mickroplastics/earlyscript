@@ -1,0 +1,38 @@
+{
+  "name": "@earlyscript/trend-engine",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./run": {
+      "types": "./src/run.ts",
+      "import": "./src/run.ts"
+    },
+    "./check": {
+      "types": "./src/check.ts",
+      "import": "./src/check.ts"
+    },
+    "./corpus": {
+      "types": "./src/corpus.ts",
+      "import": "./src/corpus.ts"
+    },
+    "./sources": {
+      "types": "./src/sources/index.ts",
+      "import": "./src/sources/index.ts"
+    }
+  },
+  "scripts": {
+    "engine": "node src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@earlyscript/editorial-contracts": "workspace:*",
+    "@huggingface/transformers": "4.3.1",
+    "effect": "catalog:",
+    "onnxruntime-node": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

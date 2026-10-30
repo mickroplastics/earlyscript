@@ -1,0 +1,37 @@
+{
+  "config_version": "earlyscript.engine.v1",
+  "sources": ["hn", "github"],
+  "embedder": {
+    "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+    "revision": "c25a394dd583836952667c12f008335071b3f43d",
+    "dtype": "q8",
+    "pooling": "last_token",
+    "batch_size": 1,
+    "intra_op_threads": 2
+  },
+  "profile": { "include_min": 0.6, "exclude_max": 0.6 },
+  "text": { "max_body_chars": 1000, "min_ascii_letter_ratio": 0.9, "excerpt_chars": 500 },
+  "cluster": { "threshold": 0.7, "active_days": 30 },
+  "stage": {
+    "context_days": 14,
+    "growth_min": 0.69,
+    "growing_min_items_7d": 3,
+    "fading_max": -0.69,
+    "coverage_rule": "per_source"
+  },
+  "rank": {
+    "baseline": { "method": "baseline.items_7d", "weights": { "items_7d": 1 } },
+    "weighted": {
+      "method": "weighted_sum.v0.01",
+      "weights": { "growth": 0.5, "log_authors_7d": 0.2, "include_score": 0.3 }
+    }
+  },
+  "emit": {
+    "max_dossiers": 20,
+    "max_evidence": 10,
+    "thin_below": 5,
+    "label_terms": 4,
+    "top_terms": 10,
+    "curve_days": 28
+  }
+}

@@ -17,7 +17,8 @@
     "packages/source-control-forgejo": "Forgejo is Earlyscript's own origin (git.r.biste.cc).",
     "packages/ssh": "Runtime dependency of apps/desktop for remote environments.",
     "packages/tailscale": "Runtime dependency of apps/desktop for remote environments.",
-    "packages/editorial-contracts": "Earlyscript's editorial primitives and the Earlywindow dossier/1 reader."
+    "packages/editorial-contracts": "Earlyscript's editorial primitives and the Earlywindow dossier/1 reader.",
+    "packages/trend-engine": "Earlyscript's deterministic trend engine over corpus/1."
   },
   "exclude": {
     "apps/mobile": "Mobile client, hidden in Earlyscript.",
