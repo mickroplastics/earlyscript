@@ -7,6 +7,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import ts from "typescript-legacy";
+
 import { readWorkspace } from "../../.github/scripts/ci-changes.cjs";
 
 export interface ScopeConfig {
@@ -28,8 +30,37 @@ export interface SourceFile {
 }
 
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/;
-const IMPORT_SPECIFIER =
-  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["']([^"'\n]+)["']/g;
+
+// Module specifiers of import/export declarations, import(), require(), import x = require()
+// and import("...") types. A template literal yields its text before the first substitution,
+// which is enough to tell which folder a dynamic import reaches into.
+export function importSpecifiers(path: string, text: string): Array<string> {
+  const specifiers: Array<string> = [];
+  const add = (node: ts.Node | undefined) => {
+    if (!node) return;
+    if (ts.isStringLiteralLike(node)) specifiers.push(node.text);
+    else if (ts.isTemplateExpression(node)) specifiers.push(node.head.text);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) add(node.moduleSpecifier);
+    else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    )
+      add(node.moduleReference.expression);
+    else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument))
+      add(node.argument.literal);
+    else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+    )
+      add(node.arguments[0]);
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false));
+  return specifiers;
+}
 
 const matchesOwned = (path: string, pattern: string) => {
   if (pattern.endsWith("*")) {
@@ -97,12 +128,16 @@ export function checkScope(
     }
   }
 
+  // Any specifier reaching an owned folder names its last segment, so files without one
+  // cannot import Earlyscript code and are not parsed.
+  const ownedNames = config.owned.map((pattern) => pattern.split("/").at(-1)!.replace(/\*$/, ""));
   const reported = new Set<string>();
   for (const file of sources) {
     const importer = packageOf(file.path, packages);
     if (!importer || included.has(importer.dir) || !SOURCE_EXTENSION.test(file.path)) continue;
+    if (!ownedNames.some((name) => file.text.includes(name))) continue;
     const fileOwner = ownedRootOf(file.path, config.owned);
-    for (const [, specifier = ""] of file.text.matchAll(IMPORT_SPECIFIER)) {
+    for (const specifier of importSpecifiers(file.path, file.text)) {
       const target = specifier.startsWith(".")
         ? ownedRootOf(
             NodePath.posix.join(NodePath.posix.dirname(file.path), specifier),
