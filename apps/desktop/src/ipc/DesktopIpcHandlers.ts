@@ -24,7 +24,7 @@ import {
   fetchSshSessionState,
   resolveSshHost,
   resolveSshPasswordPrompt,
-} from "./methods/sshEnvironment.ts";
+} from "../earlyscript/sshEnvironment.ts";
 import {
   checkForUpdate,
   downloadUpdate,

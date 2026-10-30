@@ -2,6 +2,7 @@ import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -20,7 +21,7 @@ export function LabsSettingsPanel() {
         <BoringSidebarMultilineRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
-        <LinkedEnvironmentsRow />
+        {earlyscriptFlags.remoteAccess && <LinkedEnvironmentsRow />}
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
