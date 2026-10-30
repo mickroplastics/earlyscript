@@ -91,7 +91,8 @@ function parseParagraph(text: string, line: number): Paragraph {
     if (!/[.!?]/.test(masked[i] ?? "")) continue;
     if (/\d/.test(masked[i - 1] ?? "") && /\d/.test(masked[i + 1] ?? "")) continue;
     let end = i + 1;
-    while (/[.!?"')]/.test(text[end] ?? " ")) end++;
+    // Closing quotes, brackets and Markdown emphasis or code markers stay with the sentence.
+    while (/[.!?"'”’»)*_~`]/.test(text[end] ?? " ")) end++;
     // A citation immediately after sentence punctuation belongs to that sentence.
     for (;;) {
       const next = citations.find(

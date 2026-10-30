@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - fixtures are local files.
 import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeOS from "node:os";
 import { describe, expect, it } from "vite-plus/test";
 import { checkScript, parseScript } from "./script.ts";
 
@@ -95,6 +96,33 @@ describe("script checking", () => {
       "# Hook\nThese words have their source [hn:1]. These words have another source [hn:2].\n# Block 1\nx\n# Close\nx",
     );
     expect(own.claimsMap[0]?.citations).toEqual(["itm_hn_1"]);
+  });
+
+  it.each([
+    "“These four words have evidence [hn:50078937].” These four words lack evidence.",
+    '"These four words have evidence [hn:50078937]." These four words lack evidence.',
+    "**These four words have evidence [hn:50078937].** These four words lack evidence.",
+    "__These four words have evidence [hn:50078937].__ These four words lack evidence.",
+    "*These four words have evidence [hn:50078937].* These four words lack evidence.",
+    "~~These four words have evidence [hn:50078937].~~ These four words lack evidence.",
+  ])("splits sentences after closing quotes and emphasis: %s", (hook) => {
+    const report = checkScript(`# Hook\n${hook}\n# Block 1\nx\n# Close\nx`);
+    expect(report.ok).toBe(false);
+    expect(report.claimsMap.map(({ citations }) => citations)).toEqual([["itm_hn_50078937"], []]);
+  });
+
+  it("keeps the claim after a quoted question", () => {
+    const script =
+      "# Hook\n“Why would anyone need this?” These four words lack evidence.\n# Block 1\nx\n# Close\nx";
+    const report = checkScript(script);
+    expect(report.claimsMap.map(({ text, citations }) => [text, citations])).toEqual([
+      ["These four words lack evidence.", []],
+    ]);
+    const cli = new URL("./cli.ts", import.meta.url).pathname;
+    const dir = NodeFS.mkdtempSync(`${NodeOS.tmpdir()}/editorial-script-`);
+    NodeFS.writeFileSync(`${dir}/quoted.md`, script);
+    expect(NodeChildProcess.spawnSync(process.execPath, [cli, `${dir}/quoted.md`]).status).toBe(1);
+    NodeFS.rmSync(dir, { recursive: true });
   });
 
   it("checks the actual README example and CLI exit codes", () => {
