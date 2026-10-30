@@ -11,6 +11,9 @@ export const ONNXRUNTIME_VERSION = "1.30.0";
 
 export const QWEN_MODEL = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
 export const QWEN_REVISION = "c25a394dd583836952667c12f008335071b3f43d";
+/** What the worker runs; the local embedder refuses any other spec. */
+export const QWEN_DTYPE = "q8";
+export const QWEN_POOLING = "last_token";
 export const QWEN_FILES = [
   {
     file: "config.json",

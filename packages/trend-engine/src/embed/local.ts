@@ -4,7 +4,15 @@ import * as NodeChildProcess from "node:child_process";
 import type { EmbeddingSpec } from "@earlyscript/editorial-contracts/dossier";
 
 import { EmbeddingCache } from "./cache.ts";
-import { type Embedder, embeddingKey, QWEN_MODEL, validateVector } from "./spec.ts";
+import {
+  type Embedder,
+  embeddingKey,
+  QWEN_DTYPE,
+  QWEN_MODEL,
+  QWEN_POOLING,
+  QWEN_REVISION,
+  validateVector,
+} from "./spec.ts";
 
 export interface LocalEmbedderOptions {
   readonly cacheFile: string;
@@ -93,11 +101,32 @@ class Worker {
   }
 }
 
+const RUNNABLE = {
+  model: QWEN_MODEL,
+  revision: QWEN_REVISION,
+  dtype: QWEN_DTYPE,
+  pooling: QWEN_POOLING,
+  batch_size: 1,
+} as const;
+
+/**
+ * The worker always runs the pinned Qwen revision with q8 and last-token pooling, one text
+ * at a time. A spec that claims anything else would label and cache its vectors wrongly.
+ */
+export function assertRunnableSpec(spec: EmbeddingSpec): void {
+  for (const [field, value] of Object.entries(RUNNABLE)) {
+    const claimed = spec[field as keyof typeof RUNNABLE];
+    if (claimed !== value) {
+      throw new Error(
+        `The local embedder only runs ${field} ${JSON.stringify(value)}, not ${JSON.stringify(claimed)}`,
+      );
+    }
+  }
+}
+
 /** Qwen through transformers.js in child processes, behind a disk cache keyed by spec. */
 export function createLocalEmbedder(spec: EmbeddingSpec, options: LocalEmbedderOptions): Embedder {
-  if (spec.model !== QWEN_MODEL || spec.batch_size !== 1) {
-    throw new Error(`The local embedder only runs ${QWEN_MODEL} with batch size 1`);
-  }
+  assertRunnableSpec(spec);
   const threads = Number(/intra_op_threads=(\d+)/.exec(spec.runtime)?.[1] ?? Number.NaN);
   if (!Number.isInteger(threads)) throw new Error(`No intra_op_threads in runtime ${spec.runtime}`);
   const key = embeddingKey(spec);

@@ -5,7 +5,13 @@ import { env, pipeline } from "@huggingface/transformers";
 import * as ort from "onnxruntime-node";
 
 import { prepareModel } from "./model.ts";
-import { ONNXRUNTIME_VERSION, TRANSFORMERS_VERSION, validateVector } from "./spec.ts";
+import {
+  ONNXRUNTIME_VERSION,
+  QWEN_DTYPE,
+  QWEN_POOLING,
+  TRANSFORMERS_VERSION,
+  validateVector,
+} from "./spec.ts";
 
 interface WorkerOptions {
   readonly modelDir: string;
@@ -26,7 +32,7 @@ let inferred = 0;
 async function load() {
   const modelPath = await prepareModel(options.modelDir, options.allowDownload);
   return pipeline("feature-extraction", modelPath, {
-    dtype: "q8",
+    dtype: QWEN_DTYPE,
     device: "cpu",
     local_files_only: true,
     session_options: { intraOpNumThreads: options.threads },
@@ -45,7 +51,7 @@ process.on("message", (message: Request) => {
       extractor ??= await load();
       const vectors: Array<Float32Array> = [];
       for (const text of message.texts) {
-        const output = await extractor(text, { pooling: "last_token", normalize: true });
+        const output = await extractor(text, { pooling: QWEN_POOLING, normalize: true });
         const vector = Float32Array.from(output.data as Float32Array);
         validateVector(vector);
         vectors.push(vector);
