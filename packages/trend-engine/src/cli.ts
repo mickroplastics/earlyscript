@@ -5,17 +5,25 @@ import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
 import { checkRun, rerunAndCheck } from "./check.ts";
+import { collectCorpus } from "./collect.ts";
+import { liveSources } from "./sources/index.ts";
+import type { SourceId } from "@earlyscript/editorial-contracts/source";
 import { runEngine } from "./run.ts";
 
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
-  "       engine check --run <run_dir> [--rerun --out <dir>]";
+  "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
+  "       engine collect --corpus <dir> --sources hn,github --from <day> --to <exclusive-day> [--force]";
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
   const { values } = NodeUtil.parseArgs({
     args: [...rest],
     options: {
+      from: { type: "string" },
+      to: { type: "string" },
+      sources: { type: "string" },
+      force: { type: "boolean" },
       corpus: { type: "string" },
       cutoff: { type: "string" },
       profile: { type: "string" },
@@ -29,6 +37,19 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       "allow-unverified-corpus": { type: "boolean" },
     },
   });
+  if (command === "collect" && values.corpus && values.from && values.to && values.sources) {
+    const ids = [...new Set(values.sources.split(","))];
+    if (ids.some((id) => id !== "hn" && id !== "github")) throw new Error("Unknown source");
+    const rows = await collectCorpus({
+      dir: values.corpus,
+      from: values.from,
+      to: values.to,
+      adapters: liveSources(ids as Array<SourceId>),
+      ...(values.force ? { force: true } : {}),
+    });
+    console.log(JSON.stringify(rows));
+    return 0;
+  }
   const log = (line: string) => console.error(line);
   const common = {
     log,

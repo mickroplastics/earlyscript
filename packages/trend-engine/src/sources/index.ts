@@ -1,5 +1,10 @@
 import type { SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
+import type { SourceAdapter } from "./adapter.ts";
+import { createHttpClient, type HttpOptions } from "./http.ts";
+import { collectHnDay } from "./hn.ts";
+import { collectGithubDay } from "./github.ts";
+
 import { fixtureAdapter } from "./fixture.ts";
 
 export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
@@ -27,3 +32,20 @@ export const fixtureSources = (corpusDir: string, ids: ReadonlyArray<SourceId>) 
   ids.map((id) => fixtureAdapter(corpusDir, SOURCES[id]));
 
 export type { DayResult, SourceAdapter } from "./adapter.ts";
+
+export { collectHnDay } from "./hn.ts";
+export { collectGithubDay } from "./github.ts";
+
+export function liveSources(
+  ids: ReadonlyArray<SourceId>,
+  options: HttpOptions = {},
+): Array<SourceAdapter> {
+  return ids.map((id) => {
+    const state = { nextStart: 0, blockedUntil: 0 };
+    return {
+      descriptor: SOURCES[id],
+      collectDay: (day) =>
+        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, state)),
+    };
+  });
+}
