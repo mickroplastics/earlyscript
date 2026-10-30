@@ -470,11 +470,11 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       yield* Console.warn(
         input.clearAuthorization
           ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
-          : `Could not revoke the relay-side environment record yet.\nRun \`t3 connect unlink\` again when the relay is reachable, or deregister it from the T3 Connect page of your ${EarlyscriptBrand.productName} account.`,
+          : `Could not revoke the relay-side environment record yet.\nRun \`t3 connect unlink\` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.`,
       );
     } else if (input.relayResult.value.status === "not-authenticated") {
       yield* Console.warn(
-        `The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your ${EarlyscriptBrand.productName} account, or run \`t3 connect login\` and retry.`,
+        `The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run \`t3 connect login\` and retry.`,
       );
     } else if (input.relayResult.value.status === "revoked") {
       yield* Console.log("Revoked the relay-side environment record.");
