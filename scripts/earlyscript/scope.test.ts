@@ -13,6 +13,7 @@ const config: ScopeConfig = {
   include: { "apps/server": "", "apps/web": "", "packages/editorial-core": "" },
   exclude: { "apps/mobile": "" },
   owned: ["packages/editorial-*", "apps/web/src/editorial"],
+  testAlone: ["apps/web"],
 };
 
 describe("checkScope", () => {
@@ -30,6 +31,7 @@ describe("checkScope", () => {
         ...config,
         include: { ...config.include, "packages/gone": "" },
         exclude: { "apps/web": "" },
+        testAlone: ["apps/mobile"],
       },
       packages,
       [],
@@ -38,6 +40,7 @@ describe("checkScope", () => {
       "packages/gone is listed but is not a workspace package.",
       "apps/web is in both include and exclude.",
       "apps/mobile is not classified in include or exclude.",
+      "apps/mobile is in testAlone but not in include.",
     ]);
   });
 

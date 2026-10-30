@@ -46,5 +46,7 @@
     "packages/earlywindow-engine",
     "apps/server/src/editorial",
     "apps/web/src/editorial"
-  ]
+  ],
+  "$testAlone": "es:test runs these in their own vp run after the rest, as upstream CI does: next to other suites their tests time out on a loaded machine, and a web failure would skip the server.",
+  "testAlone": ["apps/web", "apps/server"]
 }

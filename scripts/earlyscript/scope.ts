@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - a synchronous wrapper around one vp run.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - a synchronous wrapper around vp run.
 // es:test and es:build run only the packages in packages.json. The check fails when a
 // workspace package is unclassified or imports Earlyscript code without being included.
 // Usage: scope.ts check | scope.ts run <task> [args...]
@@ -13,6 +13,7 @@ export interface ScopeConfig {
   readonly include: Readonly<Record<string, string>>;
   readonly exclude: Readonly<Record<string, string>>;
   readonly owned: ReadonlyArray<string>;
+  readonly testAlone: ReadonlyArray<string>;
 }
 
 export interface ScopePackage {
@@ -74,6 +75,9 @@ export function checkScope(
     const inExclude = dir in config.exclude;
     if (inInclude && inExclude) problems.push(`${dir} is in both include and exclude.`);
     if (!inInclude && !inExclude) problems.push(`${dir} is not classified in include or exclude.`);
+  }
+  for (const dir of config.testAlone) {
+    if (!included.has(dir)) problems.push(`${dir} is in testAlone but not in include.`);
   }
 
   const ownedPackages = new Map(
@@ -151,12 +155,27 @@ function main(args: ReadonlyArray<string>): number {
     console.log(`Earlyscript scope OK: ${Object.keys(config.include).length} packages included.`);
     return 0;
   }
-  const filters = Object.keys(config.include).flatMap((dir) => ["--filter", `./${dir}`]);
-  const result = NodeChildProcess.spawnSync("vp", ["run", ...filters, task, ...rest], {
-    cwd: root,
-    stdio: "inherit",
+  // Like upstream CI's test jobs: a failing web run must not skip the server, which depends on it.
+  const alone = task === "test" ? config.testAlone : [];
+  const passes = [
+    Object.keys(config.include).filter((dir) => !alone.includes(dir)),
+    ...alone.map((dir) => [dir]),
+  ];
+  const failed = passes.filter((dirs) => {
+    const filters = dirs.flatMap((dir) => ["--filter", `./${dir}`]);
+    const parallel = task === "test" && dirs.length > 1 ? ["--parallel"] : [];
+    const result = NodeChildProcess.spawnSync(
+      "vp",
+      ["run", ...parallel, ...filters, task, ...rest],
+      {
+        cwd: root,
+        stdio: "inherit",
+      },
+    );
+    return result.status !== 0;
   });
-  return result.status ?? 1;
+  for (const dirs of failed) console.error(`es ${task} failed in: ${dirs.join(", ")}`);
+  return failed.length > 0 ? 1 : 0;
 }
 
 if (import.meta.main) {
