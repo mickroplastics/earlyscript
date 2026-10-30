@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
@@ -256,7 +255,7 @@ export function SnapShotSettings() {
   const shortcutStatus = recording
     ? "Press your shortcut. Esc cancels."
     : candidateConflict
-      ? `${EarlyscriptBrand.productName} already uses this for "${commandLabel(candidateConflict)}".`
+      ? `T3 Code already uses this for "${commandLabel(candidateConflict)}".`
       : shortcutCheck.status === "checking"
         ? "Checking shortcut…"
         : shortcutCheck.availability

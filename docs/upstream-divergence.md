@@ -25,7 +25,7 @@ El splash de `apps/web/index.html` cargaba `/apple-touch-icon.png`, un PNG de T3
 
 `TimelineAssistantRows.tsx` toma el encabezado accesible de nivel 3 de `EarlyscriptBrand.productName`. La prueba existente de renderizado del asistente en `MessagesTimeline.browser.test.tsx` comprueba ese encabezado. `TimelineToolActivityIcon.tsx` y `V2LifecycleRow.tsx` conservan su importación de `T3Wordmark.tsx`, que reexporta `earlyscript/BrandIcon.tsx`, un monograma E que hereda el color de sus iconos vecinos.
 
-Se sustituyen nombres del producto en textos de la interfaz, accesibilidad, errores expuestos al cliente, OAuth, diagnósticos y ayuda del CLI por interpolaciones de `EarlyscriptBrand.productName`. No se traducen las frases de upstream. El README generado para proyectos ya no enlaza el nombre Earlyscript con el sitio de T3. Las pruebas existentes se actualizan cuando fijaban esas frases.
+Se sustituyen nombres del producto por interpolaciones de `EarlyscriptBrand.productName` solo en las superficies web de uso diario: paleta de comandos, chat, barra lateral, ajustes principales, diálogos frecuentes y accesibilidad. No se traducen las frases de upstream. Las pruebas existentes se actualizan cuando fijaban esas frases.
 
 Criterio para conservar cadenas:
 
@@ -47,15 +47,73 @@ El alias adicional está en `apps/web/src/components/T3Wordmark.tsx`.
 
 Archivos de upstream con interpolaciones de texto o sustitución de iconos en esta pasada, además del HTML, manifiesto y configuración de Vite citados arriba:
 
+- `apps/server/src/orchestration-v2/RestartContinuation.ts`.
+- `apps/web/src/components/CommandPalette.tsx`.
+- `apps/web/src/components/EnvironmentContextChip.tsx`.
+- `apps/web/src/components/ServerUpdateAction.tsx`.
+- `apps/web/src/components/chat/QueuedRunsControl.tsx`.
+- `apps/web/src/components/chat/TimelineAssistantRows.tsx`.
+- `apps/web/src/components/chat/TimelineUserMessageRow.tsx`.
+- `apps/web/src/components/desktop/SshPasswordPromptDialog.tsx`.
+- `apps/web/src/components/settings/AcpSessionManagementSection.tsx`.
+- `apps/web/src/components/settings/ChatGptWelcomeCoordinator.tsx`.
+- `apps/web/src/components/settings/CodexSetupSection.tsx`.
+- `apps/web/src/components/settings/ConnectionsSettings.tsx`.
+- `apps/web/src/components/settings/IntegrationsSettings.tsx`.
+- `apps/web/src/components/settings/KeybindingsSettings.tsx`.
+- `apps/web/src/components/settings/LocalEnvironmentSetting.tsx`.
+- `apps/web/src/components/settings/MultipleAccountsNote.tsx`.
+- `apps/web/src/components/settings/NotificationSettings.tsx`.
+- `apps/web/src/components/settings/SecretsSettings.tsx`.
+- `apps/web/src/components/settings/SettingsPanels.logic.ts`.
+- `apps/web/src/components/settings/SettingsPanels.tsx`.
+- `apps/web/src/components/settings/StorageSettings.tsx`.
+- `apps/web/src/components/settings/ThemeImportDialog.tsx`.
+- `apps/web/src/components/settings/providerStatus.ts`.
+- `apps/web/src/components/settings/scopedSettings.ts`.
+- `apps/web/src/components/settings/settingsSearch.ts`.
+- `apps/web/src/components/sidebar/UpdateEverythingDialog.tsx`.
+- `apps/web/src/components/sidebar/updateEverythingRun.tsx`.
+
+#### Recorte tras la verificación del 30 de octubre de 2026
+
+La verificación dio NO APTO con seis hallazgos y pidió reducir el alcance. Correcciones aplicadas:
+
+- La nota de `RestartBackgroundNote.ts` vuelve a decir «T3 server»: se inyecta en el prompt de reanudación y es texto para el modelo, no presentación. El resumen visible de `RestartContinuation.ts` conserva la marca.
+- Los fixtures de `PeerForwarding.test.ts` y `PeerLinkRequests.test.ts` vuelven a «T3 Code · Desk» y «T3 Code · Laptop»: representan etiquetas de sesiones ya emitidas, que se transmiten sin alterar.
+- El comentario dentro del JavaScript generado por `deviceToolMaintenance.ts` vuelve a su texto original.
+- `SnapShotSetupDialog.tsx` conserva el nombre real de la extensión GNOME instalada, «T3 Code SnapShots» (`apps/desktop/gnome-extension/metadata.json`).
+- «Get T3 Code» en `HostedPromptLinkLanding.tsx` y «Download and reinstall T3 Code» en `bootError.ts` se mantienen mientras `DESKTOP_DOWNLOAD_URL` apunte a `https://t3.codes/download`.
+- `SshPasswordPromptDialog.tsx` recupera el espacio que faltaba tras el nombre del producto.
+
+Después se devolvieron al estado de `main` 92 archivos de superficies poco frecuentes o de alto riesgo de conflicto (mapa de integración §13), además de los cuatro que las correcciones ya dejaron iguales a `main`. La rama pasa de 135 a 39 archivos. Criterio: si no consta que el usuario vea la superficie a diario, se revierte y queda pendiente.
+
+Pendiente para una unidad posterior, agrupado:
+
+- CLI y servicio: `apps/server/src/cli/**`, unidades systemd de `cli/service.ts`, `serviceLauncher.ts` y sus pruebas.
+- OAuth y autenticación de proveedores: `auth/McpOAuth.ts`, `CodexAuthCallbackPage.ts`, `ProviderAuthService.ts`, `antigravityAuthSupport.ts`, `cloud/cliAuthHtml.ts`.
+- Relay, peer y conexión remota: `apps/server/src/peer/**`, `cloud/*`, `web/src/cloud/linkEnvironment.ts`, `RelayClientInstallDialog.tsx`, `LinkedEnvironmentsSettings.tsx` (cita la etiqueta de sesión que emite `PeerLinks.ts`), `connection/clientMetadata.ts`, `connection/platform.ts`, `versionSkew.ts`.
+- Diagnósticos y errores raros del servidor: `ProcessDiagnostics.ts`, `DatabaseMaintenance.ts`, `UserFacingErrors.ts`, `serverOwnership.ts`, `ServerEnvironmentLabel.ts`, mantenimiento e instalación de proveedores, `DiagnosticsSettings.tsx`, `ResourceTelemetryDiagnostics.tsx`, `bootError.ts`.
+- Alto riesgo de conflicto: `Orchestrator.ts`, `ws.ts`, `ClaudeAdapterV2.ts`, `RightPanelTabs.tsx`, `RightPanelSurfaceContent.tsx`, `PullRequestsPage.tsx`.
+- Escritorio, vista previa y dispositivos: `PreviewBrowser*.ts`, `ServerBrowser.ts`, `EasDeviceHost.ts`, `SimlockDeviceHost.ts`, `DesktopAppUpdate.ts`, `desktopUpdate.logic.ts`, `desktopAppActivation.ts`, `DesktopAppActivationCoordinator.tsx`, `PreviewPanel.tsx`, `PreviewView.tsx`, `chatRouteCommands.ts`.
+- SnapShots y captura: `SnapShotSettings.tsx`, `SnapShotSetupDialog.tsx`, `CaptureShortcutConfig.tsx`, `BrowserImportWizard.tsx`.
+- Primer arranque, enlaces de prompt y triage: `WelcomeWizard.tsx`, `FirstRunGate.tsx`, `HostedEmptyState.tsx`, `HostedPromptLinkLanding.tsx`, `NewThreadLinkView.tsx`, `linkedPrompt.ts`, `TriageDraftHero.tsx`, `useStartTriage.ts`, `McpAppFrame.tsx`.
+- Otros: `LabsSettingsPanel.tsx`, `UpdateTrackSwitchDialog.tsx`, `ManagedProjectFolders.ts` (README generado con enlace a t3.codes).
+
+Lista completa de archivos revertidos:
+
 - `apps/server/src/auth/McpOAuth.ts`.
 - `apps/server/src/cli/acpMcpBridge.ts`.
+- `apps/server/src/cli/app.test.ts`.
 - `apps/server/src/cli/app.ts`.
 - `apps/server/src/cli/browser.ts`.
+- `apps/server/src/cli/config.test.ts`.
 - `apps/server/src/cli/config.ts`.
 - `apps/server/src/cli/connect.ts`.
 - `apps/server/src/cli/doctor.ts`.
 - `apps/server/src/cli/environment.ts`.
 - `apps/server/src/cli/managedChatGptToken.ts`.
+- `apps/server/src/cli/pair.test.ts`.
 - `apps/server/src/cli/pair.ts`.
 - `apps/server/src/cli/service.ts`.
 - `apps/server/src/cli/theme.ts`.
@@ -73,15 +131,20 @@ Archivos de upstream con interpolaciones de texto o sustitución de iconos en es
 - `apps/server/src/device/EasDeviceHost.ts`.
 - `apps/server/src/device/SimlockDeviceHost.ts`.
 - `apps/server/src/device/deviceToolMaintenance.ts`.
+- `apps/server/src/diagnostics/ProcessDiagnostics.test.ts`.
 - `apps/server/src/diagnostics/ProcessDiagnostics.ts`.
 - `apps/server/src/environment/ServerEnvironmentLabel.ts`.
 - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`.
 - `apps/server/src/orchestration-v2/Orchestrator.ts`.
 - `apps/server/src/orchestration-v2/RestartBackgroundNote.ts`.
-- `apps/server/src/orchestration-v2/RestartContinuation.ts`.
 - `apps/server/src/orchestration-v2/UserFacingErrors.ts`.
+- `apps/server/src/peer/PeerForwarding.test.ts`.
+- `apps/server/src/peer/PeerLinkRequests.test.ts`.
+- `apps/server/src/peer/PeerLinks.test.ts`.
+- `apps/server/src/peer/PeerLinks.testkit.ts`.
 - `apps/server/src/peer/PeerLinks.ts`.
 - `apps/server/src/persistence/DatabaseMaintenance.ts`.
+- `apps/server/src/preview/PreviewBrowser.test.ts`.
 - `apps/server/src/preview/PreviewBrowser.ts`.
 - `apps/server/src/preview/PreviewBrowserHost.ts`.
 - `apps/server/src/preview/ServerBrowser.ts`.
@@ -98,23 +161,17 @@ Archivos de upstream con interpolaciones de texto o sustitución de iconos en es
 - `apps/server/src/provider/providerInstallation.ts`.
 - `apps/server/src/provider/providerMaintenanceRunner.ts`.
 - `apps/server/src/serverOwnership.ts`.
+- `apps/server/src/serviceLauncher.test.ts`.
 - `apps/server/src/serviceLauncher.ts`.
 - `apps/server/src/ws.ts`.
 - `apps/web/src/cloud/linkEnvironment.ts`.
-- `apps/web/src/components/CommandPalette.tsx`.
-- `apps/web/src/components/EnvironmentContextChip.tsx`.
 - `apps/web/src/components/HostedEmptyState.tsx`.
 - `apps/web/src/components/RightPanelTabs.tsx`.
-- `apps/web/src/components/ServerUpdateAction.tsx`.
 - `apps/web/src/components/chat/McpAppFrame.tsx`.
-- `apps/web/src/components/chat/QueuedRunsControl.tsx`.
 - `apps/web/src/components/chat/RightPanelSurfaceContent.tsx`.
-- `apps/web/src/components/chat/TimelineAssistantRows.tsx`.
-- `apps/web/src/components/chat/TimelineUserMessageRow.tsx`.
 - `apps/web/src/components/chat/TriageDraftHero.tsx`.
 - `apps/web/src/components/cloud/RelayClientInstallDialog.tsx`.
 - `apps/web/src/components/desktop/DesktopAppActivationCoordinator.tsx`.
-- `apps/web/src/components/desktop/SshPasswordPromptDialog.tsx`.
 - `apps/web/src/components/desktopUpdate.logic.ts`.
 - `apps/web/src/components/onboarding/FirstRunGate.tsx`.
 - `apps/web/src/components/onboarding/WelcomeWizard.tsx`.
@@ -124,40 +181,22 @@ Archivos de upstream con interpolaciones de texto o sustitución de iconos en es
 - `apps/web/src/components/promptLinks/NewThreadLinkView.tsx`.
 - `apps/web/src/components/promptLinks/linkedPrompt.ts`.
 - `apps/web/src/components/pullRequest/PullRequestsPage.tsx`.
-- `apps/web/src/components/settings/AcpSessionManagementSection.tsx`.
 - `apps/web/src/components/settings/BrowserImportWizard.tsx`.
 - `apps/web/src/components/settings/CaptureShortcutConfig.tsx`.
-- `apps/web/src/components/settings/ChatGptWelcomeCoordinator.tsx`.
-- `apps/web/src/components/settings/CodexSetupSection.tsx`.
-- `apps/web/src/components/settings/ConnectionsSettings.tsx`.
 - `apps/web/src/components/settings/DiagnosticsSettings.tsx`.
-- `apps/web/src/components/settings/IntegrationsSettings.tsx`.
-- `apps/web/src/components/settings/KeybindingsSettings.tsx`.
 - `apps/web/src/components/settings/LabsSettingsPanel.tsx`.
 - `apps/web/src/components/settings/LinkedEnvironmentsSettings.tsx`.
-- `apps/web/src/components/settings/LocalEnvironmentSetting.tsx`.
-- `apps/web/src/components/settings/MultipleAccountsNote.tsx`.
-- `apps/web/src/components/settings/NotificationSettings.tsx`.
 - `apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx`.
-- `apps/web/src/components/settings/SecretsSettings.tsx`.
-- `apps/web/src/components/settings/SettingsPanels.logic.ts`.
-- `apps/web/src/components/settings/SettingsPanels.tsx`.
 - `apps/web/src/components/settings/SnapShotSettings.tsx`.
 - `apps/web/src/components/settings/SnapShotSetupDialog.tsx`.
-- `apps/web/src/components/settings/StorageSettings.tsx`.
-- `apps/web/src/components/settings/ThemeImportDialog.tsx`.
 - `apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx`.
-- `apps/web/src/components/settings/providerStatus.ts`.
-- `apps/web/src/components/settings/scopedSettings.ts`.
-- `apps/web/src/components/settings/settingsSearch.ts`.
-- `apps/web/src/components/sidebar/UpdateEverythingDialog.tsx`.
-- `apps/web/src/components/sidebar/updateEverythingRun.tsx`.
 - `apps/web/src/connection/clientMetadata.ts`.
 - `apps/web/src/connection/platform.ts`.
 - `apps/web/src/desktopAppActivation.ts`.
 - `apps/web/src/hooks/useStartTriage.ts`.
 - `apps/web/src/lib/bootError.ts`.
 - `apps/web/src/shortcuts/chatRouteCommands.ts`.
+- `apps/web/src/versionSkew.test.ts`.
 - `apps/web/src/versionSkew.ts`.
 
 ## Regla

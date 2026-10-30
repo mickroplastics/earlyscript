@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
@@ -10193,7 +10192,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   if (oldest !== undefined) announcedBypassDowngrades.delete(oldest);
                 }
                 const nativeItemId = `bypass-policy-downgrade:${context.providerTurnId}`;
-                const notice = `${EarlyscriptBrand.productName} could not confirm Claude bypass permissions here, so Full access is running with approval checks.`;
+                const notice =
+                  "T3 could not confirm Claude bypass permissions here, so Full access is running with approval checks.";
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver: CLAUDE_PROVIDER,

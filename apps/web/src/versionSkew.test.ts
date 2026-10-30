@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -17,7 +16,8 @@ import {
   resolveVersionMismatch,
 } from "./versionSkew";
 
-const MISMATCH_HINT = `Version mismatch. Try syncing the client and server to the same ${EarlyscriptBrand.productName} version.`;
+const MISMATCH_HINT =
+  "Version mismatch. Try syncing the client and server to the same T3 Code version.";
 
 describe("versionSkew", () => {
   it("updates only the proven npm prefix and safely quotes its path", () => {

@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -60,7 +59,7 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
     if (status.status === "available") return;
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
-        message: `${EarlyscriptBrand.productName} cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
+        message: `T3 Code cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
       });
     }
 
@@ -96,7 +95,7 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
       return yield* new CloudEnvironmentLinkError({
         message:
           installedStatus.status === "unsupported"
-            ? `${EarlyscriptBrand.productName} cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
+            ? `T3 Code cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
             : "The relay client is still unavailable after installation.",
       });
     }

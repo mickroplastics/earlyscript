@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1563,7 +1562,7 @@ export const layerWsRpc = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
-                message: `Could not create a ${EarlyscriptBrand.productName} thread for the ACP session.`,
+                message: "Could not create a T3 thread for the ACP session.",
                 cause: launched.failure,
               });
             }
@@ -1604,7 +1603,7 @@ export const layerWsRpc = (
             if (importedThread !== null) {
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
-                message: `Delete the imported ${EarlyscriptBrand.productName} thread before deleting its native ACP session.`,
+                message: "Delete the imported T3 thread before deleting its native ACP session.",
               });
             }
             yield* manager.deleteSession({

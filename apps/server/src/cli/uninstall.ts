@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 // @effect-diagnostics nodeBuiltinImport:off
 // Windows cleanup must outlive this executable to delete its directory; scoped ChildProcess kills children on exit.
 import * as NodeChildProcess from "node:child_process";
@@ -203,5 +202,5 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
   }
   yield* Console.log("");
-  yield* Console.log(`t3 is uninstalled. Thanks for trying ${EarlyscriptBrand.productName}.`);
+  yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");
 });

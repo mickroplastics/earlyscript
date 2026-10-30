@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 // @effect-diagnostics nodeBuiltinImport:off - Lean self-invoked local IPC client; no auth/store graph.
 import * as NodeNet from "node:net";
 import * as Effect from "effect/Effect";
@@ -40,7 +39,7 @@ export async function runManagedChatGptTokenCli(args: ReadonlyArray<string>): Pr
   const result = await Effect.runPromiseExit(program);
   if (Exit.isFailure(result)) {
     process.stderr.write(
-      `Could not access the managed ChatGPT connection. Reconnect in ${EarlyscriptBrand.productName}.\n`,
+      "Could not access the managed ChatGPT connection. Reconnect in T3 Code.\n",
     );
     process.exitCode = 1;
     return;

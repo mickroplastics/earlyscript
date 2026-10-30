@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import type {
   AuthClientMetadataDeviceType,
   AuthClientPresentationMetadata,
@@ -78,7 +77,7 @@ export function clientPresentationMetadata(input: {
 }): AuthClientPresentationMetadata {
   if (input.desktopBridge !== undefined) {
     return {
-      label: `${EarlyscriptBrand.productName} Desktop`,
+      label: "T3 Code Desktop",
       deviceType: "desktop",
       os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform()),
       surface: "desktop",
@@ -87,7 +86,7 @@ export function clientPresentationMetadata(input: {
   }
 
   return {
-    label: `${EarlyscriptBrand.productName} Web`,
+    label: "T3 Code Web",
     deviceType: browserDeviceType(input.identity),
     os: browserClientOs(input.identity),
     surface: "web",

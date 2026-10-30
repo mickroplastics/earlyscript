@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import type { PinnedRuntimeProgress } from "../cloud/pinnedRuntime.ts";
 
 export function createUpdateProgress(
@@ -40,7 +39,7 @@ export function createUpdateProgress(
         const labels = {
           download: "Downloading...",
           verify: "Verifying the download...",
-          extract: `Extracting ${EarlyscriptBrand.productName}...`,
+          extract: "Extracting T3 Code...",
           validate: "Checking the new executable...",
           cached: "Using the downloaded release...",
         };

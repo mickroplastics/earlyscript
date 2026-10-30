@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import {
   AuthPreviewOperateScope,
   type PreviewAnnotationPayload,
@@ -40,7 +39,7 @@ export function PreviewPanel({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
             {canOperatePreview
-              ? `Preview is only available in the ${EarlyscriptBrand.productName} desktop app.`
+              ? "Preview is only available in the T3 Code desktop app."
               : "Pair this client again with preview access to control browser previews."}
           </p>
         </div>

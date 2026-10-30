@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import {
   CommandId,
   type GitManagerServiceError,
@@ -178,7 +177,7 @@ function namedProjectReadme(name: string): string {
     "",
     `# ${name}`,
     "",
-    `Created in ${EarlyscriptBrand.productName}.`,
+    "Created in [T3 Code](https://t3.codes).",
     "",
   ].join("\n");
 }

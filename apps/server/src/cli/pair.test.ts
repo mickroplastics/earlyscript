@@ -1,4 +1,3 @@
-import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -290,7 +289,7 @@ describe("t3 pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, `No running ${EarlyscriptBrand.productName} server found.`);
+        assert.include(rendered, "No running T3 Code server found.");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -326,7 +325,7 @@ describe("t3 pair", () => {
           ),
         );
 
-        assert.include(String(error), `No running ${EarlyscriptBrand.productName} server found.`);
+        assert.include(String(error), "No running T3 Code server found.");
         assert.notInclude(String(error), sharedHome);
         assert.deepEqual(NodeFS.readdirSync(NodePath.join(sharedHome, "userdata")), [
           "server-runtime.json",
