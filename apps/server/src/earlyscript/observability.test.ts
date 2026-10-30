@@ -21,6 +21,9 @@ describe("Earlyscript observability with the telemetry flag at its default", () 
     expect(EarlyscriptObservability.layerOtlpTracesProxyRoute).not.toBe(
       ServerHttp.layerOtlpTracesProxyRoute,
     );
+    expect(EarlyscriptObservability.layerOtlpTracesProxyRoute).toBe(
+      EarlyscriptObservability.layerOtlpTracesProxyRouteDisabled,
+    );
     const layerProbe = Layer.effectDiscard(
       Effect.gen(function* () {
         const router = yield* HttpRouter.HttpRouter;
@@ -28,7 +31,7 @@ describe("Earlyscript observability with the telemetry flag at its default", () 
       }),
     );
     const { handler, dispose } = HttpRouter.toWebHandler(
-      Layer.merge(layerProbe, EarlyscriptObservability.layerOtlpTracesProxyRoute),
+      Layer.merge(layerProbe, EarlyscriptObservability.layerOtlpTracesProxyRouteDisabled),
       { disableLogger: true },
     );
     try {

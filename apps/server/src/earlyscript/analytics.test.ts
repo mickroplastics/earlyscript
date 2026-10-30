@@ -21,20 +21,20 @@ describe("Earlyscript analytics with the thirdPartyAnalytics flag at its default
   it.effect("never builds the PostHog layer and serves a no-op service without dependencies", () =>
     Effect.gen(function* () {
       expect(EarlyscriptAnalytics.layer).not.toBe(AnalyticsService.layer);
+      expect(EarlyscriptAnalytics.layer).toBe(EarlyscriptAnalytics.layerDisabled);
       const analytics = yield* AnalyticsService.AnalyticsService;
       yield* analytics.record("server.boot.heartbeat", {});
       yield* analytics.recordOwners([], "server");
       yield* analytics.flush;
-    }).pipe(Effect.provide(EarlyscriptAnalytics.layer)),
+    }).pipe(Effect.provide(EarlyscriptAnalytics.layerDisabled)),
   );
 
   it.effect("reads no provider login or Connect account for startup owners", () =>
     Effect.gen(function* () {
       expect(EarlyscriptAnalytics.getServerOwners).not.toBe(Identify.getServerOwners);
+      expect(EarlyscriptAnalytics.getServerOwners).toBe(EarlyscriptAnalytics.noServerOwners);
       // Upstream's reader needs the home directory and secret store; this one needs nothing.
-      const owners = yield* EarlyscriptAnalytics.getServerOwners as Effect.Effect<
-        ReadonlyArray<Identify.TelemetryOwner>
-      >;
+      const owners = yield* EarlyscriptAnalytics.noServerOwners;
       expect(owners).toEqual([]);
     }),
   );
