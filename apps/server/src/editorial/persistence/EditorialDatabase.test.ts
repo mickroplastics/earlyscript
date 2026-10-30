@@ -8,6 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+
 import * as EditorialDatabase from "./EditorialDatabase.ts";
 import { layerAt, makeTempDir, removeDir } from "./EditorialDatabase.testkit.ts";
 import {
@@ -15,6 +17,9 @@ import {
   editorialMigrationManifest,
   runEditorialMigrations,
 } from "./Migrations.ts";
+import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
+import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
+import Migration0003 from "./Migrations/003_EditorialScriptHead.ts";
 
 const EXPECTED_TABLES = [
   "editorial_captures",
@@ -80,6 +85,55 @@ describe("EditorialDatabase", () => {
     }).pipe(
       Effect.provide(
         EditorialDatabase.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+      ),
+      Effect.ensuring(removeDir(dir)),
+    );
+  });
+
+  it.effect("003 makes the newest version saved before it the script head", () => {
+    const dir = makeTempDir();
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* Migration0001;
+      yield* Migration0002;
+      for (const thread of ["thread-a", "thread-b"]) {
+        yield* sql`
+          INSERT INTO editorial_video_threads (
+            thread_id, environment_id, operation_id, mode, created_by, created_at
+          )
+          VALUES (${thread}, 'env-1', ${`op-${thread}`}, 'assisted', 'operator', '2026-10-30T00:00:00.000Z')
+        `;
+      }
+      for (const [id, hash, savedAt] of [
+        ["v1", "hash-old", "2026-10-30T01:00:00.000Z"],
+        ["v2", "hash-new", "2026-10-30T02:00:00.000Z"],
+      ] as const) {
+        yield* sql`
+          INSERT INTO editorial_script_versions (
+            version_id, thread_id, content_hash, snapshot, actor, saved_at
+          )
+          VALUES (${id}, 'thread-a', ${hash}, 'text', 'operator', ${savedAt})
+        `;
+      }
+      yield* Migration0003;
+      const heads = yield* sql<{
+        readonly thread_id: string;
+        readonly script_head_hash: string | null;
+      }>`
+        SELECT thread_id, script_head_hash FROM editorial_video_threads ORDER BY thread_id
+      `;
+      assert.deepStrictEqual(
+        heads.map((row) => [row.thread_id, row.script_head_hash]),
+        [
+          ["thread-a", "hash-new"],
+          ["thread-b", null],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        NodeSqliteClient.layer({
+          filename: NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME),
+        }),
       ),
       Effect.ensuring(removeDir(dir)),
     );

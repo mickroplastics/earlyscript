@@ -86,6 +86,7 @@ export const EditorialEventType = Schema.Literals([
   "work.resolved",
   "decision.recorded",
   "script.version-saved",
+  "script.head-restored",
   "capture.saved",
   "result.saved",
 ]);
