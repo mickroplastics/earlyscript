@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Poll TCC only while the native permission helper is open.
 import * as Electron from "electron";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 import {
@@ -59,8 +60,8 @@ button:focus-visible { outline: 2px solid #007aff; outline-offset: -2px; }
 img { width: 32px; height: 32px; pointer-events: none; }
 </style></head><body><main id="panel">
 <button id="close" aria-label="Close permission helper">×</button>
-<header>↑ Drag T3 Code into the list above</header>
-<button id="app" draggable="true" aria-label="Drag T3 Code to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">T3 Code</button>
+<header>↑ Drag ${escapeHtml(EarlyscriptBrand.productName)} into the list above</header>
+<button id="app" draggable="true" aria-label="Drag ${escapeHtml(EarlyscriptBrand.productName)} to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">${escapeHtml(EarlyscriptBrand.productName)}</button>
 </main></body></html>`;
 }
 
