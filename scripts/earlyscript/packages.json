@@ -1,0 +1,52 @@
+{
+  "$comment": "Earlyscript fast battery scope. es:test and es:build run only `include`; es:typecheck, es:lint and the upstream scripts cover the whole workspace. Every workspace package must appear in exactly one list. See docs/dev-environment-linux.md.",
+  "include": {
+    "apps/server": "Server runtime; hosts the Codex and Claude providers (src/provider) and apps/server/src/editorial.",
+    "apps/web": "Client UI; hosts apps/web/src/editorial.",
+    "apps/desktop": "Electron shell Earlyscript ships on Linux, Windows and macOS.",
+    "packages/contracts": "Wire schemas shared by server and clients.",
+    "packages/shared": "Runtime utilities; home of earlyscript-flags.ts.",
+    "packages/client-runtime": "Client state shared by web and desktop.",
+    "packages/provider-core": "Provider driver interface implemented by Codex, Claude and Pi.",
+    "packages/provider-pi": "Pi provider.",
+    "packages/provider-testing": "Test fixtures for provider-pi; no tests of its own.",
+    "packages/effect-codex-app-server": "Codex app-server protocol client behind the server's Codex provider.",
+    "packages/source-control-core": "Git operations behind worktrees, diffs and checkpoints.",
+    "packages/source-control-definitions": "Forge registry the server and client-runtime import at runtime; no tests of its own.",
+    "packages/source-control-testing": "Test fixtures for server source-control tests; no tests of its own.",
+    "packages/source-control-forgejo": "Forgejo is Earlyscript's own origin (git.r.biste.cc).",
+    "packages/ssh": "Runtime dependency of apps/desktop for remote environments.",
+    "packages/tailscale": "Runtime dependency of apps/desktop for remote environments."
+  },
+  "exclude": {
+    "apps/mobile": "Mobile client, hidden in Earlyscript.",
+    "apps/marketing": "Upstream marketing site.",
+    "infra/relay": "Upstream relay service, hidden in Earlyscript.",
+    "infra/task-cache": "Upstream remote task cache.",
+    "evals": "Model evals that need real provider calls.",
+    "oxlint-plugin-t3code": "Lint rules; exercised by every es:lint run.",
+    "scripts": "Repo tooling; includes this scope check's own test.",
+    "packages/effect-acp": "ACP protocol used only by excluded providers.",
+    "packages/provider-acp": "ACP provider base used only by excluded providers.",
+    "packages/provider-acp-registry": "Registry of third-party ACP agents.",
+    "packages/provider-cursor": "Cursor provider, not used by Earlyscript.",
+    "packages/provider-grok": "Grok provider, not used by Earlyscript.",
+    "packages/provider-opencode": "OpenCode provider, not used by Earlyscript.",
+    "packages/provider-muse": "Muse provider, not used by Earlyscript.",
+    "packages/provider-fx": "fx provider, not used by Earlyscript.",
+    "packages/source-control-github": "GitHub forge, not used by Earlyscript.",
+    "packages/source-control-gitlab": "GitLab forge, not used by Earlyscript.",
+    "packages/source-control-bitbucket": "Bitbucket forge, not used by Earlyscript.",
+    "packages/source-control-azure-devops": "Azure DevOps forge, not used by Earlyscript.",
+    "packages/source-control-gitcafe": "GitCafe forge, not used by Earlyscript."
+  },
+  "owned": [
+    "packages/editorial-*",
+    "packages/trend-engine",
+    "packages/earlywindow-engine",
+    "apps/server/src/editorial",
+    "apps/web/src/editorial"
+  ],
+  "$testAlone": "es:test runs these in their own vp run after the rest, as upstream CI does: next to other suites their tests time out on a loaded machine, and a web failure would skip the server.",
+  "testAlone": ["apps/web", "apps/server"]
+}

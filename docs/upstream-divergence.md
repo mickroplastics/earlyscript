@@ -6,6 +6,7 @@ Dos unidades fusionadas el 30 de octubre de 2026, cada una con su propia secció
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
+3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -201,3 +202,25 @@ Estados: **controlado** (una bandera lo apaga), **pendiente** (envío a terceros
 - `apps/web/src/state/npmRelease.flagsOff.test.ts`.
 - `apps/desktop/src/earlyscript/updates.ts`.
 - `apps/desktop/src/updates/DesktopUpdates.flagsOff.test.ts`.
+
+## Batería rápida (rama `es/build-scope`, 30 de octubre de 2026)
+
+### Archivos de upstream modificados
+
+| Archivo        | Líneas | Motivo                                                                                                                                                                                        |
+| -------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json` | 56-62  | Coma tras `sync:repos` y seis scripts nuevos al final de `scripts`: `es:check-scope`, `es:typecheck`, `es:lint`, `es:test`, `es:test:changed` y `es:build`. Ningún script de upstream cambia. |
+
+### Archivos propios
+
+| Archivo                             | Contenido                                                                                                         |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `scripts/earlyscript/packages.json` | Clasificación de cada paquete del workspace para la batería rápida, con su motivo.                                |
+| `scripts/earlyscript/scope.ts`      | Comprobación de alcance y ejecución filtrada de `test` y `build`.                                                 |
+| `scripts/earlyscript/scope.test.ts` | Pruebas de la comprobación. Corren al inicio de `es:test` y con las de `@t3tools/scripts` en la batería completa. |
+| `docs/dev-environment-linux.md`     | Requisitos del LXC, resultados por paquete y tiempos de ambas baterías.                                           |
+| `docs/upstream-divergence.md`       | Este registro.                                                                                                    |
+
+`scripts/earlyscript/` está dentro del paquete de upstream `@t3tools/scripts`, cuyo `tsconfig.json` incluye `**/*.ts` y cuya prueba usa `--dir .`. Por eso el typecheck y las pruebas de la batería completa cubren estos archivos sin tocar configuración de upstream. Al fusionar, comprobar que siguen pasando `pnpm --filter @t3tools/scripts typecheck` y `pnpm run knip:check`.
+
+Al fusionar con upstream, ejecutar `pnpm run es:check-scope`: si upstream añadió o renombró un paquete, la comprobación falla hasta clasificarlo en `scripts/earlyscript/packages.json`.
