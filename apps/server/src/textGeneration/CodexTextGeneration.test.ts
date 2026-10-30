@@ -19,10 +19,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
-import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
@@ -53,7 +54,7 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
-  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number | "invalid";
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -92,6 +93,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
             ]),
         "if (isMcpList) {",
         '  if (typeof check.mcpServers === "number") process.exit(check.mcpServers);',
+        '  if (check.mcpServers === "invalid") process.stdout.write("not json"), process.exit(0);',
         "  process.stdout.write(JSON.stringify(check.mcpServers));",
         "  process.exit(0);",
         "}",
@@ -194,6 +196,25 @@ function withFakeCodexEnv<A, E, R>(
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
+
+const trendPresentationRequest = {
+  cwd: process.cwd(),
+  profile: { version: 1, hash: "sha256:profile", text: "Software channel." },
+  trend: {
+    id: "sig_quantum",
+    terms: ["quantum"],
+    items7d: 1,
+    authors7d: 1,
+    growth: 0,
+    affinity: 0.6,
+    volumeRank: 1,
+    scoreRank: 1,
+    sourceCount: 1,
+    coverage: [],
+  },
+  evidence: [],
+  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+};
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   it.effect.each(["exec", "mcp list"] as const)(
@@ -346,6 +367,46 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           });
         }),
     ),
+  );
+
+  it.effect.each([2, "invalid"] as const)(
+    "refuses a trend presentation when MCP listing fails: %s",
+    (mcpServers) =>
+      withFakeCodexEnv({ output: "{}", mcpServers }, (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration
+            .generateTrendPresentation(trendPresentationRequest)
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({
+            operation: "generateTrendPresentation",
+            detail: `Could not list Codex MCP servers to turn them off (${
+              mcpServers === 2 ? "exit code 2" : "invalid JSON"
+            }).`,
+          });
+        }),
+      ),
+  );
+
+  it.effect("refuses a trend presentation when MCP listing times out", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      yield* withFakeCodexEnv(
+        { output: "{}", lifecycle: { port: probe.port, command: "mcp list" } },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const fiber = yield* textGeneration
+              .generateTrendPresentation(trendPresentationRequest)
+              .pipe(Effect.flip, Effect.forkScoped);
+            yield* probe.started;
+            yield* TestClock.adjust("11 seconds");
+            const error = yield* Fiber.join(fiber);
+            expect(error.detail).toBe(
+              "Could not list Codex MCP servers to turn them off (timeout).",
+            );
+            yield* probe.exited;
+          }),
+      );
+    }),
   );
 
   it.effect("still generates when Codex cannot list its MCP servers", () =>
@@ -705,3 +766,176 @@ it.effect("trend presentation preflight falls back only to Claude or Codex", () 
     expect(result).toMatchObject({ provider: fallback, model: claudeModel });
   }),
 );
+
+const makeTrendRetryService = (input: {
+  readonly fallbackReady: boolean;
+  readonly failure: (instanceId: ProviderInstanceId) => TextGenerationError | null;
+  readonly calls: ModelSelection[];
+}) => {
+  const primary = ProviderInstanceId.make("codex");
+  const fallback = ProviderInstanceId.make("claude_work");
+  const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
+    const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
+    const snapshot: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: {
+        status:
+          instanceId === fallback && !input.fallbackReady ? "unauthenticated" : "authenticated",
+      },
+      version: null,
+      checkedAt: "1970-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    return {
+      instanceId,
+      driverKind: driver,
+      continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+      displayName: undefined,
+      enabled: true,
+      snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+      textGeneration: TextGeneration.TextGeneration.of({
+        generateCommitMessage: () => Effect.die("unused"),
+        generatePrContent: () => Effect.die("unused"),
+        generateBranchName: () => Effect.die("unused"),
+        generateReviewGuide: () => Effect.die("unused"),
+        generateThreadTitle: () => Effect.die("unused"),
+        generateTrendPresentation: (request) =>
+          Effect.gen(function* () {
+            input.calls.push(request.modelSelection);
+            const failure = input.failure(request.modelSelection.instanceId);
+            if (failure) return yield* failure;
+            return {
+              title: "Generated title",
+              summary: { whatHappened: "", whyItMatters: "", videoAngle: "" },
+              citedItemIds: [],
+              warnings: [],
+              provider: request.modelSelection.instanceId,
+              model: request.modelSelection.model,
+              promptVersion: "test",
+              generatedAt: "1970-01-01T00:00:00.000Z",
+              inputHash: "sha256:test",
+            };
+          }),
+      }),
+    };
+  });
+  return TextGeneration.make.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          listInstances: Effect.succeed(instances),
+          getInstance: (id) =>
+            Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+        }),
+        ServerSettings.layerTest({
+          providerInstances: {
+            [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+          },
+        }),
+        Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+          resolveLink: () => Effect.die("unused"),
+        }),
+      ),
+    ),
+    Effect.map((service) =>
+      service.generateTrendPresentation({
+        cwd: "/tmp",
+        profile: { version: 1, hash: "sha256:profile", text: "" },
+        trend: {
+          id: "sig",
+          terms: [],
+          items7d: 0,
+          authors7d: 0,
+          growth: 0,
+          affinity: 0,
+          volumeRank: 1,
+          scoreRank: 1,
+          sourceCount: 0,
+          coverage: [],
+        },
+        evidence: [],
+        modelSelection: { instanceId: primary, model: "chat-model" },
+      }),
+    ),
+    Effect.flatten,
+  );
+};
+
+const usageLimitFailure = new TextGenerationError({
+  operation: "generateTrendPresentation",
+  detail: "Codex CLI command failed: You've hit your usage limit. Try again later.",
+});
+
+it.effect("trend presentation retries once on another instance after a usage limit", () =>
+  Effect.gen(function* () {
+    const calls: ModelSelection[] = [];
+    const result = yield* makeTrendRetryService({
+      fallbackReady: true,
+      calls,
+      failure: (instanceId) => (instanceId === "codex" ? usageLimitFailure : null),
+    });
+    const claudeModel =
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")];
+    expect(calls).toEqual([
+      { instanceId: "codex", model: "chat-model" },
+      { instanceId: "claude_work", model: claudeModel },
+    ]);
+    expect(result).toMatchObject({ provider: "claude_work", model: claudeModel });
+  }),
+);
+
+it.effect("trend presentation does not retry a format error", () =>
+  Effect.gen(function* () {
+    const calls: ModelSelection[] = [];
+    const formatFailure = new TextGenerationError({
+      operation: "generateTrendPresentation",
+      detail: "Codex returned invalid structured output.",
+    });
+    const error = yield* makeTrendRetryService({
+      fallbackReady: true,
+      calls,
+      failure: () => formatFailure,
+    }).pipe(Effect.flip);
+    expect(error).toBe(formatFailure);
+    expect(calls).toHaveLength(1);
+  }),
+);
+
+it.effect("trend presentation keeps the usage-limit error without an eligible fallback", () =>
+  Effect.gen(function* () {
+    const calls: ModelSelection[] = [];
+    const error = yield* makeTrendRetryService({
+      fallbackReady: false,
+      calls,
+      failure: () => usageLimitFailure,
+    }).pipe(Effect.flip);
+    expect(error).toBe(usageLimitFailure);
+    expect(calls).toHaveLength(1);
+  }),
+);
+
+it("recognizes usage limits only in failed CLI commands", () => {
+  const error = (detail: string) =>
+    new TextGenerationError({ operation: "generateTrendPresentation", detail });
+  expect(
+    TextGeneration.isUsageLimitError(
+      error("Claude CLI command failed: Claude AI usage limit reached|1793000000"),
+    ),
+  ).toBe(true);
+  expect(
+    TextGeneration.isUsageLimitError(
+      error("Codex CLI command failed: exceeded retry limit, last status: 429 Too Many Requests"),
+    ),
+  ).toBe(true);
+  expect(TextGeneration.isUsageLimitError(error("Codex CLI command failed: auth expired"))).toBe(
+    false,
+  );
+  expect(TextGeneration.isUsageLimitError(error("Claude CLI request timed out."))).toBe(false);
+});
