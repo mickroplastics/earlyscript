@@ -33,6 +33,8 @@ export type {
   ReviewGuideGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
+  TrendPresentationGenerationInput,
+  TrendPresentationGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
 export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
@@ -44,7 +46,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "generateTrendPresentation";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -66,6 +69,8 @@ const resolveInstance = (
 
 // Review guides investigate the checkout read-only; the other drivers reject that request.
 const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
+// Earlyscript: trend titles and summaries fall back only to the local Claude and Codex CLIs.
+const TREND_PRESENTATION_DRIVERS = new Set(["codex", "claudeAgent"]);
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -116,6 +121,8 @@ export const make = Effect.gen(function* () {
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              (operation !== "generateTrendPresentation" ||
+                TREND_PRESENTATION_DRIVERS.has(driver)) &&
               !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
             );
           },
@@ -147,6 +154,16 @@ export const make = Effect.gen(function* () {
         service.generateReviewGuide({ ...input, modelSelection }),
       );
     }),
+    generateTrendPresentation: Effect.fn("TextGeneration.generateTrendPresentation")(
+      function (input) {
+        return generate(
+          "generateTrendPresentation",
+          input.modelSelection,
+          (service, modelSelection) =>
+            service.generateTrendPresentation({ ...input, modelSelection }),
+        );
+      },
+    ),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
       return generate(
         "generateThreadTitle",

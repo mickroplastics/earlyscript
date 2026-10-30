@@ -290,6 +290,64 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
+  it.effect("writes trend presentations ephemeral, read-only, and with MCP servers off", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "Quantum tools open up.\nSecond line",
+          summary: {
+            whatHappened: "IBM released open tools.",
+            whyItMatters: "The channel covers open software.",
+            videoAngle: "Try the tools live.",
+          },
+          citedItemIds: ["itm_hn_1"],
+        }),
+        mcpServers: [{ name: "augmenter", enabled: true }],
+        requireArg:
+          '--config features.plugins=false --config features.apps=false --config mcp_servers={"augmenter"={enabled=false}} --ephemeral --skip-git-repo-check -s read-only',
+        stdinMustContain: "write title and summary in English (en)",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateTrendPresentation({
+            cwd: process.cwd(),
+            language: "en",
+            profile: { version: 1, hash: "sha256:profile", text: "Software channel." },
+            trend: {
+              id: "sig_quantum",
+              terms: ["quantum", "ibm"],
+              items7d: 3,
+              authors7d: 3,
+              growth: 0.5,
+              affinity: 0.6,
+              volumeRank: 1,
+              scoreRank: 1,
+              sourceCount: 1,
+              coverage: [{ source: "hn", daysComplete: 28, daysPartial: 0, daysUnavailable: 0 }],
+            },
+            evidence: [
+              {
+                itemId: "itm_hn_1",
+                source: "hn",
+                title: "IBM opens quantum tools",
+                excerpt: "",
+                publishedAt: "2026-10-15T00:00:00.000Z",
+                url: "https://news.ycombinator.com/item?id=1",
+              },
+            ],
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result).toMatchObject({
+            title: "Quantum tools open up",
+            citedItemIds: ["itm_hn_1"],
+            warnings: [],
+            provider: "codex",
+            model: "gpt-5.4-mini",
+          });
+        }),
+    ),
+  );
+
   it.effect("still generates when Codex cannot list its MCP servers", () =>
     withFakeCodexEnv(
       {
@@ -490,6 +548,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          generateTrendPresentation: () => Effect.die("unused"),
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);
@@ -534,5 +593,115 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           }
         : selection,
     ]);
+  }),
+);
+
+it.effect("trend presentation preflight falls back only to Claude or Codex", () =>
+  Effect.gen(function* () {
+    const primary = ProviderInstanceId.make("codex");
+    const cursor = ProviderInstanceId.make("cursor");
+    const fallback = ProviderInstanceId.make("claude_work");
+    const drivers = new Map([
+      [primary, ProviderDriverKind.make("codex")],
+      [cursor, ProviderDriverKind.make("cursor")],
+      [fallback, ProviderDriverKind.make("claudeAgent")],
+    ]);
+    const calls: ModelSelection[] = [];
+    const instances: ProviderInstance[] = [...drivers].map(([instanceId, driver]) => {
+      const snapshot: ServerProvider = {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        version: null,
+        checkedAt: "1970-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...(instanceId === primary
+          ? {
+              usageLimits: {
+                checkedAt: "1970-01-01T00:00:00Z",
+                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+              },
+            }
+          : {}),
+      };
+      return {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+        displayName: undefined,
+        enabled: true,
+        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+          generateThreadTitle: () => Effect.die("unused"),
+          generateTrendPresentation: (input) =>
+            Effect.sync(() => {
+              calls.push(input.modelSelection);
+              return {
+                title: "Generated title",
+                summary: { whatHappened: "", whyItMatters: "", videoAngle: "" },
+                citedItemIds: [],
+                warnings: [],
+                provider: input.modelSelection.instanceId,
+                model: input.modelSelection.model,
+                promptVersion: "test",
+                generatedAt: "1970-01-01T00:00:00.000Z",
+                inputHash: "sha256:test",
+              };
+            }),
+        }),
+      };
+    });
+    const service = yield* TextGeneration.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            listInstances: Effect.succeed(instances),
+            getInstance: (id) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          }),
+          ServerSettings.layerTest({
+            providerInstances: {
+              [cursor]: { driver: ProviderDriverKind.make("cursor"), enabled: true, config: {} },
+              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+            },
+          }),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("unused"),
+          }),
+        ),
+      ),
+    );
+    const result = yield* service.generateTrendPresentation({
+      cwd: "/tmp",
+      profile: { version: 1, hash: "sha256:profile", text: "" },
+      trend: {
+        id: "sig",
+        terms: [],
+        items7d: 0,
+        authors7d: 0,
+        growth: 0,
+        affinity: 0,
+        volumeRank: 1,
+        scoreRank: 1,
+        sourceCount: 0,
+        coverage: [],
+      },
+      evidence: [],
+      modelSelection: { instanceId: primary, model: "chat-model" },
+    });
+    const claudeModel =
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")];
+    expect(calls).toEqual([{ instanceId: fallback, model: claudeModel }]);
+    expect(result).toMatchObject({ provider: fallback, model: claudeModel });
   }),
 );
