@@ -21,14 +21,19 @@ const APP_BUNDLE_ID = isDevelopment
 const APP_PROTOCOL_SCHEMES = isDevelopment
   ? [EarlyscriptBrand.devUrlScheme]
   : [EarlyscriptBrand.urlScheme];
-const LAUNCHER_VERSION = 20;
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
   "dev",
-  "blueprint-macos-1024.png",
+  EarlyscriptBrand.desktopMacIconPngFileName,
 );
-const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "prod", "black-macos-1024.png");
+const productionMacIconPngPath = NodePath.join(
+  repoRoot,
+  "assets",
+  "prod",
+  EarlyscriptBrand.desktopMacIconPngFileName,
+);
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 
@@ -209,7 +214,7 @@ function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
     sourceIconPath: development ? developmentMacIconPngPath : productionMacIconPngPath,
     generatedIconPath: NodePath.posix.join(
       runtimeDir,
-      development ? "icon-dev.icns" : "icon-prod.icns",
+      `${development ? "dev" : "prod"}-${EarlyscriptBrand.desktopMacIconIcnsFileName}`,
     ),
   };
 }
@@ -270,9 +275,8 @@ function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleIdentifier: APP_BUNDLE_ID,
     CFBundleExecutable: executableName,
     CFBundleIconFile: "icon.icns",
-    NSScreenCaptureUsageDescription:
-      "T3 Code captures the active window when you use the snapshot shortcut.",
-    NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
+    NSScreenCaptureUsageDescription: `${EarlyscriptBrand.productName} captures the active window when you use the snapshot shortcut.`,
+    NSDocumentsFolderUsageDescription: `${EarlyscriptBrand.productName} reads project files you open in the desktop app.`,
   };
 }
 
