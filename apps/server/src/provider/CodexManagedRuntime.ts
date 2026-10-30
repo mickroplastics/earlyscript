@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -66,8 +67,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "runtime",
-            detail:
-              "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
+            detail: `Could not prepare the private managed Codex token listener. Restart ${EarlyscriptBrand.productName} and retry.`,
             cause,
           }),
       ),

@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingErro
   { path: Schema.String },
 ) {
   override get message() {
-    return "No existing T3 Code database was found in this data directory.";
+    return `No existing ${EarlyscriptBrand.productName} database was found in this data directory.`;
   }
 }
 
@@ -27,7 +28,7 @@ export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message() {
-    return "Stop the T3 Code server and desktop app, including any version before 0.1.0, before repairing the database.";
+    return `Stop the ${EarlyscriptBrand.productName} server and desktop app, including any version before 0.1.0, before repairing the database.`;
   }
 }
 
@@ -36,7 +37,7 @@ export class DatabaseProjectionsInvalidError extends Schema.TaggedError<Database
   { path: Schema.String },
 ) {
   override get message() {
-    return "Database projections need repair before compaction. Start T3 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
+    return `Database projections need repair before compaction. Start ${EarlyscriptBrand.productName} once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update ${EarlyscriptBrand.productName} first.`;
   }
 }
 

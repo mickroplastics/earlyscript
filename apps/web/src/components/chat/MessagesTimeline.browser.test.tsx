@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -380,6 +381,7 @@ describe("MessagesTimeline messages", () => {
         { role: "assistant" },
       ),
     ]);
+    expect(screen.container.querySelector("h3")?.textContent).toBe(EarlyscriptBrand.productName);
     expect(screen.container.querySelector("[data-markdown-details]")?.textContent).toContain(
       "Safe details",
     );

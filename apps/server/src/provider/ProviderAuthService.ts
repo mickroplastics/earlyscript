@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import {
   ProviderSetupError,
   type ChatGptReconnectProfile,
@@ -80,7 +81,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
         instanceId,
         operation,
         detail: instance
-          ? "This provider does not support sign-in in T3 Code."
+          ? `This provider does not support sign-in in ${EarlyscriptBrand.productName}.`
           : "This provider instance is no longer available.",
       });
     }

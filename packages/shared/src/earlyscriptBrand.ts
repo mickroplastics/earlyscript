@@ -9,6 +9,8 @@ const desktopAppId = "cc.biste.earlyscript";
 
 export const EarlyscriptBrand = {
   productName: "Earlyscript",
+  webIconPath: "/earlyscript-icon.svg",
+  webTouchIconPath: "/earlyscript-touch.png",
   desktopProductName: "Earlyscript",
   cliBinName: "earlyscript",
   /** Linux executable and package name; distinct from the CLI so both can be on PATH. */

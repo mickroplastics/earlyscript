@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 /**
  * Alpha: devices leased from a Simlock gateway the user runs. Opening a device
  * takes a lease through the gateway's agent-device front, so agents drive it
@@ -127,7 +128,7 @@ export const resolveSimlockToken = (
 export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, tokenOwner: string) => {
   if (Cause.isTimeoutError(cause)) return `Could not reach the Simlock gateway at ${gatewayUrl}.`;
   if (!HttpClientError.isHttpClientError(cause))
-    return `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
+    return `The Simlock gateway at ${gatewayUrl} sent an answer ${EarlyscriptBrand.productName} could not read.`;
   if (cause.reason._tag === "StatusCodeError") {
     const status = cause.reason.response.status;
     return status === 401 || status === 403
@@ -136,7 +137,7 @@ export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, token
   }
   return cause.reason._tag === "TransportError"
     ? `Could not reach the Simlock gateway at ${gatewayUrl}.`
-    : `The Simlock gateway at ${gatewayUrl} sent an answer T3 could not read.`;
+    : `The Simlock gateway at ${gatewayUrl} sent an answer ${EarlyscriptBrand.productName} could not read.`;
 };
 
 const decodeIdentity = Schema.decodeUnknownEffect(

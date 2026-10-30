@@ -17,6 +17,149 @@ Recuento al cierre de la corrección del 30 de octubre de 2026: 58 archivos de u
 
 La columna «Líneas» da las líneas cambiadas en la versión actual del archivo, tal como las informa `git diff -U0 aa11ef6783..HEAD -- <archivo>`. Hay que actualizarla en cada cambio y en cada fusión.
 
+### Segunda pasada de marca: splash y conversación (`es/brand-2`)
+
+Base: `815f5f2a04`, 30 de octubre de 2026. Esta pasada reemplaza las exclusiones anteriores sobre los iconos web y los textos visibles de web y servidor. Los recuentos anteriores describen la primera pasada.
+
+El splash de `apps/web/index.html` cargaba `/apple-touch-icon.png`, un PNG de T3. Ahora usa el SVG propio `apps/web/public/earlyscript-icon.svg`: monograma E provisional, lienzo de 180 × 180, esquinas redondeadas y azul primario de referencia `#2563eb`. Conserva el tamaño de presentación de 64 × 64. El color es fijo, no sigue los temas personalizados. `earlyscript-touch.png` es su rasterización de 180 × 180. El favicon, el splash y el manifiesto usan rutas propias para evitar que `apply-web-brand-assets.ts` restaure los activos de upstream. Las rutas HTML se expanden desde `EarlyscriptBrand.webIconPath` y `webTouchIconPath` en `apps/web/vite.config.ts`. El manifiesto estático conserva la excepción de marca del HTML.
+
+`TimelineAssistantRows.tsx` toma el encabezado accesible de nivel 3 de `EarlyscriptBrand.productName`. La prueba existente de renderizado del asistente en `MessagesTimeline.browser.test.tsx` comprueba ese encabezado. `TimelineToolActivityIcon.tsx` y `V2LifecycleRow.tsx` conservan su importación de `T3Wordmark.tsx`, que reexporta `earlyscript/BrandIcon.tsx`, un monograma E que hereda el color de sus iconos vecinos.
+
+Se sustituyen nombres del producto en textos de la interfaz, accesibilidad, errores expuestos al cliente, OAuth, diagnósticos y ayuda del CLI por interpolaciones de `EarlyscriptBrand.productName`. No se traducen las frases de upstream. El README generado para proyectos ya no enlaza el nombre Earlyscript con el sitio de T3. Las pruebas existentes se actualizan cuando fijaban esas frases.
+
+Criterio para conservar cadenas:
+
+- `T3 Connect`, `T3 Chat` y el relay nombran servicios reales de terceros. Sus nombres y dominios permanecen, también en superficies apagadas por banderas. La página de clientes móviles describe la app móvil original, que no está rebrandeada.
+- `t3code:*`, `T3CODE_*`, `@t3tools/*`, rutas, nombres de archivo, comandos `t3`, cabeceras, nombres de clientes de proveedores, autores técnicos de Git y atributos de telemetría son contratos de compatibilidad. No cambian.
+- `MessagesTimeline.logic.ts` reconoce el sufijo de protocolo ` a T3 thread`. Cambiarlo rompería el reconocimiento de herramientas y del historial. Los títulos de herramientas MCP y los prompts de triage, adaptadores y continuación siguen describiendo ese contrato. Los fixtures y comentarios históricos permanecen.
+- `ThemePreviewCircles.tsx` conserva el nombre de la paleta T3 Code, que identifica un tema importable de upstream.
+
+Activos conservados:
+
+- `apps/web/public/favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png` y `apple-touch-icon.png`: activos heredados sin referencias desde el HTML ni el manifiesto de Earlyscript. Se conservan para las herramientas de exportación de upstream. Las peticiones explícitas a esas rutas aún devuelven el arte antiguo.
+- `apps/web/src/components/T3Wordmark.tsx`: conserva la ruta y el nombre de exportación de upstream como alias del nuevo monograma. El trazado T3 se retira.
+- `assets/{dev,prod,nightly}/app-icon.icon` y sus PNG e ICO, enumerados en `scripts/lib/brand-assets.ts`: fuentes nativas de Electron y móvil. Incluyen `assets/dev/blueprint-macos-1024.png`, `assets/prod/black-macos-1024.png`, `assets/prod/black-universal-1024.png`, `assets/prod/t3-black-windows.ico`, `assets/nightly/nightly-macos-1024.png`, `assets/nightly/nightly-universal-1024.png` y `assets/nightly/nightly-windows.ico`. Requieren exportación, empaquetado y validación por plataforma.
+- `apps/desktop/prod-resources/icon.png`: destino de staging del empaquetador, usado por el registro de escritorio Linux y los permisos de macOS. No se genera ni se modifica aquí. El shell Electron y su splash de conexión requieren revisión al empaquetar.
+
+Todos los cambios son reversibles por Git. No hay migraciones de datos, claves ni protocolos. No se arrancan servidores en esta unidad.
+
+El alias adicional está en `apps/web/src/components/T3Wordmark.tsx`.
+
+Archivos de upstream con interpolaciones de texto o sustitución de iconos en esta pasada, además del HTML, manifiesto y configuración de Vite citados arriba:
+
+- `apps/server/src/auth/McpOAuth.ts`.
+- `apps/server/src/cli/acpMcpBridge.ts`.
+- `apps/server/src/cli/app.ts`.
+- `apps/server/src/cli/browser.ts`.
+- `apps/server/src/cli/config.ts`.
+- `apps/server/src/cli/connect.ts`.
+- `apps/server/src/cli/doctor.ts`.
+- `apps/server/src/cli/environment.ts`.
+- `apps/server/src/cli/managedChatGptToken.ts`.
+- `apps/server/src/cli/pair.ts`.
+- `apps/server/src/cli/service.ts`.
+- `apps/server/src/cli/theme.ts`.
+- `apps/server/src/cli/thread.ts`.
+- `apps/server/src/cli/triage.ts`.
+- `apps/server/src/cli/uninstall.ts`.
+- `apps/server/src/cli/update.ts`.
+- `apps/server/src/cli/updateProgress.ts`.
+- `apps/server/src/cloud/ConnectReachability.ts`.
+- `apps/server/src/cloud/bootService.ts`.
+- `apps/server/src/cloud/cliAuthHtml.ts`.
+- `apps/server/src/cloud/relayResponse.ts`.
+- `apps/server/src/cloud/selfUpdate.ts`.
+- `apps/server/src/desktopUpdate/DesktopAppUpdate.ts`.
+- `apps/server/src/device/EasDeviceHost.ts`.
+- `apps/server/src/device/SimlockDeviceHost.ts`.
+- `apps/server/src/device/deviceToolMaintenance.ts`.
+- `apps/server/src/diagnostics/ProcessDiagnostics.ts`.
+- `apps/server/src/environment/ServerEnvironmentLabel.ts`.
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`.
+- `apps/server/src/orchestration-v2/Orchestrator.ts`.
+- `apps/server/src/orchestration-v2/RestartBackgroundNote.ts`.
+- `apps/server/src/orchestration-v2/RestartContinuation.ts`.
+- `apps/server/src/orchestration-v2/UserFacingErrors.ts`.
+- `apps/server/src/peer/PeerLinks.ts`.
+- `apps/server/src/persistence/DatabaseMaintenance.ts`.
+- `apps/server/src/preview/PreviewBrowser.ts`.
+- `apps/server/src/preview/PreviewBrowserHost.ts`.
+- `apps/server/src/preview/ServerBrowser.ts`.
+- `apps/server/src/project/ManagedProjectFolders.ts`.
+- `apps/server/src/provider/AntigravityProvider.ts`.
+- `apps/server/src/provider/ClaudeProvider.ts`.
+- `apps/server/src/provider/CodexAuthCallbackPage.ts`.
+- `apps/server/src/provider/CodexInstallation.ts`.
+- `apps/server/src/provider/CodexManagedRuntime.ts`.
+- `apps/server/src/provider/CodexProvider.ts`.
+- `apps/server/src/provider/ProviderAuthService.ts`.
+- `apps/server/src/provider/antigravityAuthSupport.ts`.
+- `apps/server/src/provider/providerCompatibility.ts`.
+- `apps/server/src/provider/providerInstallation.ts`.
+- `apps/server/src/provider/providerMaintenanceRunner.ts`.
+- `apps/server/src/serverOwnership.ts`.
+- `apps/server/src/serviceLauncher.ts`.
+- `apps/server/src/ws.ts`.
+- `apps/web/src/cloud/linkEnvironment.ts`.
+- `apps/web/src/components/CommandPalette.tsx`.
+- `apps/web/src/components/EnvironmentContextChip.tsx`.
+- `apps/web/src/components/HostedEmptyState.tsx`.
+- `apps/web/src/components/RightPanelTabs.tsx`.
+- `apps/web/src/components/ServerUpdateAction.tsx`.
+- `apps/web/src/components/chat/McpAppFrame.tsx`.
+- `apps/web/src/components/chat/QueuedRunsControl.tsx`.
+- `apps/web/src/components/chat/RightPanelSurfaceContent.tsx`.
+- `apps/web/src/components/chat/TimelineAssistantRows.tsx`.
+- `apps/web/src/components/chat/TimelineUserMessageRow.tsx`.
+- `apps/web/src/components/chat/TriageDraftHero.tsx`.
+- `apps/web/src/components/cloud/RelayClientInstallDialog.tsx`.
+- `apps/web/src/components/desktop/DesktopAppActivationCoordinator.tsx`.
+- `apps/web/src/components/desktop/SshPasswordPromptDialog.tsx`.
+- `apps/web/src/components/desktopUpdate.logic.ts`.
+- `apps/web/src/components/onboarding/FirstRunGate.tsx`.
+- `apps/web/src/components/onboarding/WelcomeWizard.tsx`.
+- `apps/web/src/components/preview/PreviewPanel.tsx`.
+- `apps/web/src/components/preview/PreviewView.tsx`.
+- `apps/web/src/components/promptLinks/HostedPromptLinkLanding.tsx`.
+- `apps/web/src/components/promptLinks/NewThreadLinkView.tsx`.
+- `apps/web/src/components/promptLinks/linkedPrompt.ts`.
+- `apps/web/src/components/pullRequest/PullRequestsPage.tsx`.
+- `apps/web/src/components/settings/AcpSessionManagementSection.tsx`.
+- `apps/web/src/components/settings/BrowserImportWizard.tsx`.
+- `apps/web/src/components/settings/CaptureShortcutConfig.tsx`.
+- `apps/web/src/components/settings/ChatGptWelcomeCoordinator.tsx`.
+- `apps/web/src/components/settings/CodexSetupSection.tsx`.
+- `apps/web/src/components/settings/ConnectionsSettings.tsx`.
+- `apps/web/src/components/settings/DiagnosticsSettings.tsx`.
+- `apps/web/src/components/settings/IntegrationsSettings.tsx`.
+- `apps/web/src/components/settings/KeybindingsSettings.tsx`.
+- `apps/web/src/components/settings/LabsSettingsPanel.tsx`.
+- `apps/web/src/components/settings/LinkedEnvironmentsSettings.tsx`.
+- `apps/web/src/components/settings/LocalEnvironmentSetting.tsx`.
+- `apps/web/src/components/settings/MultipleAccountsNote.tsx`.
+- `apps/web/src/components/settings/NotificationSettings.tsx`.
+- `apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx`.
+- `apps/web/src/components/settings/SecretsSettings.tsx`.
+- `apps/web/src/components/settings/SettingsPanels.logic.ts`.
+- `apps/web/src/components/settings/SettingsPanels.tsx`.
+- `apps/web/src/components/settings/SnapShotSettings.tsx`.
+- `apps/web/src/components/settings/SnapShotSetupDialog.tsx`.
+- `apps/web/src/components/settings/StorageSettings.tsx`.
+- `apps/web/src/components/settings/ThemeImportDialog.tsx`.
+- `apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx`.
+- `apps/web/src/components/settings/providerStatus.ts`.
+- `apps/web/src/components/settings/scopedSettings.ts`.
+- `apps/web/src/components/settings/settingsSearch.ts`.
+- `apps/web/src/components/sidebar/UpdateEverythingDialog.tsx`.
+- `apps/web/src/components/sidebar/updateEverythingRun.tsx`.
+- `apps/web/src/connection/clientMetadata.ts`.
+- `apps/web/src/connection/platform.ts`.
+- `apps/web/src/desktopAppActivation.ts`.
+- `apps/web/src/hooks/useStartTriage.ts`.
+- `apps/web/src/lib/bootError.ts`.
+- `apps/web/src/shortcuts/chatRouteCommands.ts`.
+- `apps/web/src/versionSkew.ts`.
+
 ## Regla
 
 Cada valor de marca se define una sola vez en `packages/shared/src/earlyscriptBrand.ts` (objeto `EarlyscriptBrand`). Los archivos de upstream lo importan y sustituyen su literal por la propiedad correspondiente; no se cambia lógica. Las excepciones son archivos que no pueden importar TypeScript (`index.html`, `package.json`, `metainfo.xml`), la documentación y los tests de upstream que fijan los literales antiguos.

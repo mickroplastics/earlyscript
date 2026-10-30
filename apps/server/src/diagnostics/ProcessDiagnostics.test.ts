@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { describe, expect, it } from "@effect/vitest";
 import type {
   DesktopHostTelemetrySnapshot,
@@ -232,7 +233,9 @@ describe("ProcessDiagnostics", () => {
         pid: CHILD_PID,
         signal: "SIGKILL",
         signaled: false,
-        message: Option.some(`Process ${CHILD_PID} is not a signalable T3 backend descendant.`),
+        message: Option.some(
+          `Process ${CHILD_PID} is not a signalable ${EarlyscriptBrand.productName} backend descendant.`,
+        ),
       });
 
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(

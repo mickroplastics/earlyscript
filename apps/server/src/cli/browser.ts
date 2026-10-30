@@ -106,12 +106,14 @@ const FONT_PACKAGES = ["fontconfig", "fonts-liberation"];
 
 const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
   Command.withDescription(
-    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts.",
+    `Set up this Linux host for ${EarlyscriptBrand.productName}'s browser: allow Chrome's sandbox and install its libraries and fonts.`,
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "linux") {
-        return yield* Console.log("Nothing to set up: T3's browser runs as is on this system.");
+        return yield* Console.log(
+          `Nothing to set up: ${EarlyscriptBrand.productName}'s browser runs as is on this system.`,
+        );
       }
       const fs = yield* FileSystem.FileSystem;
       const isRoot = (yield* HostProcess.UserId) === 0;
@@ -135,23 +137,25 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         return yield* Console.log(
           rootWarning ??
             (Option.isSome(browser)
-              ? "This host is ready for T3's browser."
-              : "Chrome's sandbox is allowed here. T3's browser installs on first use; if it then reports missing libraries, run this again."),
+              ? `This host is ready for ${EarlyscriptBrand.productName}'s browser.`
+              : `Chrome's sandbox is allowed here. ${EarlyscriptBrand.productName}'s browser installs on first use; if it then reports missing libraries, run this again.`),
         );
       }
 
       if (!isRoot) {
         if (needsProfile) {
           yield* Console.log(
-            `This host blocks the sandbox T3's browser runs in. Setup installs an AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows it.`,
+            `This host blocks the sandbox ${EarlyscriptBrand.productName}'s browser runs in. Setup installs an AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows it.`,
           );
         }
         if (missing.length > 0) {
-          yield* Console.log(`T3's browser is missing ${missing.join(", ")}; setup installs them.`);
+          yield* Console.log(
+            `${EarlyscriptBrand.productName}'s browser is missing ${missing.join(", ")}; setup installs them.`,
+          );
         }
         if (needsFonts) {
           yield* Console.log(
-            "T3's browser needs fontconfig and system fonts; setup installs them.",
+            `${EarlyscriptBrand.productName}'s browser needs fontconfig and system fonts; setup installs them.`,
           );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
@@ -176,18 +180,20 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           "-r",
           PreviewBrowserHost.APPARMOR_PROFILE_PATH,
         ]);
-        yield* Console.log("Allowed Chrome's sandbox for T3's browser.");
+        yield* Console.log(
+          `Allowed Chrome's sandbox for ${EarlyscriptBrand.productName}'s browser.`,
+        );
       }
 
       if ((missing.length > 0 || needsFonts) && !hasApt) {
         if (missing.length > 0) {
           yield* Console.log(
-            `T3's browser is missing ${missing.join(", ")}. Install them with your package manager, then run this again.`,
+            `${EarlyscriptBrand.productName}'s browser is missing ${missing.join(", ")}. Install them with your package manager, then run this again.`,
           );
         }
         if (needsFonts) {
           yield* Console.log(
-            "T3's browser needs fontconfig and system fonts. Install them with your package manager, then run this again.",
+            `${EarlyscriptBrand.productName}'s browser needs fontconfig and system fonts. Install them with your package manager, then run this again.`,
           );
         }
         return;
@@ -222,16 +228,20 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           );
         }
         yield* Console.log(
-          "Installed the browser's fonts. Restart the T3 server if browser tabs were already open.",
+          `Installed the browser's fonts. Restart the ${EarlyscriptBrand.productName} server if browser tabs were already open.`,
         );
       }
 
-      yield* Console.log(rootWarning ?? "This host is ready for T3's browser.");
+      yield* Console.log(
+        rootWarning ?? `This host is ready for ${EarlyscriptBrand.productName}'s browser.`,
+      );
     }),
   ),
 );
 
 export const browserCommand = Command.make("browser").pipe(
-  Command.withDescription("Manage T3's headless browser on this host."),
+  Command.withDescription(
+    `Manage ${EarlyscriptBrand.productName}'s headless browser on this host.`,
+  ),
   Command.withSubcommands([browserSetupCommand]),
 );

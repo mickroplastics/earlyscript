@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -197,7 +198,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : !status.desired
         ? "Run `t3 connect link` to enable T3 Connect."
         : !status.linked
-          ? "Start T3 to provision the environment link and launch its managed tunnel."
+          ? `Start ${EarlyscriptBrand.productName} to provision the environment link and launch its managed tunnel.`
           : undefined;
 
   return [
@@ -382,7 +383,7 @@ const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(functio
   yield* Console.error(
     formatAlertBox(
       last === null
-        ? "✕ Could not check T3 Connect\n  The T3 server on this machine did not answer.\n  Fix: run `t3 service status`, then `t3 connect status`."
+        ? `✕ Could not check T3 Connect\n  The ${EarlyscriptBrand.productName} server on this machine did not answer.\n  Fix: run \`t3 service status\`, then \`t3 connect status\`.`
         : formatReachabilityFailure(last),
     ),
   );
@@ -469,11 +470,11 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       yield* Console.warn(
         input.clearAuthorization
           ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
-          : "Could not revoke the relay-side environment record yet.\nRun `t3 connect unlink` again when the relay is reachable, or deregister it from the T3 Connect page of your T3 account.",
+          : `Could not revoke the relay-side environment record yet.\nRun \`t3 connect unlink\` again when the relay is reachable, or deregister it from the T3 Connect page of your ${EarlyscriptBrand.productName} account.`,
       );
     } else if (input.relayResult.value.status === "not-authenticated") {
       yield* Console.warn(
-        "The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your T3 account, or run `t3 connect login` and retry.",
+        `The relay-side environment record was not revoked.\nDeregister it from the T3 Connect page of your ${EarlyscriptBrand.productName} account, or run \`t3 connect login\` and retry.`,
       );
     } else if (input.relayResult.value.status === "revoked") {
       yield* Console.log("Revoked the relay-side environment record.");
@@ -626,7 +627,7 @@ const connectLinkCommand = Command.make("link", {
           const serveCommand = yield* resolveCliCommand("serve");
           yield* Console.log(
             flags.publishOnly
-              ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
+              ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start ${EarlyscriptBrand.productName} to publish agent activity (no managed tunnel).`
               : `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
           );
         }
@@ -745,13 +746,13 @@ const connectPublishCommand = Command.make("publish", {
         // A desired managed link already covers publishing and must not be downgraded.
         if (yield* CliState.readCliDesiredCloudLink) {
           yield* Console.log(
-            "A T3 Connect link is already pending. Start T3 to finish provisioning it; publishing starts once it links.",
+            `A T3 Connect link is already pending. Start ${EarlyscriptBrand.productName} to finish provisioning it; publishing starts once it links.`,
           );
           return;
         }
         yield* CliState.setCliDesiredCloudLink(true, "publish_only");
         yield* Console.log(
-          "Restart T3 to finish authorizing this environment to publish (no managed tunnel is created).",
+          `Restart ${EarlyscriptBrand.productName} to finish authorizing this environment to publish (no managed tunnel is created).`,
         );
       }),
     ),
@@ -789,8 +790,8 @@ const reportServiceOnboarding = Effect.fn("cli.connect.report_service_onboarding
     const platform = yield* HostProcess.Platform;
     yield* Console.log(
       platform === "darwin"
-        ? "\n✓ Background service ready\n\nT3 Code is set to run while you are logged in to this Mac. The server establishes the T3 Connect link on startup."
-        : "\n✓ Background service ready\n\nT3 Code is set to keep running after you log out. The server establishes the T3 Connect link on startup.",
+        ? `\n✓ Background service ready\n\n${EarlyscriptBrand.productName} is set to run while you are logged in to this Mac. The server establishes the T3 Connect link on startup.`
+        : `\n✓ Background service ready\n\n${EarlyscriptBrand.productName} is set to keep running after you log out. The server establishes the T3 Connect link on startup.`,
     );
     return;
   }

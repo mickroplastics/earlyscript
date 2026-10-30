@@ -25,6 +25,10 @@ import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
 
+// Static HTML cannot import the shared brand values. Vite expands these placeholders.
+process.env.EARLYSCRIPT_ICON_PATH = EarlyscriptBrand.webIconPath;
+process.env.EARLYSCRIPT_TOUCH_ICON_PATH = EarlyscriptBrand.webTouchIconPath;
+
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
 

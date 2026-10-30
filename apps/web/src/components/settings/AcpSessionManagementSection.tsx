@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import {
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
@@ -320,7 +321,7 @@ export function AcpSessionManagementSection(props: {
     <div className="grid gap-3">
       <SettingsRow
         title="Native sessions"
-        description="Resume agent-owned conversations as T3 threads."
+        description={`Resume agent-owned conversations as ${EarlyscriptBrand.productName} threads.`}
         status={
           canList && props.projects.length === 0
             ? "Add a project before importing sessions."
