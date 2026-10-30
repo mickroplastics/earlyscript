@@ -138,6 +138,7 @@ export default mergeConfig(
       setupFiles: [
         "./src/testUtils/gitConfig.setup.ts",
         "./src/testUtils/managedServiceEnv.setup.ts",
+        "../../packages/shared/src/testing/earlyscriptFlagsOn.ts",
       ],
       hookTimeout: 120_000,
       testTimeout: 120_000,
