@@ -11,7 +11,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v2";
 
 export const MAX_TREND_TITLE_CHARS = 80;
-const MAX_SUMMARY_PART_CHARS = 400;
+const MAX_SUMMARY_PART_CHARS = 700;
 const MAX_EVIDENCE_ITEMS = 12;
 const MAX_EVIDENCE_TITLE_CHARS = 300;
 const MAX_EVIDENCE_EXCERPT_CHARS = 600;
@@ -144,7 +144,7 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "Rules:",
     `- write title and summary in ${languageInstruction(language)}`,
     `- title: one line, at most ${MAX_TREND_TITLE_CHARS} characters, a plain description of the subject; no clickbait, no quotes, no trailing period`,
-    "- summary.whatHappened, summary.whyItMatters, summary.videoAngle: one or two sentences each",
+    "- summary.whatHappened, summary.whyItMatters, summary.videoAngle: one or two sentences each, at most about 450 characters per part including citation markers; be concise",
     "- citedItemIds: ids copied exactly from the id attribute; cite only ids listed below",
     "- Every factual claim about an event, including claims in the title, must be explicitly supported by the title or excerpt of at least one cited evidence item. Do not fill gaps with background knowledge.",
     "- In summary, place [itemId] immediately after each evidence-based factual claim. Include every such id in citedItemIds. Keep the title free of citation markers, but include its supporting ids in citedItemIds.",
