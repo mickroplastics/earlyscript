@@ -63,7 +63,12 @@ describe("buildTrendPresentationPrompt", () => {
     const { prompt } = buildTrendPresentationPrompt(input);
 
     expect(prompt).toContain("write title and summary in Spanish (es)");
-    expect(prompt).toContain("do not add names, numbers, dates, or claims from memory");
+    expect(prompt).toContain("Do not fill gaps with background knowledge.");
+    expect(prompt).toContain(
+      "A title mentioning Claude does not establish that Anthropic wrote or published the item.",
+    );
+    expect(prompt).toContain("Do not recommend prioritizing, deprioritizing, selecting");
+    expect(prompt).toContain("place [itemId] immediately after each evidence-based factual claim");
     expect(prompt).toContain('<item id="itm_hn_2" source="hn"');
     expect(prompt).toContain("Excerpt: Circuit search with a language model.");
     expect(prompt).toContain("- github: 0 complete days, 28 partial");
@@ -98,6 +103,40 @@ describe("finalizeTrendPresentation", () => {
 
     expect(result.citedItemIds).toEqual(["itm_hn_2"]);
     expect(result.warnings).toEqual(['Dropped a citation to unknown evidence id "itm_made_up".']);
+  });
+
+  it("adds inline citations from the summary and keeps the text as written", () => {
+    const summary = {
+      whatHappened: "Un titular informa de un avance en circuitos cuánticos [itm_hn_2].",
+      whyItMatters: "La relación con el canal no está clara.",
+      videoAngle: "Un video podría explicar el titular [itm_hn_1] [itm_hn_2].",
+    };
+    const result = finalizeTrendPresentation(input, { ...output, summary, citedItemIds: [] });
+
+    expect(result.summary).toEqual(summary);
+    expect(result.citedItemIds).toEqual(["itm_hn_2", "itm_hn_1"]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("drops an inline citation to an unknown id and warns", () => {
+    const summary = { ...output.summary, whatHappened: "Un titular informa algo [itm_made_up]." };
+    const result = finalizeTrendPresentation(input, { ...output, summary });
+
+    expect(result.summary.whatHappened).toBe("Un titular informa algo [itm_made_up].");
+    expect(result.citedItemIds).toEqual(["itm_hn_1", "itm_hn_2"]);
+    expect(result.warnings).toEqual(['Dropped a citation to unknown evidence id "itm_made_up".']);
+  });
+
+  it("moves known citation markers out of the title", () => {
+    const result = finalizeTrendPresentation(input, {
+      ...output,
+      title: "Circuitos cuánticos diseñados con Claude [itm_hn_2] [RFC]",
+      citedItemIds: [],
+    });
+
+    expect(result.title).toBe("Circuitos cuánticos diseñados con Claude [RFC]");
+    expect(result.citedItemIds).toEqual(["itm_hn_2"]);
+    expect(result.warnings).toEqual([]);
   });
 
   it("cuts a long title to one line within the limit", () => {
