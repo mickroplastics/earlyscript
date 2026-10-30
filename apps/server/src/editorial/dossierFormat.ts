@@ -227,6 +227,7 @@ export function loadRunDossiers(
       growth: component(file, "growth"),
       affinity: file.profile?.include_score ?? null,
       sourceCount: Math.max(sources.size, ...curve.map((day) => day.sources)),
+      sources: [...sources].toSorted(),
       sparkline: curve.slice(-SPARKLINE_DAYS).map((day) => (day.known ? day.items : null)),
       isNew: options.isLatestRun,
     };

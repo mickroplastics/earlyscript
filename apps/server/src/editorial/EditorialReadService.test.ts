@@ -76,6 +76,7 @@ describe("EditorialReadService", () => {
       // ln 2: the engine's log growth for a week that doubled.
       assert.closeTo(quantum.growth ?? 0, Math.LN2, 1e-6);
       assert.strictEqual(quantum.sourceCount, 1);
+      assert.deepStrictEqual(quantum.sources, ["hn"]);
       assert.deepStrictEqual(quantum.sparkline, [2, 2, 1, 0, 0, 0, 0, 2, 0, 1, 5, 2, 0, 1]);
 
       assert.deepStrictEqual(

@@ -89,6 +89,8 @@ export const EditorialTrendSummary = Schema.Struct({
   growth: Schema.NullOr(Schema.Finite),
   affinity: Schema.NullOr(Schema.Finite),
   sourceCount: NonNegativeInt,
+  /** Sources named by the evidence; `sourceCount` can be higher when the curve saw more. */
+  sources: Schema.Array(Schema.String),
   /** Last 14 days of `items`; `null` for a day that was not captured. */
   sparkline: Schema.Array(Schema.NullOr(NonNegativeInt)),
   /** Unread in the inbox. Until read state exists (U3), every trend of the latest run is new. */
