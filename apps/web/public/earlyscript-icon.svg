@@ -1,0 +1,5 @@
+<!-- Provisional Earlyscript monogram. Primary blue matches the default theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
+  <rect width="180" height="180" rx="40" fill="#2563eb"/>
+  <path d="M52 40h76v22H76v17h44v22H76v17h52v22H52Z" fill="white"/>
+</svg>
