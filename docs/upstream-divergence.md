@@ -11,6 +11,7 @@ Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia 
 5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`: pendiente de fusión.
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
+8. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -600,3 +601,43 @@ Decisiones reversibles:
 - Reintento por cuota descubierta al ejecutar, solo en esta operación: si el CLI falla con un límite de uso, se hace un único intento con otra instancia elegible de Claude o Codex (mismo `pickFallback` que el preflight, excluyendo la que falló) y se registra en el log. Errores de formato, timeouts, cancelaciones y otros fallos no se reintentan. `provider`/`model` guardan la instancia que respondió. Sin alternativa, se devuelve el error original.
 - `isUsageLimitError` es una heurística por texto, porque los CLI de Claude y Codex no exponen un código de cuota en la generación de texto: exige un fallo de comando (`Claude|Codex CLI command failed:`) y busca `usage limit`, `rate limit`, `hit your limit`, `quota`, `429`, `too many requests`, `resource_exhausted` o los códigos de ChatGPT de `@t3tools/shared/usageLimits`. Reemplazarla si los drivers llegan a clasificar el error.
 - Aislamiento MCP en Codex: si `codex mcp list` falla, devuelve JSON inválido o supera 10 s, la operación de tendencia falla con `TextGenerationError` en vez de correr con servidores MCP sin apagar. Las demás operaciones conservan el comportamiento de upstream (aviso y continuar).
+
+## 8. Espacio Tendencias (lectura)
+
+Base: `d820a87685`. Rama `es/trends-space`. Primera rebanada vertical de solo lectura del espacio Tendencias: el servidor lee las corridas del motor desde disco, un grupo RPC editorial las expone y el sidebar gana el conmutador Hilos, Tendencias y Resultados con la bandeja y el expediente. No escribe estado editorial. Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §1, §2, §3, §6 y §12.
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorial.ts` (esquemas, `EditorialRpcGroup`, `EDITORIAL_WS_METHODS`, `EDITORIAL_RPC_REQUIRED_SCOPES`, `EditorialReadError`).
+- Servidor, en `apps/server/src/editorial/`: `EditorialReadService.ts`, `dossierFormat.ts` (lector de `run.json` y `dossier/1`, métricas y orden), `rpc.ts` (handlers y agregado de trazas), `layer.ts`, sus pruebas y `fixtures/runs/` con tres expedientes reales de la corrida del 19 de octubre (sin sellos de recuperación ni rutas locales de `run.json`).
+- Cliente, en `apps/web/src/editorial/`: `state.ts`, `spaceStore.ts`, `editorial.logic.ts`, `EditorialSidebar.tsx`, `TrendInbox.tsx`, `TrendInboxRow.tsx`, `EditorialPage.tsx`, `TrendDossierPage.tsx`, `EditorialLanding.tsx` y sus pruebas.
+- Rutas: `apps/web/src/routes/_chat.editorial.$environmentId.trends.tsx`, `_chat.editorial.$environmentId.trends.$dossierId.tsx` y `_chat.editorial.$environmentId.results.tsx`.
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas                   | Alcance                                                                                                 |
+| ----------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 36, 2141-2143            | Importa `EditorialRpcGroup` y lo compone con `.merge` antes del middleware de scopes.                   |
+| `packages/contracts/src/index.ts`                     | 71                       | Reexporta `editorial.ts`.                                                                               |
+| `apps/server/src/ws.ts`                               | 243-244, 1868-1870, 1872 | Construye los handlers editoriales con su capa y los esparce en `ServerWsRpcGroup.of`.                  |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 3, 43                    | Esparce `EDITORIAL_RPC_REQUIRED_SCOPES` (lectura: `orchestration:read`) en `RPC_REQUIRED_SCOPES`.       |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 8, 15                    | Esparce `EDITORIAL_RPC_AGGREGATES` en `RPC_AGGREGATES`, que exige un agregado por método.               |
+| `apps/web/src/components/AppSidebarLayout.tsx`        | 41, 471                  | Monta `EditorialSidebar` en lugar de `ThreadSidebar`, con las mismas props.                             |
+| `apps/web/src/routes/_chat.index.tsx`                 | 15, 34-38                | Envuelve `IndexDraftLanding` en `EditorialLanding`.                                                     |
+| `apps/web/src/routeTree.gen.ts`                       | generado                 | Regenerado con `@tanstack/router-generator` (la versión del plugin de Vite); solo añade las tres rutas. |
+
+Decisiones reversibles:
+
+- Contrato dentro de `packages/contracts` en vez de `packages/editorial-contracts`: un paquete nuevo cambiaría `pnpm-lock.yaml` y el mapa de alcance. `editorial.ts` solo importa `auth.ts` y `baseSchemas.ts`, sin ciclo con `rpc.ts`; se puede mover al paquete cuando exista.
+- `EditorialReadService` se construye por conexión WebSocket dentro de `ws.ts`, no en `server.ts`: así `layerWsRpc` no gana un requisito y las pruebas de upstream que lo montan con dobles (`ws.test.ts`, `cli/*.test.ts`) no cambian. La caché por mtime vive lo que la conexión. Cuando exista `editorial.sqlite` (U3), montar `editorial/layer.ts` una vez en `server.ts` y proveerlo a `ws.ts` y al servidor MCP.
+- El directorio de corridas sale de `EARLYSCRIPT_EDITORIAL_RUNS_DIR` o de `~/earlyscript-data/runs` (derivado con `homedir()`). La identidad de una corrida es su `run_id`; nunca se arma una ruta con datos del cliente.
+- Posición por volumen: puesto de competencia por `items_7d` (los empates comparten puesto); autores de la semana desde el componente `log_authors_7d` del motor; umbral de afinidad fijo en 0,60 (`profile.include_min` de `engine.v0.02`), porque la configuración de la corrida está fuera del directorio de corridas.
+- La curva se completa a 28 días antes del corte: los días previos al primer ítem cuentan como cero conocido; un día ausente dentro de la curva y los marcados `known: false` se dibujan con contorno discontinuo, nunca como cero.
+- El conmutador de espacios es el `ToggleGroup` segmentado de upstream (botones con `aria-pressed` y flechas), no un `tablist`: el lint del repo exige la primitiva y no hay `Tabs` en `components/ui`. Va en el primer hijo del sidebar y un envoltorio `display: contents` con `order` lo coloca bajo la barra de título de cada espacio, sin editar `Sidebar.tsx`. Si upstream cambia el primer hijo de `ThreadSidebar`, el conmutador cambia de sitio sin romperse.
+- Fila de la bandeja sobre `SidebarMenuButton` con el fondo de hilo activo (`bg-sidebar-row-active`); meta abreviada («11 publ. · 11 autores · puntaje #13») para caber en el ancho por defecto.
+- Aterrizaje: la raíz decide una vez por sesión y abre el último espacio del entorno primario; después «/» conserva el comportamiento de upstream. En modo web con `autoBootstrapProjectFromCwd` (el valor por defecto de `t3` en una carpeta y de `vp run dev`), la navegación de bienvenida de `__root.tsx` al hilo de arranque llega mientras la ruta sigue en «/» y gana a esta redirección. Con el arranque automático apagado (escritorio) la raíz abre Tendencias. Arreglarlo exige que `EventRouter` omita la navegación de bienvenida cuando el aterrizaje editorial la reclame; queda para la unidad de aterrizaje con estado.
+
+Puntos de extensión:
+
+- Bandeja con estado (U3): `EditorialTrendSummary.isNew` y `EditorialInbox.newCount` se calculan hoy como «todas las de la corrida más reciente» en `loadRunDossiers`; con `editorial_trend_inbox`, la revisión vista decide `isNew`. `resolveLandingTarget` es el sitio de la regla «corrida nueva abre Tendencias». Las acciones del expediente (`PendingAction`) esperan los comandos de escritura y su scope de operación.
+- Redacción por asistente (U7): `EditorialTrendSummary.presentation` es opcional; la fila y el expediente ya muestran su título y las tres partes del resumen, con «Redactado por el asistente» y los términos del motor a la vista.
