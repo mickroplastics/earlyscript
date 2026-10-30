@@ -26,6 +26,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import * as EarlyscriptRemoteAccess from "../earlyscript/remoteAccess.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -387,13 +388,15 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => Boolean(devUrl),
   );
-  const tailscaleServeEnabled = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.tailscaleServeEnabled,
-      Option.fromUndefinedOr(env.tailscaleServeEnabled),
-      Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
+  const tailscaleServeEnabled = EarlyscriptRemoteAccess.tailscaleServe(
+    Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.tailscaleServeEnabled,
+        Option.fromUndefinedOr(env.tailscaleServeEnabled),
+        Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
+      ),
+      () => false,
     ),
-    () => false,
   );
   const tailscaleServePort = Option.getOrElse(
     resolveOptionPrecedence(
@@ -413,6 +416,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   // listens on private networks unless `service.env` sets `T3CODE_HOST`.
   // Clients then learn its LAN address and prefer it over T3 Connect.
   const privateNetworkOnly =
+    EarlyscriptRemoteAccess.serviceListensOnPrivateNetworks &&
     Option.isNone(explicitHost) &&
     mode === "web" &&
     (yield* resolveServiceLauncherMode().pipe(

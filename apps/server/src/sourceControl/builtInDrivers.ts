@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControlDefinitions.ts";
+import { sourceControlHostDrivers } from "../earlyscript/sourceControlHosts.ts";
 
 export interface SourceControlDriverEntry {
   readonly driver: Pick<SourceControlDriver, "kind" | "definition">;
@@ -21,8 +22,9 @@ export class SourceControlDrivers extends Context.Service<
   ReadonlyArray<SourceControlDriverEntry>
 >()("t3/sourceControl/builtInDrivers/SourceControlDrivers") {}
 
-const make = Effect.forEach(BUILT_IN_SOURCE_CONTROL_DRIVER_LIST, (driver) =>
-  driver.make.pipe(Effect.map((instance) => ({ driver, instance }))),
+const make = Effect.forEach(
+  sourceControlHostDrivers(BUILT_IN_SOURCE_CONTROL_DRIVER_LIST),
+  (driver) => driver.make.pipe(Effect.map((instance) => ({ driver, instance }))),
 );
 
 export const layer = Layer.effect(SourceControlDrivers, make).pipe(

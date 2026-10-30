@@ -47,9 +47,11 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
-    relayUrl: normalizeSecureRelayUrl(
-      (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
-    ),
+    relayUrl: !earlyscriptFlags.relay
+      ? null
+      : normalizeSecureRelayUrl(
+          (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
+        ),
     relayTracing: {
       tracesUrl: normalizeSecureUrl(
         (import.meta.env.VITE_RELAY_OTLP_TRACES_URL as string | undefined) ?? "",
@@ -79,6 +81,7 @@ export function resolveRelayTracingConfig() {
 }
 
 export function hasCloudPublicConfig(): boolean {
+  if (!earlyscriptFlags.t3Connect) return false;
   const config = resolveCloudPublicConfig();
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;

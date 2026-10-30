@@ -9,12 +9,8 @@ import {
   getLocalEnvironmentEnabled,
   setLocalEnvironmentEnabled,
 } from "./methods/localEnvironment.ts";
-import {
-  getAdvertisedEndpoints,
-  getServerExposureState,
-  setServerExposureMode,
-  setTailscaleServeEnabled,
-} from "./methods/serverExposure.ts";
+import { getAdvertisedEndpoints, getServerExposureState } from "./methods/serverExposure.ts";
+import { setServerExposureMode, setTailscaleServeEnabled } from "../earlyscript/serverExposure.ts";
 import {
   bootstrapSshBearerSession,
   disconnectSshEnvironment,
@@ -24,7 +20,7 @@ import {
   fetchSshSessionState,
   resolveSshHost,
   resolveSshPasswordPrompt,
-} from "./methods/sshEnvironment.ts";
+} from "../earlyscript/sshEnvironment.ts";
 import {
   checkForUpdate,
   downloadUpdate,

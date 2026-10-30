@@ -4,6 +4,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -32,7 +33,7 @@ export interface PanelLayoutControlsProps {
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
   showThreadPanelControl = true,
-  showTerminalControl = true,
+  showTerminalControl = earlyscriptFlags.terminal,
   showRightPanelControl = true,
   terminalAvailable,
   terminalOpen,

@@ -9,6 +9,7 @@ import {
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { settingsSearchItemVisible, visibleSettingsNavGroups } from "~/earlyscript/hiddenFeatures";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
@@ -115,7 +116,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   readonly heading: string | null;
   readonly paths: ReadonlyArray<SettingsPath>;
-}> = [
+}> = visibleSettingsNavGroups([
   {
     heading: null,
     paths: [
@@ -153,7 +154,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: null,
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
   },
-];
+]);
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
@@ -1327,7 +1328,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      settingsSearchItemVisible(item),
   );
 }
 

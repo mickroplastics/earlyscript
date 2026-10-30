@@ -37,7 +37,6 @@ import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
-import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -46,6 +45,8 @@ import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as EarlyscriptAnalytics from "./earlyscript/analytics.ts";
+import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
+import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
@@ -91,7 +92,6 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
-import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
@@ -136,7 +136,6 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
-import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
@@ -149,7 +148,7 @@ import {
   RELAY_URL_SECRET,
 } from "./cloud/config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import * as CloudHttp from "./cloud/http.ts";
+import * as EarlyscriptConnectHttp from "./earlyscript/connectHttp.ts";
 import * as GuestHttp from "./guest/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
@@ -546,7 +545,9 @@ const layerIdleCompactionWorker = Layer.effectDiscard(
 ).pipe(Layer.provide(ProjectionStoreV2.layer));
 
 const layerThreadPullRequestWorker = Layer.effectDiscard(
-  ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
+  ThreadPullRequestService.make.pipe(
+    Effect.flatMap((service) => EarlyscriptChangeRequests.startPullRequestWorker(service.start())),
+  ),
 ).pipe(Layer.provide(layerPullRequestService));
 
 const layerProviderInstallationRefresh = Layer.effectDiscard(
@@ -582,8 +583,8 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
-  AgentAwarenessRelay.layer,
-  HeldHooksWaker.layer,
+  EarlyscriptCloudLink.agentAwarenessRelayLayer,
+  EarlyscriptCloudLink.heldHooksWakerLayer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
@@ -598,7 +599,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
-      yield* service.start();
+      yield* EarlyscriptChangeRequests.startPullRequestWorker(service.start());
     }),
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
@@ -608,7 +609,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestWatchReactor.PullRequestWatchReactor;
-      yield* service.start();
+      yield* EarlyscriptChangeRequests.startPullRequestWorker(service.start());
     }),
   ).pipe(
     Layer.provide(PullRequestWatchReactor.layer),
@@ -721,9 +722,9 @@ const layerMakeRoutes = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(AuthHttp.layer),
       Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
-      Layer.provide(CloudHttp.layer),
+      Layer.provide(EarlyscriptConnectHttp.layerConnectHttp),
       Layer.provide(OrchestrationHttp.layer),
-      Layer.provide(PullRequestHttp.layer),
+      Layer.provide(EarlyscriptChangeRequests.layerPullRequestHttp),
       Layer.provide(ProjectHttp.layer),
       Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
@@ -1090,7 +1091,11 @@ const layerMakeServer = Layer.unwrap(
     );
 
     return layerServerApplication.pipe(
-      Layer.provide(CloudLink.layer.pipe(Layer.provideMerge(ConnectReachability.layer))),
+      Layer.provide(
+        EarlyscriptCloudLink.cloudLinkLayer(
+          CloudLink.layer.pipe(Layer.provideMerge(ConnectReachability.layer)),
+        ),
+      ),
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(

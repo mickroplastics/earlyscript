@@ -93,6 +93,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { visibleSurfaceActions } from "~/earlyscript/hiddenFeatures";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -314,7 +315,7 @@ function RightPanelEmptyState(props: {
 }) {
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
+  const actions = visibleSurfaceActions([
     {
       label: "Browser",
       icon: Globe2,
@@ -372,7 +373,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
-  ] as const;
+  ] as const);
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -1009,7 +1010,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const addSurfaceActions = [
+  const addSurfaceActions = visibleSurfaceActions([
     {
       label: "Browser",
       icon: Globe2,
@@ -1066,7 +1067,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
-  ] as const;
+  ] as const);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);

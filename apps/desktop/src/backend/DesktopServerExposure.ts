@@ -26,6 +26,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
+import * as EarlyscriptLocalExposure from "../earlyscript/localExposure.ts";
 
 const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
@@ -464,7 +465,7 @@ export const make = Effect.gen(function* () {
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
     function* ({ port }: { readonly port: number }) {
       yield* Effect.annotateCurrentSpan({ port });
-      const settings = yield* desktopSettings.get;
+      const settings = EarlyscriptLocalExposure.localOnlySettings(yield* desktopSettings.get);
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
       const resolved = resolveRuntimeState({
         requestedMode: settings.serverExposureMode,

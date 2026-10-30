@@ -18,7 +18,7 @@ import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
-import { pickEarlyscriptFlagEnv } from "@t3tools/shared/earlyscriptFlags";
+import { EARLYSCRIPT_FLAGS_ON_ENV, pickEarlyscriptFlagEnv } from "@t3tools/shared/earlyscriptFlags";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -102,6 +102,13 @@ const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 
 
 const browserTestProject = {
   extends: true,
+  // Upstream browser suites check upstream behavior, so every Earlyscript flag is on unless set.
+  define: {
+    __EARLYSCRIPT_FLAG_ENV__: JSON.stringify({
+      ...EARLYSCRIPT_FLAGS_ON_ENV,
+      ...pickEarlyscriptFlagEnv(process.env),
+    }),
+  },
   // Pre-bundle lazy browser and worker dependencies to avoid mid-run reloads.
   optimizeDeps: {
     include: [
