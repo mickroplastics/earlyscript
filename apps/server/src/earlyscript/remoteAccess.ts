@@ -14,7 +14,7 @@ export const tailscaleServe = (enabled: boolean): boolean =>
   earlyscriptFlags.remoteAccess && enabled;
 
 /**
- * Without `remoteAccess` a background service keeps upstream's loopback-or-default host instead of
+ * Without `remoteAccess` a background service listens on 127.0.0.1, like a plain web server, instead of
  * listening on private networks on its own. An explicit `--host` or `T3CODE_HOST` still applies.
  */
 export const serviceListensOnPrivateNetworks: boolean = earlyscriptFlags.remoteAccess;
