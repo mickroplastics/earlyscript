@@ -14,7 +14,7 @@ import * as EditorialThreadService from "../EditorialThreadService.ts";
 import * as EditorialPersistence from "../persistenceLayer.ts";
 import * as EditorialDatabase from "./EditorialDatabase.ts";
 
-const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment:editorial-test");
+export const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment:editorial-test");
 
 /** Launches nothing unless a test passes its own double. */
 const layerLaunchUnused = Layer.mock(ThreadLaunch.ThreadLaunchService)({});
