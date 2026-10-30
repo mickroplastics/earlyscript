@@ -156,6 +156,10 @@ describe("WorkClockService", () => {
         const replay = yield* clock.start(THREAD, "read", { operationId: "op-start" });
         assert.deepInclude(replay.state, { _tag: "running", stage: "read" });
         assert.deepStrictEqual(yield* eventTypes, ["video-thread.registered", "work.started"]);
+
+        const reused = yield* Effect.flip(clock.pause(THREAD, { operationId: "op-start" }));
+        assert.strictEqual(reused._tag, "EditorialConflictError");
+        assert.lengthOf(yield* eventTypes, 2);
       }),
     ),
   );

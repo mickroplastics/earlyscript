@@ -9,6 +9,7 @@ import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.
 import type {
   EditorialActor,
   EditorialEvent,
+  EditorialEventType,
   UnresolvedInterval,
   WorkClockSummary,
   WorkStage,
@@ -126,6 +127,7 @@ const make = Effect.gen(function* () {
    */
   const command = (
     operation: string,
+    eventType: EditorialEventType,
     threadId: string,
     options: WorkClockCommandOptions | undefined,
     apply: (
@@ -142,6 +144,7 @@ const make = Effect.gen(function* () {
           operation,
           options?.operationId,
           threadId,
+          eventType,
         );
         const events = replay ? [] : yield* apply(yield* nowIso, options?.actor ?? "operator");
         return { result: yield* readSummary(threadId), events };
@@ -149,7 +152,7 @@ const make = Effect.gen(function* () {
     );
 
   const start: WorkClockService["Service"]["start"] = (threadId, stage, options) =>
-    command("workClock.start", threadId, options, (at, actor) =>
+    command("workClock.start", "work.started", threadId, options, (at, actor) =>
       Effect.gen(function* () {
         const state = clockStateOf(yield* loadIntervals(sql, threadId));
         if (state._tag === "running") {
@@ -179,7 +182,7 @@ const make = Effect.gen(function* () {
     );
 
   const pause: WorkClockService["Service"]["pause"] = (threadId, options) =>
-    command("workClock.pause", threadId, options, (at, actor) =>
+    command("workClock.pause", "work.paused", threadId, options, (at, actor) =>
       Effect.gen(function* () {
         const state = clockStateOf(yield* loadIntervals(sql, threadId));
         if (state._tag !== "running") {
@@ -202,7 +205,7 @@ const make = Effect.gen(function* () {
     );
 
   const resume: WorkClockService["Service"]["resume"] = (threadId, options) =>
-    command("workClock.resume", threadId, options, (at, actor) =>
+    command("workClock.resume", "work.resumed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
         const state = clockStateOf(yield* loadIntervals(sql, threadId));
         if (state._tag !== "paused") {
@@ -231,7 +234,7 @@ const make = Effect.gen(function* () {
     );
 
   const changeStage: WorkClockService["Service"]["changeStage"] = (threadId, stage, options) =>
-    command("workClock.changeStage", threadId, options, (at, actor) =>
+    command("workClock.changeStage", "work.stage-changed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
         const state = clockStateOf(yield* loadIntervals(sql, threadId));
         if (state._tag === "idle") {
@@ -260,7 +263,7 @@ const make = Effect.gen(function* () {
     );
 
   const stop: WorkClockService["Service"]["stop"] = (threadId, options) =>
-    command("workClock.stop", threadId, options, (at, actor) =>
+    command("workClock.stop", "work.stopped", threadId, options, (at, actor) =>
       stopClock(sql, {
         threadId,
         at,

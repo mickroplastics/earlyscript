@@ -456,7 +456,15 @@ const make = Effect.gen(function* () {
     const actor = input.actor ?? "operator";
     return yield* threadCommand(operation, input.threadId, (at) =>
       Effect.gen(function* () {
-        if (yield* operationAlreadyApplied(sql, operation, input.operationId, input.threadId)) {
+        if (
+          yield* operationAlreadyApplied(
+            sql,
+            operation,
+            input.operationId,
+            input.threadId,
+            "decision.recorded",
+          )
+        ) {
           const existing = yield* sql<DecisionRow>`
               SELECT * FROM editorial_decisions
               WHERE decision_id = (
