@@ -1,3 +1,33 @@
+# Earlyscript
+
+Earlyscript es un fork privado de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783`. Sirve de carcasa de estudio editorial: conserva hilos, proveedores de modelos, historial y visor de diffs de T3 Code, y sobre ella se construye el motor de tendencias de Earlywindow para preparar guiones de video con decisión humana final. Las reglas del fork están al inicio de [`AGENTS.md`](AGENTS.md) y cada archivo de upstream modificado figura en [`docs/upstream-divergence.md`](docs/upstream-divergence.md).
+
+Earlyscript puede convivir con un T3 Code instalado en la misma máquina porque usa otro directorio, otros puertos y otros identificadores:
+
+| Valor                                    | T3 Code     | Earlyscript          |
+| ---------------------------------------- | ----------- | -------------------- |
+| Directorio base                          | `~/.t3`     | `~/.earlyscript`     |
+| Servidor (`t3 start`, app de escritorio) | 3773        | 4773                 |
+| Servidor de desarrollo                   | 13773       | 14773                |
+| Web de desarrollo                        | 5733        | 5743                 |
+| Esquema de URL                           | `t3code://` | `earlyscript://`     |
+| Binario del CLI                          | `t3`        | `t3` y `earlyscript` |
+
+Todos estos valores se definen en [`packages/shared/src/earlyscriptBrand.ts`](packages/shared/src/earlyscriptBrand.ts). Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre y siguen teniendo prioridad sobre los valores por defecto.
+
+Para arrancar en desarrollo, con Node 26.12.1 y pnpm 12.14.0:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+El servidor escucha en `http://127.0.0.1:14773`, la web en `http://localhost:5743` y el log imprime la URL de emparejamiento. Si `T3CODE_HOME` está definida en el entorno, por ejemplo porque la terminal se abrió desde T3 Code, hay que quitarla antes (`env -u T3CODE_HOME pnpm dev`) para no usar los datos de T3 Code.
+
+El resto de este archivo es el README de T3 Code, conservado como referencia.
+
+---
+
 # T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
