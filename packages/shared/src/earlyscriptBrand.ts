@@ -11,6 +11,8 @@ export const EarlyscriptBrand = {
   productName: "Earlyscript",
   desktopProductName: "Earlyscript",
   cliBinName: "earlyscript",
+  /** Linux executable and package name; distinct from the CLI so both can be on PATH. */
+  desktopExecutableName: "earlyscript-desktop",
   /** Base data directory below the user's home; `T3CODE_HOME` still overrides it. */
   homeDirName: ".earlyscript",
   defaultServerPort: 4773,
@@ -20,6 +22,8 @@ export const EarlyscriptBrand = {
   devUrlScheme: `${urlScheme}-dev`,
   desktopAppId,
   desktopDevAppId: `${desktopAppId}.dev`,
+  linuxWmClass: urlScheme,
+  linuxDevWmClass: `${urlScheme}-dev`,
   linuxDesktopEntryName: "cc.biste.Earlyscript.desktop",
   linuxDevDesktopEntryName: "cc.biste.Earlyscript.Development.desktop",
 } as const;
