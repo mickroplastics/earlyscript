@@ -1,3 +1,22 @@
+# Earlyscript
+
+Fork privado de T3 Code (MIT, `github.com/pingdotgg/t3code`) iniciado el 30 de octubre de 2026 por Miguel Ángel Brito Espejo. Meta: usar T3 Code como carcasa de estudio editorial (hilos, proveedores de modelos, historial, visor de diffs) y construir sobre ella el motor de tendencias, los adaptadores de fuentes y la base de decisiones de Earlywindow (`~/tesis/early-window`), para crear guiones de video con decisión humana final. Es la vía paralela descrita en `~/tesis/archive/contexto/intento-actual/planificacion/2026-10-30-pendientes-tras-migracion.md`; no sustituye a Earlywindow como versión de evaluación de la tesis hasta que Miguel lo decida.
+
+Reglas propias, que prevalecen sobre el texto de upstream que sigue:
+
+- Idioma de trabajo: español. El código y los comentarios de upstream siguen en inglés; el código nuevo también, para facilitar fusiones.
+- Remotos: `origin` es Forgejo (`git.r.biste.cc/miguel/earlyscript`); `upstream` es GitHub, solo lectura (push deshabilitado). Traer cambios de upstream con `git fetch upstream` y fusión explícita; nunca `push` a GitHub.
+- Rutas: código en `~/tesis/earlyscript`; worktrees de agentes en `~/earlyscript-wt/<nombre>`; datos y evidencia en `~/earlyscript-data/`. El repo de la tesis ignora esta carpeta.
+- Orden de trabajo acordado: primero quitar lo que no se usa (apps `mobile`, `marketing`, `server` público, relay, AUR, terminal, PRs y diffs de código), después integrar el motor de Earlywindow como paquete del workspace (`packages/earlywindow-engine`, vía `git subtree`), después la experiencia de guiones. Una unidad por worktree.
+- Verificación: cada cambio con capturas antes y después (Linux con Xvfb aquí; macOS en Gertrudis), Sol 6.1 verifica de forma independiente, Opus corrige.
+- Objetivo de plataformas: Linux, Windows y macOS. Windows se compila en Linux como hace upstream; macOS solo en Gertrudis.
+- Herramientas: Node `26.12.1` y pnpm `12.14.0` según `package.json`; instalador `vp` de Vite+ opcional.
+- Nada de credenciales, sesiones ni datos de usuarios en el repo.
+
+El resto de este archivo es el `AGENTS.md` original de T3 Code y describe su arquitectura y sus principios; léelo antes de tocar el código.
+
+---
+
 # T3 Code
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
