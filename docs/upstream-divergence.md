@@ -8,19 +8,19 @@ Base de upstream: `aa11ef6783` (30 de octubre de 2026).
 
 ### Archivos de upstream modificados
 
-| Archivo        | Líneas | Motivo                                                                                                                                                                      |
-| -------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `package.json` | 56-61  | Coma tras `sync:repos` y cinco scripts nuevos al final de `scripts`: `es:check-scope`, `es:typecheck`, `es:lint`, `es:test` y `es:build`. Ningún script de upstream cambia. |
+| Archivo        | Líneas | Motivo                                                                                                                                                                                        |
+| -------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json` | 56-62  | Coma tras `sync:repos` y seis scripts nuevos al final de `scripts`: `es:check-scope`, `es:typecheck`, `es:lint`, `es:test`, `es:test:changed` y `es:build`. Ningún script de upstream cambia. |
 
 ### Archivos propios
 
-| Archivo                             | Contenido                                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------------------------- |
-| `scripts/earlyscript/packages.json` | Clasificación de cada paquete del workspace para la batería rápida, con su motivo.       |
-| `scripts/earlyscript/scope.ts`      | Comprobación de alcance y ejecución filtrada de `test` y `build`.                        |
-| `scripts/earlyscript/scope.test.ts` | Pruebas de la comprobación. Corren con las de `@t3tools/scripts` en la batería completa. |
-| `docs/dev-environment-linux.md`     | Requisitos del LXC, resultados por paquete y tiempos de ambas baterías.                  |
-| `docs/upstream-divergence.md`       | Este registro.                                                                           |
+| Archivo                             | Contenido                                                                                                         |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `scripts/earlyscript/packages.json` | Clasificación de cada paquete del workspace para la batería rápida, con su motivo.                                |
+| `scripts/earlyscript/scope.ts`      | Comprobación de alcance y ejecución filtrada de `test` y `build`.                                                 |
+| `scripts/earlyscript/scope.test.ts` | Pruebas de la comprobación. Corren al inicio de `es:test` y con las de `@t3tools/scripts` en la batería completa. |
+| `docs/dev-environment-linux.md`     | Requisitos del LXC, resultados por paquete y tiempos de ambas baterías.                                           |
+| `docs/upstream-divergence.md`       | Este registro.                                                                                                    |
 
 `scripts/earlyscript/` está dentro del paquete de upstream `@t3tools/scripts`, cuyo `tsconfig.json` incluye `**/*.ts` y cuya prueba usa `--dir .`. Por eso el typecheck y las pruebas de la batería completa cubren estos archivos sin tocar configuración de upstream. Al fusionar, comprobar que siguen pasando `pnpm --filter @t3tools/scripts typecheck` y `pnpm run knip:check`.
 

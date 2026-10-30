@@ -57,7 +57,8 @@
     "es:check-scope": "node scripts/earlyscript/scope.ts check",
     "es:typecheck": "vp run typecheck",
     "es:lint": "vp run lint",
-    "es:test": "node scripts/earlyscript/scope.ts run test",
+    "es:test": "vp test run scripts/earlyscript/scope.test.ts && node scripts/earlyscript/scope.ts run test",
+    "es:test:changed": "node scripts/earlyscript/scope.ts check && node scripts/check-changed.ts",
     "es:build": "node scripts/earlyscript/scope.ts run build"
   },
   "devDependencies": {
