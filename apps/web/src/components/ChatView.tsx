@@ -350,7 +350,7 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
-import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
+import { ChatTerminalDrawers } from "../earlyscript/terminal";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";

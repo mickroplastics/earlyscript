@@ -19,6 +19,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { visibleKeybindings } from "../earlyscript/hiddenFeatures";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -133,7 +134,7 @@ export function createShortcutKeybindingsAtom(input: {
     return environments.find(isConnectedWithConfig)?.serverConfig?.keybindings ?? null;
   });
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeWithDefaultKeybindings(get(customAtom) ?? []),
+    visibleKeybindings(mergeWithDefaultKeybindings(get(customAtom) ?? [])),
   );
 }
 
