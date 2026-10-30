@@ -123,7 +123,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         options.cacheFile ?? NodePath.join(DEFAULT_DATA_DIR, "embeddings/embeddings.sqlite"),
       modelDir:
         options.modelDir ?? NodePath.join(DEFAULT_DATA_DIR, "models", config.embedder.revision),
-      workers: options.workers ?? 4,
+      workers: options.workers ?? 2,
       allowDownload: true,
       ...(options.log ? { log: options.log } : {}),
     });
