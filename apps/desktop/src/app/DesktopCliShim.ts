@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -9,7 +10,9 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
+// Own command name and marker, so install and uninstall never treat T3 Code's `t3` launcher as ours.
+export const COMMAND = EarlyscriptBrand.cliBinName;
+export const MARKER = `Written by ${EarlyscriptBrand.productName}: runs the desktop app's bundled ${COMMAND} CLI.`;
 
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
@@ -18,7 +21,7 @@ const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const cmdText = (value: string) => value.replaceAll("%", "%%");
 const cmdWord = (value: string) => `"${cmdText(value)}"`;
 
-const MOVED = "T3 Code has moved or been removed. Open the app once to update this command.";
+const MOVED = `${EarlyscriptBrand.productName} has moved or been removed. Open the app once to update this command.`;
 
 export type CliShimTarget =
   | { readonly kind: "appimage"; readonly appImage: string; readonly executableName: string }
@@ -116,7 +119,7 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
   environment.path.join(
     environment.baseDir,
     "bin",
-    environment.platform === "win32" ? "t3.cmd" : "t3",
+    environment.platform === "win32" ? `${COMMAND}.cmd` : COMMAND,
   );
 
 export const install = Effect.gen(function* () {
@@ -142,7 +145,7 @@ export const install = Effect.gen(function* () {
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
-      yield* logWarning("leaving a t3 launcher the app did not write", { shimPath });
+      yield* logWarning(`leaving a ${COMMAND} launcher the app did not write`, { shimPath });
       return Option.none<string>();
     }
     if (Option.getOrUndefined(existing) !== content) {
@@ -150,14 +153,15 @@ export const install = Effect.gen(function* () {
       const staging = `${shimPath}.${process.pid}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
-      yield* logInfo("installed t3 launcher", { shimPath });
+      yield* logInfo(`installed ${COMMAND} launcher`, { shimPath });
     }
     return Option.some(shimPath);
   }).pipe(
     Effect.catchCause((cause) =>
-      logWarning("could not install t3 launcher", { shimPath, cause: Cause.pretty(cause) }).pipe(
-        Effect.as(Option.none<string>()),
-      ),
+      logWarning(`could not install ${COMMAND} launcher`, {
+        shimPath,
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(Option.none<string>())),
     ),
     Effect.withSpan("desktop.cliShim.install"),
   );

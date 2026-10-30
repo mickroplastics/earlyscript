@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -346,9 +347,9 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
 
 /** Prints the one-time admin pairing URL to stdout only; logger records reach trace files and collectors. */
 export const announceStartupPairingUrl = (pairingUrl: string) =>
-  Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.").pipe(
-    Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
-  );
+  Effect.logInfo(
+    `Authentication required. Open ${EarlyscriptBrand.productName} using the pairing URL.`,
+  ).pipe(Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)));
 
 // Pairing tokens belong only in announceStartupPairingUrl's stdout output.
 export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open unavailable", {

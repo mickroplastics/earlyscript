@@ -165,7 +165,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
           assert.equal(env.VITE_HTTP_URL, undefined);
           assert.equal(env.VITE_WS_URL, undefined);
-          assert.equal(env.T3CODE_PORT, "13773");
+          assert.equal(env.T3CODE_PORT, "14773");
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
     );
@@ -194,7 +194,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("findFirstAvailableOffset", () => {
     it.effect("advances until all required ports are available", () =>
       Effect.gen(function* () {
-        const taken = new Set([13773, 5733, 13774, 5734]);
+        const taken = new Set([14773, 5743, 14774, 5744]);
         const offset = yield* findFirstAvailableOffset({
           startOffset: 0,
           requireServerPort: true,
@@ -210,8 +210,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       Effect.gen(function* () {
         const probed: Array<{ port: number; role: string | undefined }> = [];
         const offset = yield* findFirstAvailableOffset({
-          // 5733 + 833 = 6566, which browsers block as sane-port.
-          startOffset: 833,
+          // 5743 + 823 = 6566, which browsers block as sane-port.
+          startOffset: 823,
           requireServerPort: true,
           requireWebPort: true,
           checkPortAvailability: (port, role) => {
@@ -220,9 +220,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           },
         });
 
-        assert.equal(offset, 834);
+        assert.equal(offset, 824);
         assert.deepStrictEqual(probed, [
-          { port: 14_607, role: "server" },
+          { port: 15_597, role: "server" },
           { port: 6567, role: "web" },
         ]);
       }),
@@ -231,13 +231,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     it.effect("does not reject a server-only offset because its unused web port is blocked", () =>
       Effect.gen(function* () {
         const offset = yield* findFirstAvailableOffset({
-          startOffset: 833,
+          startOffset: 823,
           requireServerPort: true,
           requireWebPort: false,
           checkPortAvailability: () => Effect.succeed(true),
         });
 
-        assert.equal(offset, 833);
+        assert.equal(offset, 823);
       }),
     );
   });
@@ -289,8 +289,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.deepStrictEqual(probed, [
-          { port: 13_773, role: "server" },
-          { port: 5733, role: "web" },
+          { port: 14_773, role: "server" },
+          { port: 5743, role: "web" },
         ]);
       }),
     );
@@ -299,7 +299,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("resolveModePortOffsets", () => {
     it.effect("uses a shared fallback offset for dev mode", () =>
       Effect.gen(function* () {
-        const taken = new Set([13773, 5733]);
+        const taken = new Set([14773, 5743]);
         const offsets = yield* resolveModePortOffsets({
           mode: "dev",
           startOffset: 0,
@@ -314,7 +314,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     it.effect("keeps server offset stable for dev:web and only shifts web offset", () =>
       Effect.gen(function* () {
-        const taken = new Set([5733]);
+        const taken = new Set([5743]);
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:web",
           startOffset: 0,
@@ -329,7 +329,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
     it.effect("shifts only server offset for dev:server", () =>
       Effect.gen(function* () {
-        const taken = new Set([13773]);
+        const taken = new Set([14773]);
         const offsets = yield* resolveModePortOffsets({
           mode: "dev:server",
           startOffset: 0,

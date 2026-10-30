@@ -8,6 +8,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -44,7 +45,9 @@ import {
   SshReadinessError,
 } from "./errors.ts";
 
-const DEFAULT_REMOTE_PORT = 3773;
+const DEFAULT_REMOTE_PORT = EarlyscriptBrand.defaultServerPort;
+// Managed server, its launch state and its runtime cache stay apart from a remote T3 Code install.
+const REMOTE_HOME = `$HOME/${EarlyscriptBrand.homeDirName}`;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
@@ -437,15 +440,15 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   exit 1
 fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
-# Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+# Unpacked into the pinned-runtime layout below the managed home.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+T3_RUNTIME_DIR="@@T3_REMOTE_HOME@@/runtime/versions/$T3_ARCHIVE_VERSION"
 t3_runtime_ready() {
   [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
 if ! t3_runtime_ready; then
-  mkdir -p "$HOME/.t3/runtime/versions"
-  T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  mkdir -p "@@T3_REMOTE_HOME@@/runtime/versions"
+  T3_LOCK="@@T3_REMOTE_HOME@@/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
   # uutils mkdir can report success on EEXIST, so use shell noclobber.
   # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
@@ -486,7 +489,7 @@ if ! t3_runtime_ready; then
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
   esac
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  T3_STAGING="$(mktemp -d "@@T3_REMOTE_HOME@@/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
@@ -526,8 +529,8 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+STATE_DIR="@@T3_REMOTE_HOME@@/ssh-launch/$STATE_KEY"
+DEFAULT_SERVER_HOME="@@T3_REMOTE_HOME@@"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -723,8 +726,8 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+STATE_DIR="@@T3_REMOTE_HOME@@/ssh-launch/@@T3_STATE_KEY@@"
+DEFAULT_SERVER_HOME="@@T3_REMOTE_HOME@@"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -736,7 +739,7 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_DIR="@@T3_REMOTE_HOME@@/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -759,7 +762,7 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_DIR="@@T3_REMOTE_HOME@@/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -805,6 +808,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   );
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
+      T3_REMOTE_HOME: REMOTE_HOME,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
@@ -827,6 +831,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
 
 function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_REMOTE_HOME: REMOTE_HOME,
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
@@ -842,6 +847,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
 
 function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
+    T3_REMOTE_HOME: REMOTE_HOME,
     T3_STATE_KEY: stateKey,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
@@ -849,12 +855,14 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOption
 
 function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
+    T3_REMOTE_HOME: REMOTE_HOME,
     T3_STATE_KEY: stateKey,
   });
 }
 
 function buildRemoteLogTailScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_LOG_TAIL_SCRIPT, {
+    T3_REMOTE_HOME: REMOTE_HOME,
     T3_STATE_KEY: stateKey,
   });
 }

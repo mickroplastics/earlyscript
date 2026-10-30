@@ -1,6 +1,7 @@
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { isPrivateNetworkHost, isSharedAddressSpaceHost } from "@t3tools/shared/hostClassification";
 import { QrCode } from "@t3tools/shared/qrCode";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
@@ -183,11 +184,12 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
 
 export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
   [
-    "T3 Code server is ready.",
+    `${EarlyscriptBrand.productName} server is ready.`,
     `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
-    `App link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
+    `Desktop link: ${buildPairingAppLink(accessInfo.pairingUrl, EarlyscriptBrand.urlScheme)}`,
+    `Mobile app link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",
