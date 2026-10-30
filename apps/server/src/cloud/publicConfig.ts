@@ -7,6 +7,7 @@ import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 import * as EarlyscriptRelay from "../earlyscript/relay.ts";
+import { cloudPublicConfigAvailable } from "../earlyscript/t3Connect.ts";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -206,8 +207,10 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
-  (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
-  (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+export const hasCloudPublicConfig = cloudPublicConfigAvailable(
+  Boolean(
+    (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+    (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
+    (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+  ),
 );
