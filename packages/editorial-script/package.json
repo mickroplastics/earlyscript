@@ -1,0 +1,20 @@
+{
+  "name": "@earlyscript/editorial-script",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/script.ts",
+      "import": "./src/script.ts"
+    }
+  },
+  "scripts": {
+    "check": "node src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

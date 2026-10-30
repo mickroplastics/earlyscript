@@ -1,6 +1,7 @@
 {
   "$comment": "Earlyscript fast battery scope. es:test and es:build run only `include`; es:typecheck, es:lint and the upstream scripts cover the whole workspace. Every workspace package must appear in exactly one list. See docs/dev-environment-linux.md.",
   "include": {
+    "packages/editorial-script": "Pure script structure, citation and claims validator; no T3 runtime dependency.",
     "apps/server": "Server runtime; hosts the Codex and Claude providers (src/provider) and apps/server/src/editorial.",
     "apps/web": "Client UI; hosts apps/web/src/editorial.",
     "apps/desktop": "Electron shell Earlyscript ships on Linux, Windows and macOS.",
