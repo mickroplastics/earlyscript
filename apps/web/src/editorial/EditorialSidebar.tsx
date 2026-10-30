@@ -96,7 +96,7 @@ function SpaceTabs({
         aria-label="Espacios"
         variant="segmented"
         size="compact"
-        className="w-full"
+        className="w-full overflow-hidden"
         value={[space]}
         onValueChange={(next) => {
           const selected = SPACES.find((entry) => entry.space === next[0]);
@@ -108,9 +108,9 @@ function SpaceTabs({
             key={entry.space}
             value={entry.space}
             data-editorial-space={entry.space}
-            className="min-w-0 flex-auto"
+            className="flex-auto"
           >
-            <span className="truncate">{entry.label}</span>
+            {entry.label}
             {entry.space === "trends" && newCount > 0 ? (
               <span className="text-2xs font-semibold text-primary tabular-nums">
                 {newCount}
