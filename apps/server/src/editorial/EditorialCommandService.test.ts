@@ -13,6 +13,8 @@ import { withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.t
 
 const TREND = "trend:quantum-computing";
 const THREAD = "thread-video";
+const CUTOFF_1 = "2026-10-29T00:00:00.000Z";
+const CUTOFF_2 = "2026-10-30T00:00:00.000Z";
 
 const registerThread = Effect.gen(function* () {
   const threads = yield* EditorialThreadService;
@@ -39,12 +41,23 @@ describe("EditorialCommandService inbox", () => {
         const read = yield* commands.markRead({
           trendKey: TREND,
           runId: "run-1",
+          runCutoffAt: CUTOFF_1,
           dossierId: "d-1",
         });
         assert.strictEqual(read.seenRunId, "run-1");
         assert.strictEqual(read.seenDossierId, "d-1");
-        yield* commands.markRead({ trendKey: TREND, runId: "run-1", dossierId: "d-1" });
-        yield* commands.markRead({ trendKey: TREND, runId: "run-2", dossierId: "d-2" });
+        yield* commands.markRead({
+          trendKey: TREND,
+          runId: "run-1",
+          runCutoffAt: CUTOFF_1,
+          dossierId: "d-1",
+        });
+        yield* commands.markRead({
+          trendKey: TREND,
+          runId: "run-2",
+          runCutoffAt: CUTOFF_2,
+          dossierId: "d-2",
+        });
 
         const log = yield* events;
         assert.deepStrictEqual(
@@ -54,7 +67,37 @@ describe("EditorialCommandService inbox", () => {
             ["trend.read", TREND],
           ],
         );
-        assert.deepStrictEqual(log[1]!.payload, { runId: "run-2", dossierId: "d-2" });
+        assert.deepStrictEqual(log[1]!.payload, {
+          runId: "run-2",
+          runCutoffAt: CUTOFF_2,
+          dossierId: "d-2",
+        });
+      }),
+    ),
+  );
+
+  it.effect("ignores a read of an older run that arrives after a newer one", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const commands = yield* EditorialCommandService;
+        yield* commands.markRead({
+          trendKey: TREND,
+          runId: "run_20261030",
+          runCutoffAt: CUTOFF_2,
+        });
+        const late = yield* commands.markRead({
+          trendKey: TREND,
+          runId: "run_20261029",
+          runCutoffAt: CUTOFF_1,
+        });
+        assert.strictEqual(late.seenRunId, "run_20261030");
+        assert.strictEqual(late.seenRunCutoffAt, CUTOFF_2);
+        assert.lengthOf(yield* events, 1);
+
+        const badCutoff = yield* Effect.flip(
+          commands.markRead({ trendKey: TREND, runId: "run-x", runCutoffAt: "yesterday" }),
+        );
+        assert.strictEqual(badCutoff._tag, "EditorialInvalidInputError");
       }),
     ),
   );
@@ -98,7 +141,7 @@ describe("EditorialCommandService inbox", () => {
         const noReason = yield* Effect.flip(commands.dismiss({ trendKey: TREND, reason: "  " }));
         assert.strictEqual(noReason._tag, "EditorialInvalidInputError");
 
-        yield* commands.markRead({ trendKey: TREND, runId: "run-1" });
+        yield* commands.markRead({ trendKey: TREND, runId: "run-1", runCutoffAt: CUTOFF_1 });
         const dismissed = yield* commands.dismiss({ trendKey: TREND, reason: "off-topic" });
         assert.strictEqual(dismissed.dismissedReason, "off-topic");
         assert.strictEqual(dismissed.seenRunId, "run-1");
@@ -157,7 +200,7 @@ describe("EditorialCommandService inbox", () => {
         yield* Effect.yieldNow;
 
         yield* Effect.flip(commands.linkProduction({ trendKey: TREND, threadId: "missing" }));
-        yield* commands.markRead({ trendKey: TREND, runId: "run-1" });
+        yield* commands.markRead({ trendKey: TREND, runId: "run-1", runCutoffAt: CUTOFF_1 });
 
         const published = yield* Fiber.join(collected);
         assert.deepStrictEqual(
@@ -249,6 +292,33 @@ describe("EditorialCommandService thread records", () => {
             "decision.recorded",
           ],
         );
+      }),
+    ),
+  );
+
+  it.effect("keeps the pause length when deciding while paused", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const commands = yield* EditorialCommandService;
+        const clock = yield* WorkClockService;
+        yield* registerThread;
+
+        yield* clock.start(THREAD, "write");
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* clock.pause(THREAD);
+        yield* TestClock.adjust(Duration.seconds(5));
+        const decision = yield* commands.recordDecision({
+          threadId: THREAD,
+          action: "accept",
+          utility: 4,
+        });
+        assert.strictEqual(decision.durations.totalMs, 1000);
+
+        yield* TestClock.adjust(Duration.minutes(10));
+        const summary = yield* clock.summary(THREAD);
+        assert.strictEqual(summary.state._tag, "idle");
+        assert.strictEqual(summary.activeMs, 1000);
+        assert.strictEqual(summary.pausedMs, 5000);
       }),
     ),
   );

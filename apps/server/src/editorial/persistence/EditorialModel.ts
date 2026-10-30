@@ -39,6 +39,7 @@ export type UnsnoozeCause = typeof UnsnoozeCause.Type;
 export const TrendInboxState = Schema.Struct({
   trendKey: Schema.String,
   seenRunId: Schema.NullOr(Schema.String),
+  seenRunCutoffAt: Schema.NullOr(Schema.String),
   seenDossierId: Schema.NullOr(Schema.String),
   seenAt: Schema.NullOr(Schema.String),
   snoozedAt: Schema.NullOr(Schema.String),

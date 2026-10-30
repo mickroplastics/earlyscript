@@ -2,11 +2,15 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
 
 import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
+import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
 
 // Same registration mechanism as persistence/Migrations.ts, with its own
 // numbering: these ids live in editorial.sqlite and never collide with T3's.
 // Never renumber an applied migration; add a new entry instead.
-const migrationEntries = [[1, "EditorialFoundation", Migration0001]] as const;
+const migrationEntries = [
+  [1, "EditorialFoundation", Migration0001],
+  [2, "EditorialOrdering", Migration0002],
+] as const;
 
 export const editorialMigrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 

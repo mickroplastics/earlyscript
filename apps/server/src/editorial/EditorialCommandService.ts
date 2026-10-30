@@ -49,6 +49,8 @@ export interface ActorOption {
 export interface MarkReadInput extends ActorOption {
   readonly trendKey: string;
   readonly runId: string;
+  /** Cutoff of that run; orders runs, since run ids are opaque. */
+  readonly runCutoffAt: string;
   readonly dossierId?: string | undefined;
 }
 
@@ -154,6 +156,7 @@ export class EditorialCommandService extends Context.Service<
 interface InboxRow {
   readonly trend_key: string;
   readonly seen_run_id: string | null;
+  readonly seen_run_cutoff_at: string | null;
   readonly seen_dossier_id: string | null;
   readonly seen_at: string | null;
   readonly snoozed_at: string | null;
@@ -169,6 +172,7 @@ interface InboxRow {
 const emptyInboxState = (trendKey: string): TrendInboxState => ({
   trendKey,
   seenRunId: null,
+  seenRunCutoffAt: null,
   seenDossierId: null,
   seenAt: null,
   snoozedAt: null,
@@ -184,6 +188,7 @@ const emptyInboxState = (trendKey: string): TrendInboxState => ({
 const toInboxState = (row: InboxRow): TrendInboxState => ({
   trendKey: row.trend_key,
   seenRunId: row.seen_run_id,
+  seenRunCutoffAt: row.seen_run_cutoff_at,
   seenDossierId: row.seen_dossier_id,
   seenAt: row.seen_at,
   snoozedAt: row.snoozed_at,
@@ -199,7 +204,7 @@ const toInboxState = (row: InboxRow): TrendInboxState => ({
 const selectInbox = (sql: SqlClient.SqlClient, trendKey: string) =>
   sql<InboxRow>`
     SELECT
-      trend_key, seen_run_id, seen_dossier_id, seen_at, snoozed_at, snoozed_until,
+      trend_key, seen_run_id, seen_run_cutoff_at, seen_dossier_id, seen_at, snoozed_at, snoozed_until,
       snooze_return_json, dismissed_at, dismissed_reason, production_thread_id,
       production_linked_at, updated_at
     FROM editorial_trend_inbox
@@ -290,16 +295,28 @@ const make = Effect.gen(function* () {
     inboxCommand("editorial.markRead", input.trendKey, input.actor ?? "operator", (current, at) =>
       Effect.gen(function* () {
         const runId = yield* requireText("editorial.markRead", "runId", input.runId);
+        const runCutoffAt = yield* requireIso(
+          "editorial.markRead",
+          "runCutoffAt",
+          input.runCutoffAt,
+        );
         const dossierId = optionalText(input.dossierId);
+        // Only forward: an older run arriving late leaves the newer one seen.
+        if (
+          current.seenRunCutoffAt !== null &&
+          Date.parse(runCutoffAt) < Date.parse(current.seenRunCutoffAt)
+        ) {
+          return undefined;
+        }
         if (current.seenRunId === runId && current.seenDossierId === dossierId) return undefined;
         yield* ensureInboxRow(sql, input.trendKey, at);
         yield* sql`
           UPDATE editorial_trend_inbox
-          SET seen_run_id = ${runId}, seen_dossier_id = ${dossierId}, seen_at = ${at},
-            updated_at = ${at}
+          SET seen_run_id = ${runId}, seen_run_cutoff_at = ${runCutoffAt},
+            seen_dossier_id = ${dossierId}, seen_at = ${at}, updated_at = ${at}
           WHERE trend_key = ${input.trendKey}
         `;
-        return { type: "trend.read" as const, payload: { runId, dossierId } };
+        return { type: "trend.read" as const, payload: { runId, runCutoffAt, dossierId } };
       }),
     );
 
@@ -414,7 +431,7 @@ const make = Effect.gen(function* () {
     if (trendKeys.length === 0) return [];
     const rows = yield* sql<InboxRow>`
       SELECT
-        trend_key, seen_run_id, seen_dossier_id, seen_at, snoozed_at, snoozed_until,
+        trend_key, seen_run_id, seen_run_cutoff_at, seen_dossier_id, seen_at, snoozed_at, snoozed_until,
         snooze_return_json, dismissed_at, dismissed_reason, production_thread_id,
         production_linked_at, updated_at
       FROM editorial_trend_inbox

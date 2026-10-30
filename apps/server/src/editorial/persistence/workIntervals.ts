@@ -29,13 +29,14 @@ export interface IntervalRow {
   readonly end_reason: IntervalEndReason | null;
   readonly pause_reason: string | null;
   readonly recovered_at: string | null;
+  readonly pause_ended_at: string | null;
 }
 
 export const loadIntervals = (sql: SqlClient.SqlClient, threadId: string) =>
   sql<IntervalRow>`
     SELECT
       interval_id, thread_id, stage, status, started_at, ended_at, end_reason,
-      pause_reason, recovered_at
+      pause_reason, recovered_at, pause_ended_at
     FROM editorial_work_intervals
     WHERE thread_id = ${threadId}
     ORDER BY started_at, rowid
@@ -94,7 +95,9 @@ export const summarize = (
       continue;
     }
     stage.activeMs += elapsedMs(row.started_at, row.ended_at ?? asOf);
-    if (row.end_reason === "paused" && row.ended_at !== null) pausedSince = row.ended_at;
+    if (row.ended_at === null) continue;
+    if (row.pause_ended_at !== null) pausedMs += elapsedMs(row.ended_at, row.pause_ended_at);
+    else if (row.end_reason === "paused") pausedSince = row.ended_at;
   }
   if (pausedSince !== undefined) pausedMs += elapsedMs(pausedSince, asOf);
 
@@ -148,8 +151,8 @@ export const closeInterval = (
   `;
 
 /**
- * Ends whatever the clock is doing: closes the open segment, or turns a pause
- * into a stop at the time the pause began. No-op when idle.
+ * Ends whatever the clock is doing: closes the open segment, or ends a pause,
+ * keeping the segment's end and recording when the pause ended. No-op when idle.
  */
 export const stopClock = Effect.fn("stopEditorialClock")(function* (
   sql: SqlClient.SqlClient,
@@ -168,7 +171,7 @@ export const stopClock = Effect.fn("stopEditorialClock")(function* (
   } else {
     yield* sql`
       UPDATE editorial_work_intervals
-      SET end_reason = ${input.reason}
+      SET end_reason = ${input.reason}, pause_ended_at = ${input.at}
       WHERE interval_id = ${state.intervalId}
     `;
   }

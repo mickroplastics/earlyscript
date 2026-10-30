@@ -147,6 +147,36 @@ describe("WorkClockService", () => {
     ),
   );
 
+  it.effect("keeps the pause length when stopping while paused, across a reopen", () => {
+    const dir = makeTempDir();
+    const dbPath = NodePath.join(dir, EDITORIAL_DATABASE_FILENAME);
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        yield* registerThread;
+        yield* clock.start(THREAD, "explore");
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* clock.pause(THREAD);
+        yield* TestClock.adjust(Duration.seconds(5));
+        const stopped = yield* clock.stop(THREAD);
+        assert.strictEqual(stopped.state._tag, "idle");
+        assert.strictEqual(stopped.activeMs, 1000);
+        assert.strictEqual(stopped.pausedMs, 5000);
+      }).pipe(Effect.provide(layerAt(dbPath)));
+
+      yield* advance(30);
+
+      yield* Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        const summary = yield* clock.summary(THREAD);
+        assert.strictEqual(summary.state._tag, "idle");
+        assert.strictEqual(summary.activeMs, 1000);
+        assert.strictEqual(summary.pausedMs, 5000);
+        assert.isTrue(summary.definitive);
+      }).pipe(Effect.provide(layerAt(dbPath)));
+    }).pipe(Effect.ensuring(removeDir(dir)));
+  });
+
   it.effect("replays a command with the same operation id", () =>
     withEditorialDatabase(
       Effect.gen(function* () {
