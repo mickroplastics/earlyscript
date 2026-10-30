@@ -41,9 +41,9 @@ export const signalId = (firstItemId: string): string =>
   `sig_${NodeCrypto.createHash("sha256").update(firstItemId).digest("hex").slice(0, 12)}`;
 
 /**
- * Checkpoints as shares of the dimensions. At each one a centroid is dropped when the
- * cosine so far plus the Cauchy-Schwarz bound of the remaining coordinates cannot exceed
- * the threshold. Qwen3 vectors carry 58 % of their energy in the first half.
+ * Shares of the dimensions where a centroid is dropped once its partial cosine plus the
+ * Cauchy-Schwarz bound of the rest cannot pass the threshold. Qwen3 vectors carry 58 %
+ * of their energy in the first half and 29 % in the first quarter, too little to drop any.
  */
 const CHECKPOINTS = [1 / 2, 5 / 8, 3 / 4, 7 / 8];
 /**
@@ -60,6 +60,10 @@ class CentroidPool {
   /** Per slot: norm of the coordinates from each cut on, then the full norm. */
   tails: Float64Array;
   lastMs: Float64Array;
+  /** 1 while the slot keeps the centroid a pair of items was scanned against. */
+  scanned: Uint8Array;
+  /** Position of the slot in the scan of the current pair. */
+  scanAt: Int32Array;
   signals: Array<StackedSignal | undefined> = [];
   private readonly free: Array<number> = [];
   private used = 0;
@@ -70,6 +74,8 @@ class CentroidPool {
     this.data = new Float32Array(64 * dim);
     this.tails = new Float64Array(64 * (cuts.length + 1));
     this.lastMs = new Float64Array(64);
+    this.scanned = new Uint8Array(64);
+    this.scanAt = new Int32Array(64);
   }
 
   add(signal: StackedSignal): number {
@@ -86,6 +92,7 @@ class CentroidPool {
   set(slot: number, centroid: Float32Array, lastMs: number): void {
     this.data.set(centroid, slot * this.dim);
     this.lastMs[slot] = lastMs;
+    this.scanned[slot] = 0;
     tailNorms(centroid, this.cuts, this.tails, slot * (this.cuts.length + 1));
   }
 
@@ -105,6 +112,39 @@ class CentroidPool {
     const lastMs = new Float64Array(capacity);
     lastMs.set(this.lastMs);
     this.lastMs = lastMs;
+    const scanned = new Uint8Array(capacity);
+    scanned.set(this.scanned);
+    this.scanned = scanned;
+    const scanAt = new Int32Array(capacity);
+    scanAt.set(this.scanAt);
+    this.scanAt = scanAt;
+  }
+}
+
+/** One item's vector in double, its tail norms, and its candidate slots with their sums. */
+class Probe {
+  readonly x: Float64Array;
+  readonly tails: Float64Array;
+  slots = new Int32Array(64);
+  acc = new Float64Array(64);
+
+  constructor(dim: number, cuts: ReadonlyArray<number>) {
+    this.x = new Float64Array(dim);
+    this.tails = new Float64Array(cuts.length + 1);
+  }
+
+  load(item: StackInput, cuts: ReadonlyArray<number>): void {
+    if (item.vector.length !== this.x.length)
+      throw new Error(`item ${item.id} has ${item.vector.length} dimensions, not ${this.x.length}`);
+    this.x.set(item.vector);
+    tailNorms(this.x, cuts, this.tails, 0);
+  }
+
+  reserve(count: number): void {
+    if (this.slots.length >= count) return;
+    const capacity = Math.max(count, this.slots.length * 2);
+    this.slots = new Int32Array(capacity);
+    this.acc = new Float64Array(capacity);
   }
 }
 
@@ -124,6 +164,75 @@ function tailNorms(
       squares += vector[i]! * vector[i]!;
     }
     out[offset + (c < 0 ? cuts.length : c)] = Math.sqrt(squares);
+  }
+}
+
+/**
+ * accA[k], accB[k] = sum of xa[i], xb[i] times data[slots[k] * dim + i] for i in [0, to),
+ * two items against four centroids per pass, each coordinate read once for both. Every
+ * sum keeps dot()'s order and double precision; only independent sums interleave.
+ */
+function prefixPair(
+  xa: Float64Array,
+  xb: Float64Array,
+  data: Float32Array,
+  dim: number,
+  slots: Int32Array,
+  accA: Float64Array,
+  accB: Float64Array,
+  count: number,
+  to: number,
+): void {
+  let k = 0;
+  for (; k + 4 <= count; k += 4) {
+    const o0 = slots[k]! * dim;
+    const o1 = slots[k + 1]! * dim;
+    const o2 = slots[k + 2]! * dim;
+    const o3 = slots[k + 3]! * dim;
+    let a0 = 0;
+    let a1 = 0;
+    let a2 = 0;
+    let a3 = 0;
+    let b0 = 0;
+    let b1 = 0;
+    let b2 = 0;
+    let b3 = 0;
+    for (let i = 0; i < to; i++) {
+      const u = xa[i]!;
+      const v = xb[i]!;
+      const d0 = data[o0 + i]!;
+      const d1 = data[o1 + i]!;
+      const d2 = data[o2 + i]!;
+      const d3 = data[o3 + i]!;
+      a0 += u * d0;
+      a1 += u * d1;
+      a2 += u * d2;
+      a3 += u * d3;
+      b0 += v * d0;
+      b1 += v * d1;
+      b2 += v * d2;
+      b3 += v * d3;
+    }
+    accA[k] = a0;
+    accA[k + 1] = a1;
+    accA[k + 2] = a2;
+    accA[k + 3] = a3;
+    accB[k] = b0;
+    accB[k + 1] = b1;
+    accB[k + 2] = b2;
+    accB[k + 3] = b3;
+  }
+  for (; k < count; k++) {
+    const o = slots[k]! * dim;
+    let a = 0;
+    let b = 0;
+    for (let i = 0; i < to; i++) {
+      const d = data[o + i]!;
+      a += xa[i]! * d;
+      b += xb[i]! * d;
+    }
+    accA[k] = a;
+    accB[k] = b;
   }
 }
 
@@ -192,47 +301,43 @@ export function stackItems(
   const cuts = [
     ...new Set(CHECKPOINTS.map((share) => Math.floor(dim * share)).filter((c) => c > 0)),
   ];
+  const head = cuts[0] ?? dim;
   const stride = cuts.length + 1;
   const pool = new CentroidPool(dim, cuts);
-  const x = new Float64Array(dim);
-  const xTails = new Float64Array(stride);
+  const first = new Probe(dim, cuts);
+  const second = new Probe(dim, cuts);
+  let pairAcc = new Float64Array(64);
   let active = new Int32Array(64);
   let activeCount = 0;
-  let slots = new Int32Array(64);
-  let acc = new Float64Array(64);
 
-  for (const item of items) {
-    if (item.vector.length !== dim)
-      throw new Error(`item ${item.id} has ${item.vector.length} dimensions, not ${dim}`);
+  const expire = (publishedMs: number) => {
     let kept = 0;
     for (let k = 0; k < activeCount; k++) {
       const slot = active[k]!;
-      if (item.publishedMs - pool.lastMs[slot]! <= windowMs) active[kept++] = slot;
+      if (publishedMs - pool.lastMs[slot]! <= windowMs) active[kept++] = slot;
       else pool.release(slot);
     }
     activeCount = kept;
-    comparisons += activeCount;
+  };
 
-    if (slots.length < activeCount) {
-      slots = new Int32Array(active.length);
-      acc = new Float64Array(active.length);
-    }
-    slots.set(active.subarray(0, activeCount));
-    acc.fill(0, 0, activeCount);
-    x.set(item.vector);
-    tailNorms(x, cuts, xTails, 0);
+  /** Finishes the cosines of probe.slots, whose sums run up to `head`, and places the item. */
+  const place = (item: StackInput, probe: Probe) => {
+    const { x, tails, slots, acc } = probe;
+    comparisons += activeCount;
     let count = activeCount;
-    let from = 0;
+    let from = head;
     for (let c = 0; c < cuts.length && count > 0; c++) {
-      accumulate(x, pool.data, dim, slots, acc, count, from, cuts[c]!);
-      from = cuts[c]!;
+      if (from < cuts[c]!) {
+        accumulate(x, pool.data, dim, slots, acc, count, from, cuts[c]!);
+        from = cuts[c]!;
+      }
       let survivors = 0;
       for (let k = 0; k < count; k++) {
         const t = slots[k]! * stride;
         const bound =
           acc[k]! +
-          xTails[c]! * pool.tails[t + c]! +
-          SLACK * (1 + xTails[cuts.length]! * pool.tails[t + cuts.length]!);
+          tails[c]! * pool.tails[t + c]! +
+          SLACK * (1 + tails[cuts.length]! * pool.tails[t + cuts.length]!);
         if (bound > threshold) {
           slots[survivors] = slots[k]!;
           acc[survivors++] = acc[k]!;
@@ -277,6 +382,58 @@ export function stackItems(
       }
       active[activeCount++] = pool.add(signal);
     }
+  };
+
+  // Items go in pairs up to the first checkpoint; the second one rescans only the slot
+  // the first one changed or opened, which set() marks.
+  for (let n = 0; n < items.length; n += 2) {
+    const a = items[n]!;
+    const b = items[n + 1];
+    expire(a.publishedMs);
+    first.load(a, cuts);
+    first.reserve(activeCount);
+    first.slots.set(active.subarray(0, activeCount));
+    if (b === undefined) {
+      first.acc.fill(0, 0, activeCount);
+      accumulate(first.x, pool.data, dim, first.slots, first.acc, activeCount, 0, head);
+      place(a, first);
+      break;
+    }
+
+    second.load(b, cuts);
+    if (pairAcc.length < activeCount) pairAcc = new Float64Array(first.slots.length);
+    prefixPair(
+      first.x,
+      second.x,
+      pool.data,
+      dim,
+      first.slots,
+      first.acc,
+      pairAcc,
+      activeCount,
+      head,
+    );
+    for (let k = 0; k < activeCount; k++) {
+      pool.scanned[active[k]!] = 1;
+      pool.scanAt[active[k]!] = k;
+    }
+    place(a, first);
+
+    expire(b.publishedMs);
+    second.reserve(activeCount);
+    for (let k = 0; k < activeCount; k++) {
+      const slot = active[k]!;
+      second.slots[k] = slot;
+      if (pool.scanned[slot] === 1) {
+        second.acc[k] = pairAcc[pool.scanAt[slot]!]!;
+      } else {
+        const o = slot * dim;
+        let sum = 0;
+        for (let i = 0; i < head; i++) sum += second.x[i]! * pool.data[o + i]!;
+        second.acc[k] = sum;
+      }
+    }
+    place(b, second);
   }
   return { signals, comparisons };
 }
