@@ -368,3 +368,13 @@ Propios nuevos, por aplicación:
 | RPC y ruta HTTP de PR seguían disponibles                           | `changeRequestsRpc.flagsOff.test.ts`                      | Con `changeRequests=0` y `sourceControlHosts=1`, las 34 RPC `pullRequests.*`, `git.resolvePullRequest` y `git.preparePullRequestThread` fallan sin llamar al handler de upstream, y `POST /api/pull-requests/diff` responde 503.                                                                         |
 
 Cada prueba lee además el fuente de upstream y falla si una fusión retira el enganche.
+
+## 6. Validador del guion
+
+Base: `815f5f2a04`. Paquete puro `@earlyscript/editorial-script`, sin dependencia de T3 ni de `apps/*`. Valida estructura y presencia de citas, construye el mapa de afirmaciones y coteja ids contra un expediente opcional. No mide respaldo semántico ni el objetivo académico del 90 %.
+
+Archivos nuevos en `packages/editorial-script/`: `package.json`, `tsconfig.json`, `README.md`, `src/script.ts`, `src/cli.ts`, `src/script.test.ts` y seis fixtures Markdown en `fixtures/` (`valid`, `uncited`, `out-of-order`, `unknown`, `short-form`, `frontmatter`).
+
+Archivos propios modificados: `scripts/earlyscript/packages.json`, con una entrada en `include`, y este registro. El patrón existente `packages/*` descubre el paquete sin cambiar `pnpm-workspace.yaml`.
+
+Archivos de upstream tocados: uno, `pnpm-lock.yaml`. Solo incorpora el importer del paquete con `@types/node` y `vite-plus` del catálogo existente como dependencias de desarrollo. No incorpora resoluciones ni dependencias de ejecución nuevas. El paquete participa en `es:check-scope`, `es:typecheck`, `es:lint` y `es:test:changed`.
