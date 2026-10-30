@@ -153,6 +153,17 @@ const component = (file: DossierFile, name: string) =>
 const sum = (days: ReadonlyArray<EditorialCurveDay>, key: "items" | "authors") =>
   days.reduce((total, day) => total + day[key], 0);
 
+/** Evidence links open outside the app: only http(s) survives, anything else becomes `null`. */
+export function webUrlOrNull(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "http:" || protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 function evidenceItems(file: DossierFile): ReadonlyArray<EditorialEvidenceItem> {
   return (file.evidence ?? []).map((item) => ({
     itemId: item.item_id,
@@ -160,9 +171,18 @@ function evidenceItems(file: DossierFile): ReadonlyArray<EditorialEvidenceItem> 
     title: item.title,
     author: item.author ?? null,
     publishedAt: item.published_at,
-    permalink: item.permalink ?? null,
-    externalUrl: item.external_url ?? null,
+    permalink: webUrlOrNull(item.permalink),
+    externalUrl: webUrlOrNull(item.external_url),
   }));
+}
+
+/** ISO instants of the same format sort as strings. */
+export function evidenceRange(
+  evidence: ReadonlyArray<EditorialEvidenceItem>,
+): { readonly from: string; readonly to: string } | null {
+  if (evidence.length === 0) return null;
+  const dates = evidence.map((item) => item.publishedAt).toSorted();
+  return { from: dates[0]!, to: dates.at(-1)! };
 }
 
 interface TrendBase {

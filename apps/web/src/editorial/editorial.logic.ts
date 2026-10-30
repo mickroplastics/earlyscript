@@ -1,4 +1,5 @@
 import type {
+  EditorialEvidenceItem,
   EditorialRunSummary,
   EditorialSourceCoverage,
   EditorialTrendSummary,
@@ -27,6 +28,16 @@ export function isThreadRouteId(routeId: string | undefined): boolean {
   return routeId !== undefined && THREAD_ROUTE_IDS.has(routeId);
 }
 
+/** Accessible name of a space tab, whole even when its label is truncated or an icon. */
+export function spaceTabName(label: string, newCount: number | null): string {
+  return newCount === null ? label : `${label}, ${newCount} ${newCount === 1 ? "nueva" : "nuevas"}`;
+}
+
+/** The new-trends counter on the tab: two digits at most. */
+export function compactCount(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}
+
 export type EditorialLandingTarget =
   | { readonly space: "trends"; readonly trend: EnvironmentSpaceState["trend"] }
   | { readonly space: "results" };
@@ -43,6 +54,31 @@ export function resolveLandingTarget(state: EnvironmentSpaceState): EditorialLan
       return { space: "trends", trend: state.trend };
     case "results":
       return { space: "results" };
+  }
+}
+
+/**
+ * Decides whether the root lands in an editorial space. `claim` records what this session
+ * already decided: `"editorial"` keeps the claim while the redirect resolves, `"upstream"` and
+ * `"done"` give "/" back to upstream for the rest of the session. Shared by `EditorialLanding`
+ * and by the bootstrap-thread guard in `__root.tsx`, so both read the same rule.
+ */
+export type RootLandingClaim = "pending" | "editorial" | "upstream" | "done";
+
+export function editorialClaimsRoot(input: {
+  readonly pathname: string;
+  readonly claim: RootLandingClaim;
+  readonly state: EnvironmentSpaceState;
+}): boolean {
+  if (input.pathname !== "/") return false;
+  switch (input.claim) {
+    case "pending":
+      return resolveLandingTarget(input.state) !== null;
+    case "editorial":
+      return true;
+    case "upstream":
+    case "done":
+      return false;
   }
 }
 
@@ -65,6 +101,47 @@ const fullDateFormat = new Intl.DateTimeFormat("es", {
   year: "numeric",
   timeZone: "UTC",
 });
+
+/** Evidence opens outside the app: only `http:` and `https:` URLs are links. */
+function webUrl(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "http:" || protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The title link prefers the external URL and falls back to the permalink; the discussion link
+ * shows only when both are valid and differ. The server already drops other schemes; this
+ * revalidates in case an older server answers.
+ */
+export function evidenceLinks(item: Pick<EditorialEvidenceItem, "permalink" | "externalUrl">): {
+  readonly title: string | null;
+  readonly discussion: string | null;
+} {
+  const permalink = webUrl(item.permalink);
+  const external = webUrl(item.externalUrl);
+  return {
+    title: external ?? permalink,
+    discussion:
+      external !== null && permalink !== null && permalink !== external ? permalink : null,
+  };
+}
+
+/** "Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026": the selection, not the window. */
+export function evidenceHeading(
+  total: number,
+  range: { readonly from: string; readonly to: string } | null,
+): string {
+  const heading = `Evidencia seleccionada (${total})`;
+  if (range === null) return heading;
+  const from = formatDate(range.from);
+  const to = formatDate(range.to);
+  return `${heading} · ${from === to ? from : `${from} – ${to}`}`;
+}
 
 export function formatDecimal(value: number): string {
   return decimalFormat.format(value);
@@ -138,17 +215,30 @@ export function trendSourceText(trend: Pick<EditorialTrendSummary, "sourceCount"
   return trend.sources.map(sourceLabel).join(", ");
 }
 
-/** The engine's growth component (log scale), as words for the score metric. */
+/**
+ * Bands of the engine's growth component (`growth`, log scale of the recent rate against the
+ * earlier one): below 0 "en descenso"; 0 up to 0.3 "estable"; 0.3 up to 1.0 "crece"; above 1.0
+ * "crece rápido". A band names the measured value, never a cause or a forecast.
+ */
+export type GrowthBand = "en descenso" | "estable" | "crece" | "crece rápido";
+
+export function growthBand(growth: number): GrowthBand {
+  if (growth < 0) return "en descenso";
+  if (growth < 0.3) return "estable";
+  if (growth <= 1) return "crece";
+  return "crece rápido";
+}
+
+/** The growth component as words and value for the score metric. */
 export function growthText(growth: number | null): string {
   if (growth === null) return "crecimiento sin dato";
-  if (growth >= 1.5) return "crece rápido";
-  if (growth >= 1) return "crece";
-  return "crece despacio";
+  return `${growthBand(growth)} (${formatDecimal(growth)})`;
 }
 
 /**
- * "Por qué está aquí": plain rules over the deterministic numbers, so the block never says
- * more than the engine measured.
+ * "Por qué está aquí": plain rules over the deterministic numbers. Each bullet states one
+ * measured fact (volume, authors, affinity against its threshold, growth band and value, score
+ * position, coverage, sources) and never a cause, a consequence or an anticipation claim.
  */
 export function whyHereReasons(input: {
   readonly trend: EditorialTrendSummary;
@@ -158,19 +248,11 @@ export function whyHereReasons(input: {
   const { trend, affinityThreshold } = input;
   const reasons: Array<string> = [];
 
-  reasons.push(
-    trend.volumeRank <= 3
-      ? `Entre las de más volumen esta semana: ${trend.items7d} publicaciones, #${trend.volumeRank} por volumen.`
-      : `Volumen moderado esta semana: ${trend.items7d} publicaciones, #${trend.volumeRank} por volumen.`,
-  );
+  reasons.push(`${trend.items7d} publicaciones esta semana: #${trend.volumeRank} por volumen.`);
 
-  if (trend.items7d > 0 && trend.authors7d >= Math.max(3, trend.items7d * 0.8)) {
+  if (trend.items7d > 0) {
     reasons.push(
-      `Muchos autores distintos: ${trend.authors7d} en la semana, no es una sola cuenta.`,
-    );
-  } else if (trend.authors7d <= 2) {
-    reasons.push(
-      `Pocos autores: ${trend.authors7d} en la semana; puede ser una sola conversación.`,
+      `${trend.authors7d} ${trend.authors7d === 1 ? "autor distinto" : "autores distintos"} en las publicaciones de la semana.`,
     );
   }
 
@@ -178,33 +260,27 @@ export function whyHereReasons(input: {
     const affinity = formatDecimal(trend.affinity);
     const threshold = formatDecimal(affinityThreshold);
     reasons.push(
-      trend.affinity >= affinityThreshold + 0.1
-        ? `Afinidad alta con el perfil del canal: ${affinity}, umbral ${threshold}.`
-        : trend.affinity >= affinityThreshold
-          ? `Pasa el umbral de afinidad con el perfil por poco: ${affinity} frente a ${threshold}.`
-          : `No alcanza el umbral de afinidad con el perfil: ${affinity} frente a ${threshold}.`,
+      trend.affinity >= affinityThreshold
+        ? `Afinidad con el perfil del canal ${affinity}, sobre el umbral ${threshold}.`
+        : `Afinidad con el perfil del canal ${affinity}, bajo el umbral ${threshold}.`,
     );
   }
 
   if (trend.growth !== null) {
-    const growth = formatDecimal(trend.growth);
     reasons.push(
-      trend.growth >= 1
-        ? `Crecimiento semanal ${growth}: por puntaje queda #${trend.scoreRank}.`
-        : `Crece despacio (${growth}), así que por puntaje queda #${trend.scoreRank}: ya es tema, no anticipación.`,
+      `Crecimiento ${formatDecimal(trend.growth)} en escala logarítmica: ${growthBand(trend.growth)}.`,
     );
   }
+  reasons.push(`#${trend.scoreRank} por puntaje (${formatDecimal(trend.score)}).`);
 
   const partial = input.coverage.filter((entry) => coverageStatus(entry) !== "complete");
   if (partial.length > 0) {
     reasons.push(
-      `Cobertura incompleta en ${partial.map((entry) => sourceLabel(entry.source)).join(", ")}: los conteos de esa fuente son un piso.`,
+      `Cobertura incompleta en ${partial.map((entry) => sourceLabel(entry.source)).join(", ")}.`,
     );
   }
   if (trend.sourceCount <= 1 && trend.sources.length > 0) {
-    reasons.push(
-      `Solo aparece en ${sourceLabel(trend.sources[0] ?? "")}: sin corroboración de otra fuente.`,
-    );
+    reasons.push(`Solo aparece en ${sourceLabel(trend.sources[0] ?? "")}.`);
   }
   return reasons;
 }

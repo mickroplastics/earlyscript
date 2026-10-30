@@ -56,6 +56,7 @@ import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/server";
 import { readProject } from "../state/entities";
+import { editorialClaimsBootstrapLanding } from "../editorial/rootLanding";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
@@ -358,6 +359,11 @@ function EventRouter({
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+        return;
+      }
+      // Earlyscript: the root opens the stored Trends or Results space instead (§8).
+      if (editorialClaimsBootstrapLanding(payload.environment.environmentId, readPathname())) {
+        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
         return;
       }
       await navigate({

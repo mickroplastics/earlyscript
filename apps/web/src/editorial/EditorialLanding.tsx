@@ -1,28 +1,36 @@
-import { Navigate } from "@tanstack/react-router";
+import { Navigate, useRouter } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { resolveLandingTarget } from "./editorial.logic";
+import { decideRootLanding, readRootLandingClaim, trackRootLanding } from "./rootLanding";
 import { selectEnvironmentSpace, useSpaceStore } from "./spaceStore";
 
-// The root decides once per app session; later visits to "/" (the brand link) keep upstream's
-// behavior, so a space switch never bounces the user back.
-let landingDecided = false;
-
-/** Opens the root in the space the user left; otherwise renders upstream's landing. */
+/**
+ * Opens the root in the space the user left; otherwise renders upstream's landing. The root
+ * decides once per app session (`rootLanding.ts`); later visits to "/" (the brand link) keep
+ * upstream's behavior, so a space switch never bounces the user back.
+ */
 export function EditorialLanding({ children }: { readonly children: ReactNode }) {
+  const router = useRouter();
   const { isReady } = useEnvironments();
   const environmentId = usePrimaryEnvironmentId();
   const spaceState = useSpaceStore((state) => selectEnvironmentSpace(state, environmentId));
   const decidable = isReady || environmentId !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records that this session already landed
+  const claim = readRootLandingClaim();
+  const target =
+    claim === "upstream" || claim === "done" || environmentId === null
+      ? null
+      : resolveLandingTarget(spaceState);
+  const claimsRoot = target !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records this session's landing decision in module state shared with __root
   useEffect(() => {
-    if (decidable) landingDecided = true;
-  }, [decidable]);
+    trackRootLanding(router);
+    if (decidable) decideRootLanding(claimsRoot);
+  }, [claimsRoot, decidable, router]);
 
   // Until the catalog knows the primary environment, upstream's landing must not start a draft.
-  if (!decidable && !landingDecided) return null;
-  const target = landingDecided || environmentId === null ? null : resolveLandingTarget(spaceState);
+  if (!decidable && claim === "pending") return null;
   if (target === null || environmentId === null) return children;
   if (target.space === "results") {
     return <Navigate to="/editorial/$environmentId/results" params={{ environmentId }} replace />;

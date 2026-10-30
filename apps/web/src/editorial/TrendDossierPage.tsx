@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EditorialCurveDay,
   EditorialDossierId,
-  EditorialEvidenceItem,
   EditorialRunId,
   EditorialSourceCoverage,
   EditorialTrendDossier,
@@ -21,6 +20,8 @@ import { cn } from "../lib/utils";
 import {
   coverageStatus,
   coverageText,
+  evidenceHeading,
+  evidenceLinks,
   formatDate,
   formatDay,
   formatDecimal,
@@ -178,12 +179,12 @@ function EvidenceList({
   };
   const from = dossier.evidenceOffset + 1;
   const to = dossier.evidenceOffset + dossier.evidence.length;
-  const link = (item: EditorialEvidenceItem) => item.externalUrl ?? item.permalink;
   return (
     <div className="flex flex-col gap-3">
       <ul className="flex flex-col gap-3">
         {dossier.evidence.map((item) => {
-          const url = link(item);
+          const links = evidenceLinks(item);
+          const url = links.title;
           return (
             <li key={item.itemId} className="flex min-w-0 flex-col gap-0.5">
               {url ? (
@@ -204,12 +205,12 @@ function EvidenceList({
               <span className="text-xs text-muted-foreground">
                 {sourceLabel(item.source)} · {formatDate(item.publishedAt)}
                 {item.author ? ` · ${item.author}` : null}
-                {item.permalink && item.externalUrl && item.permalink !== item.externalUrl ? (
+                {links.discussion ? (
                   <>
                     {" · "}
                     <a
-                      href={item.permalink}
-                      onClick={(event) => open(event, item.permalink ?? "")}
+                      href={links.discussion}
+                      onClick={(event) => open(event, links.discussion ?? "")}
                       className="rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                     >
                       discusión
@@ -347,7 +348,7 @@ export function TrendDossierView({
       </DossierSection>
 
       <div className="grid gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <DossierSection title={`Evidencia (${dossier.evidenceTotal} de ${trend.items28d})`}>
+        <DossierSection title={evidenceHeading(dossier.evidenceTotal, dossier.evidenceRange)}>
           <EvidenceList dossier={evidence} onPage={onEvidencePage} />
         </DossierSection>
         <DossierSection title="Por qué está aquí">

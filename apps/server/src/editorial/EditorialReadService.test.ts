@@ -113,6 +113,11 @@ describe("EditorialReadService", () => {
       assert.strictEqual(dossier.evidenceTotal, 10);
       assert.strictEqual(dossier.evidenceOffset, 6);
       assert.strictEqual(dossier.evidence.length, 4);
+      // The range spans every selected item, older than the 28-day window included.
+      assert.deepStrictEqual(dossier.evidenceRange, {
+        from: "2026-09-09T08:27:14.000Z",
+        to: "2026-10-16T18:00:18.000Z",
+      });
 
       const missingDossier = yield* service
         .getDossier({ runId: RUN_ID, dossierId: EditorialDossierId.make("dos_missing") })

@@ -129,6 +129,8 @@ export const EditorialTrendDossier = Schema.Struct({
   evidence: Schema.Array(EditorialEvidenceItem),
   evidenceTotal: NonNegativeInt,
   evidenceOffset: NonNegativeInt,
+  /** Oldest and newest `publishedAt` over every selected item, not just this page. */
+  evidenceRange: Schema.NullOr(Schema.Struct({ from: IsoDateTime, to: IsoDateTime })),
 });
 export type EditorialTrendDossier = typeof EditorialTrendDossier.Type;
 

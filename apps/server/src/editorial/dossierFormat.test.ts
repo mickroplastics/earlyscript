@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { EditorialDossierId, type EditorialTrendSummary } from "@t3tools/contracts";
 
-import { compareTrends, competitionRanks, windowCurve } from "./dossierFormat.ts";
+import { compareTrends, competitionRanks, webUrlOrNull, windowCurve } from "./dossierFormat.ts";
 
 const day = (date: string, items: number, known = true) => ({
   day: date,
@@ -74,5 +74,20 @@ describe("compareTrends", () => {
     ];
     expect(order("volume", trends)).toEqual(["b", "c", "a"]);
     expect(order("affinity", trends)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("webUrlOrNull", () => {
+  it("keeps http and https evidence links and drops every other scheme", () => {
+    expect(webUrlOrNull("https://news.ycombinator.com/item?id=1")).toBe(
+      "https://news.ycombinator.com/item?id=1",
+    );
+    expect(webUrlOrNull("http://example.com/a")).toBe("http://example.com/a");
+    expect(webUrlOrNull('javascript:alert("x")')).toBeNull();
+    expect(webUrlOrNull("data:text/html,x")).toBeNull();
+    expect(webUrlOrNull("file:///etc/passwd")).toBeNull();
+    expect(webUrlOrNull("not a url")).toBeNull();
+    expect(webUrlOrNull(null)).toBeNull();
+    expect(webUrlOrNull(undefined)).toBeNull();
   });
 });

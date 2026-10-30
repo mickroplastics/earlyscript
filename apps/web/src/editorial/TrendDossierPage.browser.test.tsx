@@ -75,6 +75,7 @@ const DOSSIER: EditorialTrendDossier = {
   evidence: [1, 2, 3, 4, 5, 6].map(evidence),
   evidenceTotal: 10,
   evidenceOffset: 0,
+  evidenceRange: { from: "2026-09-09T08:27:14.000Z", to: "2026-10-16T18:00:18.000Z" },
 };
 
 describe("TrendDossierView", () => {
@@ -95,6 +96,13 @@ describe("TrendDossierView", () => {
     await using screen = await render(
       <TrendDossierView dossier={DOSSIER} evidence={DOSSIER} onEvidencePage={onEvidencePage} />,
     );
+    await expect
+      .element(
+        screen.getByRole("heading", {
+          name: "Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026",
+        }),
+      )
+      .toBeVisible();
     await expect.element(screen.getByText("1–6 de 10")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Siguientes" }));
     expect(onEvidencePage).toHaveBeenCalledWith(6);
@@ -105,5 +113,51 @@ describe("TrendDossierView", () => {
     for (const label of ["Crear hilo de video", "Seguir observando", "Descartar…"]) {
       await expect.element(screen.getByRole("button", { name: label })).toBeDisabled();
     }
+  });
+
+  it("links only http and https evidence and falls back to a valid permalink", async () => {
+    setup();
+    const item = (title: string, permalink: string | null, externalUrl: string | null) => ({
+      ...evidence(0),
+      itemId: title,
+      title,
+      permalink,
+      externalUrl,
+    });
+    const unsafe: EditorialTrendDossier = {
+      ...DOSSIER,
+      evidence: [
+        item(
+          "Javascript external",
+          "https://news.ycombinator.com/item?id=1",
+          'javascript:alert("x")',
+        ),
+        item("Data external", "http://news.ycombinator.com/item?id=2", "data:text/html,x"),
+        item("File external", "https://news.ycombinator.com/item?id=3", "file:///etc/passwd"),
+        item("Nothing valid", 'javascript:alert("x")', "data:text/html,x"),
+        item("Http external", "https://news.ycombinator.com/item?id=5", "http://example.com/5"),
+      ],
+      evidenceTotal: 5,
+    };
+    await using screen = await render(
+      <TrendDossierView dossier={unsafe} evidence={unsafe} onEvidencePage={() => {}} />,
+    );
+    for (const name of ["Javascript external", "Data external", "File external", "Http external"]) {
+      await userEvent.click(screen.getByRole("link", { name }));
+    }
+    expect(state.opened).toEqual([
+      "https://news.ycombinator.com/item?id=1",
+      "http://news.ycombinator.com/item?id=2",
+      "https://news.ycombinator.com/item?id=3",
+      "http://example.com/5",
+    ]);
+    await expect.element(screen.getByText("Nothing valid")).toBeVisible();
+    expect(
+      screen.container.querySelector("a[href^='javascript:'], a[href^='data:'], a[href^='file:']"),
+    ).toBeNull();
+    // Only the http item has a distinct valid permalink, so only it gets a discussion link.
+    await expect
+      .element(screen.getByRole("link", { name: "discusión" }))
+      .toHaveAttribute("href", "https://news.ycombinator.com/item?id=5");
   });
 });

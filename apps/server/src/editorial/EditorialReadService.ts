@@ -22,6 +22,7 @@ import {
   AFFINITY_THRESHOLD,
   compareTrends,
   DossierFile,
+  evidenceRange,
   loadRunDossiers,
   RunFile,
   runSummary,
@@ -233,6 +234,7 @@ export const makeWithRunsDir = Effect.fn("EditorialReadService.make")(function* 
       ),
       evidenceTotal: dossier.evidence.length,
       evidenceOffset: offset,
+      evidenceRange: evidenceRange(dossier.evidence),
     };
   });
 
