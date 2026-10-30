@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -64,12 +65,12 @@ const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(func
 const sourceTreeIconFileNames = {
   dev: {
     ico: "blueprint-windows.ico",
-    macPng: "blueprint-macos-1024.png",
+    macPng: EarlyscriptBrand.desktopMacIconPngFileName,
     universalPng: "blueprint-universal-1024.png",
   },
   prod: {
     ico: "t3-black-windows.ico",
-    macPng: "black-macos-1024.png",
+    macPng: EarlyscriptBrand.desktopMacIconPngFileName,
     universalPng: "black-universal-1024.png",
   },
 } as const;

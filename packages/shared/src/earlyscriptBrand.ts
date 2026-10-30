@@ -12,6 +12,12 @@ export const EarlyscriptBrand = {
   webIconPath: "/earlyscript-icon.svg",
   webTouchIconPath: "/earlyscript-touch.png",
   desktopProductName: "Earlyscript",
+  copyrightHolder: "Miguel Ángel Brito Espejo",
+  artifactBaseName: "Earlyscript",
+  desktopDescription:
+    "Earlyscript is an editorial studio for video scripts with final human decisions.",
+  desktopMacIconPngFileName: "earlyscript-macos-1024.png",
+  desktopMacIconIcnsFileName: "earlyscript.icns",
   cliBinName: "earlyscript",
   /** Linux executable and package name; distinct from the CLI so both can be on PATH. */
   desktopExecutableName: "earlyscript-desktop",

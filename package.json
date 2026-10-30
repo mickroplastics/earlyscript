@@ -54,6 +54,7 @@
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
     "sync:repos": "node scripts/sync-reference-repos.ts",
+    "es:icons:mac": "node scripts/earlyscript/generate-native-icons.mjs",
     "es:check-scope": "node scripts/earlyscript/scope.ts check",
     "es:typecheck": "vp run typecheck",
     "es:lint": "vp run lint",
