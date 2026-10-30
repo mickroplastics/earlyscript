@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -5,6 +6,12 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
+import {
+  buildTrendPresentationPrompt,
+  finalizeTrendPresentation,
+  hashTrendPresentationInput,
+  TREND_PRESENTATION_PROMPT_VERSION,
+} from "./editorialTextGenerationPrompts.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -167,11 +174,32 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  // Earlyscript: tool-free like thread titles; the reply is checked against the evidence it got.
+  const generateTrendPresentation: ProviderTextGeneration["generateTrendPresentation"] = Effect.fn(
+    `${name}.generateTrendPresentation`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateTrendPresentation",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildTrendPresentationPrompt(input),
+    });
+    return {
+      ...finalizeTrendPresentation(input, generated),
+      provider: input.modelSelection.instanceId,
+      model: input.modelSelection.model,
+      promptVersion: TREND_PRESENTATION_PROMPT_VERSION,
+      generatedAt: DateTime.formatIso(yield* DateTime.now),
+      inputHash: hashTrendPresentationInput(input),
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTrendPresentation,
   } satisfies ProviderTextGeneration;
 }

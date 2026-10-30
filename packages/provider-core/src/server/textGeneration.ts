@@ -9,6 +9,19 @@ import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
+import type {
+  TrendPresentation,
+  TrendPresentationPromptInput,
+  TrendPresentationProvenance,
+} from "./editorialTextGenerationPrompts.ts";
+
+export type {
+  TrendPresentationEvidence,
+  TrendPresentationProfile,
+  TrendPresentationSourceCoverage,
+  TrendPresentationSummary,
+  TrendPresentationTrend,
+} from "./editorialTextGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -97,6 +110,13 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+export interface TrendPresentationGenerationInput extends TrendPresentationPromptInput {
+  cwd: string;
+  modelSelection: ModelSelection;
+}
+
+export type TrendPresentationGenerationResult = TrendPresentation & TrendPresentationProvenance;
+
 export interface ProviderTextGeneration {
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
@@ -117,4 +137,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly generateTrendPresentation: (
+    input: TrendPresentationGenerationInput,
+  ) => Effect.Effect<TrendPresentationGenerationResult, TextGenerationError>;
 }

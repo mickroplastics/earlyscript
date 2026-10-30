@@ -152,6 +152,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return imagePaths;
   });
 
+  // Fails with the reason the list could not be read; callers decide whether that is fatal.
   const listEnabledMcpServers = Effect.fn("listEnabledMcpServers")(
     function* (input: {
       readonly binary: string;
@@ -180,19 +181,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ],
         { concurrency: "unbounded" },
       );
-      if (exitCode !== 0) {
-        yield* Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-          reason: "exit",
-          exitCode,
-        });
-        return [];
-      }
+      if (exitCode !== 0) return yield* Effect.fail(`exit code ${exitCode}`);
       const servers = yield* decodeCodexMcpServers(stdout).pipe(
-        Effect.tapError(() =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-            reason: "decode",
-          }),
-        ),
+        Effect.mapError(() => "invalid JSON"),
       );
       return servers.filter((server) => server.enabled).map((server) => server.name);
     },
@@ -200,14 +191,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     Effect.timeoutOption(CODEX_MCP_LIST_TIMEOUT_MS),
     Effect.flatMap(
       Option.match({
-        onNone: () =>
-          Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
-            reason: "timeout",
-          }).pipe(Effect.as<ReadonlyArray<string>>([])),
+        onNone: () => Effect.fail("timeout"),
         onSome: (names) => Effect.succeed(names),
       }),
     ),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    Effect.mapError((reason) => (typeof reason === "string" ? reason : "process error")),
   );
 
   const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
@@ -275,7 +263,22 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         env,
         // `codex mcp` rejects --strict-config; the overrides still apply.
         launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
-      }).pipe(Effect.map(codexMcpServersOff));
+      }).pipe(
+        Effect.catch((reason) =>
+          // Earlyscript: trend presentations never run with MCP servers that could not be turned off.
+          operation === "generateTrendPresentation"
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation,
+                  detail: `Could not list Codex MCP servers to turn them off (${reason}).`,
+                }),
+              )
+            : Effect.logWarning("codex mcp list failed; text generation keeps its MCP servers", {
+                reason,
+              }).pipe(Effect.as<ReadonlyArray<string>>([])),
+        ),
+        Effect.map(codexMcpServersOff),
+      );
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [

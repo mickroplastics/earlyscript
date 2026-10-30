@@ -289,6 +289,73 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  it.effect(
+    "writes trend presentations outside the project with tools off and keeps only known citations",
+    () =>
+      withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            type: "result",
+            structured_output: {
+              title: "IBM abre herramientas de computación cuántica",
+              summary: {
+                whatHappened: "IBM publicó herramientas abiertas.",
+                whyItMatters: "El canal cubre software abierto.",
+                videoAngle: "Probar las herramientas en vivo.",
+              },
+              citedItemIds: ["itm_hn_1", "itm_unknown"],
+            },
+          }),
+          cwdMustNotBe: process.cwd(),
+          argsMustContain: `--model ${SYNTHETIC_CLAUDE_STANDARD_MODEL}`,
+          stdinMustContain: '<item id="itm_hn_1" source="hn"',
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateTrendPresentation({
+              cwd: process.cwd(),
+              profile: { version: 1, hash: "sha256:profile", text: "Software channel." },
+              trend: {
+                id: "sig_quantum",
+                terms: ["quantum", "ibm"],
+                items7d: 3,
+                authors7d: 3,
+                growth: 0.5,
+                affinity: 0.6,
+                volumeRank: 1,
+                scoreRank: 1,
+                sourceCount: 1,
+                coverage: [],
+              },
+              evidence: [
+                {
+                  itemId: "itm_hn_1",
+                  source: "hn",
+                  title: "IBM opens quantum tools",
+                  excerpt: "",
+                  publishedAt: "2026-10-15T00:00:00.000Z",
+                  url: "https://news.ycombinator.com/item?id=1",
+                },
+              ],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
+
+            expect(generated).toMatchObject({
+              title: "IBM abre herramientas de computación cuántica",
+              citedItemIds: ["itm_hn_1"],
+              warnings: ['Dropped a citation to unknown evidence id "itm_unknown".'],
+              provider: "claudeAgent",
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              promptVersion: "trend-presentation.v2",
+            });
+            expect(generated.inputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+          }),
+      ),
+  );
+
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

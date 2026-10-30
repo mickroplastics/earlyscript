@@ -342,11 +342,19 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   });
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
+  const generateTrendPresentation: ProviderTextGeneration["generateTrendPresentation"] = () =>
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generateTrendPresentation",
+        detail: "Muse Code does not write trend presentations.",
+      }),
+    );
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTrendPresentation,
   } satisfies ProviderTextGeneration;
 });
