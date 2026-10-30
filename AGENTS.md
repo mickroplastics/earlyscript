@@ -1,6 +1,6 @@
 # Earlyscript
 
-Fork privado de T3 Code (MIT, `github.com/pingdotgg/t3code`) iniciado el 30 de octubre de 2026 por Miguel Ángel Brito Espejo. Meta: usar T3 Code como carcasa de estudio editorial (hilos, proveedores de modelos, historial, visor de diffs) y construir sobre ella el motor de tendencias, los adaptadores de fuentes y la base de decisiones de Earlywindow (`~/tesis/early-window`), para crear guiones de video con decisión humana final. Es la vía paralela descrita en `~/tesis/archive/contexto/intento-actual/planificacion/2026-10-30-pendientes-tras-migracion.md`; no sustituye a Earlywindow como versión de evaluación de la tesis hasta que Miguel lo decida.
+Fork privado de T3 Code (MIT, `github.com/pingdotgg/t3code`) iniciado el 30 de octubre de 2026 por Miguel Ángel Brito Espejo. Meta: usar T3 Code como carcasa de estudio editorial (hilos, proveedores de modelos, historial, visor de diffs) y construir sobre ella el motor de tendencias, los adaptadores de fuentes y la base de decisiones de Earlywindow (`~/tesis/early-window`), para crear guiones de video con decisión humana final. Es la vía paralela descrita en `~/tesis/archive/contexto/intento-actual/planificacion/2026-10-30-pendientes-tras-migracion.md`; Decisión de Miguel del 30 de octubre de 2026: Earlyscript es el producto final de la tesis, con el nivel de pulido de T3 Code o mejor; Earlywindow pasa a ser su motor y su antecedente evaluado.
 
 Reglas propias, que prevalecen sobre el texto de upstream que sigue:
 
