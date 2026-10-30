@@ -1,0 +1,78 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { EditorialDossierId, type EditorialTrendSummary } from "@t3tools/contracts";
+
+import { compareTrends, competitionRanks, windowCurve } from "./dossierFormat.ts";
+
+const day = (date: string, items: number, known = true) => ({
+  day: date,
+  items,
+  authors: items,
+  sources: items > 0 ? 1 : 0,
+  known,
+});
+
+describe("windowCurve", () => {
+  it("covers the days before the cutoff, zero before the trend and unknown in its gaps", () => {
+    const curve = windowCurve(
+      {
+        cutoff_at: "2026-10-19T00:00:00.000Z",
+        curve: [day("2026-10-15", 3), day("2026-10-16", 0, false), day("2026-10-18", 2)],
+      },
+      5,
+    );
+    expect(curve.map((entry) => [entry.day, entry.items, entry.known])).toEqual([
+      ["2026-10-14", 0, true],
+      ["2026-10-15", 3, true],
+      ["2026-10-16", 0, false],
+      ["2026-10-17", 0, false],
+      ["2026-10-18", 2, true],
+    ]);
+  });
+});
+
+describe("competitionRanks", () => {
+  it("lets equal values share the better rank", () => {
+    expect(competitionRanks([16, 11, 11, 3])).toEqual([1, 2, 2, 4]);
+  });
+});
+
+describe("compareTrends", () => {
+  const trend = (
+    id: string,
+    fields: Partial<Pick<EditorialTrendSummary, "isNew" | "growth" | "items7d" | "affinity">>,
+  ) =>
+    ({
+      dossierId: EditorialDossierId.make(id),
+      isNew: true,
+      growth: 1,
+      items7d: 5,
+      authors7d: 5,
+      affinity: 0.6,
+      score: 1,
+      ...fields,
+    }) as EditorialTrendSummary;
+  const order = (sort: Parameters<typeof compareTrends>[0], trends: EditorialTrendSummary[]) =>
+    trends.toSorted(compareTrends(sort)).map((entry) => entry.dossierId);
+
+  it("puts new trends first, then weekly growth, with missing growth last", () => {
+    expect(
+      order("new-first-growth", [
+        trend("seen-fast", { isNew: false, growth: 3 }),
+        trend("new-unknown", { growth: null }),
+        trend("new-slow", { growth: 0.5 }),
+        trend("new-fast", { growth: 2 }),
+      ]),
+    ).toEqual(["new-fast", "new-slow", "new-unknown", "seen-fast"]);
+  });
+
+  it("sorts by weekly volume or by profile affinity on request", () => {
+    const trends = [
+      trend("a", { items7d: 4, affinity: 0.9 }),
+      trend("b", { items7d: 16, affinity: 0.61 }),
+      trend("c", { items7d: 11, affinity: null }),
+    ];
+    expect(order("volume", trends)).toEqual(["b", "c", "a"]);
+    expect(order("affinity", trends)).toEqual(["a", "b", "c"]);
+  });
+});

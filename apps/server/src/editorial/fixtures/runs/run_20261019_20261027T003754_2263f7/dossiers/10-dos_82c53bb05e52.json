@@ -1,0 +1,524 @@
+{
+  "schema_version": "dossier/1",
+  "dossier_id": "dos_82c53bb05e52",
+  "created_at": "2026-10-27T00:43:13.089Z",
+  "cutoff_at": "2026-10-19T00:00:00.000Z",
+  "engine": {
+    "version": "0.0.1",
+    "run_id": "run_20261019_20261027T003754_2263f7",
+    "mode": "daily",
+    "config_version": "engine.v0.02",
+    "config_hash": "sha256:bbd969341d13ffe363f9a3ac4a400d7a362984b531481a4322defa3ee9438af3",
+    "corpus_hash": "sha256:5bf2d88a265b587390f4798612a1b4dfd96a14e88a5becde9b0df6ad81e1177b",
+    "embedding": {
+      "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      "revision": "c25a394dd583836952667c12f008335071b3f43d",
+      "dtype": "q8",
+      "pooling": "last_token",
+      "batch_size": 1,
+      "runtime": "transformers.js@4.3.1+onnxruntime-node@1.30.0+cpu"
+    }
+  },
+  "profile": {
+    "version": 1,
+    "hash": "sha256:db510e303cb7f3cff7099230a00d36b1918f28a0e6aa6b8be01727649b8bb80d",
+    "include_score": 0.74087,
+    "exclude_score": 0.502695
+  },
+  "signal": {
+    "id": "sig_7c382e796d60",
+    "label": "llms llm judge judges",
+    "label_source": "terms",
+    "stage": "growing",
+    "corroboration": "single_source",
+    "first_seen_at": "2026-09-14T16:29:30.000Z",
+    "top_terms": ["llms", "llm", "judge", "judges"]
+  },
+  "curve": [
+    {
+      "day": "2026-09-21",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-22",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-23",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-24",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-25",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-26",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-27",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-28",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-29",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-30",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-01",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-02",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-03",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-04",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-05",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-06",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-07",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-08",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-10-09",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-10",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-11",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-12",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-13",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-14",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-15",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-16",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-17",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-10-18",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    }
+  ],
+  "rank": {
+    "method": "weighted_sum.v0.01",
+    "reference": "zero",
+    "score": 1.156977,
+    "components": [
+      {
+        "name": "growth",
+        "value": 0.875469,
+        "weight": 0.5,
+        "contribution": 0.437735
+      },
+      {
+        "name": "log_authors_7d",
+        "value": 2.484907,
+        "weight": 0.2,
+        "contribution": 0.496981
+      },
+      {
+        "name": "include_score",
+        "value": 0.74087,
+        "weight": 0.3,
+        "contribution": 0.222261
+      }
+    ]
+  },
+  "coverage": {
+    "window_days": 28,
+    "by_source": [
+      {
+        "source": "hn",
+        "days_complete": 28,
+        "days_partial": 0,
+        "days_unavailable": 0
+      },
+      {
+        "source": "github",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      }
+    ]
+  },
+  "observations": [],
+  "evidence": [
+    {
+      "item_id": "itm_hn_50047422",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50047422",
+      "external_url": "https://twitter.com/karpathy/status/2109361546505966046",
+      "published_at": "2026-10-11T20:20:52.000Z",
+      "author": "albertzeyer",
+      "title": "The gap in shared understanding of LLM capability is widening",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50087909",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50087909",
+      "external_url": "https://aunhumano.com/index.php/2026/10/14/four-ai-models-walked-into-a-supermarket-none-could-replace-the-person-who-audits-it/",
+      "published_at": "2026-10-14T13:59:46.000Z",
+      "author": "mfalcon",
+      "title": "Can LLMs audit a supermarket shelf yet?",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50110870",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50110870",
+      "external_url": "https://scottlocklin.wordpress.com/2026/10/15/llms-are-not-agm-though-some-have-internal-monologue/",
+      "published_at": "2026-10-15T21:51:01.000Z",
+      "author": "d_silin",
+      "title": "LLMs are not AGM (though some have internal monologue)",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_49841219",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=49841219",
+      "external_url": "https://infere.com/blog/what-is-llm-as-a-judge/",
+      "published_at": "2026-09-25T07:19:46.000Z",
+      "author": "saturn5k",
+      "title": "What is LLM-as-a-Judge, and How It Works?",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50126478",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50126478",
+      "external_url": null,
+      "published_at": "2026-10-17T00:15:44.000Z",
+      "author": "bitbasher",
+      "title": "Ask HN: How (if at all) are you leveraging LLMs?",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50118237",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50118237",
+      "external_url": "https://kevinaleman.com/ai-has-a-problem-with-functional-programming/",
+      "published_at": "2026-10-16T13:36:50.000Z",
+      "author": "kaleman15",
+      "title": "LLMs have a problem with functional programming",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50138678",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50138678",
+      "external_url": "https://jrdsgl.com/if-you-dont-run-your-own-llm-proxy-how-the-fuck-do-you-even-know-whats-going-on/",
+      "published_at": "2026-10-18T07:12:11.000Z",
+      "author": "hnaccount93",
+      "title": "If you don't run your own LLM proxy how the fuck do you even know whats going on",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50089207",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50089207",
+      "external_url": "https://amendary.com/blog/llms-are-bad-at-drawing-diagrams",
+      "published_at": "2026-10-14T15:30:30.000Z",
+      "author": "higeorge13",
+      "title": "LLMs are bad at drawing diagrams. Or are they?",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_50010936",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50010936",
+      "external_url": "https://amendary.com/blog/keeping-docs-in-sync-with-code",
+      "published_at": "2026-10-08T19:38:41.000Z",
+      "author": "higeorge13",
+      "title": "We have LLMs now. Why are the docs still wrong?",
+      "excerpt": ""
+    },
+    {
+      "item_id": "itm_hn_49699590",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=49699590",
+      "external_url": "https://www.amazon.science/blog/when-llm-judges-agree-should-we-believe-them",
+      "published_at": "2026-09-14T16:29:30.000Z",
+      "author": "Betelbuddy",
+      "title": "When LLM judges agree, should we believe them?",
+      "excerpt": ""
+    }
+  ],
+  "evidence_status": "sufficient",
+  "catalog_matches": [],
+  "data_gaps": [
+    {
+      "source": "github",
+      "day": "2026-09-21",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-22",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-23",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-24",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-25",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-26",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-27",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-28",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-29",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-09-30",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-01",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-02",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-03",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-04",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-05",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-06",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-07",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-08",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-09",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-10",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-11",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-12",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-13",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-14",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-15",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-16",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-17",
+      "reason": "partial"
+    },
+    {
+      "source": "github",
+      "day": "2026-10-18",
+      "reason": "partial"
+    }
+  ]
+}
