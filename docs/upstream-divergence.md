@@ -706,3 +706,17 @@ Base: `815f5f2a04`. Comprobación: `git diff --name-status 815f5f2a04..es/engine
 ### Comparación con la corrida canónica de Earlywindow
 
 Con el mismo corpus, corte y perfil, y los mismos 45.557 textos embebidos, Earlyscript emite 19 expedientes y la canónica 18; coinciden 3 de 5 en el top 5 por línea base y 1 de 5 en el ponderado (`~/earlyscript-data/engine-1/beatriz/a3-comparacion.md`). La explicación propuesta es una hipótesis plausible, no una causa demostrada: la canónica usó vectores de macOS y Earlyscript vectores de Linux x64 (coseno mediano 0,965 entre plataformas para el mismo texto), y con un umbral de 0,70 y un apilado que depende del orden esas diferencias cambiarían qué ítems forman cada señal. La aislaría correr ambos motores sobre los mismos vectores de Linux con reglas equivalentes; no se ejecutó porque Earlywindow solo tiene la caché de macOS y la regla del paso 1 prohíbe reutilizarla.
+
+## 11. Fuentes en vivo (motor)
+
+Base: `d505a14ede`. Cero archivos de upstream modificados. No hay dependencias nuevas.
+
+Archivos nuevos: `packages/trend-engine/src/collect.ts`, `src/sources/{hn,github,http,shared,live.test}.ts` y `src/testkit/hn-live-reference.jsonl`. Se amplían los esquemas propios de `packages/editorial-contracts/src/source.ts`, el registro de fuentes y la CLI del motor. Los adaptadores y la limpieza de texto declaran su procedencia en Earlywindow `engine.v0.02`.
+
+Decisiones reversibles:
+
+- Algolia para HN, como Earlywindow. Permite enumerar historias de un día sin recorrer IDs de Firebase. No incluye comentarios. La división temporal detecta ventanas truncadas.
+- GitHub Search con la misma consulta y primera página de 100 de Earlywindow. Las creaciones se guardan en su día UTC. La cobertura siempre es `partial` porque la consulta selecciona por estrellas actuales.
+- Una petición simultánea, pausa HN de 250 ms y GitHub de 6500 ms, tres reintentos exponenciales, 45 segundos por petición y cinco minutos por día. Estos límites se concentran en `src/sources/http.ts`.
+- `complete` evita otra descarga salvo `--force`. Se unen ítems por ID, se conservan versiones previas por hash y se comprueba el manifiesto antes de escribir. El bloqueo y los renombres protegen contra escritores simultáneos, pero no ofrecen recuperación transaccional de una interrupción entre archivos.
+- `--to` exclusivo, igual que el corpus congelado. El directorio de corpus se elige por CLI. No se instala todavía una tarea nocturna.
