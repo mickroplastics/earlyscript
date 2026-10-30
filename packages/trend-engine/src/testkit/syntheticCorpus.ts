@@ -10,6 +10,7 @@ import type { CoverageRecord, SourceId } from "@earlyscript/editorial-contracts/
 
 import { hashCorpus } from "../corpus.ts";
 import { daysBetween } from "../days.ts";
+import { sha256 } from "../hash.ts";
 import { loadConfig, DEFAULT_CONFIG_PATH } from "../run.ts";
 
 export const FROM_DAY = "2026-09-20";
@@ -126,16 +127,29 @@ export async function writeSyntheticCorpus(
     selection_bias: "present_stars" as const,
     selection: { hn: "all stories", github: "first 100 by stars", to_day: "exclusive" },
   };
+  const files = listFiles(root).map((path) => {
+    const bytes = NodeFS.readFileSync(NodePath.join(root, path));
+    return { path, sha256: sha256(bytes), bytes: bytes.length };
+  });
   const manifest = {
     ...fields,
-    files: [],
-    corpus_hash: await hashCorpus(root, fields),
+    files,
+    corpus_hash: hashCorpus({ ...fields, files }),
     written_at: RETRIEVED,
   };
   NodeFS.writeFileSync(
     NodePath.join(root, "corpus-manifest.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
+}
+
+function listFiles(root: string, prefix = ""): Array<string> {
+  return NodeFS.readdirSync(NodePath.join(root, prefix), { withFileTypes: true })
+    .flatMap((entry) => {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      return entry.isDirectory() ? listFiles(root, relative) : [relative];
+    })
+    .toSorted();
 }
 
 export const tempDir = (prefix: string) =>

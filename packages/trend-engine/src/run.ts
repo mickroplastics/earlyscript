@@ -278,7 +278,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         engine: {
           version: ENGINE_VERSION,
           config_hash: configHash,
-          corpus_hash: corpus.hash,
+          corpus_hash: corpus.usedHash,
           embedding: embedder.spec,
         },
         profile: { name: profile.name, version: profile.version ?? null, hash: profileHash },
@@ -356,7 +356,8 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       error: null,
       corpus: {
         dir: NodePath.resolve(options.corpusDir),
-        hash: corpus.hash,
+        corpus_used_hash: corpus.usedHash,
+        corpus_manifest_hash: corpus.manifestHash,
         verified: corpus.verified,
         from_day: corpus.fromDay,
         to_day: corpus.toDay,

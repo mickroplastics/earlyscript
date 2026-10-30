@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - plain library; the manifest is decoded with Schema.
-// The corpus/1 reader. Hashing follows Earlywindow's src/engine/corpus.ts (manifestHash,
-// listFiles, item checks) so the frozen corpus keeps its corpus_hash.
+// The corpus/1 reader. The manifest hash follows Earlywindow's src/engine/corpus.ts
+// (manifestHash, item checks) so the frozen corpus keeps its corpus_hash.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -11,37 +11,20 @@ import type { Item } from "@earlyscript/editorial-contracts/item";
 import type { CoverageRecord, SourceId } from "@earlyscript/editorial-contracts/source";
 
 import { daysBetween } from "./days.ts";
-import { sha256 } from "./hash.ts";
+import { canonicalJson, sha256 } from "./hash.ts";
 import type { SourceAdapter } from "./sources/adapter.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(EarlywindowCorpusManifest);
-const SKIPPED = new Set([".collect-lock", "corpus-manifest.json", ".DS_Store"]);
-
-async function listFiles(root: string, prefix = ""): Promise<Array<string>> {
-  const files: Array<string> = [];
-  for (const entry of await NodeFSP.readdir(NodePath.join(root, prefix), { withFileTypes: true })) {
-    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (SKIPPED.has(relative) || SKIPPED.has(entry.name)) continue;
-    if (entry.isSymbolicLink()) throw new Error(`Symlink in corpus: ${relative}`);
-    if (entry.isDirectory()) files.push(...(await listFiles(root, relative)));
-    else if (entry.isFile()) files.push(relative);
-    else throw new Error(`Unsupported corpus entry: ${relative}`);
-  }
-  return files.toSorted();
-}
+const COVERAGE_FILE = "coverage.jsonl";
 
 type ManifestFields = Pick<
   EarlywindowCorpusManifest,
-  "schema_version" | "from_day" | "to_day" | "selection_bias" | "selection" | "purges"
+  "schema_version" | "from_day" | "to_day" | "selection_bias" | "selection" | "files" | "purges"
 >;
+type FileHash = EarlywindowCorpusManifest["files"][number];
 
 /** Earlywindow's corpus_hash: SHA-256 of the manifest fields and every file's hash and size. */
-export async function hashCorpus(root: string, manifest: ManifestFields): Promise<string> {
-  const files: Array<{ path: string; sha256: string; bytes: number }> = [];
-  for (const path of await listFiles(root)) {
-    const bytes = await NodeFSP.readFile(NodePath.join(root, path));
-    files.push({ path, sha256: sha256(bytes), bytes: bytes.length });
-  }
+export function hashCorpus(manifest: ManifestFields): string {
   return sha256(
     JSON.stringify({
       schema_version: manifest.schema_version,
@@ -49,15 +32,31 @@ export async function hashCorpus(root: string, manifest: ManifestFields): Promis
       to_day: manifest.to_day,
       selection_bias: manifest.selection_bias,
       selection: manifest.selection,
-      files,
+      files: manifest.files,
       ...(manifest.purges ? { purges: manifest.purges } : {}),
     }),
   );
 }
 
+const isMissing = (error: unknown) =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
+
+async function hashFile(root: string, path: string): Promise<FileHash | null> {
+  try {
+    const bytes = await NodeFSP.readFile(NodePath.join(root, path));
+    return { path, sha256: sha256(bytes), bytes: bytes.length };
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
 export interface Corpus {
-  readonly hash: string;
-  /** The manifest's corpus_hash equals the hash of the files on disk. */
+  /** SHA-256 of the day files and coverage rows read before the cutoff; nothing later enters it. */
+  readonly usedHash: string;
+  /** The frozen corpus's identity, the manifest's corpus_hash, taken without opening data files. */
+  readonly manifestHash: string;
+  /** The manifest is self-consistent and every file read matches its entry in it. */
   readonly verified: boolean;
   readonly fromDay: string;
   readonly toDay: string;
@@ -72,28 +71,42 @@ export interface ReadCorpusOptions {
   readonly adapters: ReadonlyArray<SourceAdapter>;
   /** Exclusive. Day files at or after it are never opened. */
   readonly untilDay: string;
-  /** Accept a corpus whose files no longer match its manifest, such as a copy with a day removed. */
+  /** Accept a corpus whose files read no longer match its manifest, such as a copy with a day removed. */
   readonly allowUnverified?: boolean;
 }
 
 /**
- * Hashes every file with Earlywindow's manifest rule, then replays each source day
- * before `untilDay` through its adapter.
+ * Hashes coverage.jsonl and each source day file before `untilDay`, checks them against the
+ * manifest, then replays those days through the adapters. Day files at or after `untilDay`
+ * are never opened, so an unreadable or corrupt later day cannot fail or change a run.
  */
 export async function readCorpus(options: ReadCorpusOptions): Promise<Corpus> {
   const root = NodePath.resolve(options.dir);
   const manifest = decodeManifest(
     JSON.parse(await NodeFSP.readFile(NodePath.join(root, "corpus-manifest.json"), "utf8")),
   );
-  const hash = await hashCorpus(root, manifest);
-  const verified = hash === manifest.corpus_hash;
+  const days = daysBetween(manifest.from_day, manifest.to_day).filter(
+    (day) => day < options.untilDay,
+  );
+  const paths = [
+    COVERAGE_FILE,
+    ...options.adapters.flatMap((adapter) =>
+      days.map((day) => `${adapter.descriptor.id}/${day}.jsonl`),
+    ),
+  ];
+  const listed = new Map(manifest.files.map((file) => [file.path, file]));
+  const read: Array<FileHash> = [];
+  let verified = hashCorpus(manifest) === manifest.corpus_hash;
+  for (const path of paths) {
+    const file = await hashFile(root, path);
+    const entry = listed.get(path);
+    if (file) read.push(file);
+    if (file?.sha256 !== entry?.sha256 || file?.bytes !== entry?.bytes) verified = false;
+  }
   if (!verified && options.allowUnverified !== true) {
     throw new Error(`Corpus files do not match corpus-manifest.json (${root})`);
   }
 
-  const days = daysBetween(manifest.from_day, manifest.to_day).filter(
-    (day) => day < options.untilDay,
-  );
   const items: Array<Item> = [];
   const coverage: Array<CoverageRecord> = [];
   const missingDays: Array<{ source: SourceId; day: string }> = [];
@@ -118,8 +131,18 @@ export async function readCorpus(options: ReadCorpusOptions): Promise<Corpus> {
       }
     }
   }
+  // Coverage rows rather than coverage.jsonl's bytes: its rows for later days stay out.
+  const usedHash = sha256(
+    canonicalJson({
+      schema_version: manifest.schema_version,
+      until_day: options.untilDay,
+      files: read.filter((file) => file.path !== COVERAGE_FILE),
+      coverage,
+    }),
+  );
   return {
-    hash,
+    usedHash,
+    manifestHash: manifest.corpus_hash,
     verified,
     fromDay: manifest.from_day,
     toDay: manifest.to_day,

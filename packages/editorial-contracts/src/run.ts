@@ -64,8 +64,11 @@ export const RunRecord = Schema.Struct({
   corpus: Schema.NullOr(
     Schema.Struct({
       dir: Schema.String,
-      hash: Schema.String,
-      /** The manifest's own corpus_hash matched the files read. */
+      /** Day files and coverage rows before the cutoff: what the run read. */
+      corpus_used_hash: Schema.String,
+      /** The frozen corpus's corpus_hash, from its manifest; no later day file is opened for it. */
+      corpus_manifest_hash: Schema.String,
+      /** The manifest is self-consistent and every file read matches its entry. */
       verified: Schema.Boolean,
       from_day: Schema.String,
       to_day: Schema.String,

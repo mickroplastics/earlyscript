@@ -24,6 +24,7 @@ export type EmbeddingSpec = typeof EmbeddingSpec.Type;
 export const EngineRef = Schema.Struct({
   version: Schema.String,
   config_hash: Schema.String,
+  /** Earlyscript: the hash of the corpus read before the cutoff. Earlywindow: its whole corpus_hash. */
   corpus_hash: Schema.String,
   embedding: EmbeddingSpec,
 });

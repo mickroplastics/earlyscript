@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - tests write temporary corpora.
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { checkRun, readRun } from "./check.ts";
 import { readCorpus } from "./corpus.ts";
@@ -21,6 +22,17 @@ import {
 } from "./testkit/syntheticCorpus.ts";
 
 const LOST_DAY = "2026-10-05";
+
+// Records every path the corpus reader and the fixture adapters open.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readFile: vi.fn(actual.readFile), open: vi.fn(actual.open) };
+});
+
+const opened = (): Array<string> =>
+  [...vi.mocked(NodeFSP.readFile).mock.calls, ...vi.mocked(NodeFSP.open).mock.calls].map(([path]) =>
+    String(path),
+  );
 
 /** Records every text the run embeds. */
 function recordingEmbedder(seen: Array<string>): Embedder {
@@ -42,29 +54,48 @@ async function setup(options: Parameters<typeof writeSyntheticCorpus>[1] = {}) {
 }
 
 describe("runEngine", () => {
-  it("reads nothing at or after the cutoff", async () => {
+  it("never opens a day at or after the cutoff, readable or not", async () => {
     const { corpusDir, profilePath, outDir } = await setup();
-    // A broken file after the cutoff proves the day is never opened.
-    NodeFS.writeFileSync(NodePath.join(corpusDir, "hn", "2026-10-11.jsonl"), "not json\n");
+    const run = (seen: Array<string>) =>
+      runEngine({
+        corpusDir,
+        cutoff: CUTOFF,
+        profilePath,
+        outDir,
+        config: testConfig(),
+        embedder: recordingEmbedder(seen),
+      });
+    const clean = await run([]);
+    // A corrupt later day and an unreadable one: opening either would fail the run.
+    const corrupt = NodePath.join(corpusDir, "hn", "2026-10-11.jsonl");
+    const unreadable = NodePath.join(corpusDir, "hn", "2026-10-10.jsonl");
+    NodeFS.writeFileSync(corrupt, "not json\n");
+    NodeFS.chmodSync(unreadable, 0o000);
+    vi.mocked(NodeFSP.readFile).mockClear();
+    vi.mocked(NodeFSP.open).mockClear();
     const seen: Array<string> = [];
-    const record = await runEngine({
-      corpusDir,
-      cutoff: CUTOFF,
-      profilePath,
-      outDir,
-      config: testConfig(),
-      embedder: recordingEmbedder(seen),
-      allowUnverifiedCorpus: true,
-    });
-    expect(record.status).toBe("ok");
-    expect(seen.some((text) => text.includes(FUTURE_WORD))).toBe(false);
-    const future = syntheticItems().filter((item) => item.published_at >= CUTOFF).length;
-    expect(record.stats?.["items"]).toMatchObject({ read: syntheticItems().length - future });
-    const { dossiers } = readRun(NodePath.join(outDir, record.run_id));
-    expect(dossiers.length).toBeGreaterThan(0);
-    for (const dossier of dossiers) {
-      expect(dossier.curve.every((point) => point.day < CUTOFF.slice(0, 10))).toBe(true);
-      expect(dossier.evidence.every((item) => item.published_at < CUTOFF)).toBe(true);
+    try {
+      const record = await run(seen);
+      expect(record.status).toBe("ok");
+      expect(opened()).not.toContain(corrupt);
+      expect(opened()).not.toContain(unreadable);
+      expect(opened()).toContain(NodePath.join(corpusDir, "hn", "2026-10-09.jsonl"));
+      expect(record.corpus?.verified).toBe(true);
+      expect(record.corpus?.corpus_used_hash).toBe(clean.corpus?.corpus_used_hash);
+      expect(record.corpus?.corpus_manifest_hash).toBe(clean.corpus?.corpus_manifest_hash);
+      expect(record.logical_hash).toBe(clean.logical_hash);
+      expect(seen.some((text) => text.includes(FUTURE_WORD))).toBe(false);
+      const future = syntheticItems().filter((item) => item.published_at >= CUTOFF).length;
+      expect(record.stats?.["items"]).toMatchObject({ read: syntheticItems().length - future });
+      const { dossiers } = readRun(NodePath.join(outDir, record.run_id));
+      expect(dossiers.length).toBeGreaterThan(0);
+      for (const dossier of dossiers) {
+        expect(dossier.engine.corpus_hash).toBe(record.corpus?.corpus_used_hash);
+        expect(dossier.curve.every((point) => point.day < CUTOFF.slice(0, 10))).toBe(true);
+        expect(dossier.evidence.every((item) => item.published_at < CUTOFF)).toBe(true);
+      }
+    } finally {
+      NodeFS.chmodSync(unreadable, 0o644);
     }
   });
 
@@ -156,9 +187,10 @@ describe("runEngine", () => {
     expect((await run(lost, "all_sources")).dossiers).toBe(0);
   });
 
-  it("fails on a corpus that no longer matches its manifest unless allowed", async () => {
+  it("fails on a day read that no longer matches the manifest unless allowed", async () => {
     const { corpusDir, profilePath, outDir } = await setup();
-    NodeFS.writeFileSync(NodePath.join(corpusDir, "stray.txt"), "not in the manifest\n");
+    // Same items, different bytes, in a day before the cutoff.
+    NodeFS.appendFileSync(NodePath.join(corpusDir, "hn", "2026-10-01.jsonl"), "\n");
     const record = await runEngine({
       corpusDir,
       cutoff: CUTOFF,
