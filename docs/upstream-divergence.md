@@ -2,12 +2,13 @@
 
 Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos propios que añade. Es la lista de revisión de cada fusión desde `upstream-main`: si upstream cambió uno de estos archivos, comprobar que nuestro cambio sigue aplicado y que no apareció un literal nuevo de T3 Code al lado. Las líneas corresponden al último commit que tocó el enganche; tras una fusión, buscar el enganche por su texto (`EarlyscriptBrand`, `earlyscriptFlags`, `Earlyscript*`, `earlyscript/`, `visible*`).
 
-Cuatro unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
+Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
 3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 4. Funciones escondidas (`es/flags-lote-a`), base `cf8174bd47`, con `main` fusionado en `c7c2cb720a`.
+5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -368,3 +369,34 @@ Propios nuevos, por aplicación:
 | RPC y ruta HTTP de PR seguían disponibles                           | `changeRequestsRpc.flagsOff.test.ts`                      | Con `changeRequests=0` y `sourceControlHosts=1`, las 34 RPC `pullRequests.*`, `git.resolvePullRequest` y `git.preparePullRequestThread` fallan sin llamar al handler de upstream, y `POST /api/pull-requests/diff` responde 503.                                                                         |
 
 Cada prueba lee además el fuente de upstream y falla si una fusión retira el enganche.
+
+## 5. Motor de tendencias (paso 1) (rama `es/engine-1`, 30 de octubre de 2026)
+
+Base: `815f5f2a04`. Comprobación: `git diff --name-status 815f5f2a04..es/engine-1`. Dos paquetes nuevos sin dependencia de T3, de `apps/*` ni de `@t3tools/*`; nada en `apps/server` ni en `apps/web`. Especificación: `~/tesis/archive/contexto/intento-actual/planificacion/2026-10-30-earlyscript-motor/03-principios-y-primitivos.md` §8.
+
+### Archivos de upstream modificados
+
+| Archivo               | Líneas   | Motivo                                                                                                                                                                                                                                                                            |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm-workspace.yaml` | 26-28    | `allowBuilds`: `onnxruntime-node: false` y `protobufjs: false`, con un comentario. pnpm 12 rechaza la instalación si un paquete nuevo con script de instalación no está clasificado. Los binarios de CPU de ONNX Runtime vienen en el paquete; su postinstall solo descarga CUDA. |
+| `pnpm-lock.yaml`      | generado | Entradas de los dos paquetes y de `@huggingface/transformers@4.3.1`, `onnxruntime-node@1.30.0` y sus dependencias. En una fusión, regenerar con `pnpm install` en lugar de resolver el conflicto a mano.                                                                          |
+
+### Archivos propios
+
+- `packages/editorial-contracts/`: esquemas de Effect de los primitivos (`source`, `item`, `profile`, `dossier`, `run`, `decision`) y lector de `dossier/1` y `corpus/1` de Earlywindow (`earlywindow.ts`), con su prueba.
+- `packages/trend-engine/`: `sources/` (interfaz `SourceAdapter` y adaptador `fixture`), `corpus.ts`, `prepare.ts`, `embed/` (Qwen en procesos hijo, caché, modelo fijado, embedder de huellas para pruebas), `cluster.ts`, `series.ts`, `profile.ts`, `rank.ts`, `dossier.ts`, `run.ts`, `check.ts`, `cli.ts`, `host.ts`, `config/engine.v1.json`, `testkit/` y pruebas. Cada archivo portado de Earlywindow nombra su origen en la cabecera.
+- `scripts/earlyscript/packages.json`: los dos paquetes en `include`.
+
+### Decisiones reversibles
+
+| Decisión                                                                                                                                                                                                                            | Alternativa                                                            | Dónde cambiarla                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------ |
+| Motor como biblioteca TypeScript sin runtime de Effect; solo los contratos usan Effect Schema. El servidor lo envolverá en un servicio en el paso 2.                                                                                | Servicios de Effect desde el inicio.                                   | `packages/trend-engine/src`          |
+| `stage.coverage_rule: per_source`: una señal queda sin clasificar solo si una ventana de 7 días no tiene ningún día conocido por sus fuentes; con un día perdido se cuenta lo observado y el expediente marca `coverage.uncertain`. | `all_sources`, la regla de Earlywindow v0.02, que deja la lista vacía. | `config/engine.v1.json`              |
+| GitHub tiene `coverage_policy: sample`: sus días `partial` (100 primeros por estrellas) no son huecos. Earlywindow los listaba en `data_gaps` y todo expediente salía con 28 huecos.                                                | Tratarlos como hueco.                                                  | `src/sources/index.ts`               |
+| Elegibles = creciendo y dentro del perfil; se emiten los que están entre los 20 primeros de cualquiera de los dos rankings, ordenados por línea base.                                                                               | Orden de archivo por puntaje, como Earlywindow.                        | `src/run.ts`                         |
+| Línea base `baseline.items_7d` con peso 1 sobre `items_7d` (regla del backtest).                                                                                                                                                    | `log_items_7d`.                                                        | `config/engine.v1.json`              |
+| `logical_hash` cubre solo los expedientes; `stats.signals_hash` cubre todas las señales como control adicional. Ya no hay `engine.sqlite` por corrida.                                                                              | Base por corrida como Earlywindow.                                     | `src/dossier.ts`, `src/run.ts`       |
+| `config_hash` es el SHA-256 del JSON canónico de la configuración, no de los bytes del archivo.                                                                                                                                     | Bytes del archivo.                                                     | `src/run.ts`                         |
+| Qwen con 4 procesos de 2 hilos (`intra_op_threads` entra en la clave de caché aunque no cambie los vectores).                                                                                                                       | Otra combinación.                                                      | `config/engine.v1.json`, `--workers` |
+| `hash6` del nombre de la corrida = hash de entradas, instante y proceso, para que dos corridas del mismo segundo no choquen.                                                                                                        | Hash solo de entradas.                                                 | `src/run.ts`                         |
