@@ -79,6 +79,8 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as EditorialHandlers from "../editorial/mcp/handlers.ts";
+import { EditorialToolkit } from "../editorial/mcp/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -1161,4 +1163,9 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
+/** Earlyscript: read-only editorial tools, kept out of layerTools and its upstream budget. */
+export const layerEditorialToolkit = toolkitRegistration(EditorialToolkit, EditorialHandlers.layer);
+
+export const layer = Layer.merge(layerTools, layerEditorialToolkit).pipe(
+  Layer.provideMerge(layerMcpTransport),
+);
