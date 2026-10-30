@@ -5,6 +5,7 @@ import {
 } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -86,7 +87,7 @@ export function resolveRelayClientTracingConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
   fallback = buildTimeRelayClientTracing,
 ) {
-  if (!isRelayTracingEnabled(env)) {
+  if (!earlyscriptFlags.telemetry || !isRelayTracingEnabled(env)) {
     return null;
   }
 
