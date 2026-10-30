@@ -11,6 +11,8 @@ Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia 
 5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`: pendiente de fusión.
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
+8. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único enganche: `apps/server/src/server.ts`.
+9. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único archivo de upstream tocado: `apps/server/src/server.ts`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -600,3 +602,66 @@ Decisiones reversibles:
 - Reintento por cuota descubierta al ejecutar, solo en esta operación: si el CLI falla con un límite de uso, se hace un único intento con otra instancia elegible de Claude o Codex (mismo `pickFallback` que el preflight, excluyendo la que falló) y se registra en el log. Errores de formato, timeouts, cancelaciones y otros fallos no se reintentan. `provider`/`model` guardan la instancia que respondió. Sin alternativa, se devuelve el error original.
 - `isUsageLimitError` es una heurística por texto, porque los CLI de Claude y Codex no exponen un código de cuota en la generación de texto: exige un fallo de comando (`Claude|Codex CLI command failed:`) y busca `usage limit`, `rate limit`, `hit your limit`, `quota`, `429`, `too many requests`, `resource_exhausted` o los códigos de ChatGPT de `@t3tools/shared/usageLimits`. Reemplazarla si los drivers llegan a clasificar el error.
 - Aislamiento MCP en Codex: si `codex mcp list` falla, devuelve JSON inválido o supera 10 s, la operación de tendencia falla con `TextGenerationError` en vez de correr con servidores MCP sin apagar. Las demás operaciones conservan el comportamiento de upstream (aviso y continuar).
+
+## 9. Base editorial y servicios de estado
+
+Base: `d820a87685`. Rama `es/editorial-db`. Base propia `editorial.sqlite` en el directorio de estado configurado, junto a `statev2.sqlite`, con migraciones y servicios Effect para la bandeja de tendencias, el reloj de trabajo, las decisiones, las versiones del guion, las capturas, los resultados y el registro de hilos de video. Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §2, §6, §8 y §9.
+
+Archivos nuevos en `apps/server/src/editorial/`:
+
+- `persistence/EditorialDatabase.ts`: tag `EditorialSql`, ruta `editorial.sqlite`, `NodeSqliteClient.layer` con los pragmas de `persistence/Sqlite.ts` (busy timeout, foreign keys, WAL, `synchronous = NORMAL`) y las migraciones editoriales. El cliente se captura con `Layer.provide`; nunca se publica como `SqlClient.SqlClient`. No usa `Sqlite.layerFromPath`, que ejecutaría las migraciones de T3.
+- `persistence/Migrations.ts`, `persistence/Migrations/001_EditorialFoundation.ts` y `002_EditorialOrdering.ts`: mismo mecanismo `Migrator.fromRecord` que upstream, numeración propia desde 1 y tabla de historial `editorial_sql_migrations`.
+- `persistence/EditorialModel.ts`: esquemas de los primitivos (etapas, modos, acciones, estado de bandeja, eventos, resumen del reloj, decisión).
+- `persistence/EditorialEventLog.ts`: `appendEvent` dentro de la transacción, `transact` (publica los eventos después del commit), `readSince`, `latestSeq` y `changes`.
+- `persistence/workIntervals.ts`: estado y resumen del reloj a partir de los segmentos, y cierre compartido con la decisión.
+- `persistence/Errors.ts`, `persistence/support.ts` y `persistence/EditorialDatabase.testkit.ts`.
+- `EditorialCommandService.ts`, `WorkClockService.ts`, `EditorialThreadService.ts` y `persistenceLayer.ts`.
+- Pruebas: `persistence/EditorialDatabase.test.ts`, `EditorialCommandService.test.ts`, `WorkClockService.test.ts` y `EditorialThreadService.test.ts`.
+
+Archivos de upstream tocados:
+
+| Archivo                     | Líneas  | Alcance                                                                                                               |
+| --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/server.ts` | 51, 639 | Importa `editorial/persistenceLayer.ts` y lo monta en `layerRuntimeCoreDependenciesBase`, junto a `layerPersistence`. |
+
+`persistenceLayer.ts` publica `EditorialSql`, `EditorialEventLog`, `EditorialCommandService`, `WorkClockService` y `EditorialThreadService`. Al construirse marca como `needs_resolution` los segmentos del reloj que quedaron abiertos por una caída. La unidad de lectura y RPC consume esos servicios desde su propio `editorial/layer.ts`; si también provee `persistenceLayer.layer`, Effect lo memoiza y se construye una sola vez.
+
+Esquema de `001_EditorialFoundation`:
+
+- `editorial_events`: `seq`, `type`, `aggregate_kind` (`trend` o `video_thread`), `aggregate_id`, `operation_id` (único cuando existe), `actor`, `payload_json`, `created_at`.
+- `editorial_trend_inbox`: `trend_key`, `seen_run_id`, `seen_dossier_id`, `seen_at`, `snoozed_at`, `snoozed_until`, `snooze_return_json`, `dismissed_at`, `dismissed_reason`, `production_thread_id`, `production_linked_at`, `created_at`, `updated_at`.
+- `editorial_video_threads`: `thread_id`, `environment_id`, `operation_id` (único), `mode`, `trend_key`, `run_id`, `dossier_id`, `dossier_hash`, `script_path`, `launch_state` (`pending`, `launched` o `failed`), `created_by`, `created_at`.
+- `editorial_work_intervals`: `interval_id`, `thread_id`, `stage` (`explore`, `read`, `write` o `decide`), `status` (`open`, `closed` o `needs_resolution`), `started_at`, `ended_at`, `end_reason`, `pause_reason`, `recovered_at`, `actor`. Índice único parcial: un solo segmento abierto por hilo.
+- `editorial_script_versions`: `version_id`, `thread_id`, `content_hash` (SHA-256 hexadecimal), `snapshot`, `script_path`, `actor`, `saved_at`; único por hilo y hash.
+- `editorial_decisions`: `decision_id`, `thread_id`, `action`, `utility` (1 a 5), `reason`, `script_version_hash` (clave foránea a la versión del mismo hilo), `explore_ms`, `read_ms`, `write_ms`, `decide_ms`, `total_ms`, `clock_definitive`, `actor`, `decided_at`.
+- `editorial_captures`: `capture_id`, `thread_id`, `url`, `title`, `note`, `actor`, `captured_at`.
+- `editorial_video_results`: `result_id`, `thread_id`, `views`, `subscribers`, `clicks`, `comments`, `observed_at`, `actor`, `recorded_at`.
+
+`002_EditorialOrdering` agrega dos columnas sin tocar la 001:
+
+- `editorial_trend_inbox.seen_run_cutoff_at`: corte de la corrida guardada en `seen_run_id`. `markRead` exige `runCutoffAt` y solo avanza `seen_*` si ese corte no es anterior al guardado; una petición de una corrida más antigua no cambia nada ni escribe evento. Los ids de corrida no se comparan.
+- `editorial_work_intervals.pause_ended_at`: fin de la pausa que empezó en `ended_at` cuando el reloj se detiene o se decide durante ella. El segmento toma el `end_reason` de la detención y el resumen conserva la duración de la pausa sin seguir sumándola.
+
+Las tablas por hilo tienen clave foránea a `editorial_video_threads`. No hay claves foráneas hacia `statev2.sqlite`: el vínculo con el `ThreadId` de T3 es lógico y tolera hilos archivados, borrados o no creados.
+
+Desviaciones respecto al mapa:
+
+- El reloj guarda un segmento por tramo trabajado, no una fila por etapa con `paused_at` y `resumed_at`. Una pausa cierra el segmento con `end_reason = 'paused'` y la reanudación abre otro en la misma etapa. Con columnas únicas de pausa solo se conservaría la última pausa. El tiempo pausado es el hueco entre segmentos, o el tramo entre `ended_at` y `pause_ended_at` si la pausa terminó con una detención o una decisión.
+- Un solo segmento abierto por hilo, no uno por etapa: la etapa en curso es única, y `changeStage` cierra la actual y abre la nueva en una transacción.
+- Se agregan `unsnooze`, `reopen` y `resolveInterval`, que la lista de la unidad no nombra. Sin ellos, el regreso por crecimiento, la reapertura de un descarte y la resolución humana tras una caída no tendrían camino de escritura.
+- `editorial_runs`, `editorial_dossiers`, `editorial_channel_profiles`, `editorial_browser_visits` y `editorial_jobs` quedan para las unidades del importador, el navegador y la corrida diaria.
+
+Decisiones reversibles:
+
+- Nombres de tablas, columnas, tipos de evento y la tabla de historial `editorial_sql_migrations`.
+- Fechas como texto ISO en UTC; las entradas con zona horaria se normalizan.
+- `actor` es `operator` o `system`; solo la recuperación usa `system`.
+- Motivo obligatorio para `edit` y `reject`, opcional para `accept`; utilidad obligatoria en las tres.
+- Las duraciones de una etapa que nunca corrió quedan en `NULL`, no en cero. `clock_definitive = 0` cuando quedan segmentos sin resolver.
+- Registrar una decisión detiene el reloj (`work.stopped` con motivo `decided`) en la misma transacción.
+- El orden de las corridas en la bandeja se toma del `cutoffAt` que pasa el llamador. Dos corridas con el mismo corte se tratan como equivalentes: la última marcada queda como vista.
+- `markRead`, `dismiss`, `unsnooze`, `reopen` y `linkProduction` no escriben evento cuando no cambian nada. `snooze` siempre escribe, porque renueva la condición.
+- La condición de regreso del snooze es `{ metric, baseline, atLeast }`. La evalúa el importador de corridas; esta unidad solo la guarda.
+- Las versiones del guion se identifican por contenido: guardar el mismo texto devuelve la versión existente. Tope de 1 MiB por versión.
+- `registerVideoThread` devuelve la fila persistida cuando la operación ya existe, aunque el reintento proponga otro `ThreadId`. Un `ThreadId` ya registrado por otra operación es un conflicto.
+- Sin worker de lectura ni de checkpoint en la base editorial: tiene poco volumen y se escribe a mano.
