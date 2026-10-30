@@ -3,6 +3,7 @@ import {
   relayClerkTokenOptions,
 } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 import * as Schema from "effect/Schema";
 
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
@@ -62,6 +63,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 }
 
 export function resolveRelayTracingConfig() {
+  if (!earlyscriptFlags.telemetry) return null;
   // The relay exporter is created during module initialization, so this must be synchronous.
   if (typeof window !== "undefined" && window.desktopBridge?.getRelayTelemetryEnabled() === false) {
     return null;

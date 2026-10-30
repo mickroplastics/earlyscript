@@ -17,6 +17,7 @@ import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
+import { pickEarlyscriptFlagEnv } from "@t3tools/shared/earlyscriptFlags";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -90,6 +91,7 @@ const unitTestProject = {
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
+      "../../packages/shared/src/testing/earlyscriptFlagsOn.ts",
     ],
   },
 } satisfies TestProjectInlineConfiguration;
@@ -320,6 +322,7 @@ export default defineConfig(() => {
       "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      __EARLYSCRIPT_FLAG_ENV__: JSON.stringify(pickEarlyscriptFlagEnv(process.env)),
     },
     resolve: {
       tsconfigPaths: true,

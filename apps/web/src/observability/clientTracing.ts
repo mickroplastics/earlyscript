@@ -13,6 +13,7 @@ import * as ClientTracer from "./clientTracer";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 interface NavigatorUserAgentData {
@@ -74,6 +75,7 @@ let activeConfigKey: string | null = null;
 let pendingConfiguration = Promise.resolve();
 
 export function configureClientTracing(): Promise<void> {
+  if (!earlyscriptFlags.telemetry) return Promise.resolve();
   if (activeConfigKey !== null) {
     return pendingConfiguration;
   }
