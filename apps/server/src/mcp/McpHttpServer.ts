@@ -70,6 +70,7 @@ import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as EarlyscriptChangeRequests from "../earlyscript/changeRequests.ts";
+import * as EarlyscriptRemoteAccess from "../earlyscript/remoteAccess.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -198,7 +199,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
+    Effect.map(EarlyscriptRemoteAccess.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
