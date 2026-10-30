@@ -49,6 +49,7 @@ import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
 import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
 import * as EditorialPersistence from "./editorial/persistenceLayer.ts";
+import * as EditorialVideoThreads from "./editorial/videoThreadLayer.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -627,6 +628,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  EditorialVideoThreads.layer,
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

@@ -77,6 +77,8 @@ export const EditorialEventType = Schema.Literals([
   "trend.reopened",
   "trend.production-linked",
   "video-thread.registered",
+  "video-thread.launched",
+  "video-thread.launch-failed",
   "work.started",
   "work.paused",
   "work.resumed",
