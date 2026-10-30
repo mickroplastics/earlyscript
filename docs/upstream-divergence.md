@@ -368,3 +368,36 @@ Propios nuevos, por aplicación:
 | RPC y ruta HTTP de PR seguían disponibles                           | `changeRequestsRpc.flagsOff.test.ts`                      | Con `changeRequests=0` y `sourceControlHosts=1`, las 34 RPC `pullRequests.*`, `git.resolvePullRequest` y `git.preparePullRequestThread` fallan sin llamar al handler de upstream, y `POST /api/pull-requests/diff` responde 503.                                                                         |
 
 Cada prueba lee además el fuente de upstream y falla si una fusión retira el enganche.
+
+## 7. Título y resumen de tendencia
+
+Base: `815f5f2a04`. Rama `es/trend-presentation`. Operación `generateTrendPresentation` en el servicio de generación de texto que ya produce títulos de hilo y mensajes de commit. Recibe perfil, datos deterministas de la tendencia y evidencia con ids; devuelve un título de una línea (80 caracteres como máximo), un resumen de tres partes (`whatHappened`, `whyItMatters`, `videoAngle`), los ids citados, avisos y la procedencia (`provider`, `model`, `promptVersion`, `generatedAt`, `inputHash`). No devuelve puntajes ni cambia el orden. Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §5.
+
+Archivos nuevos en `packages/provider-core/src/server/`: `editorialTextGenerationPrompts.ts` (tipos, prompt `trend-presentation.v1` con esquema estructurado, validación de citas contra la evidencia enviada, recorte del título y hash del input lógico) y `editorialTextGenerationPrompts.test.ts`. Los tipos no dependen de `@t3tools/contracts`; se reexportarán desde `packages/editorial-contracts` cuando exista.
+
+Archivos de upstream tocados (excepción al objetivo de enganches de una línea, prevista en el mapa §15 fila U7: un método obligatorio nuevo en `ProviderTextGeneration` obliga a adaptar cada implementación escrita a mano):
+
+| Archivo                                                          | Líneas                                | Alcance                                                                                                                                                        |
+| ---------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/provider-core/src/server/textGeneration.ts`            | 12-24, 113-119, 140-143               | Importa y reexporta los tipos editoriales; `TrendPresentationGenerationInput`/`Result` y el método en `ProviderTextGeneration`.                                |
+| `packages/provider-core/src/server/textGenerationOperations.ts`  | 1, 9-14, 177-196, 203                 | `generateTrendPresentation` en `fromRunner`, por el camino sin `investigate`; Claude, Codex, Cursor, Grok, Pi, OpenCode y Antigravity la heredan.              |
+| `apps/server/src/textGeneration/TextGeneration.ts`               | 36-37, 49-50, 72-73, 124-125, 157-166 | Reexporta los tipos; amplía `TextGenerationOp`; `TREND_PRESENTATION_DRIVERS` limita el fallback de cuota a Claude y Codex; método del servicio por `generate`. |
+| `apps/server/src/textGeneration/ClaudeTextGeneration.ts`         | 186                                   | La operación corre en un directorio temporal, como los títulos de hilo, para no cargar instrucciones del proyecto.                                             |
+| `apps/server/src/provider/Drivers/CodexManagedProvider.ts`       | 287-288                               | Pasa la operación por `protect`, como las demás.                                                                                                               |
+| `packages/provider-opencode/src/server/driver.ts`                | 154-158                               | Enruta la operación entre v1 y v2.                                                                                                                             |
+| `packages/provider-opencode/src/server/textGeneration.ts`        | 19                                    | Literal de la operación en el contexto de sus errores.                                                                                                         |
+| `packages/provider-muse/src/server/textGeneration.ts`            | 345-351, 358                          | Falla con `TextGenerationError`.                                                                                                                               |
+| `packages/provider-acp-registry/src/server/driver.ts`            | 84                                    | Falla con `TextGenerationError`, como sus otras operaciones.                                                                                                   |
+| `packages/provider-fx/src/server/driver.ts`                      | 60                                    | Falla con `TextGenerationError`, como sus otras operaciones.                                                                                                   |
+| `apps/server/src/textGeneration/ClaudeTextGeneration.test.ts`    | 292-358                               | Prueba con el CLI simulado: fuera del proyecto, sin herramientas, cita desconocida descartada con aviso.                                                       |
+| `apps/server/src/textGeneration/CodexTextGeneration.test.ts`     | 293-350, 551, 598-707                 | Prueba de `--ephemeral`, `-s read-only` y MCP apagados; doble del preflight existente; preflight que salta Cursor y cae en Claude.                             |
+| `apps/server/src/git/GitManager.test.ts`                         | 291, 341                              | Doble completado.                                                                                                                                              |
+| `apps/server/src/orchestration-v2/ProviderEventIngestor.test.ts` | 260                                   | Doble completado.                                                                                                                                              |
+
+Decisiones reversibles:
+
+- Tipos en `provider-core` hasta que exista `packages/editorial-contracts`; mover el archivo y dejar la reexportación en `textGeneration.ts`.
+- `provider` guarda el `instanceId` usado tras el fallback, no el tipo de driver.
+- `inputHash` cubre perfil, tendencia, evidencia e idioma; excluye `cwd`, modelo y versión del prompt, que se guardan aparte.
+- Límites del prompt: 12 ítems de evidencia, 600 caracteres por extracto, 4.000 del perfil, 400 por parte del resumen. La evidencia que excede el límite no se envía y no se puede citar; queda un aviso.
+- Sin reintento tras un error de cuota del CLI: la operación usa el preflight existente, que solo cambia de proveedor cuando el snapshot ya marca la ventana agotada.
