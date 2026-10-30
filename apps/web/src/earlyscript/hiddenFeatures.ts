@@ -43,3 +43,17 @@ export function visibleSurfaceActions<const Action extends { readonly label: str
 ): Array<Action> {
   return actions.filter((action) => isOn(SURFACE_ACTION_FLAGS[action.label], flags));
 }
+
+/** Command palette actions (by `value`) that exist only for a hidden feature. */
+const COMMAND_PALETTE_ACTION_FLAGS: Readonly<Record<string, EarlyscriptFlagName>> = {
+  "action:pull-requests": "changeRequests",
+  "action:link-pull-request": "changeRequests",
+  "action:open-thread-pull-requests": "changeRequests",
+};
+
+export function visibleCommandPaletteActions<const Item extends { readonly value: string }>(
+  items: ReadonlyArray<Item>,
+  flags: EarlyscriptFlags = earlyscriptFlags,
+): Array<Item> {
+  return items.filter((item) => isOn(COMMAND_PALETTE_ACTION_FLAGS[item.value], flags));
+}

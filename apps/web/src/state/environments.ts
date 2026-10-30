@@ -7,6 +7,7 @@ import {
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { earlyscriptFlags } from "@t3tools/shared/earlyscriptFlags";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -96,7 +97,9 @@ export function useEnvironmentIdentities() {
 }
 
 export function usePullRequestsSupported() {
-  return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
+  return (
+    useAtomValue(environmentSummaries.pullRequestsSupportedAtom) && earlyscriptFlags.changeRequests
+  );
 }
 
 export function useEnvironmentMachines() {

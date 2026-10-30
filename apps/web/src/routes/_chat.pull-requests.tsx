@@ -4,7 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
 import { SORT_OPTIONS } from "../components/pullRequest/pullRequestListOptions";
 import { type PullRequestsSearch } from "../components/pullRequest/usePullRequestListView";
-import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
+import { PullRequestsPage } from "../earlyscript/changeRequests";
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
 

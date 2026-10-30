@@ -46,6 +46,7 @@ import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as EarlyscriptAnalytics from "./earlyscript/analytics.ts";
+import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
@@ -546,7 +547,9 @@ const layerIdleCompactionWorker = Layer.effectDiscard(
 ).pipe(Layer.provide(ProjectionStoreV2.layer));
 
 const layerThreadPullRequestWorker = Layer.effectDiscard(
-  ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
+  ThreadPullRequestService.make.pipe(
+    Effect.flatMap((service) => EarlyscriptChangeRequests.startPullRequestWorker(service.start())),
+  ),
 ).pipe(Layer.provide(layerPullRequestService));
 
 const layerProviderInstallationRefresh = Layer.effectDiscard(
@@ -598,7 +601,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
-      yield* service.start();
+      yield* EarlyscriptChangeRequests.startPullRequestWorker(service.start());
     }),
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
@@ -608,7 +611,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestWatchReactor.PullRequestWatchReactor;
-      yield* service.start();
+      yield* EarlyscriptChangeRequests.startPullRequestWorker(service.start());
     }),
   ).pipe(
     Layer.provide(PullRequestWatchReactor.layer),
