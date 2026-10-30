@@ -49,6 +49,9 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatEditorialEnvironmentIdTrendsRouteImport } from './routes/_chat.editorial.$environmentId.trends'
+import { Route as ChatEditorialEnvironmentIdResultsRouteImport } from './routes/_chat.editorial.$environmentId.results'
+import { Route as ChatEditorialEnvironmentIdTrendsDossierIdRouteImport } from './routes/_chat.editorial.$environmentId.trends.$dossierId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -254,6 +257,24 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatEditorialEnvironmentIdTrendsRoute =
+  ChatEditorialEnvironmentIdTrendsRouteImport.update({
+    id: '/editorial/$environmentId/trends',
+    path: '/editorial/$environmentId/trends',
+    getParentRoute: () => ChatRoute,
+  } as any)
+const ChatEditorialEnvironmentIdResultsRoute =
+  ChatEditorialEnvironmentIdResultsRouteImport.update({
+    id: '/editorial/$environmentId/results',
+    path: '/editorial/$environmentId/results',
+    getParentRoute: () => ChatRoute,
+  } as any)
+const ChatEditorialEnvironmentIdTrendsDossierIdRoute =
+  ChatEditorialEnvironmentIdTrendsDossierIdRouteImport.update({
+    id: '/$dossierId',
+    path: '/$dossierId',
+    getParentRoute: () => ChatEditorialEnvironmentIdTrendsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -295,6 +316,9 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
+  '/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -336,6 +360,9 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
+  '/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -379,6 +406,9 @@ export interface FileRoutesById {
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/_chat/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
+  '/_chat/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/_chat/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -422,6 +452,9 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/editorial/$environmentId/results'
+    | '/editorial/$environmentId/trends'
+    | '/editorial/$environmentId/trends/$dossierId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -463,6 +496,9 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/editorial/$environmentId/results'
+    | '/editorial/$environmentId/trends'
+    | '/editorial/$environmentId/trends/$dossierId'
   id:
     | '__root__'
     | '/_chat'
@@ -505,6 +541,9 @@ export interface FileRouteTypes {
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
+    | '/_chat/editorial/$environmentId/results'
+    | '/_chat/editorial/$environmentId/trends'
+    | '/_chat/editorial/$environmentId/trends/$dossierId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -799,6 +838,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/editorial/$environmentId/trends': {
+      id: '/_chat/editorial/$environmentId/trends'
+      path: '/editorial/$environmentId/trends'
+      fullPath: '/editorial/$environmentId/trends'
+      preLoaderRoute: typeof ChatEditorialEnvironmentIdTrendsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/editorial/$environmentId/results': {
+      id: '/_chat/editorial/$environmentId/results'
+      path: '/editorial/$environmentId/results'
+      fullPath: '/editorial/$environmentId/results'
+      preLoaderRoute: typeof ChatEditorialEnvironmentIdResultsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/editorial/$environmentId/trends/$dossierId': {
+      id: '/_chat/editorial/$environmentId/trends/$dossierId'
+      path: '/$dossierId'
+      fullPath: '/editorial/$environmentId/trends/$dossierId'
+      preLoaderRoute: typeof ChatEditorialEnvironmentIdTrendsDossierIdRouteImport
+      parentRoute: typeof ChatEditorialEnvironmentIdTrendsRoute
+    }
   }
 }
 
@@ -864,6 +924,21 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
   ChatSettingsRouteChildren,
 )
 
+interface ChatEditorialEnvironmentIdTrendsRouteChildren {
+  ChatEditorialEnvironmentIdTrendsDossierIdRoute: typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
+}
+
+const ChatEditorialEnvironmentIdTrendsRouteChildren: ChatEditorialEnvironmentIdTrendsRouteChildren =
+  {
+    ChatEditorialEnvironmentIdTrendsDossierIdRoute:
+      ChatEditorialEnvironmentIdTrendsDossierIdRoute,
+  }
+
+const ChatEditorialEnvironmentIdTrendsRouteWithChildren =
+  ChatEditorialEnvironmentIdTrendsRoute._addFileChildren(
+    ChatEditorialEnvironmentIdTrendsRouteChildren,
+  )
+
 interface ChatRouteChildren {
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
@@ -872,6 +947,8 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatEditorialEnvironmentIdResultsRoute: typeof ChatEditorialEnvironmentIdResultsRoute
+  ChatEditorialEnvironmentIdTrendsRoute: typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -882,6 +959,10 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatEditorialEnvironmentIdResultsRoute:
+    ChatEditorialEnvironmentIdResultsRoute,
+  ChatEditorialEnvironmentIdTrendsRoute:
+    ChatEditorialEnvironmentIdTrendsRouteWithChildren,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

@@ -240,6 +240,8 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
+import * as EditorialLayer from "./editorial/layer.ts";
+import * as EditorialRpc from "./editorial/rpc.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1863,7 +1865,11 @@ export const layerWsRpc = (
         return result;
       });
 
+      const editorialHandlers = yield* EditorialRpc.makeHandlers.pipe(
+        Effect.provide(EditorialLayer.layer),
+      );
       const upstreamHandlers = ServerWsRpcGroup.of({
+        ...editorialHandlers,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

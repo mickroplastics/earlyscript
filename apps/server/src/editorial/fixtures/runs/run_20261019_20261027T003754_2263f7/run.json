@@ -1,0 +1,20 @@
+{
+  "run_id": "run_20261019_20261027T003754_2263f7",
+  "mode": "daily",
+  "cutoff_at": "2026-10-19T00:00:00.000Z",
+  "started_at": "2026-10-27T00:37:54.831Z",
+  "finished_at": "2026-10-27T00:43:13.414Z",
+  "status": "ok",
+  "engine_version": "0.0.1",
+  "config_version": "engine.v0.02",
+  "config_hash": "sha256:bbd969341d13ffe363f9a3ac4a400d7a362984b531481a4322defa3ee9438af3",
+  "corpus_hash": "sha256:5bf2d88a265b587390f4798612a1b4dfd96a14e88a5becde9b0df6ad81e1177b",
+  "sources": ["hn", "github"],
+  "logical_hash": "sha256:d1f2291005e9f4310396a7f53d0f5b752174daa3ec401e7ab65073b7e9fadfc6",
+  "dossiers": 3,
+  "files": [
+    "dossiers/04-dos_ead8cfa066df.json",
+    "dossiers/10-dos_82c53bb05e52.json",
+    "dossiers/13-dos_bbb80d57481e.json"
+  ]
+}
