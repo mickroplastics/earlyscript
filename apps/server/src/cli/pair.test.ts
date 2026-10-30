@@ -214,7 +214,9 @@ describe("t3 pair", () => {
 
         const token = /#token=([A-Z2-9]+)/.exec(output)?.[1];
         assert.isString(token);
-        assert.include(output, `App link: ${buildPairingAppLink(`${origin}/pair#token=${token}`)}`);
+        const pairingUrl = `${origin}/pair#token=${token}`;
+        assert.include(output, `Desktop link: ${buildPairingAppLink(pairingUrl, "earlyscript")}`);
+        assert.include(output, `Mobile app link: ${buildPairingAppLink(pairingUrl)}`);
 
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),

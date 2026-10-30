@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>cc.biste.earlyscript</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Earlyscript</name>
+  <summary>Editorial studio for video scripts with coding agents</summary>
+  <developer id="cc.biste">
+    <name>Miguel Ángel Brito Espejo</name>
+  </developer>
+  <description>
+    <p>
+      Earlyscript is a desktop app, built on T3 Code, for researching topics
+      and drafting video scripts with your existing agent subscriptions. The
+      final editorial decision stays with you.
+    </p>
+  </description>
+  <launchable type="desktop-id">earlyscript-desktop.desktop</launchable>
+  <icon type="stock">earlyscript-desktop</icon>
+  <provides>
+    <binary>earlyscript-desktop</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://git.r.biste.cc/miguel/earlyscript</url>
+  <url type="vcs-browser">https://git.r.biste.cc/miguel/earlyscript</url>
+</component>

@@ -1,3 +1,4 @@
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { useState } from "react";
 
 import {
@@ -10,6 +11,8 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+
+const { cliBinName, productName } = EarlyscriptBrand;
 
 export function CliCommandSettingsRow() {
   const bridge = getDesktopCliCommandBridge();
@@ -26,7 +29,10 @@ export function CliCommandSettingsRow() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: action === "install" ? "Could not install t3" : "Could not remove t3",
+            title:
+              action === "install"
+                ? `Could not install ${cliBinName}`
+                : `Could not remove ${cliBinName}`,
             description: error instanceof Error ? error.message : "Something went wrong.",
           }),
         );
@@ -37,12 +43,12 @@ export function CliCommandSettingsRow() {
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
-    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    ? `Another ${cliBinName} at ${state.shadowedBy} runs first in a new terminal. Remove it to use ${productName}'s.`
     : !installed
-      ? "Run T3 Code's CLI as `t3` from any terminal."
+      ? `Run ${productName}'s CLI as \`${cliBinName}\` from any terminal.`
       : state.onPath
         ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
-        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;
+        : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`${cliBinName}\`.`;
 
   return (
     <SettingsRow
