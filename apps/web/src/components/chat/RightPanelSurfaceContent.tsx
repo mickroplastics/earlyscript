@@ -22,6 +22,7 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
+import { rightPanelSurfaceVisible } from "../../earlyscript/hiddenFeatures";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -77,7 +78,7 @@ export function RightPanelSurfaceContent(props: {
   readonly files: RightPanelFileProps;
 }) {
   const { surface, threadRef, visible } = props;
-  if (surface === null) return null;
+  if (surface === null || !rightPanelSurfaceVisible(surface.kind)) return null;
   switch (surface.kind) {
     case "preview":
       return (

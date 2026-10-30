@@ -7,6 +7,8 @@ import {
   type EarlyscriptFlags,
 } from "@t3tools/shared/earlyscriptFlags";
 
+import type { RightPanelKind, ThreadRightPanelState } from "../rightPanelStore";
+
 const isOn = (flag: EarlyscriptFlagName | undefined, flags: EarlyscriptFlags): boolean =>
   flag === undefined || flags[flag];
 
@@ -91,4 +93,54 @@ export function visibleCommandPaletteActions<const Item extends { readonly value
   flags: EarlyscriptFlags = earlyscriptFlags,
 ): Array<Item> {
   return items.filter((item) => isOn(COMMAND_PALETTE_ACTION_FLAGS[item.value], flags));
+}
+
+/** Right panel surfaces that exist only for a hidden feature. */
+const SURFACE_KIND_FLAGS: Partial<Record<RightPanelKind, EarlyscriptFlagName>> = {
+  terminal: "terminal",
+  "pull-request": "changeRequests",
+  "pull-requests": "changeRequests",
+};
+
+/** Whether the right panel may mount a surface of `kind`; hidden kinds render nothing. */
+export function rightPanelSurfaceVisible(
+  kind: RightPanelKind,
+  flags: EarlyscriptFlags = earlyscriptFlags,
+): boolean {
+  return isOn(SURFACE_KIND_FLAGS[kind], flags);
+}
+
+function visibleThreadRightPanelState(
+  state: ThreadRightPanelState,
+  flags: EarlyscriptFlags,
+): ThreadRightPanelState {
+  const surfaces = state.surfaces.filter((surface) =>
+    rightPanelSurfaceVisible(surface.kind, flags),
+  );
+  if (surfaces.length === state.surfaces.length) return state;
+  const activeSurfaceId = surfaces.some((surface) => surface.id === state.activeSurfaceId)
+    ? state.activeSurfaceId
+    : (surfaces[0]?.id ?? null);
+  return { ...state, surfaces, activeSurfaceId, isOpen: state.isOpen && surfaces.length > 0 };
+}
+
+/**
+ * The right panel store's `merge` on every rehydration: drops saved terminal and pull request
+ * surfaces of hidden features, so a tab saved by an earlier build is never restored.
+ */
+export function mergeVisibleRightPanelState<
+  State extends { readonly byThreadKey: Record<string, ThreadRightPanelState> },
+>(persisted: unknown, current: State, flags: EarlyscriptFlags = earlyscriptFlags): State {
+  // zustand's default merge.
+  const merged = { ...current, ...(persisted as Partial<State> | undefined) };
+  if (!merged.byThreadKey || typeof merged.byThreadKey !== "object") return merged;
+  return {
+    ...merged,
+    byThreadKey: Object.fromEntries(
+      Object.entries(merged.byThreadKey).map(([threadKey, state]) => [
+        threadKey,
+        Array.isArray(state?.surfaces) ? visibleThreadRightPanelState(state, flags) : state,
+      ]),
+    ),
+  };
 }
