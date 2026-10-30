@@ -628,7 +628,7 @@ Archivos de upstream tocados:
 | --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/server.ts` | 51, 639 | Importa `editorial/persistenceLayer.ts` y lo monta en `layerRuntimeCoreDependenciesBase`, junto a `layerPersistence`. |
 
-`persistenceLayer.ts` publica `EditorialSql`, `EditorialEventLog`, `EditorialCommandService`, `WorkClockService` y `EditorialThreadService`. Al construirse marca como `needs_resolution` los segmentos del reloj que quedaron abiertos por una caída. La unidad de lectura y RPC consume esos servicios desde su propio `editorial/layer.ts`; si también provee `persistenceLayer.layer`, Effect lo memoiza y se construye una sola vez.
+`persistenceLayer.ts` publica `EditorialSql`, `EditorialEventLog`, `EditorialCommandService`, `WorkClockService` y `EditorialThreadService` (desde §10, `ManualThreadPolicy` en lugar de `EditorialThreadService`, que pasó a `videoThreadLayer.ts`). Al construirse marca como `needs_resolution` los segmentos del reloj que quedaron abiertos por una caída. La unidad de lectura y RPC consume esos servicios desde su propio `editorial/layer.ts`; si también provee `persistenceLayer.layer`, Effect lo memoiza y se construye una sola vez.
 
 Esquema de `001_EditorialFoundation`:
 
@@ -669,6 +669,50 @@ Decisiones reversibles:
 - Las versiones del guion se identifican por contenido: guardar el mismo texto devuelve la versión existente. Tope de 1 MiB por versión.
 - `registerVideoThread` devuelve la fila persistida cuando la operación ya existe, aunque el reintento proponga otro `ThreadId`. Un `ThreadId` ya registrado por otra operación es un conflicto.
 - Sin worker de lectura ni de checkpoint en la base editorial: tiene poco volumen y se escribe a mano.
+
+## 10. Hilo de video: servidor
+
+Base: `d505a14ede`. Rama `es/video-thread-server`. Crear un hilo de video desde Tendencias, impedir en el servidor que un agente corra en un hilo manual, guardar versiones del guion leídas del workspace del hilo y exponer `script_check` como única herramienta MCP editorial. Sin interfaz: la consumen U5b (hilo de video) y U6 (modo manual). Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §6, §7, §8 y §9.
+
+Archivos nuevos en `apps/server/src/editorial/`:
+
+- `ManualThreadPolicy.ts`: `ManualThreadPolicy` (`Context.Reference`, por defecto permite todo) con `assertAgentAllowed(threadId)`, que consulta `editorial_video_threads.mode`; `threadsWithAgentWork` y `assertPlanAllowed`, que buscan en un plan del orquestador los eventos `run.created` y los efectos `provider-turn.start`, `provider-turn.steer`, `provider-turn.restart` y `provider-runtime.continue`; error `ManualThreadAgentBlockedError` con motivo `manual-thread` o `policy-unavailable`.
+- `ScriptVersionService.ts`: `readScript`, `snapshot` y `decide`; error `ScriptFileError`.
+- `DossierEvidence.ts`: puerto `Context.Reference` para cargar la evidencia del expediente del hilo. Por defecto no conoce ninguno y `script_check` informa `compared: false`. Lo proveerá el servicio de lectura.
+- `mcp/tools.ts` y `mcp/handlers.ts`: `EditorialToolkit` con `script_check` solamente.
+- `videoThreadLayer.ts`: monta `EditorialThreadService` y `ScriptVersionService` encima de la orquestación.
+- `persistence/Migrations/003_EditorialScriptHead.ts`: columna `editorial_video_threads.script_head_hash`, rellenada con la versión más reciente ya guardada.
+- `videoThread.testkit.ts` y pruebas: `ManualThreadPolicy.test.ts`, `ManualThreadPolicy.integration.test.ts`, `ScriptVersionService.test.ts`, `mcp/handlers.test.ts`.
+
+Archivos propios modificados: `EditorialThreadService.ts` (`createVideo` y `markLaunchState`), `EditorialCommandService.ts` (cabeza del guion), `persistence/EditorialModel.ts` (eventos `video-thread.launched`, `video-thread.launch-failed` y `script.head-restored`), `persistence/Migrations.ts`, `persistenceLayer.ts`, `persistence/EditorialDatabase.testkit.ts` y sus pruebas.
+
+Archivos de upstream tocados:
+
+| Archivo                                                        | Líneas                      | Alcance                                                                                                                                                                                          |
+| -------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`             | 134, 1004-1005, 13034-13046 | Lee `ManualThreadPolicy` y, tras planificar un comando, rechaza el plan con `OrchestratorCommandRejectedError` si crea un run o un efecto de turno en un hilo manual. El rechazo deja su recibo. |
+| `apps/server/src/orchestration-v2/ProviderTurnStartService.ts` | 58, 162, 495-509            | Antes de abrir sesión, marca el run como fallido (`manual-thread-agent-blocked`) si el hilo es manual. Cubre runs encolados y efectos repetidos tras un reinicio, que no pasan por la admisión.  |
+| `apps/server/src/mcp/McpHttpServer.ts`                         | 82-83, 1166-1171            | `layerEditorialToolkit` registra `EditorialToolkit` y `layer` lo une a `layerTools`, sin tocar la lista ni el presupuesto de herramientas de upstream.                                           |
+| `apps/server/src/server.ts`                                    | 52, 631                     | Monta `editorial/videoThreadLayer.ts` en `layerRuntimeCoreDependenciesBase`, encima de `layerOrchestrationApplication`.                                                                          |
+| `apps/server/package.json`                                     | 77                          | `@earlyscript/editorial-script` como dependencia de workspace, como los demás paquetes puros que se empaquetan.                                                                                  |
+| `pnpm-lock.yaml`                                               | 943-945                     | Enlace del paquete anterior. En una fusión, regenerar con `pnpm install`.                                                                                                                        |
+
+Comportamiento:
+
+- `createVideo` registra primero el hilo con su `operationId`, después lo lanza con `ThreadLaunchService.launch` sin `initialMessage` (crear el hilo no arranca un agente), con `commandId` `editorial:create-video:<operationId>`, título `Video: <título>` y ruta de guion `videos/<slug>-<id>.md` por defecto. Luego vincula la tendencia y arranca el reloj en Explorar (manual) o Leer (asistido). Un reintento con el mismo `operationId` reutiliza el hilo, no lanza otro y no abre otro segmento; con otro modo o expediente es un conflicto. Un lanzamiento fallido queda como `failed` y el reintento lanza el mismo `ThreadId`.
+- `ManualThreadPolicy` guarda el modo de un hilo registrado mientras vive el proceso, porque no cambia. Un hilo sin registrar se consulta de nuevo a los 2 s. Si la base no se puede leer, bloquea cualquier hilo cuyo modo no conozca todavía; con la base sana, los hilos no editoriales no se ven afectados.
+- La cabeza del guion es la última versión guardada; volver a guardar un texto anterior la restaura (`script.head-restored`). `recordDecision` exige que `scriptVersionHash` sea la cabeza; sin versiones, que no se indique ninguna. `ScriptVersionService.decide` toma antes una instantánea del archivo, de modo que una edición posterior a lo que vio el cliente produce un conflicto.
+- `readScript` rechaza rutas absolutas, `~`, `..` y symlinks que salen del workspace (worktree del hilo, o el checkout del proyecto si no tiene). Solo lee hilos de video registrados.
+
+Decisiones reversibles:
+
+- `EditorialThreadService` se movió de `persistenceLayer.ts` a `videoThreadLayer.ts`. Necesita `ThreadLaunchService`, que vive encima de la orquestación, mientras que el orquestador necesita `ManualThreadPolicy`, que vive debajo. Revertir obliga a separar `createVideo` del registro.
+- `ManualThreadPolicy` es un `Context.Reference` que permite todo por defecto, para que las pruebas y capas de upstream que no montan la base editorial sigan igual. El costo: si alguien monta `persistenceLayer.ts` encima de la orquestación, la guarda se apaga sin error. `ManualThreadPolicy.integration.test.ts` reproduce el orden de `server.ts`, pero no lo importa. La alternativa es un `Context.Service` obligatorio, que exige proveerlo en cada prueba de upstream que construye el orquestador.
+- Se revisa el plan del comando, no el tipo de comando: cubre comandos que upstream agregue después. La lista de efectos de agente está en `AGENT_EFFECT_TYPES`.
+- Ante una base ilegible, bloquear (`policy-unavailable`) en vez de permitir.
+- `decide` ignora un guion que nunca se escribió (`not-found`) y decide sin versión.
+- `script_check` corta los diagnósticos y las citas desconocidas en 200 (`truncated: true`). Un expediente con forma inválida se informa como error de la herramienta.
+- `@earlyscript/editorial-script` va en `devDependencies`, como `@t3tools/contracts` y `@t3tools/shared`, porque el servidor se empaqueta.
 
 ## 5. Motor de tendencias (paso 1) (rama `es/engine-1`, 30 de octubre de 2026)
 
