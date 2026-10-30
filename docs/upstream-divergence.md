@@ -706,3 +706,27 @@ Base: `815f5f2a04`. Comprobación: `git diff --name-status 815f5f2a04..es/engine
 ### Comparación con la corrida canónica de Earlywindow
 
 Con el mismo corpus, corte y perfil, y los mismos 45.557 textos embebidos, Earlyscript emite 19 expedientes y la canónica 18; coinciden 3 de 5 en el top 5 por línea base y 1 de 5 en el ponderado (`~/earlyscript-data/engine-1/beatriz/a3-comparacion.md`). La explicación propuesta es una hipótesis plausible, no una causa demostrada: la canónica usó vectores de macOS y Earlyscript vectores de Linux x64 (coseno mediano 0,965 entre plataformas para el mismo texto), y con un umbral de 0,70 y un apilado que depende del orden esas diferencias cambiarían qué ítems forman cada señal. La aislaría correr ambos motores sobre los mismos vectores de Linux con reglas equivalentes; no se ejecutó porque Earlywindow solo tiene la caché de macOS y la regla del paso 1 prohíbe reutilizarla.
+
+### Rendimiento del apilado (rama `es/engine-perf`, 30 de octubre de 2026)
+
+Solo cambia `packages/trend-engine/src/cluster.ts`; se añaden `src/cluster.test.ts` y `src/testkit/cluster.reference.ts`, copia de `stackItems` de `d505a14ede` que las pruebas usan como referencia. El resultado no cambia: el apilado depende del orden de llegada y del umbral, así que cada coseno se suma en el orden y la precisión de `dot()` y solo se omite un centroide cuando una cota exacta prueba que no puede superar el umbral.
+
+Perfil anterior: el 97 % del tiempo era `dot()` (576,6 s de 594,5 s). Son 290.979.221 cosenos de 1024 dimensiones, unos 298.000 millones de multiplicaciones a 0,52 GMAC/s en una sola cadena de sumas dependientes. La recolección de basura (0,05 %), la normalización de centroides (0,05 %) y el filtro de señales activas (0,7 %) no pesaban.
+
+Cambios:
+
+1. Centroides activos en un `Float32Array` contiguo, un espacio por señal, con espacios reutilizados al vencer la ventana.
+2. Cuatro centroides por pasada con sumas independientes, sin asignaciones por comparación.
+3. Poda en 1/2, 5/8, 3/4 y 7/8 de las dimensiones: suma parcial más el producto de las normas del resto (Cauchy-Schwarz), con holgura de 1e-9 para el redondeo. Quedan 158.700 millones de multiplicaciones, el 53 % del total; el 94 % de ellas está antes de la mitad.
+4. Hasta la mitad, los ítems pasan de dos en dos: cada coordenada se lee una vez para ambos, con ocho sumas independientes. El segundo ítem recalcula solo el centroide que el primero modificó o abrió.
+
+Corrida completa en Beatriz (corpus `~/earlywindow-data/corpus`, corte `2026-10-19T00:00:00Z`, `singularidev.v1.json`, `config/engine.v1.json`, caché caliente y 0 inferencias):
+
+| Código                 | Corrida                               | Total   | Apilado | Memoria pico | `logical_hash`         | `signals_hash`         |
+| ---------------------- | ------------------------------------- | ------- | ------- | ------------ | ---------------------- | ---------------------- |
+| `d505a14ede` (antes)   | `run_20261019_20261030T225322_7e6c85` | 594,3 s | 593,0 s | 578 MiB      | `sha256:ea8025e7…2bc8` | `sha256:d32dfb81…5ec4` |
+| `df15d94cd1` (después) | `run_20261019_20261030T234145_b156e3` | 62,9 s  | 61,2 s  | 565 MiB      | `sha256:ea8025e7…2bc8` | `sha256:d32dfb81…5ec4` |
+
+El apilado es 9,7 veces más rápido y la corrida 9,5 veces. La corrida de la tabla se hizo en `7863543463`, con el mismo árbol que `df15d94cd1`: solo cambió después el mensaje de un commit anterior. `engine check` y `engine check --rerun` coinciden. Banco sobre la entrada volcada, cada versión fijada a un núcleo P con las tres en paralelo: referencia 430 a 446 s, poda con cuatro centroides 160 s y pares 75 s, con el mismo hash estricto de ids, miembros, fechas y bytes de centroides. Evidencia en `~/earlyscript-data/engine-perf/README.md`.
+
+No se intentó: una cota más ajustada con proyecciones (PCA), porque con un coseno medio de 0,43 entre ítems la cota del resto seguiría siendo holgada y cada centroide modificado tendría que proyectarse de nuevo (estimación, no medida); índices aproximados, porque cambian el resultado; ni hilos, WebAssembly o código nativo, fuera del alcance de la unidad.
