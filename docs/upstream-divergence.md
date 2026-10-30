@@ -609,7 +609,7 @@ Base: `d820a87685`. Rama `es/editorial-db`. Base propia `editorial.sqlite` en el
 Archivos nuevos en `apps/server/src/editorial/`:
 
 - `persistence/EditorialDatabase.ts`: tag `EditorialSql`, ruta `editorial.sqlite`, `NodeSqliteClient.layer` con los pragmas de `persistence/Sqlite.ts` (busy timeout, foreign keys, WAL, `synchronous = NORMAL`) y las migraciones editoriales. El cliente se captura con `Layer.provide`; nunca se publica como `SqlClient.SqlClient`. No usa `Sqlite.layerFromPath`, que ejecutaría las migraciones de T3.
-- `persistence/Migrations.ts` y `persistence/Migrations/001_EditorialFoundation.ts`: mismo mecanismo `Migrator.fromRecord` que upstream, numeración propia desde 1 y tabla de historial `editorial_sql_migrations`.
+- `persistence/Migrations.ts`, `persistence/Migrations/001_EditorialFoundation.ts` y `002_EditorialOrdering.ts`: mismo mecanismo `Migrator.fromRecord` que upstream, numeración propia desde 1 y tabla de historial `editorial_sql_migrations`.
 - `persistence/EditorialModel.ts`: esquemas de los primitivos (etapas, modos, acciones, estado de bandeja, eventos, resumen del reloj, decisión).
 - `persistence/EditorialEventLog.ts`: `appendEvent` dentro de la transacción, `transact` (publica los eventos después del commit), `readSince`, `latestSeq` y `changes`.
 - `persistence/workIntervals.ts`: estado y resumen del reloj a partir de los segmentos, y cierre compartido con la decisión.
@@ -636,11 +636,16 @@ Esquema de `001_EditorialFoundation`:
 - `editorial_captures`: `capture_id`, `thread_id`, `url`, `title`, `note`, `actor`, `captured_at`.
 - `editorial_video_results`: `result_id`, `thread_id`, `views`, `subscribers`, `clicks`, `comments`, `observed_at`, `actor`, `recorded_at`.
 
+`002_EditorialOrdering` agrega dos columnas sin tocar la 001:
+
+- `editorial_trend_inbox.seen_run_cutoff_at`: corte de la corrida guardada en `seen_run_id`. `markRead` exige `runCutoffAt` y solo avanza `seen_*` si ese corte no es anterior al guardado; una petición de una corrida más antigua no cambia nada ni escribe evento. Los ids de corrida no se comparan.
+- `editorial_work_intervals.pause_ended_at`: fin de la pausa que empezó en `ended_at` cuando el reloj se detiene o se decide durante ella. El segmento toma el `end_reason` de la detención y el resumen conserva la duración de la pausa sin seguir sumándola.
+
 Las tablas por hilo tienen clave foránea a `editorial_video_threads`. No hay claves foráneas hacia `statev2.sqlite`: el vínculo con el `ThreadId` de T3 es lógico y tolera hilos archivados, borrados o no creados.
 
 Desviaciones respecto al mapa:
 
-- El reloj guarda un segmento por tramo trabajado, no una fila por etapa con `paused_at` y `resumed_at`. Una pausa cierra el segmento con `end_reason = 'paused'` y la reanudación abre otro en la misma etapa. Con columnas únicas de pausa solo se conservaría la última pausa. El tiempo pausado es el hueco entre segmentos.
+- El reloj guarda un segmento por tramo trabajado, no una fila por etapa con `paused_at` y `resumed_at`. Una pausa cierra el segmento con `end_reason = 'paused'` y la reanudación abre otro en la misma etapa. Con columnas únicas de pausa solo se conservaría la última pausa. El tiempo pausado es el hueco entre segmentos, o el tramo entre `ended_at` y `pause_ended_at` si la pausa terminó con una detención o una decisión.
 - Un solo segmento abierto por hilo, no uno por etapa: la etapa en curso es única, y `changeStage` cierra la actual y abre la nueva en una transacción.
 - Se agregan `unsnooze`, `reopen` y `resolveInterval`, que la lista de la unidad no nombra. Sin ellos, el regreso por crecimiento, la reapertura de un descarte y la resolución humana tras una caída no tendrían camino de escritura.
 - `editorial_runs`, `editorial_dossiers`, `editorial_channel_profiles`, `editorial_browser_visits` y `editorial_jobs` quedan para las unidades del importador, el navegador y la corrida diaria.
@@ -653,6 +658,7 @@ Decisiones reversibles:
 - Motivo obligatorio para `edit` y `reject`, opcional para `accept`; utilidad obligatoria en las tres.
 - Las duraciones de una etapa que nunca corrió quedan en `NULL`, no en cero. `clock_definitive = 0` cuando quedan segmentos sin resolver.
 - Registrar una decisión detiene el reloj (`work.stopped` con motivo `decided`) en la misma transacción.
+- El orden de las corridas en la bandeja se toma del `cutoffAt` que pasa el llamador. Dos corridas con el mismo corte se tratan como equivalentes: la última marcada queda como vista.
 - `markRead`, `dismiss`, `unsnooze`, `reopen` y `linkProduction` no escriben evento cuando no cambian nada. `snooze` siempre escribe, porque renueva la condición.
 - La condición de regreso del snooze es `{ metric, baseline, atLeast }`. La evalúa el importador de corridas; esta unidad solo la guarda.
 - Las versiones del guion se identifican por contenido: guardar el mismo texto devuelve la versión existente. Tope de 1 MiB por versión.
