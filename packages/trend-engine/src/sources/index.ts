@@ -40,9 +40,12 @@ export function liveSources(
   ids: ReadonlyArray<SourceId>,
   options: HttpOptions = {},
 ): Array<SourceAdapter> {
-  return ids.map((id) => ({
-    descriptor: SOURCES[id],
-    collectDay: (day) =>
-      (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options)),
-  }));
+  return ids.map((id) => {
+    const pacing = { nextStart: 0 };
+    return {
+      descriptor: SOURCES[id],
+      collectDay: (day) =>
+        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, pacing)),
+    };
+  });
 }

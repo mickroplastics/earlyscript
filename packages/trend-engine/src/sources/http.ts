@@ -17,12 +17,15 @@ export interface HttpOptions {
   readonly requestTimeoutMs?: number;
 }
 
-export function createHttpClient(source: "hn" | "github", options: HttpOptions = {}): GetResponse {
+export function createHttpClient(
+  source: "hn" | "github",
+  options: HttpOptions = {},
+  pacing = { nextStart: 0 },
+): GetResponse {
   const now = options.now ?? Date.now;
   const wait = options.sleep ?? NodeTimersPromises.setTimeout;
   const fetcher = options.fetch ?? fetch;
   const deadline = now() + (options.dayTimeoutMs ?? 300_000);
-  let nextStart = 0;
   const pause = source === "github" ? 6500 : 250;
   const token = source === "github" ? process.env.GITHUB_TOKEN : undefined;
   async function delay(ms: number) {
@@ -31,10 +34,10 @@ export function createHttpClient(source: "hn" | "github", options: HttpOptions =
   }
   return async (url) => {
     for (let attempt = 0; attempt <= 3; attempt++) {
-      await delay(Math.max(0, nextStart - now()));
+      await delay(Math.max(0, pacing.nextStart - now()));
       const remaining = deadline - now();
       if (remaining <= 0) throw new SourceFailure("Day time budget exhausted");
-      nextStart = now() + pause;
+      pacing.nextStart = now() + pause;
       let response: Response;
       let body: unknown;
       try {
@@ -68,7 +71,7 @@ export function createHttpClient(source: "hn" | "github", options: HttpOptions =
             : Math.max(0, Date.parse(retry) - now());
       const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
       if (response.headers.get("x-ratelimit-remaining") === "0") {
-        nextStart = Math.max(nextStart, reset + 1500);
+        pacing.nextStart = Math.max(pacing.nextStart, reset + 1500);
       }
       if (limited || response.status >= 500) {
         if (attempt === 3) throw new SourceFailure(`HTTP ${response.status}; retry limit reached`);
@@ -77,7 +80,7 @@ export function createHttpClient(source: "hn" | "github", options: HttpOptions =
             1000 * 2 ** attempt,
             limited ? 60_000 : 0,
             Number.isFinite(retryMs) ? retryMs : 0,
-            nextStart - now(),
+            pacing.nextStart - now(),
           ),
         );
         continue;

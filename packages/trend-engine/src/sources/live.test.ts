@@ -65,6 +65,24 @@ describe("live sources", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(waits).toEqual([70_000, 2000]);
   });
+  it("shares pacing across consecutive UTC days", async () => {
+    let clock = 0;
+    const waits: Array<number> = [];
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => response({ hits: [], nbHits: 0 }));
+    const [adapter] = liveSources(["hn"], {
+      fetch: fetcher,
+      now: () => clock,
+      sleep: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+      },
+    });
+    await adapter!.collectDay(day);
+    await adapter!.collectDay(until);
+    expect(waits).toEqual([250]);
+  });
   it("keeps one subdivided window when the other times out", async () => {
     const items = await reference();
     let calls = 0;
