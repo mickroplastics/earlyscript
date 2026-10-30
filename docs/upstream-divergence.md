@@ -4,15 +4,19 @@ Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos p
 
 Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
 
+Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
+
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`; ampliada por `es/brand-2` (icono propio y superficies de uso diario, base `815f5f2a04`), ver la subsección de recorte.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
 3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 4. Funciones escondidas (`es/flags-lote-a`), base `cf8174bd47`, con `main` fusionado en `c7c2cb720a`.
-5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`: pendiente de fusión.
+5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; upstream tocado: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
 8. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único enganche: `apps/server/src/server.ts`.
 9. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único archivo de upstream tocado: `apps/server/src/server.ts`.
+
+10. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -665,3 +669,40 @@ Decisiones reversibles:
 - Las versiones del guion se identifican por contenido: guardar el mismo texto devuelve la versión existente. Tope de 1 MiB por versión.
 - `registerVideoThread` devuelve la fila persistida cuando la operación ya existe, aunque el reintento proponga otro `ThreadId`. Un `ThreadId` ya registrado por otra operación es un conflicto.
 - Sin worker de lectura ni de checkpoint en la base editorial: tiene poco volumen y se escribe a mano.
+
+## 5. Motor de tendencias (paso 1) (rama `es/engine-1`, 30 de octubre de 2026)
+
+Base: `815f5f2a04`. Comprobación: `git diff --name-status 815f5f2a04..es/engine-1`. Dos paquetes nuevos sin dependencia de T3, de `apps/*` ni de `@t3tools/*`; nada en `apps/server` ni en `apps/web`. Especificación: `~/tesis/archive/contexto/intento-actual/planificacion/2026-10-30-earlyscript-motor/03-principios-y-primitivos.md` §8.
+
+### Archivos de upstream modificados
+
+| Archivo               | Líneas   | Motivo                                                                                                                                                                                                                                                                            |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm-workspace.yaml` | 26-28    | `allowBuilds`: `onnxruntime-node: false` y `protobufjs: false`, con un comentario. pnpm 12 rechaza la instalación si un paquete nuevo con script de instalación no está clasificado. Los binarios de CPU de ONNX Runtime vienen en el paquete; su postinstall solo descarga CUDA. |
+| `pnpm-lock.yaml`      | generado | Entradas de los dos paquetes y de `@huggingface/transformers@4.3.1`, `onnxruntime-node@1.30.0` y sus dependencias. En una fusión, regenerar con `pnpm install` en lugar de resolver el conflicto a mano.                                                                          |
+
+### Archivos propios
+
+- `packages/editorial-contracts/`: esquemas de Effect de los primitivos (`source`, `item`, `profile`, `dossier`, `run`, `decision`) y lector de `dossier/1` y `corpus/1` de Earlywindow (`earlywindow.ts`), con su prueba.
+- `packages/trend-engine/`: `sources/` (interfaz `SourceAdapter` y adaptador `fixture`), `corpus.ts`, `prepare.ts`, `embed/` (Qwen en procesos hijo, caché, modelo fijado, embedder de huellas para pruebas), `cluster.ts`, `series.ts`, `profile.ts`, `rank.ts`, `dossier.ts`, `run.ts`, `check.ts`, `cli.ts`, `host.ts`, `config/engine.v1.json`, `testkit/` y pruebas. Cada archivo portado de Earlywindow nombra su origen en la cabecera.
+- `scripts/earlyscript/packages.json`: los dos paquetes en `include`.
+
+### Decisiones reversibles
+
+| Decisión                                                                                                                                                                                                                                            | Alternativa                                                                       | Dónde cambiarla                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------ |
+| Motor como biblioteca TypeScript sin runtime de Effect; solo los contratos usan Effect Schema. El servidor lo envolverá en un servicio en el paso 2.                                                                                                | Servicios de Effect desde el inicio.                                              | `packages/trend-engine/src`          |
+| `stage.coverage_rule: per_source`: una señal queda sin clasificar solo si una ventana de 7 días no tiene ningún día conocido por sus fuentes; con un día perdido se cuenta lo observado y el expediente marca `coverage.uncertain`.                 | `all_sources`, la regla de Earlywindow v0.02, que deja la lista vacía.            | `config/engine.v1.json`              |
+| GitHub tiene `coverage_policy: sample`: sus días `partial` (100 primeros por estrellas) no son huecos. Earlywindow los listaba en `data_gaps` y todo expediente salía con 28 huecos.                                                                | Tratarlos como hueco.                                                             | `src/sources/index.ts`               |
+| Elegibles = creciendo y dentro del perfil; se emiten los que están entre los 20 primeros de cualquiera de los dos rankings, ordenados por línea base.                                                                                               | Orden de archivo por puntaje, como Earlywindow.                                   | `src/run.ts`                         |
+| Línea base `baseline.items_7d` con peso 1 sobre `items_7d` (regla del backtest).                                                                                                                                                                    | `log_items_7d`.                                                                   | `config/engine.v1.json`              |
+| `logical_hash` cubre solo los expedientes; `stats.signals_hash` cubre todas las señales como control adicional. Ya no hay `engine.sqlite` por corrida.                                                                                              | Base por corrida como Earlywindow.                                                | `src/dossier.ts`, `src/run.ts`       |
+| `config_hash` es el SHA-256 del JSON canónico de la configuración, no de los bytes del archivo.                                                                                                                                                     | Bytes del archivo.                                                                | `src/run.ts`                         |
+| Qwen con procesos de 2 hilos y 2 procesos por defecto (`intra_op_threads` entra en la clave de caché aunque no cambie los vectores).                                                                                                                | Más procesos en una máquina libre (Beatriz: 6).                                   | `config/engine.v1.json`, `--workers` |
+| `hash6` del nombre de la corrida = hash de entradas, instante y proceso, para que dos corridas del mismo segundo no choquen.                                                                                                                        | Hash solo de entradas.                                                            | `src/run.ts`                         |
+| El corte se aplica antes de abrir archivos: `corpus_used_hash` cubre los días anteriores al corte y sus filas de cobertura, y es el `corpus_hash` de los expedientes; `corpus_manifest_hash` toma la identidad del corpus congelado del manifiesto. | Hash de todos los archivos, como Earlywindow, que abre días posteriores al corte. | `src/corpus.ts`                      |
+| El embedder local rechaza una especificación con otra revisión, dtype o pooling que los que ejecuta su proceso hijo.                                                                                                                                | Ejecutar lo que pida la configuración.                                            | `src/embed/local.ts`                 |
+
+### Comparación con la corrida canónica de Earlywindow
+
+Con el mismo corpus, corte y perfil, y los mismos 45.557 textos embebidos, Earlyscript emite 19 expedientes y la canónica 18; coinciden 3 de 5 en el top 5 por línea base y 1 de 5 en el ponderado (`~/earlyscript-data/engine-1/beatriz/a3-comparacion.md`). La explicación propuesta es una hipótesis plausible, no una causa demostrada: la canónica usó vectores de macOS y Earlyscript vectores de Linux x64 (coseno mediano 0,965 entre plataformas para el mismo texto), y con un umbral de 0,70 y un apilado que depende del orden esas diferencias cambiarían qué ítems forman cada señal. La aislaría correr ambos motores sobre los mismos vectores de Linux con reglas equivalentes; no se ejecutó porque Earlywindow solo tiene la caché de macOS y la regla del paso 1 prohíbe reutilizarla.

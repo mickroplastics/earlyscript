@@ -1,0 +1,46 @@
+{
+  "name": "@earlyscript/editorial-contracts",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./source": {
+      "types": "./src/source.ts",
+      "import": "./src/source.ts"
+    },
+    "./item": {
+      "types": "./src/item.ts",
+      "import": "./src/item.ts"
+    },
+    "./profile": {
+      "types": "./src/profile.ts",
+      "import": "./src/profile.ts"
+    },
+    "./dossier": {
+      "types": "./src/dossier.ts",
+      "import": "./src/dossier.ts"
+    },
+    "./run": {
+      "types": "./src/run.ts",
+      "import": "./src/run.ts"
+    },
+    "./decision": {
+      "types": "./src/decision.ts",
+      "import": "./src/decision.ts"
+    },
+    "./earlywindow": {
+      "types": "./src/earlywindow.ts",
+      "import": "./src/earlywindow.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

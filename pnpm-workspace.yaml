@@ -23,6 +23,9 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
+  # Earlyscript trend-engine: CPU binaries are bundled; the postinstall only fetches CUDA.
+  onnxruntime-node: false
+  protobufjs: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
   sharp: true
   "@tsc-rs/typescript": true

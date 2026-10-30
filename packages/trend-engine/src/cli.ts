@@ -1,0 +1,80 @@
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
+//   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]
+//   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
+import * as NodeFS from "node:fs";
+import * as NodeUtil from "node:util";
+
+import { checkRun, rerunAndCheck } from "./check.ts";
+import { runEngine } from "./run.ts";
+
+const USAGE =
+  "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
+  "       engine check --run <run_dir> [--rerun --out <dir>]";
+
+async function main(argv: ReadonlyArray<string>): Promise<number> {
+  const [command, ...rest] = argv;
+  const { values } = NodeUtil.parseArgs({
+    args: [...rest],
+    options: {
+      corpus: { type: "string" },
+      cutoff: { type: "string" },
+      profile: { type: "string" },
+      out: { type: "string" },
+      config: { type: "string" },
+      workers: { type: "string" },
+      cache: { type: "string" },
+      models: { type: "string" },
+      run: { type: "string" },
+      rerun: { type: "boolean" },
+      "allow-unverified-corpus": { type: "boolean" },
+    },
+  });
+  const log = (line: string) => console.error(line);
+  const common = {
+    log,
+    ...(values.workers ? { workers: Number(values.workers) } : {}),
+    ...(values.cache ? { cacheFile: values.cache } : {}),
+    ...(values.models ? { modelDir: values.models } : {}),
+    ...(values["allow-unverified-corpus"] ? { allowUnverifiedCorpus: true } : {}),
+  };
+  if (command === "run" && values.corpus && values.cutoff && values.profile && values.out) {
+    NodeFS.mkdirSync(values.out, { recursive: true });
+    const record = await runEngine({
+      ...common,
+      corpusDir: values.corpus,
+      cutoff: values.cutoff,
+      profilePath: values.profile,
+      outDir: values.out,
+      ...(values.config ? { configPath: values.config } : {}),
+    });
+    const { run_id, status, error, dossiers, logical_hash, duration_ms, peak_rss_bytes } = record;
+    console.log(
+      JSON.stringify({
+        run_id,
+        status,
+        error,
+        dossiers,
+        logical_hash,
+        duration_ms,
+        peak_rss_bytes,
+      }),
+    );
+    return status === "ok" ? 0 : 1;
+  }
+  if (command === "check" && values.run) {
+    if (values.rerun && !values.out) {
+      console.error(USAGE);
+      return 64;
+    }
+    const result =
+      values.rerun && values.out
+        ? await rerunAndCheck(values.run, values.out, common)
+        : checkRun(values.run);
+    console.log(JSON.stringify(result));
+    return result.ok ? 0 : 1;
+  }
+  console.error(USAGE);
+  return 64;
+}
+
+process.exitCode = await main(process.argv.slice(2));
