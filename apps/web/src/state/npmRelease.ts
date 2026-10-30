@@ -5,6 +5,9 @@ import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+/** Earlyscript: with `updateChecks` off npm is never asked, so a missing release means unknown. */
+export const npmReleaseChecksDisabled = !earlyscriptFlags.updateChecks;
+
 export interface NpmRelease {
   readonly version: string;
   /** Absent on releases published before npm manifests carried it. */
@@ -16,7 +19,7 @@ export interface NpmRelease {
 export const npmReleaseAtom = Atom.family((spec: string) =>
   Atom.make(
     Effect.gen(function* () {
-      if (!earlyscriptFlags.updateChecks) return null;
+      if (npmReleaseChecksDisabled) return null;
       const response = yield* HttpClient.get(
         `https://registry.npmjs.org/t3/${encodeURIComponent(spec)}`,
       );
