@@ -4,14 +4,14 @@ Earlyscript es un fork privado de [T3 Code](https://github.com/pingdotgg/t3code)
 
 Earlyscript puede convivir con un T3 Code instalado en la misma máquina porque usa otro directorio, otros puertos y otros identificadores:
 
-| Valor                                    | T3 Code     | Earlyscript          |
-| ---------------------------------------- | ----------- | -------------------- |
-| Directorio base                          | `~/.t3`     | `~/.earlyscript`     |
-| Servidor (`t3 start`, app de escritorio) | 3773        | 4773                 |
-| Servidor de desarrollo                   | 13773       | 14773                |
-| Web de desarrollo                        | 5733        | 5743                 |
-| Esquema de URL                           | `t3code://` | `earlyscript://`     |
-| Binario del CLI                          | `t3`        | `t3` y `earlyscript` |
+| Valor                                    | T3 Code     | Earlyscript                                               |
+| ---------------------------------------- | ----------- | --------------------------------------------------------- |
+| Directorio base                          | `~/.t3`     | `~/.earlyscript`                                          |
+| Servidor (`t3 start`, app de escritorio) | 3773        | 4773                                                      |
+| Servidor de desarrollo                   | 13773       | 14773                                                     |
+| Web de desarrollo                        | 5733        | 5743                                                      |
+| Esquema de URL                           | `t3code://` | `earlyscript://`                                          |
+| Binario del CLI                          | `t3`        | `t3` y `earlyscript`; el escritorio instala `earlyscript` |
 
 Todos estos valores se definen en [`packages/shared/src/earlyscriptBrand.ts`](packages/shared/src/earlyscriptBrand.ts). Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre y siguen teniendo prioridad sobre los valores por defecto.
 
