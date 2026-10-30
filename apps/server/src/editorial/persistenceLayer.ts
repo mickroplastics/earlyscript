@@ -1,0 +1,44 @@
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import * as EditorialCommandService from "./EditorialCommandService.ts";
+import * as EditorialThreadService from "./EditorialThreadService.ts";
+import * as WorkClockService from "./WorkClockService.ts";
+import * as EditorialDatabase from "./persistence/EditorialDatabase.ts";
+import * as EditorialEventLog from "./persistence/EditorialEventLog.ts";
+
+// Segments left open by a previous process are flagged for the operator
+// before any client can reach the clock.
+const layerRecoverOpenIntervals = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const clock = yield* WorkClockService.WorkClockService;
+    const recovered = yield* clock.recoverOpenIntervals();
+    if (recovered.length > 0) {
+      yield* Effect.logWarning("Editorial work intervals need resolution after restart").pipe(
+        Effect.annotateLogs({ intervals: recovered.map((interval) => interval.intervalId) }),
+      );
+    }
+  }),
+);
+
+/**
+ * Editorial storage and state services over `editorial.sqlite`. Publishes
+ * `EditorialSql` for the other editorial services (read side, RPC), never the
+ * global `SqlClient`.
+ */
+export const layerFromDatabase = <E, R>(
+  database: Layer.Layer<EditorialDatabase.EditorialSql, E, R>,
+) =>
+  layerRecoverOpenIntervals.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        EditorialCommandService.layer,
+        WorkClockService.layer,
+        EditorialThreadService.layer,
+      ),
+    ),
+    Layer.provideMerge(EditorialEventLog.layer),
+    Layer.provideMerge(database),
+  );
+
+export const layer = layerFromDatabase(EditorialDatabase.layerConfig);
