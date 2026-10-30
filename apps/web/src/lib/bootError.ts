@@ -361,7 +361,7 @@ export function showBootError(error: unknown) {
             nightly ? `${DOWNLOAD_URL}?channel=nightly` : DOWNLOAD_URL,
             nightly
               ? "Download and reinstall the latest nightly build"
-              : `Download and reinstall ${EarlyscriptBrand.productName}`,
+              : "Download and reinstall T3 Code",
           ),
         ]
       : []),
