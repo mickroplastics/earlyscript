@@ -208,6 +208,27 @@ Lista completa de archivos revertidos:
 - `apps/web/src/versionSkew.test.ts`.
 - `apps/web/src/versionSkew.ts`.
 
+### Marca nativa de escritorio (`es/brand-native`)
+
+Base `d505a14edec99139a73983f54c796699f8d2d15c`, 30 de octubre de 2026. Completa los pendientes macOS de icono, permisos, About, ZIP, bienvenida y ayudante de permisos registrados en Gertrudis. Esta unidad reemplaza la exclusión anterior de los iconos nativos solo para macOS y la de los textos de producto de `WelcomeWizard.tsx`.
+
+Activos propios añadidos en `assets/{dev,prod,nightly}/`: `earlyscript-macos-1024.png` y `earlyscript.icns`. Los tres canales usan el mismo monograma E provisional de `apps/web/public/earlyscript-icon.svg`. Se regeneran en macOS con `node scripts/earlyscript/generate-native-icons.mjs`, mediante `sips` e `iconutil`, sin instalaciones globales. El mismo comando está disponible como `pnpm es:icons:mac`. El ICNS contiene tamaños de 16, 32, 128, 256 y 512 puntos con sus variantes de doble resolución. El empaquetador conserva su generación de `icon.png` a 512 píxeles y `icon.icns` desde el PNG propio. Los ICNS versionados permiten inspeccionar la exportación original sin empaquetar.
+
+| Archivo de upstream                                    | Alcance                                                                                                                                                                          |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json`                                         | Comando `es:icons:mac` para regenerar los activos propios.                                                                                                                       |
+| `scripts/lib/brand-assets.ts`                          | Importación de la marca y rutas macOS propias para prod, dev y nightly. Las rutas de otros clientes permanecen.                                                                  |
+| `apps/desktop/src/app/DesktopAssets.ts`                | Importación de la marca y nombre del PNG macOS para el escritorio sin empaquetar, tanto dev como prod.                                                                           |
+| `scripts/build-desktop-artifact.ts`                    | Nombre del distribuible, copyright con año de compilación, autor y descripción desde la marca. Interpolación del producto en las cuatro descripciones de permisos de Info.plist. |
+| `apps/web/src/components/onboarding/WelcomeWizard.tsx` | Interpolación del producto en el aviso de uso de datos y en las dos instrucciones de conexión.                                                                                   |
+| `apps/desktop/src/permissions/MacPermissionHelper.ts`  | Importación de la marca y nombre del producto escapado en el encabezado, la etiqueta accesible y el botón del ayudante.                                                          |
+
+`packages/shared/src/earlyscriptBrand.ts` añade `copyrightHolder`, `artifactBaseName`, `desktopDescription` y los nombres de los dos activos macOS. El titular del producto es Miguel Ángel Brito Espejo. `LICENSE`, los avisos MIT y las atribuciones de dependencias permanecen intactos.
+
+Se conservan los activos T3 anteriores y sus proyectos Icon Composer. Los iconos Windows, Linux y móvil siguen siendo T3 porque requieren exportación y verificación propias por plataforma. El exportador de upstream no escribe el campo macOS de sus variantes, por lo que no sobrescribe los PNG de Earlyscript. Los favicon heredados permanecen sin uso desde el HTML de Earlyscript. `homepage` y la política de privacidad conservan los enlaces de upstream mientras no exista un destino propio decidido. El aviso de telemetría conserva su comportamiento heredado, aunque la recopilación está apagada por las banderas por defecto; esta unidad cambia su marca, no su lógica.
+
+Siguen siendo T3 los identificadores internos, claves `t3code:*`, variables `T3CODE_*`, paquetes `@t3tools/*`, protocolos, prompts, fixtures y licencias. También quedan fuera los mensajes secundarios de actualización y recuperación de arranque citados en el informe macOS anterior. Son decisiones reversibles en Git, sin migraciones de datos ni cambios de permisos del sistema.
+
 ## Regla
 
 Cada valor de marca se define una sola vez en `packages/shared/src/earlyscriptBrand.ts` (objeto `EarlyscriptBrand`). Los archivos de upstream lo importan y sustituyen su literal por la propiedad correspondiente; no se cambia lógica. Las excepciones son archivos que no pueden importar TypeScript (`index.html`, `package.json`, `metainfo.xml`), la documentación y los tests de upstream que fijan los literales antiguos.
