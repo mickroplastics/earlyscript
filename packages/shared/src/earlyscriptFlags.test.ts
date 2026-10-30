@@ -15,8 +15,11 @@ describe("earlyscript flags", () => {
       updateChecks: false,
       relay: false,
       t3Connect: false,
-      mobilePairing: false,
       marketing: false,
+      terminal: false,
+      changeRequests: false,
+      sourceControlHosts: false,
+      remoteAccess: false,
     });
     expect(Object.values(EARLYSCRIPT_FLAG_DEFAULTS).every((value) => value === false)).toBe(true);
   });
@@ -27,6 +30,9 @@ describe("earlyscript flags", () => {
       "EARLYSCRIPT_FLAG_THIRD_PARTY_ANALYTICS",
     );
     expect(earlyscriptFlagEnvName("t3Connect")).toBe("EARLYSCRIPT_FLAG_T3_CONNECT");
+    expect(earlyscriptFlagEnvName("sourceControlHosts")).toBe(
+      "EARLYSCRIPT_FLAG_SOURCE_CONTROL_HOSTS",
+    );
   });
 
   it("reads 1, 0, true and false and ignores anything else", () => {
