@@ -490,11 +490,47 @@ const csvCell = (value: CsvValue): string => {
   return /[",\r\n]/.test(text) || text !== text.trim() ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
+/** A projected row: only the columns of `file` for `mode`, each value as it will be written. */
+export type ProjectedRow = Readonly<Record<string, CsvValue>>;
+
 /**
- * Renders `rows` with the columns of `file` for `mode`. `full` copies; `share` passes every
- * cell through `shareValue`. Only the listed columns are read from a row, so a new field on a
- * row never leaks. `datos` holds the raw payload; `share` projects it here, by `tipo`.
+ * The one projection of a row: `full` copies the listed columns, `share` passes each through
+ * its rule with `shareValue`. CSV files and `resumen.md` both read rows from here, so there is
+ * no second way for a stored value to reach a share file. Only the listed columns are read, so
+ * a new field on a row never leaks. `datos` holds the raw payload; `share` projects it by `tipo`.
  */
+export const projectRow = (
+  file: string,
+  mode: EditorialEvidenceMode,
+  row: CsvRow,
+  names: Pseudonyms,
+): ProjectedRow =>
+  Object.fromEntries(
+    columnsOf(file, mode).map((spec) => {
+      const value = row[spec.name] ?? null;
+      if (mode === "full" || spec.share === null) return [spec.name, value];
+      const shared = shareValue(spec.share, value, names, {
+        aggregate: row.agregado,
+        eventType: row.tipo,
+      });
+      return [
+        spec.name,
+        typeof shared === "object" && shared !== null ? stableJson(shared) : shared,
+      ];
+    }),
+  );
+
+const FORMULA_START = /^[=+\-@\t\r]/;
+
+/**
+ * A share cell. Share holds no free text, but a string that a spreadsheet would read as a
+ * formula still gets a leading `'` (defense in depth); numbers stay numbers. `full` is not
+ * neutralized: import its CSV as text.
+ */
+export const shareCsvCell = (value: CsvValue): string =>
+  typeof value === "string" && FORMULA_START.test(value) ? csvCell(`'${value}`) : csvCell(value);
+
+/** Renders `rows` of `file` for `mode` from their projection. */
 export const renderCsv = (
   file: string,
   mode: EditorialEvidenceMode,
@@ -502,23 +538,11 @@ export const renderCsv = (
   names: Pseudonyms,
 ): string => {
   const specs = columnsOf(file, mode);
+  const cell = mode === "share" ? shareCsvCell : csvCell;
   const lines = [specs.map((spec) => csvCell(spec.name)).join(",")];
   for (const row of rows) {
-    lines.push(
-      specs
-        .map((spec) => {
-          const value = row[spec.name] ?? null;
-          if (mode === "full" || spec.share === null) return csvCell(value);
-          const shared = shareValue(spec.share, value, names, {
-            aggregate: row.agregado,
-            eventType: row.tipo,
-          });
-          return csvCell(
-            typeof shared === "object" && shared !== null ? stableJson(shared) : shared,
-          );
-        })
-        .join(","),
-    );
+    const projected = projectRow(file, mode, row, names);
+    lines.push(specs.map((spec) => cell(projected[spec.name] ?? null)).join(","));
   }
   return `${lines.join("\n")}\n`;
 };

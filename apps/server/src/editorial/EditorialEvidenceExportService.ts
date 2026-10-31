@@ -27,7 +27,6 @@ import {
   ALL_EVIDENCE_FILES,
   CAPTURES_FILE,
   DECISIONS_FILE,
-  EVIDENCE_COLUMNS,
   EVENTS_FILE,
   EVIDENCE_FILES,
   EVIDENCE_SCHEMA,
@@ -49,8 +48,10 @@ import {
   shareWhitelist,
   stableJson,
   utcDay,
+  projectRow,
   type CsvRow,
-  type Pseudonyms,
+  type CsvValue,
+  type ProjectedRow,
 } from "./evidenceFormat.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { EditorialEventType } from "./persistence/EditorialModel.ts";
@@ -88,6 +89,13 @@ export interface EditorialEvidenceExportServiceShape {
   readonly write: (
     pkg: EvidencePackage,
     directory: string,
+    options?: {
+      /**
+       * Folder the real path of the destination must stay under, every ancestor resolved. The
+       * RPC passes the user's home; the CLI passes nothing and may write anywhere.
+       */
+      readonly within?: string;
+    },
   ) => Effect.Effect<string, EditorialEvidenceExportError>;
 }
 
@@ -288,14 +296,84 @@ const decisionRow = (decision: EditorialResultsDecision, current: boolean): CsvR
   decidida: decision.decidedAt,
 });
 
+const numberOrNull = (value: CsvValue): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const RESULTS_MODES: ReadonlySet<CsvValue> = new Set(["assisted", "manual"]);
+const RESULTS_ACTIONS: ReadonlySet<CsvValue> = new Set(["accept", "edit", "reject"]);
+
+/**
+ * A decision rebuilt from its projected `decisiones.csv` row, for the summary's aggregates. A
+ * row whose mode, action or utility did not pass its rule is left out of them.
+ */
+const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => {
+  const utility = numberOrNull(row.utilidad ?? null);
+  if (!RESULTS_MODES.has(row.modo ?? null) || !RESULTS_ACTIONS.has(row.accion ?? null)) {
+    return null;
+  }
+  if (utility === null) return null;
+  const mode = row.modo as EditorialResultsMode;
+  const durations = {
+    exploreMs: numberOrNull(row.explorar_ms ?? null),
+    readMs: numberOrNull(row.leer_ms ?? null),
+    writeMs: numberOrNull(row.escribir_ms ?? null),
+    decideMs: numberOrNull(row.decidir_ms ?? null),
+    totalMs: numberOrNull(row.total_ms ?? null),
+  };
+  const stages = (
+    [
+      ["explore", durations.exploreMs],
+      ["read", durations.readMs],
+      ["write", durations.writeMs],
+      ["decide", durations.decideMs],
+    ] as const
+  ).flatMap(([stage, ms]) => (ms === null ? [] : [stage]));
+  const claims = numberOrNull(row.afirmaciones ?? null);
+  const cited = numberOrNull(row.con_cita ?? null);
+  const metrics = {
+    views: numberOrNull(row.vistas ?? null),
+    subscribers: numberOrNull(row.suscriptores ?? null),
+    clicks: numberOrNull(row.clics ?? null),
+    comments: numberOrNull(row.comentarios ?? null),
+  };
+  const observedAt = typeof row.metricas_observadas === "string" ? row.metricas_observadas : null;
+  return {
+    decisionId: "",
+    threadId: String(row.hilo ?? ""),
+    environmentId: "",
+    mode,
+    trendKey: null,
+    runId: null,
+    dossierId: null,
+    action: row.accion as EditorialResultsDecision["action"],
+    utility,
+    reason: null,
+    decidedAt: "",
+    current: row.vigente === true,
+    clockDefinitive: row.reloj_definitivo === true,
+    stages,
+    coverage: EditorialResultsService.coverageOf(mode, stages),
+    durations,
+    script:
+      claims === null || cited === null
+        ? null
+        : { versionHash: String(row.guion_hash ?? ""), claims, cited },
+    video: observedAt === null ? null : { ...metrics, observedAt },
+  };
+};
+
+/**
+ * Everything `resumen.md` shows, already projected: decisions and runs are the rows of
+ * `decisiones.csv` and `corridas.csv` after `projectRow`, the sequence passed its rule. The
+ * summary has no way of its own to read a stored value.
+ */
 interface SummaryInput {
   readonly mode: EditorialEvidenceMode;
-  readonly names: Pseudonyms;
   readonly since: string | null;
   readonly until: string | null;
-  readonly lastEventSeq: number;
-  readonly decisions: ReadonlyArray<EditorialResultsDecision>;
-  readonly runs: ReadonlyArray<RunRow>;
+  readonly lastEventSeq: number | null;
+  readonly decisionRows: ReadonlyArray<ProjectedRow>;
+  readonly runRows: ReadonlyArray<ProjectedRow>;
   readonly sources: ReadonlyArray<EditorialSourceEntry>;
   readonly fileRows: ReadonlyArray<{ readonly name: string; readonly rows: number }>;
 }
@@ -342,7 +420,9 @@ const filterText = (
 
 /** `resumen.md`: aggregates only, no free text and no export timestamp. */
 const renderSummary = (input: SummaryInput): string => {
-  const { modes, comparisons } = EditorialResultsService.summarizeDecisions(input.decisions);
+  const { modes, comparisons } = EditorialResultsService.summarizeDecisions(
+    input.decisionRows.flatMap((row) => decisionFromRow(row) ?? []),
+  );
   const filter = filterText(input.mode, input.since, input.until);
   const stageRows = modes.flatMap((mode) => [
     ...mode.stages.map((entry) => [
@@ -397,21 +477,16 @@ const renderSummary = (input: SummaryInput): string => {
     mode.citations.cited,
     mode.citations.ratio === null ? "sin datos" : formatDecimal(mode.citations.ratio),
   ]);
-  // In share every cell goes through its column rule, as in `corridas.csv`.
-  const runCell = (column: string, value: unknown): string | number => {
-    if (input.mode === "full") return value === null ? "" : (value as string | number);
-    const rule = EVIDENCE_COLUMNS[RUNS_FILE]?.find((spec) => spec.name === column)?.share;
-    const shared = rule ? shareValue(rule, value, input.names) : null;
-    return typeof shared === "string" || typeof shared === "number" ? shared : "";
-  };
-  const runRows = input.runs.map((run) => [
-    runCell("corrida", run.run_id),
-    utcDay(run.cutoff_at) ?? "sin corte",
-    runCell("estado_importacion", run.import_state),
-    run.dossier_count,
-    run.seen,
-    run.dismissed,
-    run.produced,
+  const cell = (value: CsvValue | undefined): string | number =>
+    typeof value === "string" || typeof value === "number" ? value : "";
+  const runRows = input.runRows.map((run) => [
+    cell(run.corrida),
+    utcDay(typeof run.corte === "string" ? run.corte : null) ?? "sin corte",
+    cell(run.estado_importacion),
+    cell(run.expedientes),
+    cell(run.vistas),
+    cell(run.descartadas),
+    cell(run.producidas),
   ]);
   const yesNo = (value: boolean) => (value ? "sí" : "no");
   // Only catalog sources: their names are constants of this build.
@@ -431,7 +506,7 @@ const renderSummary = (input: SummaryInput): string => {
   return [
     "# Evidencia de Earlyscript",
     "",
-    `Esquema \`${EVIDENCE_SCHEMA}\`, paquete ${input.mode === "full" ? "completo (uso local)" : "para compartir"}. Estado de la base hasta el evento ${input.lastEventSeq}. Filtro: ${filter}.`,
+    `Esquema \`${EVIDENCE_SCHEMA}\`, paquete ${input.mode === "full" ? "completo (uso local)" : "para compartir"}. Estado de la base hasta el evento ${input.lastEventSeq ?? "?"}. Filtro: ${filter}.`,
     "",
     "Estas cifras son descriptivas: hilos y temas distintos en cada modo, valorados por el operador. La comparación de la tesis es por pares, sobre el mismo tema y con revisores externos. Ningún porcentaje de ahorro se calcula aquí.",
     "",
@@ -513,11 +588,13 @@ const SHARE_RULES = [
   "Cada valor pasa por la regla de su columna (`columns[].rule`) o de su campo (`eventData`): enumeraciones cerradas, enteros, días, sha256 de 64 hexadecimales, versión x.y.z o engine.vX.Y e ids del catálogo de fuentes. Un valor que no cumple su regla queda vacío.",
   "Fechas redondeadas al día UTC, también las de los filtros (`filters`); las filas se filtraron con el instante pedido.",
   "Sin identificadores de entorno, operación ni sesión, y sin datos crudos de fuentes.",
+  "Una celda de texto que empiece por =, +, - o @ lleva delante una comilla simple (') para que una hoja de cálculo no la lea como fórmula; en share no debería haber ninguna.",
 ];
 
 const FULL_RULES = [
   "Paquete local para el operador: incluye texto libre (motivos, notas de captura, URL, títulos) y la carga íntegra de cada evento.",
-  "No incluye la sesión de cada evento ni el texto de los guiones (solo su sha256). La carga de cada evento se copia tal cual, sin sanear.",
+  "No incluye la sesión de cada evento ni el texto de los guiones (solo su sha256). Nada está saneado: la carga de cada evento y el texto libre se copian tal cual.",
+  "Las celdas no se neutralizan: un texto que empiece por =, +, - o @ es una fórmula para una hoja de cálculo. Al abrirlo, importar sus CSV como texto.",
   "No publicar ni subir a repositorios; para el informe y los revisores, exportar con --share.",
 ];
 
@@ -552,9 +629,9 @@ const make = Effect.gen(function* () {
         WHERE aggregate_kind = 'video_thread'
         GROUP BY aggregate_id
         UNION ALL
-        SELECT json_extract(payload_json, '$.threadId'), 1, NULL, MIN(seq) FROM editorial_events
+        SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.threadId') END, 1, NULL, MIN(seq) FROM editorial_events
         WHERE type = 'trend.production-linked'
-          AND json_extract(payload_json, '$.threadId') IS NOT NULL
+          AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.threadId') END IS NOT NULL
         GROUP BY 1
         UNION ALL
         SELECT production_thread_id, 1, NULL, 9007199254740991 FROM editorial_trend_inbox
@@ -583,12 +660,12 @@ const make = Effect.gen(function* () {
         SELECT aggregate_id, 1, NULL, MIN(seq) FROM editorial_events
         WHERE aggregate_kind = 'run' GROUP BY aggregate_id
         UNION ALL
-        SELECT json_extract(payload_json, '$.runId'), 1, NULL, MIN(seq) FROM editorial_events
-        WHERE json_extract(payload_json, '$.runId') IS NOT NULL GROUP BY 1
+        SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.runId') END, 1, NULL, MIN(seq) FROM editorial_events
+        WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.runId') END IS NOT NULL GROUP BY 1
         UNION ALL
-        SELECT json_extract(payload_json, '$.observed.runId'), 1, NULL, MIN(seq)
+        SELECT CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.observed.runId') END, 1, NULL, MIN(seq)
         FROM editorial_events
-        WHERE json_extract(payload_json, '$.observed.runId') IS NOT NULL GROUP BY 1
+        WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.observed.runId') END IS NOT NULL GROUP BY 1
         UNION ALL
         SELECT run_id, 1, NULL, 9007199254740991 FROM editorial_video_threads
         WHERE run_id IS NOT NULL
@@ -685,7 +762,7 @@ const make = Effect.gen(function* () {
         r.sources_json, r.dossier_count, r.skipped_files_json,
         (
           SELECT COUNT(DISTINCT e.aggregate_id) FROM editorial_events e
-          WHERE e.type = 'trend.read' AND json_extract(e.payload_json, '$.runId') = r.run_id
+          WHERE e.type = 'trend.read' AND CASE WHEN json_valid(e.payload_json) THEN json_extract(e.payload_json, '$.runId') END = r.run_id
         ) AS seen,
         (
           SELECT COUNT(DISTINCT d.trend_key) FROM editorial_dossiers d
@@ -789,14 +866,20 @@ const make = Effect.gen(function* () {
       [CAPTURES_FILE]: data.captures,
     };
     const csvNames = EVIDENCE_FILES[mode].filter((name) => name !== SUMMARY_FILE);
+    const project = (file: string) =>
+      (csv[file] ?? []).map((row) => projectRow(file, mode, row, data.names));
+    // In share the sequence passes its rule like any cell; `full` keeps the stored value.
+    const lastEventSeq =
+      mode === "share"
+        ? numberOrNull(shareValue({ kind: "int" }, data.lastEventSeq, data.names) as CsvValue)
+        : data.lastEventSeq;
     const summary = renderSummary({
       mode,
-      names: data.names,
       since: options.since ?? null,
       until: options.until ?? null,
-      lastEventSeq: data.lastEventSeq,
-      decisions,
-      runs: data.runs,
+      lastEventSeq,
+      decisionRows: project(DECISIONS_FILE),
+      runRows: project(RUNS_FILE),
       sources: view.sources,
       fileRows: csvNames.map((name) => ({ name, rows: csv[name]?.length ?? 0 })),
     });
@@ -849,7 +932,7 @@ const make = Effect.gen(function* () {
           ...(mode === "full" ? { [CAPTURES_FILE]: "capturada" } : {}),
         },
       },
-      state: { lastEventSeq: data.lastEventSeq },
+      state: { lastEventSeq },
       packageHash,
       files: files.map((file) => ({
         name: file.name,
@@ -888,7 +971,7 @@ const make = Effect.gen(function* () {
 
   const write: EditorialEvidenceExportServiceShape["write"] = Effect.fn(
     "EditorialEvidenceExportService.write",
-  )(function* (pkg, directory) {
+  )(function* (pkg, directory, options) {
     if (!path.isAbsolute(directory)) {
       return yield* new EditorialEvidenceExportError({
         reason: "target",
@@ -913,6 +996,22 @@ const make = Effect.gen(function* () {
       Effect.try({ try: () => NodeFS.realpathSync(entry), catch: unreachable(entry) });
 
     const parent = path.dirname(target);
+    // Containment: the real path of the deepest existing ancestor (links resolved all the way
+    // up) must already be under `within`, before anything is created.
+    const within = options?.within === undefined ? null : yield* realPath(options.within);
+    const inside = (real: string) =>
+      within === null ||
+      real === within ||
+      real.startsWith(within.endsWith(path.sep) ? within : `${within}${path.sep}`);
+    if (within !== null) {
+      let existing = target;
+      while ((yield* lstat(existing)) === undefined && path.dirname(existing) !== existing) {
+        existing = path.dirname(existing);
+      }
+      if (!inside(yield* realPath(existing))) {
+        return yield* refuse(`${target} is outside ${options!.within}. Choose a folder there.`);
+      }
+    }
     yield* fs.makeDirectory(parent, { recursive: true }).pipe(Effect.catch(failed));
     // The destination is a real folder of its parent, never a link to somewhere else.
     const before = yield* lstat(target);
@@ -927,6 +1026,9 @@ const make = Effect.gen(function* () {
     const resolved = yield* realPath(target);
     if (resolved !== path.join(yield* realPath(parent), path.basename(target))) {
       return yield* refuse(`${target} resolves outside its parent folder.`);
+    }
+    if (!inside(resolved)) {
+      return yield* refuse(`${target} is outside ${options!.within}. Choose a folder there.`);
     }
 
     const entries = yield* fs.readDirectory(target).pipe(Effect.catch(failed));

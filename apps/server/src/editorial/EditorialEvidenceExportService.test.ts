@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -11,6 +12,7 @@ import {
   EditorialResultsRpcGroup,
   RpcScopeAuthorization,
 } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,6 +29,7 @@ import {
   EVIDENCE_FILES,
   MANIFEST_FILE,
   SHARE_EVENT_DATA,
+  shareCsvCell,
   shareEventDataWhitelist,
   shareWhitelist,
   type ShareRule,
@@ -35,6 +38,7 @@ import { EditorialEventType } from "./persistence/EditorialModel.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { makeTempDir, withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.ts";
 import { appendEvent } from "./persistence/EditorialEventLog.ts";
+import { EDITORIAL_MIGRATIONS_TABLE } from "./persistence/Migrations.ts";
 import { runFixtureThread, seedResultsFixture } from "./resultsFixture.testkit.ts";
 import * as EditorialResultsRpc from "./resultsRpc.ts";
 
@@ -202,6 +206,8 @@ const withEvidence = <A, E, R>(body: Effect.Effect<A, E, R>) => {
     body.pipe(
       Effect.provide(
         handlers.pipe(
+          // Tests write under the temporary directory; R7 tests narrow it themselves.
+          Layer.provide(Layer.succeed(EditorialResultsRpc.EvidenceExportRoot, NodeOS.tmpdir())),
           Layer.provideMerge(EditorialEvidenceExportService.layerFromReads),
           Layer.provideMerge(reads),
           Layer.provideMerge(NodeServices.layer),
@@ -287,6 +293,8 @@ const seedEvidence = Effect.gen(function* () {
     `;
   }
 });
+
+class Rollback extends Data.TaggedError("Rollback")<{ readonly leaked: boolean }> {}
 
 /** Text an imported run or a stored payload could carry; none may reach share. */
 const ADVERSARIAL = [
@@ -833,6 +841,180 @@ describe("EditorialEvidenceExportService", () => {
         } finally {
           NodeFS.rmSync(root, { recursive: true, force: true });
         }
+      }),
+    ),
+  );
+
+  it.effect("leaks no stored value of any column into share (every table, by introspection)", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        yield* seedEvidence;
+        yield* seedAdversarial;
+        const sql = yield* EditorialSql;
+        yield* sql`
+            INSERT INTO editorial_browser_visits (visit_id, thread_id, tab_id, url, title, origin, visited_at)
+            VALUES ('visit-1', 'thread-manual-4', 'tab-1', 'https://x.invalid/', 'T', 'desktop',
+              '2026-10-27T10:00:00.000Z')
+          `;
+        const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+        const tables = yield* sql<{ readonly name: string }>`
+            SELECT name FROM sqlite_schema
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> ${EDITORIAL_MIGRATIONS_TABLE}
+            ORDER BY name
+          `;
+        // As Sol did: past the CHECKs and foreign keys, any text in any column.
+        yield* sql`PRAGMA foreign_keys = OFF`;
+        yield* sql`PRAGMA ignore_check_constraints = ON`;
+        const leaks: Array<string> = [];
+        const covered: Array<string> = [];
+        const unwritable: Array<string> = [];
+        const failures: Array<string> = [];
+        const empty: Array<string> = [];
+        for (const { name: table } of tables) {
+          const count = yield* sql<{
+            readonly n: number;
+          }>`SELECT COUNT(*) AS n FROM ${sql(table)}`;
+          if ((count[0]?.n ?? 0) === 0) {
+            empty.push(table);
+            continue;
+          }
+          const columns = yield* sql.unsafe<{ readonly name: string }>(
+            `PRAGMA table_info("${table}")`,
+          );
+          for (const { name: column } of columns) {
+            const marker = `MKR-${table}-${column}-`;
+            const outcome = yield* sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  yield* sql.unsafe(`UPDATE "${table}" SET "${column}" = '${marker}' || rowid`);
+                  const pkg = yield* evidence.build({ mode: "share" });
+                  const text = [...pkg.files.map((file) => file.content), pkg.manifest].join("\n");
+                  return yield* new Rollback({ leaked: text.includes(marker) });
+                }),
+              )
+              .pipe(
+                Effect.map(() => "unreachable" as const),
+                Effect.catchTags({
+                  Rollback: (rollback) => Effect.succeed(rollback.leaked ? "leak" : "clean"),
+                  // An INTEGER PRIMARY KEY (rowid alias) cannot hold text at all.
+                  SqlError: () => Effect.succeed("unwritable" as const),
+                  // A stored value must never make the export fail either.
+                  EditorialEvidenceExportError: () => Effect.succeed("failed" as const),
+                }),
+              );
+            const name = `${table}.${column}`;
+            if (outcome === "leak") leaks.push(name);
+            else if (outcome === "failed") failures.push(name);
+            else if (outcome === "unwritable") unwritable.push(name);
+            else covered.push(name);
+          }
+        }
+        assert.deepStrictEqual(leaks, []);
+        assert.deepStrictEqual(failures, []);
+        // Every table the export reads had rows, so its columns were really exercised.
+        for (const table of [
+          "editorial_events",
+          "editorial_runs",
+          "editorial_dossiers",
+          "editorial_trend_inbox",
+          "editorial_video_threads",
+          "editorial_work_intervals",
+          "editorial_decisions",
+          "editorial_script_versions",
+          "editorial_video_results",
+          "editorial_captures",
+          "editorial_browser_visits",
+          "editorial_source_settings",
+          "editorial_source_backtests",
+        ]) {
+          assert.notInclude(empty, table, table);
+        }
+        assert.include(covered, "editorial_runs.dossier_count");
+        assert.isAbove(covered.length, 100);
+        assert.deepStrictEqual(unwritable, ["editorial_events.seq"]);
+      }),
+    ),
+  );
+
+  it.effect("writes the RPC package only under its root, all ancestors resolved", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        yield* seedEvidence;
+        const handlersUnder = (root: string) =>
+          EditorialResultsRpc.makeHandlers.pipe(
+            Effect.provideService(EditorialResultsRpc.EvidenceExportRoot, root),
+          );
+        // The default root is the user's home: /tmp is outside it.
+        const home = yield* handlersUnder(NodeOS.homedir());
+        const tmp = `/tmp/earlyscript-r7-${process.pid}-${NodePath.basename(makeTempDir())}`;
+        try {
+          const refused = yield* Effect.flip(
+            home[EDITORIAL_RESULTS_WS_METHODS.export]({ mode: "share", directory: tmp }),
+          );
+          assert.strictEqual(refused._tag, "EditorialEvidenceExportError");
+          assert.isFalse(NodeFS.existsSync(tmp));
+        } finally {
+          NodeFS.rmSync(tmp, { recursive: true, force: true });
+        }
+        const root = makeTempDir();
+        const outside = makeTempDir();
+        try {
+          const handlers = yield* handlersUnder(root);
+          // A link inside the root whose target is outside it: an ancestor, not the folder.
+          NodeFS.symlinkSync(outside, NodePath.join(root, "atajo"), "dir");
+          const viaLink = yield* Effect.flip(
+            handlers[EDITORIAL_RESULTS_WS_METHODS.export]({
+              mode: "share",
+              directory: NodePath.join(root, "atajo", "nueva", "carpeta"),
+            }),
+          );
+          assert.strictEqual(viaLink._tag, "EditorialEvidenceExportError");
+          assert.deepStrictEqual(NodeFS.readdirSync(outside), []);
+          // A path that leaves the root by `..`.
+          const dotdot = yield* Effect.flip(
+            handlers[EDITORIAL_RESULTS_WS_METHODS.export]({
+              mode: "share",
+              directory: NodePath.join(root, "..", NodePath.basename(outside)),
+            }),
+          );
+          assert.strictEqual(dotdot._tag, "EditorialEvidenceExportError");
+          assert.deepStrictEqual(NodeFS.readdirSync(outside), []);
+          // Inside the root, new folders included, it writes.
+          const ok = yield* handlers[EDITORIAL_RESULTS_WS_METHODS.export]({
+            mode: "share",
+            directory: NodePath.join(root, "evidencia", "nueva"),
+          });
+          assert.isTrue(ok.directory!.startsWith(NodeFS.realpathSync(root)));
+          // The CLI path (no root) may still write anywhere real.
+          const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+          const free = NodePath.join(outside, "cli");
+          assert.strictEqual(yield* evidence.write(yield* exportOf("share"), free), free);
+        } finally {
+          NodeFS.rmSync(root, { recursive: true, force: true });
+          NodeFS.rmSync(outside, { recursive: true, force: true });
+        }
+      }),
+    ),
+  );
+
+  it.effect("neutralizes formula-looking share cells and keeps full as stored", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        assert.strictEqual(shareCsvCell("=cmd|' /C calc'!A0"), "'=cmd|' /C calc'!A0");
+        assert.strictEqual(shareCsvCell("+1"), "'+1");
+        assert.strictEqual(shareCsvCell("-x"), "'-x");
+        assert.strictEqual(shareCsvCell("@SUM(A1)"), "'@SUM(A1)");
+        assert.strictEqual(shareCsvCell(-5), "-5");
+        assert.strictEqual(shareCsvCell("h001"), "h001");
+        yield* seedEvidence;
+        const sql = yield* EditorialSql;
+        yield* sql`UPDATE editorial_decisions SET reason = '=HYPERLINK("http://x.invalid")'`;
+        const full = yield* exportOf("full");
+        const reasons = parseCsv(fileOf(full, "decisiones.csv")).map((row) => row.motivo);
+        assert.include(reasons, '=HYPERLINK("http://x.invalid")');
+        assert.include(full.manifest, "importar sus CSV como texto");
+        const share = yield* exportOf("share");
+        for (const file of share.files) assert.notInclude(file.content, "HYPERLINK", file.name);
       }),
     ),
   );

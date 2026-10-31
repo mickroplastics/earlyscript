@@ -86,8 +86,11 @@ const COMPLETE_STAGES: Readonly<
 export const coverageOf = (
   mode: EditorialResultsMode,
   stages: ReadonlyArray<EditorialResultsStage>,
-): EditorialResultsCoverage =>
-  COMPLETE_STAGES[mode].every((stage) => stages.includes(stage)) ? "complete" : "partial";
+): EditorialResultsCoverage => {
+  // A stored mode outside the enum (the table is not STRICT) is never complete.
+  const required = COMPLETE_STAGES[mode] as ReadonlyArray<EditorialResultsStage> | undefined;
+  return required?.every((stage) => stages.includes(stage)) ? "complete" : "partial";
+};
 
 interface DecisionRow {
   readonly decision_id: string;

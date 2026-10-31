@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the user's home bounds where the export RPC writes.
+import * as NodeOS from "node:os";
+
 import {
   EDITORIAL_RESULTS_WS_METHODS,
   EditorialEvidenceExportError,
@@ -55,10 +58,20 @@ export class EditorialResultsRpcHandlers extends Context.Reference<EditorialResu
   },
 ) {}
 
+/**
+ * Where the export RPC may write: the real path of the destination stays under this folder.
+ * The user's home by default; a client cannot widen it.
+ */
+export class EvidenceExportRoot extends Context.Reference<string>(
+  "t3/editorial/EvidenceExportRoot",
+  { defaultValue: () => NodeOS.homedir() },
+) {}
+
 export const makeHandlers = Effect.gen(function* () {
   const results = yield* EditorialResultsService.EditorialResultsService;
   const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
   const path = yield* Path.Path;
+  const root = yield* EvidenceExportRoot;
   return {
     [EDITORIAL_RESULTS_WS_METHODS.summary]: () => results.summary,
     [EDITORIAL_RESULTS_WS_METHODS.decisions]: results.decisions,
@@ -69,7 +82,13 @@ export const makeHandlers = Effect.gen(function* () {
         const pkg = yield* evidence.build(input);
         const files = pkg.files.map(({ name, sha256, bytes }) => ({ name, sha256, bytes }));
         if (input.directory !== undefined) {
-          const directory = yield* evidence.write(pkg, path.join(input.directory, pkg.packageName));
+          const directory = yield* evidence.write(
+            pkg,
+            path.join(input.directory, pkg.packageName),
+            {
+              within: root,
+            },
+          );
           return {
             mode: pkg.mode,
             packageHash: pkg.packageHash,
