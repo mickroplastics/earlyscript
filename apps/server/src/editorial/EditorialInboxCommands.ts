@@ -235,9 +235,20 @@ const make = Effect.gen(function* () {
     const shown = yield* read
       .getDossier({ runId: input.runId, dossierId: input.dossierId, evidenceLimit: 1 })
       .pipe(Effect.mapError(commandError("not-found", "Cannot read the dossier")));
+    // A purged manual thread frees its dossier: the next one takes a new operation, since the
+    // first one's T3 launch receipt still names the deleted thread.
+    const base = `editorial:trend-video-manual:${input.runId}:${input.dossierId}`;
+    const purged = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM editorial_events
+      WHERE type = 'video-thread.purged'
+        AND json_extract(payload_json, '$.operationId') LIKE ${`${base}%`}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.n ?? 0),
+      Effect.mapError(commandError("storage", "Cannot read the editorial events")),
+    );
     const created = yield* threads
       .createVideo({
-        operationId: `editorial:trend-video-manual:${input.runId}:${input.dossierId}`,
+        operationId: purged === 0 ? base : `${base}:${purged + 1}`,
         projectId: input.projectId,
         mode: "manual",
         title: shown.trend.presentation?.title ?? shown.trend.label,

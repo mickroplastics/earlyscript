@@ -215,7 +215,8 @@ export function ManualCaptureList({
           <p className="text-muted-foreground text-xs">
             {page === null
               ? "Abre una página en el navegador para capturarla."
-              : `Título y enlace se llenan solos desde ${hostOf(page.url)}; tú pones la nota.`}
+              : `Título y enlace se llenan solos desde ${hostOf(page.url)}; tú pones la nota.`}{" "}
+            «Quitar» oculta una captura; sus datos siguen guardados.
           </p>
         </div>
       )}

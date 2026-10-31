@@ -16,6 +16,7 @@ export const WRITING: EditorialVideoState = {
     runId: "run_20261019_20261027T003754_2263f7",
     dossierId: "dos_bbb80d57481e",
     trendTitle: "Computación cuántica: Google, IBM y hardware abierto",
+    deleted: false,
   },
   clock: {
     state: { _tag: "running", stage: "write", since: "2026-10-31T13:05:00.000Z" },
@@ -82,6 +83,7 @@ export const MANUAL_EXPLORING: EditorialVideoState = {
     runId: null,
     dossierId: null,
     trendTitle: null,
+    deleted: false,
   },
   clock: {
     state: { _tag: "running", stage: "explore", since: "2026-10-31T09:00:00.000Z" },

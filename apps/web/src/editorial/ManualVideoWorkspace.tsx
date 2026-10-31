@@ -8,7 +8,9 @@ import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { useQuietThreadShell } from "../state/entities";
 import { ManualBrowser, useCapturablePage } from "./ManualBrowser";
+import { useManualBrowserLocale } from "./manualBrowserLocale";
 import { ManualCaptureList, type ManualCaptureControls } from "./ManualCaptureList";
+import { ManualRetentionInfo } from "./ManualThreadData";
 import {
   MANUAL_STAGES,
   MANUAL_STAGE_LABEL,
@@ -224,7 +226,10 @@ function ManualVideoWorkspaceView({
             mismo tema que una tendencia (comparación por pares)
           </span>
         ) : null}
-        <div className="ms-auto">{clock}</div>
+        <div className="ms-auto flex items-center gap-2">
+          <ManualRetentionInfo />
+          {clock}
+        </div>
       </header>
       <div className="flex shrink-0 flex-col gap-2 px-4 py-2">
         <StageSelector
@@ -329,6 +334,7 @@ function LiveManualWorkspace({
   readonly receivedAtMs: number;
 }) {
   const nowMs = useNowSecond();
+  useManualBrowserLocale();
   const shell = useQuietThreadShell(threadRef);
   const workspaceRoot = useThreadWorkspaceRoot(threadRef);
   const page = useCapturablePage(threadRef);

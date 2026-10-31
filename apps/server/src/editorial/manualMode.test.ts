@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the purge test checks the version copy on disk.
+import * as NodeFS from "node:fs";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -8,6 +11,7 @@ import {
   ThreadId,
   type EditorialVideoError,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,7 +19,10 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerConfig from "../config.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import { BrowserVisitService, visitOfPreviewEvent } from "./BrowserVisitService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
@@ -29,9 +36,31 @@ const MANUAL = ThreadId.make("thread-manual");
 const MANUAL_SCRIPT = "videos/manual.md";
 const MINUTE = 60_000;
 
-/** The video handlers with the preview manager the browser history listens to. */
+/** Threads a test deleted in T3; the double of ThreadManagementService reports them so. */
+const deletedThreads = new Set<string>();
+
+/**
+ * The video handlers with the preview manager the browser history listens to, a state
+ * directory for version copies, and T3 threads that exist unless a test deleted them.
+ */
 const layer = EditorialVideoRpc.layer.pipe(
   Layer.provideMerge(PreviewManager.layer),
+  Layer.provideMerge(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (threadId) =>
+        Effect.succeed({
+          ...liveThreadShell(threadId),
+          deletedAt: deletedThreads.has(threadId)
+            ? DateTime.makeUnsafe("2026-10-31T06:00:00.000Z")
+            : null,
+        }),
+    }),
+  ),
+  Layer.provideMerge(
+    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "editorial-manual-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  ),
   Layer.provide(NodeServices.layer),
 );
 
@@ -65,6 +94,7 @@ const withManual = <A, E, R>(
 ) =>
   withVideoWorkspace((workspace) =>
     Effect.gen(function* () {
+      deletedThreads.clear();
       const handlers = yield* registerManual;
       return yield* body(handlers, workspace);
     }).pipe(Effect.provide(layer), Effect.scoped),
@@ -449,5 +479,185 @@ describe("manual video thread: creation", () => {
         { launch },
       );
     }),
+  );
+});
+
+describe("manual video thread: deleted in T3", () => {
+  it.effect("reads the record of a deleted thread and refuses work on it", () =>
+    withManual((handlers) =>
+      Effect.gen(function* () {
+        const saved = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.capture]({
+          threadId: MANUAL,
+          url: "https://news.ycombinator.com/",
+        });
+        assert.strictEqual(saved.thread.deleted, false);
+        // A live thread keeps its record: a purge needs the thread deleted first.
+        const live = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.purge]({ threadId: MANUAL }).pipe(
+          Effect.flip,
+        );
+        assert.strictEqual(reasonOf(live), "thread-live");
+
+        deletedThreads.add(MANUAL);
+        const view = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: MANUAL });
+        assert.strictEqual(view.video?.thread.deleted, true);
+        const refusals = [
+          handlers[EDITORIAL_VIDEO_WS_METHODS.capture]({ threadId: MANUAL, url: "https://x.com/" }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.removeCapture]({
+            threadId: MANUAL,
+            captureId: saved.captures[0]!.captureId,
+          }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.clock]({
+            threadId: MANUAL,
+            command: { _tag: "stage", stage: "write" },
+          }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.clock]({
+            threadId: MANUAL,
+            command: { _tag: "pause" },
+          }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: MANUAL }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.decide]({
+            threadId: MANUAL,
+            action: "accept",
+            utility: 3,
+            scriptVersionHash: null,
+            operationId: "decision-deleted",
+          }),
+          handlers[EDITORIAL_VIDEO_WS_METHODS.saveResult]({
+            threadId: MANUAL,
+            views: 1,
+            observedAt: "2026-10-31T12:00:00.000Z",
+          }),
+        ];
+        for (const refused of refusals) {
+          assert.strictEqual(reasonOf(yield* Effect.flip(refused)), "thread-deleted");
+        }
+        // Nothing moved: the clock still runs Explorar's one segment, the capture is listed.
+        const after = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: MANUAL });
+        assert.deepStrictEqual(
+          after.video?.clock.stages.map(({ stage, segments }) => [stage, segments]),
+          [["explore", 1]],
+        );
+        assert.strictEqual(after.video?.captures.length, 1);
+      }),
+    ),
+  );
+});
+
+describe("manual video thread: purge", () => {
+  it.effect("deletes every row and copy of a deleted thread, and nothing else", () =>
+    withManual((handlers, { write }) =>
+      Effect.gen(function* () {
+        const sql = yield* EditorialSql;
+        const visits = yield* BrowserVisitService;
+        yield* visits.record({
+          threadId: MANUAL,
+          tabId: "tab-1",
+          url: "https://news.ycombinator.com/",
+          title: "Hacker News",
+          origin: "server",
+        });
+        const kept = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.capture]({
+          threadId: MANUAL,
+          url: "https://github.com/trending",
+          note: "nota del operador",
+        });
+        // «Quitar» hides a capture; its row stays until the purge.
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.removeCapture]({
+          threadId: MANUAL,
+          captureId: kept.captures[0]!.captureId,
+        });
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.capture]({
+          threadId: MANUAL,
+          url: "https://x.com/",
+        });
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: MANUAL,
+          command: { _tag: "stage", stage: "write" },
+        });
+        yield* write(MANUAL_SCRIPT, SCRIPT);
+        const saved = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: MANUAL });
+        const hash = saved.script.head!.contentHash;
+        const copy = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.openVersion]({
+          threadId: MANUAL,
+          contentHash: hash,
+        });
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: MANUAL,
+          action: "accept",
+          utility: 4,
+          scriptVersionHash: hash,
+          operationId: "decision-purge",
+        });
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.saveResult]({
+          threadId: MANUAL,
+          views: 10,
+          observedAt: "2026-10-31T12:00:00.000Z",
+        });
+        yield* sql`
+          INSERT INTO editorial_trend_inbox (
+            trend_key, production_thread_id, production_linked_at, created_at, updated_at
+          )
+          VALUES ('trend:quantum', ${MANUAL}, '2026-10-31', '2026-10-31', '2026-10-31')
+        `;
+        assert.isTrue(NodeFS.existsSync(copy.path));
+
+        deletedThreads.add(MANUAL);
+        const purged = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.purge]({ threadId: MANUAL });
+        assert.deepStrictEqual(purged.deleted, {
+          visits: 1,
+          captures: 2,
+          scriptVersions: 1,
+          versionFiles: 1,
+          decisions: 1,
+          results: 1,
+          workIntervals: 3,
+          events: purged.deleted.events,
+        });
+        assert.isAbove(purged.deleted.events, 0);
+        assert.isFalse(NodeFS.existsSync(copy.path));
+
+        const counts = yield* Effect.forEach(
+          [
+            "editorial_video_threads",
+            "editorial_browser_visits",
+            "editorial_captures",
+            "editorial_script_versions",
+            "editorial_decisions",
+            "editorial_video_results",
+            "editorial_work_intervals",
+          ],
+          (table) =>
+            sql<{ readonly n: number }>`
+              SELECT COUNT(*) AS n FROM ${sql(table)} WHERE thread_id = ${MANUAL}
+            `.pipe(Effect.map((rows) => [table, rows[0]?.n] as const)),
+        );
+        assert.deepStrictEqual(
+          counts.filter(([, n]) => n !== 0),
+          [],
+        );
+        // Only the purge itself stays in the log, with counts and no URL or note.
+        const left = yield* sql<{ readonly type: string; readonly payload_json: string }>`
+          SELECT type, payload_json FROM editorial_events
+          WHERE aggregate_kind = 'video_thread' AND aggregate_id = ${MANUAL}
+        `;
+        assert.deepStrictEqual(
+          left.map((row) => row.type),
+          ["video-thread.purged"],
+        );
+        assert.notInclude(left[0]!.payload_json, "http");
+        assert.notInclude(left[0]!.payload_json, "nota");
+        const link = yield* sql<{ readonly production_thread_id: string | null }>`
+          SELECT production_thread_id FROM editorial_trend_inbox WHERE trend_key = 'trend:quantum'
+        `;
+        assert.strictEqual(link[0]?.production_thread_id, null);
+        // The view is that of an ordinary thread now; the other video thread is untouched.
+        const view = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: MANUAL });
+        assert.strictEqual(view.video, null);
+        const other = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({
+          threadId: ThreadId.make(VIDEO_THREAD_ID),
+        });
+        assert.strictEqual(other.video?.thread.mode, "assisted");
+      }),
+    ),
   );
 });

@@ -3,13 +3,13 @@ import { EnvironmentId, ThreadId, type EditorialVideoState } from "@t3tools/cont
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 const testState = vi.hoisted(() => ({
   live: null as null | { view: { threadId: string; video: unknown }; receivedAtMs: number },
-  mode: "unknown" as "unknown" | "manual" | "other",
+  mode: "unknown" as "unknown" | "manual" | "manual-deleted" | "other",
   calls: [] as Array<{ label: string; input: unknown }>,
   toast: vi.fn(),
 }));
@@ -49,6 +49,7 @@ vi.mock(import("../components/ui/toast"), async (original) => {
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { applyPreviewServerSnapshot, clearThreadPreviewState } from "../previewStateStore";
 import { EditorialThreadRouteView } from "./EditorialThreadRouteView";
+import { useManualBrowserLocale } from "./manualBrowserLocale";
 import { ManualVideoWorkspace } from "./ManualVideoWorkspace";
 import { MANUAL_EXPLORING, MANUAL_WRITING } from "./videoThread.fixture";
 
@@ -110,6 +111,72 @@ describe("EditorialThreadRouteView", () => {
     );
     await expect.element(screen.getByRole("textbox", { name: "Composer" })).toBeVisible();
     expect(screen.container.querySelector("[inert]")).toBeNull();
+  });
+});
+
+describe("a deleted manual thread", () => {
+  const target = { kind: "server" as const, threadRef: THREAD_REF };
+
+  it("shows what remains instead of the workspace, and purges after confirmation", async () => {
+    using _setup = setup({
+      ...MANUAL_EXPLORING,
+      thread: { ...MANUAL_EXPLORING.thread, deleted: true },
+    });
+    testState.mode = "manual-deleted";
+    await using screen = await renderWithRegistry(
+      <EditorialThreadRouteView target={target} background={false} />,
+    );
+    await expect.element(screen.getByText("Este hilo manual se borró")).toBeVisible();
+    expect(screen.container.querySelector("[data-testid='manual-video-workspace']")).toBeNull();
+    expect(screen.container.querySelector("[aria-label='Composer']")).toBeNull();
+    // Nothing on this page can move the clock or record work.
+    expect(screen.container.textContent).not.toContain("Capturar la página abierta");
+    await expect.element(screen.getByText(/«Quitar» oculta una captura/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Borrar datos del hilo" }));
+    // The confirmation renders in a portal, outside the screen's container.
+    await expect.element(page.getByText("¿Borrar los datos de este hilo?")).toBeVisible();
+    expect(callsOf("environment-data:editorial:video-purge")).toEqual([]);
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    await act(async () => {
+      [...dialog.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Sí, borrar los datos")!
+        .click();
+    });
+    expect(callsOf("environment-data:editorial:video-purge")).toEqual([
+      { threadId: "thread-manual" },
+    ]);
+    await expect
+      .element(screen.getByText("Sus datos editoriales también se borraron."))
+      .toBeVisible();
+    expect(callsOf(CLOCK)).toEqual([]);
+  });
+});
+
+function LocalizedBrowserDouble() {
+  useManualBrowserLocale();
+  return (
+    <div>
+      <button type="button" aria-label="Float preview over chat">
+        Release control
+      </button>
+      <input aria-label="Search or enter URL" placeholder="Search or enter URL" />
+      <span>Hacker News</span>
+    </div>
+  );
+}
+
+describe("useManualBrowserLocale", () => {
+  it("puts the embedded browser's controls in Spanish and leaves page text alone", async () => {
+    await using screen = await renderWithRegistry(<LocalizedBrowserDouble />);
+    await expect
+      .element(screen.getByRole("button", { name: "Ventana flotante del navegador" }))
+      .toHaveTextContent("Soltar el control");
+    await expect
+      .element(screen.getByRole("textbox", { name: "Busca o escribe una dirección" }))
+      .toHaveAttribute("placeholder", "Busca o escribe una dirección");
+    await expect.element(screen.getByText("Hacker News")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("chat");
   });
 });
 

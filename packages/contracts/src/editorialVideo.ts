@@ -32,6 +32,7 @@ export const EDITORIAL_VIDEO_WS_METHODS = {
   createManual: "editorial.video.createManual",
   capture: "editorial.video.capture",
   removeCapture: "editorial.video.removeCapture",
+  purge: "editorial.video.purge",
 } as const;
 
 export const EditorialVideoClockState = Schema.Union([
@@ -139,6 +140,11 @@ export const EditorialVideoThread = Schema.Struct({
   dossierId: Schema.NullOr(Schema.String),
   /** Assistant title of the dossier, else the engine label; null when the run is not readable. */
   trendTitle: Schema.NullOr(Schema.String),
+  /**
+   * The T3 thread was deleted, or is gone after its launch. Its editorial record stays until
+   * `purge`; work commands answer `thread-deleted`.
+   */
+  deleted: Schema.Boolean,
 });
 export type EditorialVideoThread = typeof EditorialVideoThread.Type;
 
@@ -287,6 +293,25 @@ export const EditorialVideoRemoveCaptureInput = Schema.Struct({
 });
 export type EditorialVideoRemoveCaptureInput = typeof EditorialVideoRemoveCaptureInput.Type;
 
+export const EditorialVideoPurgeInput = Schema.Struct({ threadId: ThreadId });
+export type EditorialVideoPurgeInput = typeof EditorialVideoPurgeInput.Type;
+
+/** What a purge deleted, row by row and file by file. */
+export const EditorialVideoPurgeResult = Schema.Struct({
+  threadId: ThreadId,
+  deleted: Schema.Struct({
+    visits: NonNegativeInt,
+    captures: NonNegativeInt,
+    scriptVersions: NonNegativeInt,
+    versionFiles: NonNegativeInt,
+    decisions: NonNegativeInt,
+    results: NonNegativeInt,
+    workIntervals: NonNegativeInt,
+    events: NonNegativeInt,
+  }),
+});
+export type EditorialVideoPurgeResult = typeof EditorialVideoPurgeResult.Type;
+
 export const EditorialVideoErrorReason = Schema.Literals([
   "unavailable",
   /** The thread has no editorial association, or the interval does not exist. */
@@ -304,6 +329,10 @@ export const EditorialVideoErrorReason = Schema.Literals([
   "not-decided",
   /** The script file is missing, outside the workspace or not text. */
   "script-file",
+  /** The T3 thread was deleted: its record can be read or purged, not worked on. */
+  "thread-deleted",
+  /** A purge needs the T3 thread deleted first, so a live thread never loses its mode. */
+  "thread-live",
   "storage",
 ]);
 export type EditorialVideoErrorReason = typeof EditorialVideoErrorReason.Type;
@@ -389,6 +418,17 @@ const EditorialVideoRemoveCaptureRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.remov
   error: videoError,
 });
 
+/**
+ * Deletes a video thread's editorial record and its version copies for good; one event with
+ * counts remains. Only once the T3 thread is deleted (`thread-live` otherwise): a live manual
+ * thread without its record would lose the policy that keeps agents out.
+ */
+const EditorialVideoPurgeRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.purge, {
+  payload: EditorialVideoPurgeInput,
+  success: EditorialVideoPurgeResult,
+  error: videoError,
+});
+
 /** Merged into `WsRpcGroup` next to the editorial and Results groups. */
 export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoGetRpc,
@@ -401,6 +441,7 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoCreateManualRpc,
   EditorialVideoCaptureRpc,
   EditorialVideoRemoveCaptureRpc,
+  EditorialVideoPurgeRpc,
 );
 
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
@@ -414,4 +455,5 @@ export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_VIDEO_WS_METHODS.createManual]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.capture]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.purge]: AuthOrchestrationOperateScope,
 } as const;

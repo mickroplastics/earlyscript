@@ -30,13 +30,15 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as BrowserVisits from "./BrowserVisitService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
+import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type { DecisionAction, VideoThread } from "./persistence/EditorialModel.ts";
+import { nowIso } from "./persistence/support.ts";
 import { ScriptVersionService } from "./ScriptVersionService.ts";
 import { WorkClockService } from "./WorkClockService.ts";
 
@@ -52,6 +54,7 @@ export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
   [EDITORIAL_VIDEO_WS_METHODS.createManual]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.capture]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.purge]: "editorial",
 } as const;
 
 type VideoRpcs = RpcGroup.Rpcs<typeof EditorialVideoRpcGroup>;
@@ -92,6 +95,7 @@ export class EditorialVideoRpcHandlers extends Context.Reference<EditorialVideoH
       [EDITORIAL_VIDEO_WS_METHODS.createManual]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.capture]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.purge]: () => Effect.fail(unavailable),
     }),
   },
 ) {}
@@ -229,6 +233,8 @@ const makeHandlers = Effect.gen(function* () {
   // thread still works and shows its dossier id.
   const reader = yield* Effect.serviceOption(EditorialReadService);
   const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  // Whether the T3 thread still exists; without the service (a test), every thread does.
+  const threadManagement = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
 
   const scriptCounts = boundedCache<{ claims: number; cited: number } | null>();
   const trendTitles = boundedCache<string>();
@@ -288,6 +294,19 @@ const makeHandlers = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * Deleted in T3, or absent after its launch. A failed read counts as present: the view stays
+   * readable and the policy, not this check, guards agent work.
+   */
+  const isDeleted = Effect.fn("EditorialVideoRpc.isDeleted")(function* (thread: VideoThread) {
+    if (Option.isNone(threadManagement)) return false;
+    const shell = yield* threadManagement.value
+      .getThreadShell(ThreadId.make(thread.threadId))
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (shell === undefined) return false;
+    return shell === null ? thread.launchState === "launched" : shell.deletedAt !== null;
+  });
+
   const readState = Effect.fn("EditorialVideoRpc.readState")(function* (thread: VideoThread) {
     const threadId = thread.threadId;
     const clock = yield* clocks.summary(threadId);
@@ -332,6 +351,7 @@ const makeHandlers = Effect.gen(function* () {
         runId: thread.runId,
         dossierId: thread.dossierId,
         trendTitle: yield* trendTitleOf(thread),
+        deleted: yield* isDeleted(thread),
       },
       clock: {
         state:
@@ -382,11 +402,20 @@ const makeHandlers = Effect.gen(function* () {
       Effect.mapError(toVideoError),
     );
 
-  /** A command on one video thread, answered with the thread's state after it. */
+  /**
+   * A work command on one video thread, answered with the thread's state after it. Refused on
+   * a thread deleted in T3: a stale tab or a direct URL cannot keep its clock or record going.
+   */
   const onThread = Effect.fn("EditorialVideoRpc.onThread")(function* <
     E extends { readonly _tag: string; readonly message: string },
   >(threadId: string, body: (thread: VideoThread) => Effect.Effect<unknown, E>) {
     const thread = yield* requireThread(threadId).pipe(Effect.mapError(toVideoError));
+    if (yield* isDeleted(thread)) {
+      return yield* videoError(
+        "thread-deleted",
+        `Thread ${threadId} was deleted; its editorial record is read-only until purged.`,
+      );
+    }
     yield* body(thread).pipe(Effect.mapError(toVideoError));
     return yield* stateOf(thread);
   });
@@ -458,6 +487,104 @@ const makeHandlers = Effect.gen(function* () {
       }),
     );
 
+  /** Where `openVersion` writes the read-only copy of a version, by content hash. */
+  const versionDirOf = (stateDir: string, contentHash: string) =>
+    NodePath.join(
+      stateDir,
+      "editorial",
+      "versions",
+      contentHash.replace(/[^A-Za-z0-9]/g, "").slice(0, 64),
+    );
+
+  /** Rows of a table for one thread, deleted, and how many. */
+  const deleteRows = (table: string, threadId: string) =>
+    sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM ${sql(table)} WHERE thread_id = ${threadId}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.n ?? 0),
+      Effect.tap(() => sql`DELETE FROM ${sql(table)} WHERE thread_id = ${threadId}`),
+    );
+
+  const purge = Effect.fn("EditorialVideoRpc.purge")(function* (threadId: string) {
+    const thread = yield* requireThread(threadId);
+    if (!(yield* isDeleted(thread))) {
+      return yield* videoError(
+        "thread-live",
+        "Borra primero el hilo; sus datos editoriales se borran después.",
+      );
+    }
+    const purged = yield* log.transact(
+      "editorial.purgeVideoThread",
+      Effect.gen(function* () {
+        const hashes = yield* sql<{ readonly content_hash: string }>`
+          SELECT content_hash FROM editorial_script_versions WHERE thread_id = ${threadId}
+        `;
+        // Decisions name a version, so they go before the versions they reference.
+        const deleted = {
+          visits: yield* deleteRows("editorial_browser_visits", threadId),
+          captures: yield* deleteRows("editorial_captures", threadId),
+          decisions: yield* deleteRows("editorial_decisions", threadId),
+          results: yield* deleteRows("editorial_video_results", threadId),
+          workIntervals: yield* deleteRows("editorial_work_intervals", threadId),
+          scriptVersions: yield* deleteRows("editorial_script_versions", threadId),
+        };
+        const events = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM editorial_events
+          WHERE aggregate_kind = 'video_thread' AND aggregate_id = ${threadId}
+        `.pipe(Effect.map((rows) => rows[0]?.n ?? 0));
+        yield* sql`
+          DELETE FROM editorial_events
+          WHERE aggregate_kind = 'video_thread' AND aggregate_id = ${threadId}
+        `;
+        const at = yield* nowIso;
+        yield* sql`
+          UPDATE editorial_trend_inbox
+          SET production_thread_id = NULL, production_linked_at = NULL, updated_at = ${at}
+          WHERE production_thread_id = ${threadId}
+        `;
+        yield* sql`DELETE FROM editorial_video_threads WHERE thread_id = ${threadId}`;
+        // Counts only: the record of the purge keeps no URL, note or script.
+        const event = yield* appendEvent(sql, {
+          type: "video-thread.purged",
+          aggregateKind: "video_thread",
+          aggregateId: threadId,
+          actor: "operator",
+          payload: { operationId: thread.operationId, mode: thread.mode, ...deleted, events },
+          createdAt: at,
+        });
+        // A copy on disk is shared by content: kept while another thread holds the same hash.
+        const shared = yield* sql<{ readonly content_hash: string }>`
+          SELECT DISTINCT content_hash FROM editorial_script_versions
+          WHERE content_hash IN ${sql.in(hashes.map((row) => row.content_hash).concat(""))}
+        `;
+        const sharedHashes = new Set(shared.map((row) => row.content_hash));
+        const orphanHashes = hashes
+          .map((row) => row.content_hash)
+          .filter((hash) => !sharedHashes.has(hash));
+        return { result: { deleted: { ...deleted, events }, orphanHashes }, events: [event] };
+      }),
+    );
+    let versionFiles = 0;
+    if (Option.isSome(config)) {
+      const stateDir = config.value.stateDir;
+      for (const hash of purged.orphanHashes) {
+        const dir = versionDirOf(stateDir, hash);
+        versionFiles += yield* Effect.tryPromise({
+          try: async () => {
+            const names = await NodeFSP.readdir(dir).catch(() => [] as string[]);
+            await NodeFSP.rm(dir, { recursive: true, force: true });
+            return names.length;
+          },
+          catch: () => videoError("storage", "Cannot delete a version's read-only copy."),
+        });
+      }
+    }
+    return {
+      threadId: ThreadId.make(threadId),
+      deleted: { ...purged.deleted, versionFiles },
+    };
+  }, Effect.mapError(toVideoError));
+
   /**
    * The snapshot of a saved version as a read-only file under the server's state directory.
    * The file surface shows an absolute host path without editing, so the decided script reads
@@ -484,13 +611,7 @@ const makeHandlers = Effect.gen(function* () {
       );
     }
     const name = NodePath.basename(row.script_path ?? "") || "guion.md";
-    const target = NodePath.join(
-      config.value.stateDir,
-      "editorial",
-      "versions",
-      contentHash.replace(/[^A-Za-z0-9]/g, "").slice(0, 64),
-      name,
-    );
+    const target = NodePath.join(versionDirOf(config.value.stateDir, contentHash), name);
     yield* Effect.tryPromise({
       try: async () => {
         await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
@@ -574,6 +695,7 @@ const makeHandlers = Effect.gen(function* () {
     [EDITORIAL_VIDEO_WS_METHODS.openVersion]: ({ threadId, contentHash }) =>
       openVersion(threadId, contentHash),
     [EDITORIAL_VIDEO_WS_METHODS.createManual]: (input) => createManual(input),
+    [EDITORIAL_VIDEO_WS_METHODS.purge]: ({ threadId }) => purge(threadId),
     [EDITORIAL_VIDEO_WS_METHODS.capture]: ({ threadId, url, title, note }) =>
       onThread(threadId, (thread) =>
         commands.saveCapture({

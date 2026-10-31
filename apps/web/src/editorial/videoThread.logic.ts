@@ -228,6 +228,8 @@ const FAILURE_TEXT: Readonly<Record<EditorialVideoErrorReason, string>> = {
   "clock-unresolved": "Resuelve el tramo abierto antes de decidir.",
   "not-decided": "Registra la decisión antes del resultado.",
   "script-file": "No se pudo leer el archivo del guion.",
+  "thread-deleted": "El hilo se borró: su registro editorial ya no admite cambios.",
+  "thread-live": "Borra primero el hilo; sus datos editoriales se borran después.",
   storage: "No se pudo escribir en la base editorial.",
 };
 

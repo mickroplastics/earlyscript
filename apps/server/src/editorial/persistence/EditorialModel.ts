@@ -79,6 +79,7 @@ export const EditorialEventType = Schema.Literals([
   "video-thread.registered",
   "video-thread.launched",
   "video-thread.launch-failed",
+  "video-thread.purged",
   "work.started",
   "work.paused",
   "work.resumed",
