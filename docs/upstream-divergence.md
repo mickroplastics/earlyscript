@@ -20,6 +20,8 @@ Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su p
 
 11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 
+12. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
+
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
@@ -874,3 +876,46 @@ Corrida completa en Beatriz (corpus `~/earlywindow-data/corpus`, corte `2026-10-
 El apilado es 9,7 veces más rápido y la corrida 9,5 veces. La corrida de la tabla se hizo en `7863543463`, con el mismo árbol que `df15d94cd1`: solo cambió después el mensaje de un commit anterior. `engine check` y `engine check --rerun` coinciden. Banco sobre la entrada volcada, cada versión fijada a un núcleo P con las tres en paralelo: referencia 430 a 446 s, poda con cuatro centroides 160 s y pares 75 s, con el mismo hash estricto de ids, miembros, fechas y bytes de centroides. Evidencia en `~/earlyscript-data/engine-perf/README.md`.
 
 No se intentó: una cota más ajustada con proyecciones (PCA), porque con un coseno medio de 0,43 entre ítems la cota del resto seguiría siendo holgada y cada centroide modificado tendría que proyectarse de nuevo (estimación, no medida); índices aproximados, porque cambian el resultado; ni hilos, WebAssembly o código nativo, fuera del alcance de la unidad.
+
+## 13. Espacio Resultados
+
+Base: `638a6cf64e`, fusionada con `main` en `ed5c3a2903`. Rama `es/results-space`. Tercer espacio del sidebar, solo lectura sobre `editorial.sqlite`: tiempo por ficha asistido frente a manual, utilidad media, afirmaciones con cita, bandeja de tendencias, métricas de video y registro de decisiones. Decisiones 7 y 9 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §12 y §14 (U8).
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialResults.ts` (esquemas, `EditorialResultsRpcGroup` con `editorial.results.summary` y `editorial.results.decisions`, `EDITORIAL_RESULTS_WS_METHODS`, `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES` con `orchestration:read`, `EditorialResultsError`).
+- Servidor, en `apps/server/src/editorial/`: `EditorialResultsService.ts` (lecturas con `EditorialSql`, cuantiles y agregados), `resultsRpc.ts` (handlers como `Context.Reference` con valor por defecto `unavailable`, agregados de trazas y capa), `resultsFixture.testkit.ts` (seis hilos, tres asistidos y tres manuales, escritos con `EditorialThreadService`, `WorkClockService` y `EditorialCommandService` bajo `TestClock`) y `EditorialResultsService.test.ts`.
+- Cliente: `apps/web/src/editorial/resultsState.ts` y, en `apps/web/src/editorial/results/`, `ResultsPage.tsx`, `ResultsNavigation.tsx`, `results.logic.ts` y sus pruebas (`results.logic.test.ts`, `ResultsPage.browser.test.tsx`).
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                              |
+| ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialResultsRpcGroup` y lo compone con `.merge` después del grupo editorial.                            |
+| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialResults.ts`.                                                                                     |
+| `apps/server/src/ws.ts`                               | 245, 1874 | Esparce los handlers de Resultados, leídos de su `Reference`, junto a `editorialHandlers`.                           |
+| `apps/server/src/server.ts`                           | 52, 634   | Monta `resultsRpc.layer` en `layerRuntimeCoreDependenciesBase`, sobre `EditorialRuntime.aroundOrchestration` (§10).  |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES`.                                                                     |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_RESULTS_RPC_AGGREGATES`.                                                                          |
+| `apps/server/package.json`                            | 77        | `@earlyscript/editorial-script` como dependencia de desarrollo del workspace, igual que en `es/video-thread-server`. |
+| `pnpm-lock.yaml`                                      | 943-945   | Importer de esa dependencia, idéntico al de `es/video-thread-server`.                                                |
+
+Archivo propio tocado: `apps/web/src/editorial/EditorialSidebar.tsx`, que monta `ResultsNavigation` en lugar del aviso fijo. La ruta `_chat.editorial.$environmentId.results.tsx` ya existía y ahora monta `ResultsPage`; `routeTree.gen.ts` no cambia.
+
+Decisiones reversibles:
+
+- Montaje: los handlers viven en una `Context.Reference` (`EditorialResultsRpcHandlers`) construida una vez en `server.ts`; `ws.ts` solo los esparce. `layerWsRpc` conserva su firma y las pruebas de upstream que lo montan con dobles reciben `unavailable`. Es el mismo patrón que `es/editorial-write` usa para `EditorialRpcHandlers`; si ambos se fusionan, los dos grupos pueden compartir una sola `Reference`.
+- Unidad de análisis: la decisión vigente de cada hilo de video, que es la más reciente por `decided_at`. Las anteriores siguen en el registro, marcadas «reemplazada», y no entran en los agregados.
+- Tiempos: las duraciones que `recordDecision` guarda con la decisión, ya sin pausas. Un hilo cuya decisión tiene `clock_definitive = 0` queda fuera de todas las estadísticas de tiempo y se cuenta aparte; su total aparece en la tabla con «≥». Una etapa que no corrió en un hilo no aporta un cero: ese hilo no entra en el n de la etapa.
+- Estadísticos: mediana y cuartiles por interpolación lineal entre estadísticos de orden (tipo 7 de R), con n, mínimo y máximo. Ningún porcentaje de reducción ni «ahorro»: la página muestra las dos medianas y su diferencia con los dos n, y una nota de que la comparación de la tesis es por pares, sobre el mismo tema y con revisores externos.
+- Comparaciones de la decisión 9: explorar (manual `explore` frente a asistido `explore` más `read`, porque leer el expediente reemplaza la exploración a mano; nulo si ninguna corrió), escribir (`write` frente a `write`) y proceso completo (total frente a total, solo hilos con cobertura completa). Escribir y proceso completo se muestran por separado y nunca se suman.
+- Cobertura: cada decisión lleva las etapas registradas (duración no nula; cero milisegundos cuenta como registrada) y `coverage`. Es `complete` si el hilo asistido registró `read`, `write` y `decide` (su `explore` es opcional: exploró el motor) o si el manual registró `explore`, `write` y `decide`; si falta alguna, `partial`. La regla está en `coverageOf` de `EditorialResultsService.ts`. Un hilo con un solo minuto de `write` queda fuera de «Proceso completo» y entra en la comparación `recorded`, «Total de etapas registradas», que toma todos los hilos con reloj definitivo y se muestra como línea bajo las tarjetas con el aviso «Cobertura parcial: incluye N hilos…». Cada comparación informa los hilos parciales que contiene; el resumen por modo, `partialCoverage`. La fila «Total registrado» de la tabla por etapa usa el total de todos los hilos con reloj, como `recorded`.
+- Afirmaciones con cita: `checkScript` de `@earlyscript/editorial-script` sobre el `snapshot` de `editorial_script_versions` cuyo hash nombra la decisión, sin expediente. Cuenta oraciones con un marcador de cita propio o heredado del párrafo; no mide respaldo semántico ni el 90 % de la tesis. La proporción por modo suma afirmaciones de todos los guiones (no promedia proporciones). Una decisión sin versión no aporta. El conteo se guarda en memoria por hash, hasta 500 entradas.
+- Utilidad: la que registra el operador con la decisión (1 a 5), con media, n y distribución. Las valoraciones de revisores externos y las versiones de rúbrica no están en esta base y no se mezclan aquí.
+- Bandeja: cuatro conteos independientes sobre `editorial_trend_inbox`: leídas (`seen_at`), en observación (`snoozed_at` sin descarte), descartadas (`dismissed_at`) y en producción (`production_thread_id`).
+- Métricas de video: la observación más reciente por `observed_at`, solo descriptiva, sin atribución al sistema ni al modo.
+- Página: tarjetas de las tres comparaciones; gráfico de barras SVG por etapa (barra = mediana, trazo = RIC, línea discontinua = etapa sin registro), con escala común y sin librería; la misma información en una tabla; tabla de decisiones paginada de 20 en 20 con filtro por modo. Los colores de serie son `primary` (asistido) y `muted-foreground` (manual): el repositorio no define tokens `--chart-*`. El nombre del hilo sale del shell de T3 si existe (con enlace al hilo); si no, de la tendencia o de los primeros ocho caracteres del id.
+- Estado vacío: «Aún no hay decisiones registradas. Resultados se llena con cada hilo de video que cierres.» La bandeja aparece antes de la primera decisión solo si algún conteo es mayor que cero.
+- `ResultsNavigation` lista las secciones de la página como anclas (`useLinkProps` con `hash` y `hashScrollIntoView`), no ítems. Todas apuntan a la misma ruta y el router marca activas a todas con `aria-current="page"`, que `Link` aplica después de cualquier prop y que `activeOptions` no puede apagar sin `includeHash` (que dejaría `page` en la seleccionada). `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active` de las props del enlace; solo la sección que nombra el hash recibe `aria-current="location"` (`sectionAriaCurrent`).
+- Decisiones tiene tres estados (`ResultsDecisionsState`): «Cargando decisiones…» mientras la página no llegó, un aviso de error con el motivo (`decisionsFailureText`: base no disponible, base ilegible, entorno sin autorización o entorno sin respuesta) y el botón «Reintentar», que refresca el átomo de esa página con `useAtomRefresh`, o la tabla. Tendencias trata el fallo con un aviso y la carga sin contenido; aquí el resumen ya está en pantalla, así que la sección explica lo que falta en lugar de desaparecer.
+- Texto del aviso descriptivo: «Estas diferencias son descriptivas», sin la palabra «ahorro».
