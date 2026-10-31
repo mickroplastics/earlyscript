@@ -56,12 +56,9 @@ interface Tagged {
 }
 
 /**
- * The listing is walked once for a range of days and kept between days; only tagged articles
- * stay in memory. Page numbers shift while new articles arrive: repeats are merged by id, and
- * an article deleted during the walk can push one unseen article back a page. The CDN can
- * serve a cached page (`Age`) taken before the previous one; the articles published between
- * the two pages then fall in no page, so the days across that boundary stay `partial` and the
- * next collect, which retries partial days, fills them by id.
+ * One walk of the listing serves a range of days; only tagged articles stay in memory. Repeats
+ * from shifted pages merge by id. A CDN page older than the previous one (`Age`) can hide the
+ * articles between them: days across that boundary stay `partial` with the range in the note.
  */
 export function devtoCollector(): (
   day: string,
