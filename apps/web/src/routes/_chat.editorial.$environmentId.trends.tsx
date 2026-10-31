@@ -10,7 +10,7 @@ function TrendsRouteView() {
     <EditorialEmptyPage
       space="Tendencias"
       title="Elige una tendencia"
-      description="Abre una tendencia de la lista para leer su expediente: curva, cobertura, evidencia y por qué está aquí."
+      description="Abre una tendencia de la lista para leer su ficha de tendencia: curva, cobertura, evidencia y por qué está aquí."
     />
   );
 }

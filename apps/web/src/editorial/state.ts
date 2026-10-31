@@ -18,7 +18,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 /** Bumped after an inbox command succeeds, so open inbox and dossier reads refetch. */
 const inboxRevision = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
 
-const bumpInbox = (
+export const bumpInbox = (
   { environmentId }: { readonly environmentId: EnvironmentId },
   registry: AtomRegistry.AtomRegistry,
 ) => Effect.sync(() => registry.update(inboxRevision(environmentId), (value) => value + 1));

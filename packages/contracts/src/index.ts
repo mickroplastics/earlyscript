@@ -70,4 +70,5 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./editorial.ts";
 export * from "./editorialResults.ts";
+export * from "./editorialPresentation.ts";
 export * from "./editorialVideo.ts";

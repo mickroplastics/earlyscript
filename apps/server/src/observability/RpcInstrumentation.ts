@@ -7,6 +7,7 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { EDITORIAL_RPC_AGGREGATES } from "../editorial/rpc.ts";
 import { EDITORIAL_RESULTS_RPC_AGGREGATES } from "../editorial/resultsRpc.ts";
+import { EDITORIAL_PRESENTATION_RPC_AGGREGATES } from "../editorial/presentationRpc.ts";
 import { EDITORIAL_VIDEO_RPC_AGGREGATES } from "../editorial/videoRpc.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
@@ -16,6 +17,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 const RPC_AGGREGATES = {
   ...EDITORIAL_RPC_AGGREGATES,
   ...EDITORIAL_RESULTS_RPC_AGGREGATES,
+  ...EDITORIAL_PRESENTATION_RPC_AGGREGATES,
   ...EDITORIAL_VIDEO_RPC_AGGREGATES,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",

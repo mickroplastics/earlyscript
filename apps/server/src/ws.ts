@@ -242,6 +242,7 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
 import * as EditorialRpc from "./editorial/rpc.ts";
 import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
+import * as EditorialPresentationRpc from "./editorial/presentationRpc.ts";
 import * as EditorialVideoRpc from "./editorial/videoRpc.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
@@ -1872,6 +1873,7 @@ export const layerWsRpc = (
       const upstreamHandlers = ServerWsRpcGroup.of({
         ...editorialHandlers,
         ...(yield* EditorialResultsRpc.EditorialResultsRpcHandlers),
+        ...(yield* EditorialPresentationRpc.makeHandlers),
         ...(yield* EditorialVideoRpc.EditorialVideoRpcHandlers),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
