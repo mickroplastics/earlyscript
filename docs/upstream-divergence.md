@@ -1223,13 +1223,13 @@ Capturas reales en Beatriz (31 de octubre de 2026, sin `HF_TOKEN`, sin errores e
 2. 03:55 a 03:57 UTC, 115 s, con la compuerta, `--force` sobre el mismo corpus. dev.to del 30 subió a 1884 porque `collect` une por id: los 52 nuevos eran todos del 30 de octubre entre las 03:44 y las 04:59 UTC. La primera captura tenía un hueco por una página vieja del CDN, probablemente guardada por los sondeos manuales previos de las 03:39 con `per_page=1000`. Esto motivó la detección descrita arriba. Está en `history/` del mismo directorio.
 3. Captura final, 03:59 a 04:01 UTC, 114 s, código de salida 0, en un directorio nuevo `~/earlyscript-data/live/corpus-s3-prueba/`:
 
-| Fuente      | Día        | Estado  | Ítems | Detalle |
-| ----------- | ---------- | ------- | ----: | ------- |
-| huggingface | 2026-10-29 | partial |    67 | 50 modelos (0 sin tarjeta) y 17 papers |
-| huggingface | 2026-10-30 | partial |    89 | 50 modelos (0 sin tarjeta) y 39 papers |
-| devto       | 2026-10-29 | partial |  2161 | 12 páginas; dos tramos posibles sin ver (23:21 a 23:31 y 17:12 a 17:13 UTC) |
+| Fuente      | Día        | Estado  | Ítems | Detalle                                                                                                                                      |
+| ----------- | ---------- | ------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| huggingface | 2026-10-29 | partial |    67 | 50 modelos (0 sin tarjeta) y 17 papers                                                                                                       |
+| huggingface | 2026-10-30 | partial |    89 | 50 modelos (0 sin tarjeta) y 39 papers                                                                                                       |
+| devto       | 2026-10-29 | partial |  2161 | 12 páginas; dos tramos posibles sin ver (23:21 a 23:31 y 17:12 a 17:13 UTC)                                                                  |
 | devto       | 2026-10-30 | partial |  1845 | 12 páginas; dos tramos posibles sin ver (19:49 a 20:39 y 11:21 a 11:35 UTC); faltan 39 artículos que sí tenía la unión de las capturas 1 y 2 |
 
-Una segunda pasada inmediata sin `--force` (37 s) volvió a pedir los dos días `partial` de dev.to, recibió las mismas páginas en caché y no añadió ninguno: la caché dura al menos varios minutos. Una corrida diaria no debería encontrar sus propias entradas; el plazo real de la caché es *por confirmar*. Si hace falta cerrar los huecos, la opción reversible es pedir páginas puente con otro `per_page`, otra clave de caché, alrededor del tramo marcado. No está implementada.
+Una segunda pasada inmediata sin `--force` (37 s) volvió a pedir los dos días `partial` de dev.to, recibió las mismas páginas en caché y no añadió ninguno: la caché dura al menos varios minutos. Una corrida diaria no debería encontrar sus propias entradas; el plazo real de la caché es _por confirmar_. Si hace falta cerrar los huecos, la opción reversible es pedir páginas puente con otro `per_page`, otra clave de caché, alrededor del tramo marcado. No está implementada.
 
 dev.to aporta entre 1800 y 2200 ítems por día, más que HN, y tres cuartas partes llevan `ai` (1610 de 2169 el 29 de octubre). Antes de que entre al motor hace falta decidir si se acota (menos etiquetas, un mínimo de reacciones o una muestra) y comprobar en un backtest que no empeora P@5.
