@@ -49,7 +49,8 @@ const VIEW: EditorialSourcesView = {
     }),
     entry({ source: "arxiv" }),
     entry({ source: "stackexchange", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
-    entry({ source: "bluesky", rankBlocked: "not-ready", collectBlocked: "blocked" }),
+    entry({ source: "bluesky", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
+    entry({ source: "lobsters", rankBlocked: "not-ready", collectBlocked: "blocked" }),
     entry({ source: "rss", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
   ],
   rssFeeds: [
@@ -134,7 +135,7 @@ describe("SourcesSettingsView", () => {
     await expect.element(unread).toBeDisabled();
     await expect.element(unread).toHaveAccessibleDescription(/^Pendiente de leer sus términos/);
     await expect
-      .element(page.getByRole("switch", { name: "Usar Bluesky en el motor" }))
+      .element(page.getByRole("switch", { name: "Usar Lobsters en el motor" }))
       .toHaveAccessibleDescription(/Bloqueada por sus condiciones de uso/);
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -156,6 +157,13 @@ describe("SourcesSettingsView", () => {
       .element(page.getByRole("link", { name: "Leer términos" }))
       .toHaveAttribute("href", "https://info.arxiv.org/help/api/tou.html");
     await expect.element(page.getByText("31 oct 2026", { exact: false })).toBeVisible();
+    // arXiv's documented exception to robots.txt, with the terms it quotes.
+    await expect
+      .element(page.getByRole("link", { name: "Términos de la API" }))
+      .toHaveAttribute("href", "https://info.arxiv.org/help/api/tou.html");
+    await expect
+      .element(page.getByText("make no more than one request every three seconds", { exact: false }))
+      .toBeVisible();
   });
 
   it("adds a feed by URL and clears the form", async () => {
