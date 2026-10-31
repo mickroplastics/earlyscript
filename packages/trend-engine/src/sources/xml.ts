@@ -145,13 +145,12 @@ export function parseXml(input: string): XmlElement {
       const attrs: Record<string, string> = {};
       for (const match of inner.slice(name.length).matchAll(ATTRIBUTE))
         attrs[match[1]!] = decodeEntities(match[2] ?? match[3] ?? "");
+      // The new element's own depth, self-closing leaves included.
+      if (stack.length + 1 > MAX_XML_DEPTH)
+        throw new XmlError(`Elements nested deeper than ${MAX_XML_DEPTH}`);
       const element: XmlElement = { name, attrs, children: [] };
       append(element);
-      if (!selfClosing) {
-        stack.push(element);
-        if (stack.length > MAX_XML_DEPTH)
-          throw new XmlError(`Elements nested deeper than ${MAX_XML_DEPTH}`);
-      }
+      if (!selfClosing) stack.push(element);
     }
   }
   if (stack.length) throw new XmlError(`Unclosed element <${stack[stack.length - 1]!.name}>`);

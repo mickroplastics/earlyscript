@@ -116,6 +116,17 @@ export async function purgeCorpus(
       JSON.parse(await NodeFSP.readFile(NodePath.join(root, "corpus-manifest.json"), "utf8")),
     );
     if (hashCorpus(manifest) !== manifest.corpus_hash) throw new Error("Invalid corpus hash");
+    // Idempotent: a purge already recorded is never written again.
+    const already = (manifest.purges ?? [])
+      .filter(isPurgeRecord)
+      .find(
+        (row) =>
+          row.source === record.source &&
+          row.match === record.match &&
+          row.value_sha256 === record.value_sha256,
+      );
+    if (already)
+      return { ...already, unchanged: true, message: "Already purged; corpus unchanged" };
     const files = new Map(manifest.files.map((file) => [file.path, file]));
     const contents = new Map<string, Buffer>();
     for (const file of files.values()) {
@@ -131,9 +142,10 @@ export async function purgeCorpus(
       files.set(path, { path, sha256: sha256(text), bytes: Buffer.byteLength(text) });
     }
     let removed = 0;
-    let rewritten = 0;
     const dayCounts = new Map<string, { kept: number; removed: number }>();
+    const edits: Array<{ path: string; text: string; isDay: boolean }> = [];
     // Day files of the source and every history copy: an earlier version must not keep the item.
+    // Edits are planned first, so a target without matches leaves the corpus untouched.
     for (const [path, bytes] of contents) {
       const isDay = path.startsWith(`${options.source}/`) && path.endsWith(".jsonl");
       if (!isDay && !path.startsWith("history/")) continue;
@@ -149,20 +161,32 @@ export async function purgeCorpus(
       });
       if (kept.length === lines.length) continue;
       removed += isDay ? lines.length - kept.length : 0;
-      rewritten++;
-      const text = kept.map((line) => `${line}\n`).join("");
-      if (isDay) {
-        await write(path, text);
+      edits.push({ path, text: kept.map((line) => `${line}\n`).join(""), isDay });
+      if (isDay)
         dayCounts.set(path.slice(options.source.length + 1, -6), {
           kept: kept.length,
           removed: lines.length - kept.length,
         });
+    }
+    // Nothing matched: no record, no rewrite, the manifest and corpus_hash stay as they were.
+    if (!edits.length)
+      return {
+        ...record,
+        purged_at: now(),
+        items_removed: 0,
+        files_rewritten: 0,
+        unchanged: true,
+        message: "No matches; corpus unchanged",
+      };
+    for (const { path, text, isDay } of edits) {
+      if (isDay) {
+        await write(path, text);
         continue;
       }
       // History files are named by their content hash; the scrubbed copy takes a new name.
       files.delete(path);
       await NodeFSP.rm(NodePath.join(root, path));
-      if (kept.length) await write(`history/${sha256(text).slice(7)}.jsonl`, text);
+      if (text) await write(`history/${sha256(text).slice(7)}.jsonl`, text);
     }
     if (dayCounts.size) {
       const raw = contents.get("coverage.jsonl")?.toString("utf8") ?? "";
@@ -188,9 +212,9 @@ export async function purgeCorpus(
       ...record,
       purged_at: now(),
       items_removed: removed,
-      files_rewritten: rewritten,
+      files_rewritten: edits.length,
     };
-    // A purge that removed nothing is still recorded: it keeps future collections from storing the items.
+    // The record keeps future collections from storing the purged items again.
     const next = {
       schema_version: manifest.schema_version,
       from_day: manifest.from_day,
@@ -208,7 +232,7 @@ export async function purgeCorpus(
       NodePath.join(root, "corpus-manifest.json.tmp"),
       NodePath.join(root, "corpus-manifest.json"),
     );
-    return purge;
+    return { ...purge, unchanged: false, message: null };
   } finally {
     await lock.close();
     await NodeFSP.unlink(lockPath);

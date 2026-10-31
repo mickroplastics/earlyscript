@@ -2,13 +2,13 @@
 // Regressions from Sol's review of a5ec1257fb (H1 redirects, H2 depth, H3 roots, H4 excerpts,
 // H6 entities), reproduced with ~/earlyscript-data/sources-lobsters-rss-verify/*.mjs.
 import * as NodeHttp from "node:http";
-import { afterEach, describe, it, expect } from "vite-plus/test";
+import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import type { RssFeed } from "@earlyscript/editorial-contracts/source";
 import { collectRssDay, EXCERPT_CHARS, feedBody, validateFeed } from "./rss.ts";
 import { followRedirects, MAX_REDIRECTS } from "./robots.ts";
 import { liveSources } from "./index.ts";
 import { MAX_XML_DEPTH, parseXml, XmlError } from "./xml.ts";
-import type { FrozenResponse } from "./http.ts";
+import { createHttpClient, credentialHeaders, type FrozenResponse } from "./http.ts";
 
 const day = "2026-10-29";
 const now = "2026-10-31T00:00:00.000Z";
@@ -144,6 +144,60 @@ describe("H1: redirects are followed by hand and gated by robots.txt on every ho
   });
 });
 
+describe("R1: credentials stay on the origin that issued them", () => {
+  it("drops the GitHub token on a redirect to another host and on robots.txt", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "SYNTHETIC-REVIEW-TOKEN");
+    try {
+      const seen: Array<[string, string | null]> = [];
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+        const href = String(url);
+        seen.push([href, new Headers(init?.headers).get("authorization")]);
+        if (href.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /");
+        if (new URL(href).host === "api.github.com")
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://untrusted.example/search" },
+          });
+        return new Response(
+          JSON.stringify({ total_count: 0, incomplete_results: false, items: [] }),
+        );
+      });
+      const [github] = liveSources(["github"], { fetch: fetcher, ...quietClock() });
+      await github!.collectDay(day);
+      expect(
+        seen.map(([url, auth]) => [new URL(url).origin + new URL(url).pathname, auth]),
+      ).toEqual([
+        ["https://api.github.com/search/repositories", "Bearer SYNTHETIC-REVIEW-TOKEN"],
+        ["https://untrusted.example/robots.txt", null],
+        ["https://untrusted.example/search", null],
+      ]);
+      // A robots.txt on the credential's own origin is anonymous too.
+      const direct: Array<string | null> = [];
+      await createHttpClient("github", {
+        fetch: async (_url, init) => {
+          direct.push(new Headers(init?.headers).get("authorization"));
+          return new Response("{}");
+        },
+      })("https://api.github.com/robots.txt");
+      expect(direct).toEqual([null]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it("binds a credential to scheme, host and port", () => {
+    const credential = { origin: "https://api.example", headers: { Authorization: "Bearer t" } };
+    expect(credentialHeaders(credential, "https://api.example/x")).toEqual(credential.headers);
+    for (const url of [
+      "http://api.example/x",
+      "https://api.example:8443/x",
+      "https://api.example.evil/x",
+      "https://sub.api.example/x",
+      "https://api.example/robots.txt",
+    ])
+      expect(credentialHeaders(credential, url), url).toEqual({});
+  });
+});
+
 describe("H2/H3: hostile XML fails alone with XmlError", () => {
   it("rejects 15,000 nested elements without a RangeError and keeps the capture alive", async () => {
     const deep = rss(
@@ -153,6 +207,14 @@ describe("H2/H3: hostile XML fails alone with XmlError", () => {
     const result = await collect(deep);
     expect(result.coverage).toMatchObject({ status: "unavailable", items: 0 });
     expect(result.coverage?.note).toContain(`deeper than ${MAX_XML_DEPTH}`);
+  });
+  it("counts self-closing leaves against the depth limit", () => {
+    const nest = (depth: number, leaf: string) =>
+      `${"<a>".repeat(depth)}${leaf}${"</a>".repeat(depth)}`;
+    expect(() => parseXml(nest(MAX_XML_DEPTH - 1, "<b/>"))).not.toThrow();
+    expect(() => parseXml(nest(MAX_XML_DEPTH, "<b/>"))).toThrow(`deeper than ${MAX_XML_DEPTH}`);
+    expect(() => parseXml(nest(MAX_XML_DEPTH, ""))).not.toThrow();
+    expect(() => parseXml(nest(MAX_XML_DEPTH + 1, ""))).toThrow(XmlError);
   });
   it("rejects a second root and text outside the root", async () => {
     const two = rss(item("<description>ok</description>")) + "<other/>";
@@ -189,7 +251,7 @@ describe("H4: bodies are excerpts, never whole articles", () => {
     );
     expect(result.items.map((entry) => [entry.body.length, entry.body_kind])).toEqual([
       [11, "summary"],
-      [EXCERPT_CHARS, "excerpt"],
+      [EXCERPT_CHARS, "content"],
       [5, "summary"],
     ]);
     expect(result.items[1]).toMatchObject({ body_length: 1999, truncated: true });
@@ -200,11 +262,12 @@ describe("H4: bodies are excerpts, never whole articles", () => {
       body: "x".repeat(EXCERPT_CHARS),
       body_length: 3000,
       truncated: true,
-      body_kind: "excerpt",
+      body_kind: "summary",
     });
     expect(feedBody({ summary: "", content: "short article" })).toMatchObject({
       body: "short article",
-      body_kind: "excerpt",
+      body_kind: "content",
+      truncated: false,
     });
   });
 });

@@ -134,7 +134,7 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
   return {
     descriptor: SOURCES.lobsters,
     collectDay: (day) => {
-      const text = createHttpClient("lobsters", { ...options, text: true }, state);
+      const text = createHttpClient("lobsters", { ...options, text: true, anonymous: true }, state);
       const json = createHttpClient("lobsters", options, state);
       const robots = robotsGate(() => text, rules);
       return collectLobstersDay(
@@ -210,10 +210,10 @@ function gatedAdapter(id: GatedSource, options: HttpOptions): SourceAdapter {
   return {
     descriptor: SOURCES[id],
     collectDay: (day) => {
-      const text = createHttpClient(id, { ...own, text: true }, state);
+      const text = createHttpClient(id, { ...own, text: true, anonymous: true }, state);
       const robots = robotsGate(() => text, new Map<string, ReadonlyArray<RobotsRule>>());
       // The arXiv API answers Atom XML, read as text like robots.txt.
-      const client = id === "arxiv" ? text : createHttpClient(id, own, state);
+      const client = createHttpClient(id, id === "arxiv" ? { ...own, text: true } : own, state);
       const data = id === "npm" ? memoized(client, pages) : client;
       return GATED[id](
         day,
@@ -239,7 +239,7 @@ export function liveSources(
       descriptor: SOURCES[id],
       collectDay: (day) => {
         // API URLs are not robots-gated, but a redirect away from them is.
-        const text = createHttpClient(id, { ...options, text: true }, state);
+        const text = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
         const json = createHttpClient(id, options, state);
         const get = followRedirects(
           () => json,

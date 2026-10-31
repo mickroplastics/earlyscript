@@ -144,7 +144,10 @@ export const EXCERPT_CHARS = 500;
 /** Plain text of feed HTML, with the HTML entities plainText leaves behind decoded. */
 const feedText = (html: string) => decodeEntities(plainText(html)).trim();
 
-/** The stored body: the summary, else the content; cut to EXCERPT_CHARS either way. */
+/**
+ * The stored body: the summary, else the content; cut to EXCERPT_CHARS either way.
+ * `body_kind` says where the text came from; `truncated` says whether it was cut.
+ */
 export function feedBody(entry: Pick<FeedEntry, "summary" | "content">) {
   const summary = feedText(entry.summary);
   const text = summary || feedText(entry.content);
@@ -153,7 +156,7 @@ export function feedBody(entry: Pick<FeedEntry, "summary" | "content">) {
     body: cut ? text.slice(0, EXCERPT_CHARS) : text,
     body_length: text.length,
     truncated: cut,
-    body_kind: summary && !cut ? ("summary" as const) : ("excerpt" as const),
+    body_kind: summary ? ("summary" as const) : ("content" as const),
   };
 }
 
