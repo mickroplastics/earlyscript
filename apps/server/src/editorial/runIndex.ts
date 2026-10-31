@@ -42,6 +42,8 @@ export interface DossierRow {
   readonly run_id: string;
   readonly dossier_id: string;
   readonly trend_key: string;
+  /** Hash of the dossier file; a video thread records it with the dossier it attaches. */
+  readonly content_hash: string;
   readonly items_7d: number;
   readonly items_28d: number;
   readonly authors_7d: number;
@@ -85,7 +87,8 @@ export const selectLatestRun = (sql: SqlClient.SqlClient) =>
   `.pipe(Effect.map((rows) => Option.filter(Option.fromNullishOr(rows[0]), isReadableRun)));
 
 const DOSSIER_COLUMNS =
-  "run_id, dossier_id, trend_key, items_7d, items_28d, authors_7d, score, last_activity_day";
+  "run_id, dossier_id, trend_key, content_hash, items_7d, items_28d, authors_7d, score, " +
+  "last_activity_day";
 
 export const selectRunDossiers = (sql: SqlClient.SqlClient, runId: string) =>
   sql<DossierRow>`

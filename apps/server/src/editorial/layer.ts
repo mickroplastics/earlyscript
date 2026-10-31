@@ -8,8 +8,8 @@ import * as RunDirectory from "./RunDirectory.ts";
 
 /**
  * The editorial read side, importer and RPC handlers over a run directory. Needs the storage
- * services of `persistenceLayer.ts` (EditorialSql, EditorialEventLog, EditorialCommandService),
- * which `server.ts` mounts below it.
+ * services of `persistenceLayer.ts` (EditorialSql, EditorialEventLog, EditorialCommandService)
+ * and EditorialThreadService of `videoThreadLayer.ts`, which `server.ts` mounts below it.
  */
 export const layerFromRunDirectory = <E, R>(
   runDirectory: Layer.Layer<RunDirectory.EditorialRunDirectory, E, R>,

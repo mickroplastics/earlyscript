@@ -15,12 +15,16 @@ import {
   evidenceLinks,
   growthBand,
   growthText,
+  inboxSections,
   resolveLandingTarget,
   resolveRouteSpace,
   runGroupLabel,
   runPresentationProgressText,
+  snoozePresetLabel,
+  snoozeStateText,
   spaceTabName,
   splitInbox,
+  trendMenuItems,
   whyHereReasons,
 } from "./editorial.logic";
 
@@ -97,6 +101,148 @@ describe("splitInbox", () => {
     const { visible, folded } = splitInbox(Array.from({ length: 18 }, (_, index) => index));
     expect(visible).toHaveLength(10);
     expect(folded).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+  });
+});
+
+describe("inboxSections", () => {
+  const AT = "2026-10-31T08:00:00.000Z";
+  const state = (patch: Partial<NonNullable<EditorialTrendSummary["inbox"]>> = {}) => ({
+    isNew: false,
+    seenRunId: null,
+    seenAt: null,
+    snoozed: null,
+    dismissed: null,
+    production: null,
+    ...patch,
+  });
+  // Server order for "new-first-growth": new trends first, then by growth.
+  const trend = (id: string, inbox: ReturnType<typeof state>) => ({
+    id,
+    isNew: inbox.isNew,
+    inbox,
+  });
+
+  it("keeps the server order, folds past ten and moves snoozed and dismissed apart", () => {
+    const fresh = Array.from({ length: 12 }, (_, index) =>
+      trend(`new-${index}`, state({ isNew: true })),
+    );
+    const production = trend(
+      "production",
+      state({ production: { threadId: "thread-video", linkedAt: AT } }),
+    );
+    const snoozed = trend("snoozed", state({ snoozed: { at: AT, until: null, returnWhen: null } }));
+    const dismissed = trend("dismissed", state({ dismissed: { at: AT, reason: "Ya cubierto" } }));
+    const both = trend(
+      "both",
+      state({
+        snoozed: { at: AT, until: null, returnWhen: null },
+        dismissed: { at: AT, reason: "Fuera de tema" },
+      }),
+    );
+
+    const sections = inboxSections([...fresh, snoozed, production, dismissed, both]);
+
+    expect(sections.visible.map((entry) => entry.id)).toEqual(
+      fresh.slice(0, 10).map((entry) => entry.id),
+    );
+    expect(sections.folded.map((entry) => entry.id)).toEqual(["new-10", "new-11", "production"]);
+    expect(sections.snoozed.map((entry) => entry.id)).toEqual(["snoozed"]);
+    expect(sections.dismissed.map((entry) => entry.id)).toEqual(["dismissed", "both"]);
+    expect(sections.newCount).toBe(12);
+  });
+
+  it("treats a trend without inbox state, from an older server, as active", () => {
+    const sections = inboxSections([{ id: "old", isNew: true }]);
+    expect(sections.visible.map((entry) => entry.id)).toEqual(["old"]);
+    expect(sections.newCount).toBe(1);
+  });
+});
+
+describe("trendMenuItems", () => {
+  const AT = "2026-10-31T08:00:00.000Z";
+  const base = {
+    isNew: false,
+    seenRunId: null,
+    seenAt: null,
+    snoozed: null,
+    dismissed: null,
+    production: null,
+  };
+  const ids = (items: ReturnType<typeof trendMenuItems>) => items.map((item) => item.id);
+  const presets = [{ id: "after:60", label: "In 1 hour", whenLabel: "9:00" }];
+
+  it("offers the three exits of a trend in the inbox, watching by growth first", () => {
+    const items = trendMenuItems(base, presets);
+    expect(ids(items)).toEqual(["create-video", "keep-watching", "dismiss"]);
+    expect(items[1]?.children?.map((child) => child.id)).toEqual([
+      "keep-watching",
+      "snooze:after:60",
+      "snooze:custom",
+    ]);
+  });
+
+  it("replaces each exit taken with its way back", () => {
+    expect(
+      ids(
+        trendMenuItems(
+          {
+            ...base,
+            snoozed: { at: AT, until: null, returnWhen: null },
+            production: { threadId: "thread-video", linkedAt: AT },
+          },
+          presets,
+        ),
+      ),
+    ).toEqual(["open-video", "return-to-inbox", "dismiss"]);
+    expect(ids(trendMenuItems({ ...base, dismissed: { at: AT, reason: "No" } }, presets))).toEqual([
+      "create-video",
+      "reopen",
+    ]);
+  });
+});
+
+describe("snoozePresetLabel", () => {
+  it("says T3's snooze times in Spanish and keeps a label it does not know", () => {
+    expect(
+      [
+        "In 1 hour",
+        "In 3 hours",
+        "In 90 minutes",
+        "In 2 days",
+        "This evening",
+        "Tomorrow",
+        "Next week",
+        "Next Monday",
+        "Friday",
+        "Someday",
+      ].map(snoozePresetLabel),
+    ).toEqual([
+      "En 1 hora",
+      "En 3 horas",
+      "En 90 minutos",
+      "En 2 días",
+      "Esta noche",
+      "Mañana",
+      "La próxima semana",
+      "El próximo lunes",
+      "El viernes",
+      "Someday",
+    ]);
+  });
+});
+
+describe("snoozeStateText", () => {
+  it("names the growth target the server set and the time when there is one", () => {
+    expect(
+      snoozeStateText({
+        at: "2026-10-31T08:00:00.000Z",
+        until: null,
+        returnWhen: { metric: "items7d", baseline: 11, atLeast: 17 },
+      }),
+    ).toBe("En observación: vuelve con 17 publicaciones en 7 días (hoy 11).");
+    expect(snoozeStateText({ at: "2026-10-31T08:00:00.000Z", until: null, returnWhen: null })).toBe(
+      "En observación.",
+    );
   });
 });
 

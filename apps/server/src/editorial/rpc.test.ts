@@ -7,6 +7,8 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  ProjectId,
+  ProviderInstanceId,
   EDITORIAL_RPC_REQUIRED_SCOPES,
   EDITORIAL_WRITE_METHODS,
   EDITORIAL_WS_METHODS,
@@ -17,20 +19,24 @@ import {
   RpcScopeAuthorization,
   type EditorialReadError,
   type EditorialStreamItem,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialInboxCommands } from "./EditorialInboxCommands.ts";
 import { withEditorial } from "./editorialLayer.testkit.ts";
 import { subscribeInbox, SUBSCRIBE_MAX_REPLAY } from "./inboxStream.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { EditorialRpcHandlers } from "./rpc.ts";
 
@@ -53,6 +59,30 @@ const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
       Effect.provide(Layer.merge(group.toLayer(handlers), RpcAuthorization.layer(scopes))),
     );
   });
+
+const VIDEO_INPUT = {
+  trendKey: QUANTUM_KEY,
+  runId: RUN_ID,
+  dossierId: QUANTUM,
+  projectId: ProjectId.make("project:studio"),
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+};
+
+/** Records each launch input and answers as ThreadLaunchService does. */
+const makeLaunchDouble = Effect.gen(function* () {
+  const calls = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
+  const layer = Layer.mock(ThreadLaunch.ThreadLaunchService)({
+    launch: (input) =>
+      Ref.update(calls, (current) => [...current, input]).pipe(
+        Effect.as({
+          threadId: input.threadId as ThreadId,
+          projection: {} as ThreadLaunch.ThreadLaunchResult["projection"],
+          resumed: false,
+        }),
+      ),
+  });
+  return { calls, layer };
+});
 
 const events = Effect.gen(function* () {
   return yield* (yield* EditorialEventLog).readSince(0);
@@ -95,6 +125,7 @@ describe("editorial RPC authorization", () => {
           client[EDITORIAL_WS_METHODS.snooze]({ trendKey: QUANTUM_KEY }),
           client[EDITORIAL_WS_METHODS.unsnooze]({ trendKey: QUANTUM_KEY }),
           client[EDITORIAL_WS_METHODS.reopen]({ trendKey: QUANTUM_KEY }),
+          client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT),
         ]) {
           const error = yield* attempt.pipe(Effect.flip);
           assert.strictEqual(error._tag, "EnvironmentAuthorizationError");
@@ -147,6 +178,124 @@ describe("editorial RPC authorization", () => {
         );
       }).pipe(Effect.scoped),
     ),
+  );
+
+  it.effect("creates one video thread per trend and answers a second click with it", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const client = yield* clientWith([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+            ]);
+            const live = yield* Stream.toQueue(yield* subscribeInbox({}), { capacity: 8 });
+            assert.strictEqual((yield* Queue.take(live))._tag, "snapshot");
+            const first = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isTrue(first.created);
+            assert.strictEqual(first.state.production?.threadId, first.threadId);
+            // Open inboxes learn of the production link without a refetch.
+            const linked = yield* Queue.take(live);
+            assert.ok(linked._tag === "trend");
+            assert.strictEqual(linked.trendKey, QUANTUM_KEY);
+            assert.strictEqual(linked.state.production?.threadId, first.threadId);
+
+            const [call] = yield* Ref.get(launch.calls);
+            assert.strictEqual(call?.threadId, first.threadId);
+            assert.strictEqual(call?.projectId, VIDEO_INPUT.projectId);
+            assert.isUndefined(call?.initialMessage);
+            assert.match(call?.title ?? "", /^Video: /);
+
+            const second = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isFalse(second.created);
+            assert.strictEqual(second.threadId, first.threadId);
+            assert.strictEqual((yield* Ref.get(launch.calls)).length, 1);
+
+            const registered = (yield* events).find(
+              (event) => event.type === "video-thread.registered",
+            );
+            assert.deepStrictEqual(registered?.payload, {
+              environmentId: "environment:editorial-test",
+              mode: "assisted",
+              trendKey: QUANTUM_KEY,
+              runId: RUN_ID,
+              dossierId: QUANTUM,
+            });
+
+            // A dossier of another trend never attaches to this one.
+            const mismatch = yield* client[EDITORIAL_WS_METHODS.createVideo]({
+              ...VIDEO_INPUT,
+              trendKey: CHINA_KEY,
+            }).pipe(Effect.flip);
+            assert.ok(mismatch._tag === "EditorialCommandError");
+            assert.strictEqual(mismatch.reason, "not-found");
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
+  );
+
+  it.effect(
+    "finishes a creation that failed after linking production, without a second thread",
+    () =>
+      Effect.gen(function* () {
+        const launch = yield* makeLaunchDouble;
+        yield* withEditorial(
+          () =>
+            Effect.gen(function* () {
+              yield* (yield* EditorialImportService).sync;
+              const sql = yield* EditorialSql;
+              const inbox = yield* EditorialInboxCommands;
+              const intervals = sql<{ readonly n: number }>`
+              SELECT COUNT(*) AS n FROM editorial_work_intervals
+            `.pipe(Effect.map((rows) => rows[0]?.n));
+              // Storage fails after the thread is launched and linked, before the clock starts.
+              yield* sql.unsafe(
+                "CREATE TRIGGER fail_clock BEFORE INSERT ON editorial_work_intervals " +
+                  "BEGIN SELECT RAISE(ABORT, 'clock failure'); END",
+              );
+              yield* inbox.createVideo(SESSION, VIDEO_INPUT).pipe(Effect.flip);
+              yield* sql.unsafe("DROP TRIGGER fail_clock");
+              assert.strictEqual(yield* intervals, 0);
+
+              const retry = yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              assert.isFalse(retry.created);
+              assert.strictEqual(yield* intervals, 1);
+              assert.strictEqual((yield* Ref.get(launch.calls)).length, 1);
+
+              // A later click replays the started clock instead of opening another interval.
+              yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              assert.strictEqual(yield* intervals, 1);
+            }).pipe(Effect.scoped),
+          { launch: launch.layer },
+        );
+      }),
+  );
+
+  it.effect("registers one video for two concurrent clicks", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const sql = yield* EditorialSql;
+            const inbox = yield* EditorialInboxCommands;
+            const [first, second] = yield* Effect.all(
+              [inbox.createVideo(SESSION, VIDEO_INPUT), inbox.createVideo(SESSION, VIDEO_INPUT)],
+              { concurrency: 2 },
+            );
+            assert.strictEqual(first.threadId, second.threadId);
+            assert.strictEqual(
+              (yield* sql`SELECT thread_id FROM editorial_video_threads`).length,
+              1,
+            );
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
   );
 
   it("exposes no editorial write to MCP tools or orchestration commands", () => {

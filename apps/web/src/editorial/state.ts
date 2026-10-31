@@ -59,6 +59,42 @@ export function applyEditorialStreamItem(
   };
 }
 
+/** Refetches the environment's inbox and dossier reads, as a command does after it succeeds. */
+export function refreshEditorialInbox(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+): void {
+  Effect.runSync(bumpInbox({ environmentId }, registry));
+}
+
+/**
+ * The inbox read with each trend's state as the subscription last left it. The read keeps
+ * its order and what the subscription does not carry (titles drafted after it started); the
+ * subscription keeps the states current. When the subscription already shows another run, an
+ * import the read has not seen, the subscription's inbox replaces the read until it refetches.
+ */
+export function withLiveInboxState(
+  inbox: EditorialInbox,
+  live: EditorialInbox | null,
+): EditorialInbox {
+  if (live === null) return inbox;
+  if (live.run !== null && live.run.runId !== inbox.run?.runId) return live;
+  if (live.run?.runId !== inbox.run?.runId) return inbox;
+  const liveByKey = new Map(live.trends.map((trend) => [trend.trendKey, trend]));
+  return {
+    ...inbox,
+    trends: inbox.trends.map((trend) => {
+      const current = trend.trendKey === undefined ? undefined : liveByKey.get(trend.trendKey);
+      return current?.inbox === undefined
+        ? trend
+        : { ...trend, isNew: current.isNew, inbox: current.inbox };
+    }),
+    newCount: live.newCount,
+    snoozedCount: live.snoozedCount,
+    dismissedCount: live.dismissedCount,
+  };
+}
+
 /**
  * Editorial reads, the live inbox and the human inbox commands, per environment. The
  * server takes the actor from the session; commands carry only what the operator chose.
@@ -84,11 +120,13 @@ export const editorialEnvironment = {
     transform: (stream) =>
       stream.pipe(Stream.scan(() => EMPTY_INBOX_VIEW, applyEditorialStreamItem)),
   }),
-  /** Opening a dossier confirms it read on the server. */
+  /**
+   * Opening a dossier confirms it read on the server. No refetch: the subscription updates the
+   * row in place, so the trend just opened keeps its place in the list, as a visited thread does.
+   */
   markRead: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:mark-read",
     tag: EDITORIAL_WS_METHODS.markRead,
-    onSuccess: bumpInbox,
   }),
   /** "Seguir observando": without `until` or `returnWhen` the server applies its growth default. */
   snooze: createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -110,6 +148,12 @@ export const editorialEnvironment = {
   reopen: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:reopen",
     tag: EDITORIAL_WS_METHODS.reopen,
+    onSuccess: bumpInbox,
+  }),
+  /** "Crear hilo de video": answers with the trend's thread when it already has one. */
+  createVideo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:create-video",
+    tag: EDITORIAL_WS_METHODS.createVideo,
     onSuccess: bumpInbox,
   }),
 };

@@ -1,7 +1,10 @@
 import type {
+  ContextMenuItem,
   EditorialEvidenceItem,
   EditorialRunSummary,
+  EditorialSnoozeMetric,
   EditorialSourceCoverage,
+  EditorialTrendInboxState,
   EditorialTrendSummary,
 } from "@t3tools/contracts";
 
@@ -84,6 +87,158 @@ export function editorialClaimsRoot(input: {
 
 export function splitInbox<T>(trends: ReadonlyArray<T>, visibleCount = INBOX_VISIBLE_COUNT) {
   return { visible: trends.slice(0, visibleCount), folded: trends.slice(visibleCount) };
+}
+
+type InboxTrend = Pick<EditorialTrendSummary, "isNew" | "inbox">;
+
+/**
+ * The inbox as the sidebar shows it, in the server's order: the active list (its first ten
+ * visible, the rest folded), then "En observación" and "Descartadas". A dismissed trend that
+ * was also snoozed counts as dismissed; a trend in production stays in the active list.
+ */
+export function inboxSections<T extends InboxTrend>(trends: ReadonlyArray<T>) {
+  const active: Array<T> = [];
+  const snoozed: Array<T> = [];
+  const dismissed: Array<T> = [];
+  for (const trend of trends) {
+    if (trend.inbox?.dismissed) dismissed.push(trend);
+    else if (trend.inbox?.snoozed) snoozed.push(trend);
+    else active.push(trend);
+  }
+  return {
+    ...splitInbox(active),
+    snoozed,
+    dismissed,
+    newCount: active.filter((trend) => trend.isNew).length,
+  };
+}
+
+const SNOOZE_METRIC_LABELS: Readonly<Record<EditorialSnoozeMetric, string>> = {
+  items7d: "publicaciones en 7 días",
+  authors7d: "autores en 7 días",
+  items28d: "publicaciones en 28 días",
+  score: "de puntaje",
+};
+
+const wakeFormat = new Intl.DateTimeFormat("es", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/** "En observación: vuelve con 14 publicaciones en 7 días (hoy 11)." The wake time is local. */
+export function snoozeStateText(snoozed: NonNullable<EditorialTrendInboxState["snoozed"]>) {
+  const growth = snoozed.returnWhen
+    ? `vuelve con ${formatMetric(snoozed.returnWhen.atLeast)} ${SNOOZE_METRIC_LABELS[snoozed.returnWhen.metric]} (hoy ${formatMetric(snoozed.returnWhen.baseline)})`
+    : null;
+  const until = snoozed.until
+    ? `vuelve el ${wakeFormat.format(new Date(snoozed.until)).replaceAll(".", "")}`
+    : null;
+  const parts = [growth, until].filter((part) => part !== null);
+  return parts.length === 0 ? "En observación." : `En observación: ${parts.join(" o ")}.`;
+}
+
+function formatMetric(value: number): string {
+  return Number.isInteger(value) ? String(value) : formatDecimal(value);
+}
+
+const SNOOZE_LABELS_ES: Readonly<Record<string, string>> = {
+  "This morning": "Esta mañana",
+  "This afternoon": "Esta tarde",
+  "This evening": "Esta noche",
+  Tomorrow: "Mañana",
+  "Next week": "La próxima semana",
+};
+
+const WEEKDAYS_ES: Readonly<Record<string, string>> = {
+  Sunday: "domingo",
+  Monday: "lunes",
+  Tuesday: "martes",
+  Wednesday: "miércoles",
+  Thursday: "jueves",
+  Friday: "viernes",
+  Saturday: "sábado",
+};
+
+const DURATION_UNITS_ES: Readonly<Record<string, readonly [string, string]>> = {
+  minute: ["minuto", "minutos"],
+  hour: ["hora", "horas"],
+  day: ["día", "días"],
+};
+
+/**
+ * A thread snooze preset label (`resolveSnoozePresets`, in English) in the editorial space's
+ * Spanish. The presets, their times and their order stay T3's; a label this table does not
+ * know is shown as T3 wrote it.
+ */
+export function snoozePresetLabel(label: string): string {
+  const duration = /^In (\d+) (minute|hour|day)s?$/.exec(label);
+  if (duration) {
+    const count = Number(duration[1]);
+    const units = DURATION_UNITS_ES[duration[2] ?? ""];
+    if (units) return `En ${count} ${count === 1 ? units[0] : units[1]}`;
+  }
+  const next = /^Next (\w+)$/.exec(label);
+  const nextDay = next ? WEEKDAYS_ES[next[1] ?? ""] : undefined;
+  if (nextDay) return `El próximo ${nextDay}`;
+  const day = WEEKDAYS_ES[label];
+  if (day) return `El ${day}`;
+  return SNOOZE_LABELS_ES[label] ?? label;
+}
+
+export type TrendMenuAction =
+  | "create-video"
+  | "open-video"
+  | "keep-watching"
+  | `snooze:${string}`
+  | "return-to-inbox"
+  | "dismiss"
+  | "reopen";
+
+/**
+ * The row's context menu: the dossier's three exits, each replaced by its way back once taken.
+ * "Seguir observando" waits for growth or for one of the thread snooze times. There is no
+ * "mark unread": the server keeps no command that forgets a read.
+ */
+export function trendMenuItems(
+  state: EditorialTrendInboxState | undefined,
+  snoozePresets: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly whenLabel: string;
+  }>,
+): ReadonlyArray<ContextMenuItem<TrendMenuAction>> {
+  const items: Array<ContextMenuItem<TrendMenuAction>> = [
+    state?.production
+      ? { id: "open-video", label: "Abrir hilo de video", icon: "message-square" }
+      : { id: "create-video", label: "Crear hilo de video", icon: "message-square-plus" },
+  ];
+  if (state?.snoozed) {
+    items.push({ id: "return-to-inbox", label: "Volver a la bandeja", icon: "clock" });
+  } else if (!state?.dismissed) {
+    items.push({
+      id: "keep-watching",
+      label: "Seguir observando",
+      icon: "clock",
+      children: [
+        { id: "keep-watching", label: "Hasta que crezca" },
+        ...snoozePresets.map((preset, index) => ({
+          id: `snooze:${preset.id}` as const,
+          label: `${snoozePresetLabel(preset.label)} (${preset.whenLabel})`,
+          separatorBefore: index === 0,
+        })),
+        { id: "snooze:custom", label: "Personalizado…", separatorBefore: true },
+      ],
+    });
+  }
+  items.push(
+    state?.dismissed
+      ? { id: "reopen", label: "Reabrir", icon: "refresh-cw", separatorBefore: true }
+      : { id: "dismiss", label: "Descartar…", icon: "archive", separatorBefore: true },
+  );
+  return items;
 }
 
 const decimalFormat = new Intl.NumberFormat("es", {

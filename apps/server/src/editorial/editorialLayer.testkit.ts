@@ -7,11 +7,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import type * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as EditorialLayer from "./layer.ts";
-import * as EditorialPersistence from "./persistenceLayer.ts";
 import * as RunDirectory from "./RunDirectory.ts";
 import * as EditorialDatabase from "./persistence/EditorialDatabase.ts";
-import { makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
+import {
+  layerAt as layerStorageAt,
+  makeTempDir,
+  removeDir,
+} from "./persistence/EditorialDatabase.testkit.ts";
 
 export const FIXTURE_RUN_ID = "run_20261019_20261027T003754_2263f7";
 
@@ -30,15 +34,18 @@ export const addNativeFixtureRun = (runsDir: string) =>
     );
   });
 
+interface EditorialTestOptions {
+  readonly watch?: boolean;
+  readonly fs?: Layer.Layer<FileSystem.FileSystem>;
+  /** Thread launches of `createVideo`; none unless a test passes its own double. */
+  readonly launch?: Layer.Layer<ThreadLaunch.ThreadLaunchService>;
+}
+
 /** Editorial storage, read side, importer and handlers over `runsDir`, without the poll loop. */
-const layerAt = (dbPath: string, runsDir: string, options: { readonly watch?: boolean } = {}) =>
+const layerAt = (dbPath: string, runsDir: string, options: EditorialTestOptions = {}) =>
   EditorialLayer.layerFromRunDirectory(RunDirectory.layerWithRunsDir(runsDir), {
     watch: options.watch ?? false,
-  }).pipe(
-    Layer.provideMerge(
-      EditorialPersistence.layerFromDatabase(EditorialDatabase.layerFromPath(dbPath)),
-    ),
-  );
+  }).pipe(Layer.provideMerge(layerStorageAt(dbPath, options.launch)));
 
 /** A writable copy of the fixture runs directory, removed with the scope. */
 const copyFixtureRuns = Effect.gen(function* () {
@@ -55,7 +62,7 @@ const copyFixtureRuns = Effect.gen(function* () {
  */
 export const withEditorial = <A, E, R>(
   use: (runs: { readonly dir: string; readonly runDir: string }) => Effect.Effect<A, E, R>,
-  options: { readonly watch?: boolean; readonly fs?: Layer.Layer<FileSystem.FileSystem> } = {},
+  options: EditorialTestOptions = {},
 ) => {
   const dbDir = makeTempDir();
   return Effect.gen(function* () {

@@ -28,6 +28,7 @@ export const EDITORIAL_RPC_AGGREGATES = {
   [EDITORIAL_WS_METHODS.unsnooze]: "editorial",
   [EDITORIAL_WS_METHODS.dismiss]: "editorial",
   [EDITORIAL_WS_METHODS.reopen]: "editorial",
+  [EDITORIAL_WS_METHODS.createVideo]: "editorial",
 } as const;
 
 type EditorialRpcs = RpcGroup.Rpcs<typeof EditorialRpcGroup>;
@@ -61,6 +62,7 @@ const unavailableHandlers: EditorialHandlers = {
   [EDITORIAL_WS_METHODS.unsnooze]: () => Effect.fail(unavailableCommand),
   [EDITORIAL_WS_METHODS.dismiss]: () => Effect.fail(unavailableCommand),
   [EDITORIAL_WS_METHODS.reopen]: () => Effect.fail(unavailableCommand),
+  [EDITORIAL_WS_METHODS.createVideo]: () => Effect.fail(unavailableCommand),
 };
 
 /**
@@ -102,6 +104,7 @@ const makeHandlers = Effect.gen(function* () {
     [EDITORIAL_WS_METHODS.unsnooze]: (input) => inbox.unsnooze(session, input),
     [EDITORIAL_WS_METHODS.dismiss]: (input) => inbox.dismiss(session, input),
     [EDITORIAL_WS_METHODS.reopen]: (input) => inbox.reopen(session, input),
+    [EDITORIAL_WS_METHODS.createVideo]: (input) => inbox.createVideo(session, input),
   });
 });
 

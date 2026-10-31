@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyEditorialStreamItem, EMPTY_INBOX_VIEW } from "./state";
+import { applyEditorialStreamItem, EMPTY_INBOX_VIEW, withLiveInboxState } from "./state";
 
 const RUN = EditorialRunId.make("run-1");
 const NEW_STATE: EditorialTrendInboxState = {
@@ -94,5 +94,46 @@ describe("applyEditorialStreamItem", () => {
         newCount: 1,
       }).seq,
     ).toBe(5);
+  });
+});
+
+describe("withLiveInboxState", () => {
+  const run = {
+    runId: EditorialRunId.make("run-1"),
+    cutoffAt: "2026-10-19T00:00:00.000Z",
+    finishedAt: null,
+    status: "ok",
+    configVersion: null,
+    sources: ["hn"],
+    dossierCount: 2,
+  };
+  const production = {
+    ...NEW_STATE,
+    isNew: false,
+    production: { threadId: "thread-video", linkedAt: "2026-10-31T08:00:00.000Z" },
+  };
+
+  it("keeps the read's titles and takes each trend's state from the subscription", () => {
+    const read: EditorialInbox = {
+      ...inbox,
+      run,
+      trends: [{ ...trend("a"), label: "drafted later" }, trend("b")],
+    };
+    const live: EditorialInbox = {
+      ...inbox,
+      run,
+      trends: [{ ...trend("a"), isNew: false, inbox: production }, trend("b")],
+      newCount: 1,
+    };
+    const merged = withLiveInboxState(read, live);
+    expect(merged.trends[0]?.label).toBe("drafted later");
+    expect(merged.trends[0]?.inbox).toEqual(production);
+    expect(merged.trends[0]?.isNew).toBe(false);
+    expect(merged.newCount).toBe(1);
+
+    // A run the read has not seen yet replaces it; without a subscription the read stands.
+    const newerRun = { ...live, run: { ...run, runId: EditorialRunId.make("run-2") } };
+    expect(withLiveInboxState(read, newerRun)).toBe(newerRun);
+    expect(withLiveInboxState(read, null)).toBe(read);
   });
 });

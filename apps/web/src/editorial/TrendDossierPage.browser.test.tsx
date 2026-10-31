@@ -1,20 +1,59 @@
-import { EditorialDossierId, EditorialRunId, type EditorialTrendDossier } from "@t3tools/contracts";
+import {
+  EditorialDossierId,
+  EditorialRunId,
+  EditorialTrendKey,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  type EditorialTrendDossier,
+  type EditorialTrendInboxState,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+// The dialog's layers stack by its CSS; without it the inert overlay takes the clicks.
+import "~/index.css";
 
 import { render } from "../../test/render";
 import { TrendDossierView, type TrendPresentationActions } from "./TrendDossierPage";
 
-const state = vi.hoisted(() => ({ opened: [] as string[] }));
+const state = vi.hoisted(() => ({
+  opened: [] as string[],
+  commands: [] as Array<readonly [string, unknown]>,
+}));
 vi.mock("../browser/useOpenLink", () => ({
   useOpenLink: () => async (url: string) => {
     state.opened.push(url);
   },
 }));
+// Each command answers as the server would for the quantum trend.
+vi.mock("../state/use-orchestration-command", async () => {
+  const { AsyncResult } = await import("effect/reactivity");
+  return {
+    useOrchestrationCommand:
+      (command: { readonly label: string }) => async (value: { readonly input: unknown }) => {
+        state.commands.push([command.label, value.input]);
+        return AsyncResult.success(
+          command.label.endsWith("create-video") ? { threadId: "thread-video" } : {},
+        );
+      },
+  };
+});
+vi.mock("./videoThreadTarget", () => ({
+  resolveVideoThreadTarget: () => ({
+    projectId: "project:studio",
+    modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
+    runtimeMode: "approval-required",
+  }),
+}));
 
 function setup() {
   state.opened = [];
+  state.commands = [];
 }
+
+const ENVIRONMENT_ID = EnvironmentId.make("env-1");
+const TREND_KEY = EditorialTrendKey.make("sig_69a4b83dd577");
+const AT = "2026-10-31T08:00:00.000Z";
 
 const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
 
@@ -52,6 +91,7 @@ const DOSSIER: EditorialTrendDossier = {
     sources: ["hn"],
     sparkline: [],
     isNew: true,
+    trendKey: TREND_KEY,
   },
   run: {
     runId: RUN_ID,
@@ -84,7 +124,12 @@ describe("TrendDossierView", () => {
   it("outlines an uncaptured day instead of drawing it as zero", async () => {
     setup();
     await using screen = await render(
-      <TrendDossierView dossier={DOSSIER} evidence={DOSSIER} onEvidencePage={() => {}} />,
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+      />,
     );
     const day = (date: string) => screen.container.querySelector(`[data-curve-day="${date}"]`);
     expect(day("2026-10-17")?.hasAttribute("data-unknown")).toBe(true);
@@ -92,11 +137,16 @@ describe("TrendDossierView", () => {
     await expect.element(screen.getByText("Cobertura parcial en GitHub")).toBeVisible();
   });
 
-  it("pages the evidence, opens links outside the app and keeps decisions disabled", async () => {
+  it("pages the evidence and opens links outside the app", async () => {
     setup();
     const onEvidencePage = vi.fn();
     await using screen = await render(
-      <TrendDossierView dossier={DOSSIER} evidence={DOSSIER} onEvidencePage={onEvidencePage} />,
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={onEvidencePage}
+      />,
     );
     await expect
       .element(
@@ -114,10 +164,134 @@ describe("TrendDossierView", () => {
 
     await userEvent.click(screen.getByRole("link", { name: "Quantum item 1" }));
     expect(state.opened).toEqual(["https://example.com/1"]);
+  });
 
-    for (const label of ["Crear hilo de video", "Seguir observando", "Descartar…"]) {
-      await expect.element(screen.getByRole("button", { name: label })).toBeDisabled();
-    }
+  it("keeps watching until growth, without a time, and creates the video thread", async () => {
+    setup();
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Seguir observando", exact: true }));
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        ["environment-data:editorial:snooze", { trendKey: TREND_KEY }],
+      ]),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Crear hilo de video" }));
+    await vi.waitFor(() =>
+      expect(state.commands.at(-1)).toEqual([
+        "environment-data:editorial:create-video",
+        {
+          trendKey: TREND_KEY,
+          runId: RUN_ID,
+          dossierId: DOSSIER.trend.dossierId,
+          projectId: ProjectId.make("project:studio"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+          runtimeMode: "approval-required",
+        },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/env-1/thread-video"),
+    );
+  });
+
+  it("dismisses only with a reason of at least three characters", async () => {
+    setup();
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Descartar…" }));
+    const dialog = page.getByRole("dialog", { name: "Descartar tendencia" });
+    await userEvent.click(dialog.getByRole("button", { name: "Descartar" }));
+    await expect
+      .element(dialog.getByRole("alert"))
+      .toHaveTextContent("Escribe el motivo, al menos 3 caracteres.");
+    await userEvent.fill(dialog.getByRole("textbox", { name: "Motivo" }), "  ok ");
+    await userEvent.click(dialog.getByRole("button", { name: "Descartar" }));
+    await expect.element(dialog.getByRole("alert")).toBeVisible();
+    expect(state.commands).toEqual([]);
+
+    await userEvent.fill(dialog.getByRole("textbox", { name: "Motivo" }), "  Ya cubierto  ");
+    await userEvent.click(dialog.getByRole("button", { name: "Descartar" }));
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        ["environment-data:editorial:dismiss", { trendKey: TREND_KEY, reason: "Ya cubierto" }],
+      ]),
+    );
+    await expect.element(dialog).not.toBeInTheDocument();
+  });
+
+  it("offers the way back of each state and links a trend in production to its thread", async () => {
+    setup();
+    const withState = (patch: Partial<EditorialTrendInboxState>): EditorialTrendDossier => ({
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        isNew: false,
+        inbox: {
+          isNew: false,
+          seenRunId: RUN_ID,
+          seenAt: AT,
+          snoozed: null,
+          dismissed: null,
+          production: null,
+          ...patch,
+        },
+      },
+    });
+    const snoozed = withState({
+      snoozed: {
+        at: AT,
+        until: null,
+        returnWhen: { metric: "items7d", baseline: 11, atLeast: 17 },
+      },
+      production: { threadId: "thread-video", linkedAt: AT },
+    });
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={snoozed}
+        evidence={snoozed}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect
+      .element(screen.getByText("En observación: vuelve con 17 publicaciones en 7 días (hoy 11)."))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo de video" }))
+      .toHaveAttribute("href", "/env-1/thread-video");
+    await userEvent.click(screen.getByRole("button", { name: "Volver a la bandeja" }));
+
+    const dismissed = withState({ dismissed: { at: AT, reason: "Fuera de tema" } });
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={dismissed}
+        evidence={dismissed}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect.element(screen.getByText("Descartada: Fuera de tema")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reabrir" }));
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        ["environment-data:editorial:unsnooze", { trendKey: TREND_KEY }],
+        ["environment-data:editorial:reopen", { trendKey: TREND_KEY }],
+      ]),
+    );
   });
 
   it("links only http and https evidence and falls back to a valid permalink", async () => {
@@ -145,7 +319,12 @@ describe("TrendDossierView", () => {
       evidenceTotal: 5,
     };
     await using screen = await render(
-      <TrendDossierView dossier={unsafe} evidence={unsafe} onEvidencePage={() => {}} />,
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={unsafe}
+        evidence={unsafe}
+        onEvidencePage={() => {}}
+      />,
     );
     for (const name of ["Javascript external", "Data external", "File external", "Http external"]) {
       await userEvent.click(screen.getByRole("link", { name }));
@@ -195,6 +374,7 @@ describe("TrendDossierView", () => {
     };
     await using screen = await render(
       <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
         dossier={drafted}
         evidence={drafted}
         onEvidencePage={() => {}}
@@ -231,6 +411,7 @@ describe("TrendDossierView", () => {
     const onDraft = vi.fn();
     await using screen = await render(
       <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
         evidence={DOSSIER}
         onEvidencePage={() => {}}
@@ -258,6 +439,7 @@ describe("TrendDossierView", () => {
     setup();
     await using screen = await render(
       <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
         evidence={DOSSIER}
         onEvidencePage={() => {}}
@@ -297,6 +479,7 @@ describe("TrendDossierView", () => {
     };
     await using screen = await render(
       <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
         dossier={stale}
         evidence={stale}
         onEvidencePage={() => {}}
