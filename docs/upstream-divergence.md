@@ -1098,4 +1098,4 @@ Decisiones reversibles:
 - Menú contextual por fila con `contextMenu.show`, como las filas de hilos: crear o abrir el hilo de video, seguir observando (hasta que crezca, los plazos de los hilos o personalizado), volver a la bandeja, descartar o reabrir. No hay «Marcar como no leída»: el servidor no tiene un comando que olvide una lectura.
 - Seguir observando sin plazo deja que el servidor aplique su umbral de crecimiento y avisa «Vuelve si crece.»; los plazos son los de los hilos (`resolveSnoozePresets`), con sus etiquetas de upstream en inglés.
 - Descartar exige un motivo de 3 a 300 caracteres. El contrato admite hasta 500; el límite menor es del diálogo.
-- Abrir la ficha de una tendencia nueva llama a `markRead` una vez por expediente abierto.
+- Abrir la ficha de una tendencia nueva llama a `markRead` una vez por expediente abierto, sin refrescar la consulta: la suscripción cambia la fila en su sitio y la tendencia recién abierta no salta de lugar, como un hilo visitado. Las demás salidas sí refrescan, porque la fila cambia de sección o de estado.

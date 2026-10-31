@@ -109,11 +109,13 @@ export const editorialEnvironment = {
     transform: (stream) =>
       stream.pipe(Stream.scan(() => EMPTY_INBOX_VIEW, applyEditorialStreamItem)),
   }),
-  /** Opening a dossier confirms it read on the server. */
+  /**
+   * Opening a dossier confirms it read on the server. No refetch: the subscription updates the
+   * row in place, so the trend just opened keeps its place in the list, as a visited thread does.
+   */
   markRead: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:mark-read",
     tag: EDITORIAL_WS_METHODS.markRead,
-    onSuccess: bumpInbox,
   }),
   /** "Seguir observando": without `until` or `returnWhen` the server applies its growth default. */
   snooze: createEnvironmentRpcCommand(connectionAtomRuntime, {
