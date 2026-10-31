@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 // Sources with an adapter. A new source adds its id here and an adapter in trend-engine.
-export const SourceId = Schema.Literals(["hn", "github"]);
+export const SourceId = Schema.Literals(["hn", "github", "lobsters", "rss"]);
 export type SourceId = typeof SourceId.Type;
 
 export const UtcDay = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
@@ -90,3 +90,17 @@ export const GithubSearch = Schema.Struct({
     }),
   ),
 });
+/** One page of lobste.rs `/newest/page/N.json`, newest first. */
+export const LobstersPage = Schema.Array(
+  Schema.Struct({
+    short_id: Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/)),
+    created_at: Schema.String,
+    title: Schema.String,
+    url: Schema.String,
+    description_plain: Schema.optionalKey(Schema.String),
+    submitter_user: Schema.NullOr(Schema.String),
+    tags: Schema.Array(Schema.String),
+    short_id_url: Schema.String,
+    comments_url: Schema.String,
+  }),
+);

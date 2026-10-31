@@ -1,0 +1,210 @@
+// @effect-diagnostics globalDate:off - plain async library with native fetch and UTC timestamps.
+// Curated RSS 2.0 and Atom feeds (rss-feeds.ts). A feed only lists its latest entries, so a
+// day counts as covered by a feed when the feed reaches back before that day.
+import type { Item } from "@earlyscript/editorial-contracts/item";
+import { DAY_MS, dayStart } from "../days.ts";
+import { sha256 } from "../hash.ts";
+import { SourceFailure, type GetResponse } from "./http.ts";
+import type { RobotsGate } from "./robots.ts";
+import type { RssFeed } from "./rss-feeds.ts";
+import { githubEntity, plainText, sortItems } from "./shared.ts";
+import { element, elements, parseXml, textOf, XmlError, type XmlElement } from "./xml.ts";
+import type { DayResult } from "./adapter.ts";
+
+export interface FeedEntry {
+  readonly key: string;
+  readonly link: string | null;
+  readonly title: string;
+  readonly summary: string;
+  /** Epoch milliseconds; null when the entry has no parseable date. */
+  readonly published: number | null;
+  readonly author: string | null;
+}
+
+/** RSS `author` is an e-mail address, optionally with a name in parentheses; keep only the name. */
+function rssAuthor(value: string): string | null {
+  const named = /\(([^)]+)\)\s*$/.exec(value)?.[1]?.trim();
+  if (named) return named;
+  return value.includes("@") || !value.trim() ? null : value.trim();
+}
+
+function date(...values: ReadonlyArray<string>): number | null {
+  for (const value of values) {
+    const ms = Date.parse(value.trim());
+    if (value.trim() && Number.isFinite(ms)) return ms;
+  }
+  return null;
+}
+
+function absolute(href: string, base: string): string | null {
+  try {
+    const url = new URL(href.trim(), base);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function atomLink(entry: XmlElement, base: string): string | null {
+  const links = elements(entry, "link", "atom:link");
+  const alternate =
+    links.find((link) => (link.attrs.rel ?? "alternate") === "alternate") ?? links[0];
+  return alternate?.attrs.href ? absolute(alternate.attrs.href, base) : null;
+}
+
+/** Entries of an RSS 2.0 or Atom document; throws XmlError when it is neither. */
+export function parseFeed(text: string, feedUrl: string): Array<FeedEntry> {
+  const root = parseXml(text);
+  if (root.name === "rss" || root.name === "rdf:RDF") {
+    const channel = element(root, "channel");
+    if (!channel) throw new XmlError("RSS without channel");
+    // RSS 1.0 keeps items beside the channel; RSS 2.0 inside it.
+    return [...elements(channel, "item"), ...elements(root, "item")].map((item) => {
+      const guid = textOf(element(item, "guid")).trim();
+      const link =
+        absolute(textOf(element(item, "link")), feedUrl) ??
+        (/^https?:\/\//.test(guid) ? guid : null);
+      return {
+        key: guid || link || textOf(element(item, "title")),
+        link,
+        title: textOf(element(item, "title")),
+        summary: textOf(element(item, "description", "content:encoded")),
+        published: date(textOf(element(item, "pubDate")), textOf(element(item, "dc:date"))),
+        author:
+          textOf(element(item, "dc:creator")).trim() || rssAuthor(textOf(element(item, "author"))),
+      };
+    });
+  }
+  if (root.name === "feed" || root.name === "atom:feed") {
+    return elements(root, "entry", "atom:entry").map((entry) => {
+      const link = atomLink(entry, feedUrl);
+      return {
+        key: textOf(element(entry, "id", "atom:id")).trim() || link || "",
+        link,
+        title: textOf(element(entry, "title", "atom:title")),
+        summary: textOf(element(entry, "summary", "content", "atom:summary", "atom:content")),
+        published: date(
+          textOf(element(entry, "published", "atom:published")),
+          textOf(element(entry, "updated", "atom:updated")),
+        ),
+        author:
+          textOf(
+            element(element(entry, "author", "atom:author") ?? entry, "name", "atom:name"),
+          ).trim() || null,
+      };
+    });
+  }
+  throw new XmlError(`Not an RSS or Atom document: <${root.name}>`);
+}
+
+/** Last 200 body per feed URL, replayed when the server answers 304. */
+export interface CachedFeed {
+  readonly etag: string | null;
+  readonly lastModified: string | null;
+  readonly text: string;
+}
+
+export interface RssDeps {
+  readonly feeds: ReadonlyArray<RssFeed>;
+  /** One client per host, so each host gets its own pause. */
+  readonly getFor: (url: string) => GetResponse;
+  readonly robots: RobotsGate;
+  readonly cache: Map<string, CachedFeed>;
+}
+
+export async function collectRssDay(
+  day: string,
+  deps: RssDeps,
+  now = new Date().toISOString(),
+): Promise<DayResult> {
+  const start = dayStart(day);
+  const end = start + DAY_MS;
+  const items = new Map<string, Item>();
+  const failed: Array<string> = [];
+  const short: Array<string> = [];
+  let responded = 0;
+  let retrievedAt = now;
+  for (const feed of deps.feeds) {
+    let text: string;
+    let observed: string;
+    try {
+      const refusal = await deps.robots(feed.feedUrl);
+      if (refusal) throw new SourceFailure(refusal);
+      const cached = deps.cache.get(feed.feedUrl);
+      const response = await deps.getFor(feed.feedUrl)(feed.feedUrl, {
+        ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
+        ...(cached?.lastModified ? { "If-Modified-Since": cached.lastModified } : {}),
+      });
+      observed = retrievedAt = response.observed_at;
+      if (response.status === 304 && cached) text = cached.text;
+      else if (response.status === 200 && typeof response.body === "string") {
+        text = response.body;
+        deps.cache.set(feed.feedUrl, {
+          etag: response.etag ?? null,
+          lastModified: response.last_modified ?? null,
+          text,
+        });
+      } else throw new SourceFailure(`HTTP ${response.status}`);
+    } catch (error) {
+      if (!(error instanceof SourceFailure)) throw error;
+      failed.push(`${feed.id} (${error.message})`);
+      continue;
+    }
+    let entries: Array<FeedEntry>;
+    try {
+      entries = parseFeed(text, feed.feedUrl);
+    } catch (error) {
+      if (!(error instanceof XmlError)) throw error;
+      failed.push(`${feed.id} (invalid feed: ${error.message})`);
+      continue;
+    }
+    responded++;
+    const dated = entries.flatMap((entry) => (entry.published === null ? [] : [entry.published]));
+    // Entries older than the oldest listed one have rotated out: the day may be missing some.
+    if (dated.length < entries.length || !dated.length || Math.min(...dated) >= start)
+      short.push(feed.id);
+    for (const entry of entries) {
+      if (entry.published === null || entry.published < start || entry.published >= end) continue;
+      const summary = plainText(entry.summary);
+      const link = entry.link ?? feed.siteUrl;
+      const id = `itm_rss_${feed.id}_${sha256(entry.key || link).slice(7, 23)}`;
+      if (!items.has(id))
+        items.set(id, {
+          id,
+          source: "rss",
+          permalink: link,
+          external_url: entry.link,
+          published_at: new Date(entry.published).toISOString(),
+          author: entry.author ?? feed.name,
+          title: plainText(entry.title) || summary.slice(0, 120),
+          body: summary.slice(0, 4000),
+          body_length: summary.length,
+          truncated: summary.length > 4000,
+          retrieved_at: observed,
+          entities: githubEntity(entry.link),
+        });
+    }
+  }
+  const notes = [`feeds=${deps.feeds.length} responded=${responded}`];
+  if (failed.length) notes.push(`failed: ${failed.join(", ")}`);
+  if (short.length) notes.push(`window_short: ${short.join(", ")}`);
+  const unfinished = end > Date.parse(retrievedAt);
+  if (unfinished) notes.push("Day not finished at retrieval");
+  const status =
+    responded === 0
+      ? "unavailable"
+      : failed.length || short.length || unfinished
+        ? "partial"
+        : "complete";
+  return {
+    items: sortItems([...items.values()]),
+    coverage: {
+      source: "rss",
+      day,
+      status,
+      items: items.size,
+      retrieved_at: retrievedAt,
+      note: notes.join("; "),
+    },
+  };
+}

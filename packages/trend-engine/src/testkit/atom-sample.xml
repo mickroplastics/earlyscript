@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trimmed from the shape of simonwillison.net/atom/everything/; text is synthetic. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en-us">
+  <title>Simon Willison's Weblog</title>
+  <link href="https://simonwillison.net/" rel="alternate"/>
+  <id>http://simonwillison.net/</id>
+  <updated>2026-10-30T22:00:00+00:00</updated>
+  <author><name>Simon Willison</name></author>
+  <entry>
+    <title>Claude Code skills, a quick look</title>
+    <link href="/2026/Oct/30/skills/" rel="alternate"/>
+    <published>2026-10-30T22:00:00+00:00</published>
+    <updated>2026-10-31T08:00:00+00:00</updated>
+    <id>https://simonwillison.net/2026/Oct/30/skills/</id>
+    <summary type="html">&lt;p&gt;Notes on &lt;code&gt;SKILL.md&lt;/code&gt; files.&lt;/p&gt;</summary>
+    <author><name>Simon Willison</name></author>
+  </entry>
+  <entry>
+    <title type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">Quoting <em>someone</em></div></title>
+    <link href="https://simonwillison.net/2026/Oct/30/quote/" rel="alternate"/>
+    <link href="https://example.com/source" rel="related"/>
+    <updated>2026-10-30T09:30:00-05:00</updated>
+    <id>https://simonwillison.net/2026/Oct/30/quote/</id>
+    <content type="html">&lt;blockquote&gt;A quote&lt;/blockquote&gt;</content>
+  </entry>
+  <entry>
+    <title>Older post</title>
+    <link href="https://simonwillison.net/2026/Oct/28/older/"/>
+    <published>2026-10-28T12:00:00Z</published>
+    <id>https://simonwillison.net/2026/Oct/28/older/</id>
+    <summary>Before the day.</summary>
+  </entry>
+</feed>

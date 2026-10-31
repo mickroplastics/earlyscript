@@ -1177,3 +1177,54 @@ Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
 
 Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).
+
+## 21. Fuentes Lobste.rs y RSS/Atom (rama `es/sources-lobsters-rss`, 31 de octubre de 2026)
+
+Base: `f75eebfae2`. Cero archivos de upstream modificados. Sin dependencias nuevas: `fast-xml-parser` está en el lockfile, pero solo como dependencia de `apps/web`; añadirlo al motor tocaría el lockfile que también tocan S1 a S3, así que se escribe un lector XML mínimo propio (`src/sources/xml.ts`, con pruebas).
+
+Archivos nuevos en `packages/trend-engine/src/sources/`: `lobsters.ts`, `rss.ts`, `rss-feeds.ts`, `robots.ts`, `xml.ts` y `lobsters-rss.test.ts`; en `src/testkit/`: `lobsters-newest-page.json` (seis historias de una página real del 30 de octubre, descripciones recortadas), `rss-sample.xml` y `atom-sample.xml` (forma de Substack y de simonwillison.net, texto sintético). Se amplían `SourceId` (`"lobsters","rss"`; S1 lo amplía también, se resuelve al fusionar), el esquema `LobstersPage` de `editorial-contracts/src/source.ts`, el registro de `index.ts`, `http.ts` y la CLI (`engine collect --sources` acepta cualquier `SourceId`). `DEFAULT_SOURCES` del motor no cambia.
+
+Selección:
+
+- `lobsters`: todas las historias creadas en el día UTC, paginando `https://lobste.rs/newest/page/N.json` (25 por página, de la más nueva a la más vieja) hasta ver una historia anterior al día o una página vacía; tope de 40 páginas. Ítem `itm_lob_<short_id>`: `permalink` es la página de comentarios, `external_url` el enlace (nulo en las publicaciones de texto), `author` quien envió, cuerpo `description_plain` y una línea `Tags: ...`. Política `census`.
+- `rss`: la lista de `rss-feeds.ts`; la selección del descriptor son sus URL, así que cambiar la lista cambia el hash del corpus. Ítems del día por `pubDate` (o `dc:date`) en RSS y `published` (o `updated`) en Atom. Resumen del feed (`description`/`summary`) antes que el contenido completo; 4000 caracteres como máximo. `author` es el autor de la entrada o, si no hay, el nombre del feed; el feed queda siempre en el id `itm_rss_<feed>_<sha256 de guid o enlace, 16 hex>`. De `author` de RSS solo se guarda el nombre entre paréntesis, nunca el correo. Política `census` sobre la lista.
+
+Cobertura:
+
+- Lobsters: `complete` si la paginación pasó el inicio del día; `partial` si se cortó (tope, error en una página posterior) con ítems; `unavailable` si no obtuvo ninguno.
+- RSS: `complete` si todos los feeds respondieron (200 o 304) y cada uno llega a antes del inicio del día; `partial` si alguno falló o es corto, con `note` `feeds=N responded=M; failed: id (motivo); window_short: id`; `unavailable` si ninguno respondió. «Corto» (`window_short`) es más estricto que el encargo: un feed solo lista sus últimas entradas, y si la más vieja es posterior al inicio del día pudo perder entradas de ese día.
+- Ambas: `partial` con «Day not finished at retrieval» si el día no había terminado al capturarlo, para que `complete` no congele un día a medias (HN y GitHub no lo hacen).
+
+Red:
+
+- `http.ts`: perfiles `lobsters` (pausa 2 s, 1 MiB) y `rss` (pausa 1 s por host, 4 MiB; el feed más grande medido pesó 2,6 MB). Opción `text` para leer cuerpos como texto (feeds, `robots.txt`). `GetResponse` acepta cabeceras extra y la respuesta devuelve `etag` y `last_modified`.
+- `User-Agent: Earlyscript/0.1 (+https://github.com/miwgel)` para todas las fuentes, también HN y GitHub (antes `Earlyscript-academic-collector`). El contacto es el perfil público de GitHub, como hacía Earlywindow con Wikimedia; no se envía correo.
+- RSS reenvía `If-None-Match` e `If-Modified-Since` y reutiliza el cuerpo guardado ante un 304. La caché vive en memoria durante un `engine collect`: varios días de una misma ejecución descargan cada feed una vez; dos ejecuciones separadas lo descargan de nuevo.
+- `robots.ts` (RFC 9309) para Lobsters y RSS: grupos que nombran `earlyscript`, si no los de `*`; gana la regla más larga y `Allow` en empate; `*` y `$` en patrones. Un `robots.txt` 4xx no impone reglas; 5xx o red caída rechaza el origen ese día. Se lee una vez por origen y ejecución, por el mismo cliente con pausa. Una URL rechazada queda en `note` como `robots_disallowed: ...`. HN y GitHub son API y no pasan por esta compuerta.
+
+Lobste.rs bloqueado por su `robots.txt` (comprobado el 31 de octubre de 2026). El archivo permite todo a una lista de buscadores y para el resto dice `User-agent: *` / `Disallow: /`, con `Content-Signal: ai-input=no, ai-train=no, search=yes` y un comentario que pide seguir el estándar. El JSON es público, pero el colector no está en la lista, así que el adaptador se detiene antes de la primera página y el día queda `unavailable` con `robots_disallowed`. El documento de condiciones (`08-fuentes-candidatas-y-condiciones.md`) no había revisado `robots.txt`. Para usarlo hace falta permiso escrito de los administradores de Lobsters (y que el uso encaje con `ai-input=no`) o retirarlo; queda como decisión de Miguel. Durante el desarrollo se descargó una vez `/newest/page/1.json` para conocer su forma, antes de leer el `robots.txt`; de esa página salen las seis historias del fixture.
+
+Feeds elegidos (14; todos respondieron 200 con RSS o Atom el 31 de octubre de 2026 y su `robots.txt` permite la ruta del feed a `*`):
+
+| id                   | Feed                            | Motivo                                                                 |
+| -------------------- | ------------------------------- | ---------------------------------------------------------------------- |
+| `openai`             | OpenAI News                     | Lanzamientos de modelos, Codex y API                                   |
+| `deepmind`           | Google DeepMind Blog            | Gemini e investigación                                                 |
+| `huggingface`        | Hugging Face Blog               | Modelos abiertos e inferencia local                                    |
+| `github-blog`        | The GitHub Blog                 | Copilot y agentes en la plataforma                                     |
+| `ollama`             | Ollama Blog                     | Motor de referencia para LLM locales                                   |
+| `simonwillison`      | Simon Willison's Weblog         | Cobertura diaria de herramientas LLM y agentes de código               |
+| `latent-space`       | Latent Space                    | Boletín y podcast de ingeniería de IA                                  |
+| `pragmatic-engineer` | The Pragmatic Engineer          | Adopción de IA en equipos; las entradas de pago solo traen un adelanto |
+| `interconnects`      | Interconnects                   | Modelos abiertos y post-entrenamiento                                  |
+| `ahead-of-ai`        | Ahead of AI (Sebastian Raschka) | Investigación en LLM para practicantes                                 |
+| `lucumr`             | Armin Ronacher                  | Ensayos sobre programación con agentes                                 |
+| `mitchellh`          | Mitchell Hashimoto              | Autor de herramientas sobre desarrollo asistido                        |
+| `hamel`              | Hamel Husain                    | Evaluación de LLM e ingeniería aplicada                                |
+| `martinfowler`       | Martin Fowler                   | Práctica de software, serie sobre IA generativa                        |
+
+Descartados: Anthropic (sin RSS; `/news/rss.xml` da 404 y no se raspa HTML), Cursor (sin feed en `/blog/rss.xml`), LangChain (la ruta devuelve HTML) y Hacker Newsletter (repite HN).
+
+Licencias: ningún feed declara una licencia abierta en el propio feed; se asume el copyright del editor y no se verificó sitio por sitio. El corpus guarda título, enlace y el extracto que el propio feed sindica, para análisis privado, sin republicar. `pragmatic-engineer` declara en `robots.txt` `ai-input=yes, ai-train=no`. Cada feed lleva su nota en `rss-feeds.ts`.
+
+Pruebas: respuestas grabadas para selección del día, campos, paginación cortada, día sin terminar, `robots.txt` (incluido el real de Lobsters), 4xx y 5xx de `robots.txt`, RSS 2.0 y Atom, feeds caídos y cortos, `ETag`/`If-Modified-Since` con 304, pausas por host y huecos en `coverageSummary`. Pruebas en vivo por fuente con `EARLYSCRIPT_LIVE_TESTS=1`.
