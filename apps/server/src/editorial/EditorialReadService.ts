@@ -260,7 +260,7 @@ const make = Effect.gen(function* () {
   });
 
   return EditorialReadService.of(
-    withPresentations(sql, { listRuns, getInbox, getDossier, getTrendState }),
+    withPresentations(sql, directory, { listRuns, getInbox, getDossier, getTrendState }),
   );
 });
 

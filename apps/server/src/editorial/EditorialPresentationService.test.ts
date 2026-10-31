@@ -1,11 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import { EditorialDossierId, EditorialRunId, TextGenerationError } from "@t3tools/contracts";
-import type {
-  TrendPresentationGenerationInput,
-  TrendPresentationGenerationResult,
+import {
+  hashTrendPresentationInput,
+  type TrendPresentationGenerationInput,
+  type TrendPresentationGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
@@ -19,7 +21,8 @@ import { EditorialReadService } from "./EditorialReadService.ts";
 import { SINGULARIDEV_PROFILE_V1, presentationProfileFromBytes } from "./channelProfile.ts";
 import { withEditorial } from "./editorialLayer.testkit.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import { readyPresentations } from "./presentationRead.ts";
+import { presentationsForRun } from "./presentationRead.ts";
+import { EditorialRunDirectory } from "./RunDirectory.ts";
 
 const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
 const QUANTUM = EditorialDossierId.make("dos_bbb80d57481e");
@@ -50,7 +53,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v2",
+    promptVersion: "trend-presentation.v3",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -100,13 +103,25 @@ const presentationLayer = (generator: Generator) =>
  * Runs `effect` with the presentation service over the editorial services of a fresh
  * database and a copy of the fixture run (shared run directory, read side, importer).
  */
-const withDrafting = <A, E, R>(effect: (generator: Generator) => Effect.Effect<A, E, R>) =>
-  withEditorial(() =>
+const withDrafting = <A, E, R>(
+  effect: (
+    generator: Generator,
+    runs: { readonly dir: string; readonly runDir: string },
+  ) => Effect.Effect<A, E, R>,
+) =>
+  withEditorial((runs) =>
     Effect.gen(function* () {
       const generator = yield* makeGenerator;
-      return yield* effect(generator).pipe(Effect.provide(presentationLayer(generator)));
+      return yield* effect(generator, runs).pipe(Effect.provide(presentationLayer(generator)));
     }),
   );
+
+/** What each dossier of the run shows, as the read side computes it. */
+const shown = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  const directory = yield* EditorialRunDirectory;
+  return yield* presentationsForRun(sql, directory, RUN_ID);
+});
 
 const presentationRows = Effect.gen(function* () {
   const sql = yield* EditorialSql;
@@ -144,7 +159,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v2");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v3");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);
@@ -169,7 +184,6 @@ describe("EditorialPresentationService", () => {
     withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
-        const sql = yield* EditorialSql;
         const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
         const regenerated = yield* service.regenerate({ runId: RUN_ID, dossierId: QUANTUM });
 
@@ -186,8 +200,9 @@ describe("EditorialPresentationService", () => {
             [2, "ready", regenerated.presentation.title],
           ],
         );
-        const ready = yield* readyPresentations(sql, RUN_ID);
+        const ready = yield* shown;
         assert.strictEqual(ready.get(QUANTUM)?.title, regenerated.presentation.title);
+        assert.strictEqual(ready.get(QUANTUM)?.status, "current");
         // ensure now returns the newest revision without generating.
         const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
         assert.isTrue(again.reused);
@@ -259,6 +274,41 @@ describe("EditorialPresentationService", () => {
     ),
   );
 
+  it.effect("a new prompt version marks stored text stale and ensure writes it again", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const sql = yield* EditorialSql;
+        const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const input = (yield* Ref.get(generator.calls))[0]!;
+        // The stored row as the previous prompt left it: same input, older prompt version.
+        yield* sql`
+          UPDATE editorial_presentations
+          SET input_hash = ${hashTrendPresentationInput(input, "trend-presentation.v2")},
+              prompt_version = 'trend-presentation.v2'
+        `;
+
+        const before = (yield* shown).get(QUANTUM);
+        assert.strictEqual(before?.status, "stale");
+        assert.strictEqual(before?.title, first.presentation.title);
+
+        const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.isFalse(again.reused);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
+        const after = (yield* shown).get(QUANTUM);
+        assert.strictEqual(after?.status, "current");
+        assert.strictEqual(after?.title, again.presentation.title);
+        assert.deepStrictEqual(
+          (yield* presentationRows).map((row) => [row.revision, row.status]),
+          [
+            [1, "ready"],
+            [2, "ready"],
+          ],
+        );
+      }),
+    ),
+  );
+
   it.effect("an unknown dossier fails without writing a row", () =>
     withDrafting(() =>
       Effect.gen(function* () {
@@ -308,6 +358,7 @@ describe("EditorialReadService with presentations", () => {
         const inbox = yield* read.getInbox({});
         const byId = new Map(inbox.trends.map((trend) => [trend.dossierId, trend]));
         assert.deepStrictEqual(byId.get(QUANTUM)?.presentation, drafted.presentation);
+        assert.strictEqual(byId.get(QUANTUM)?.presentation?.status, "current");
         assert.isUndefined(byId.get(CHINA)?.presentation);
         // The engine's words stay next to the assistant's title.
         assert.strictEqual(byId.get(QUANTUM)?.label, "quantum computing ibm open");
@@ -316,6 +367,41 @@ describe("EditorialReadService with presentations", () => {
         assert.deepStrictEqual(dossier.trend.presentation, drafted.presentation);
         const other = yield* read.getDossier({ runId: RUN_ID, dossierId: JUDGE });
         assert.isUndefined(other.trend.presentation);
+      }),
+    ),
+  );
+
+  it.effect("a changed excerpt marks the presentation stale before anyone drafts again", () =>
+    withDrafting((_generator, runs) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* (yield* EditorialImportService).sync;
+        const read = yield* EditorialReadService;
+        const service = yield* EditorialPresentationService;
+        const drafted = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        const file = `${runs.runDir}/dossiers/13-dos_bbb80d57481e.json`;
+        const dossier = JSON.parse(yield* fs.readFileString(file)) as {
+          evidence: Array<{ excerpt?: string }>;
+        };
+        dossier.evidence[0]!.excerpt = "IBM published a new quantum roadmap.";
+        yield* fs.writeFileString(file, JSON.stringify(dossier));
+
+        // The read shows the old text, marked stale, before ensure runs.
+        const stale = yield* read.getDossier({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.strictEqual(stale.trend.presentation?.status, "stale");
+        assert.strictEqual(stale.trend.presentation?.title, drafted.presentation.title);
+        const inbox = yield* read.getInbox({});
+        const row = inbox.trends.find((trend) => trend.dossierId === QUANTUM);
+        assert.strictEqual(row?.presentation?.status, "stale");
+
+        const changed = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.isFalse(changed.reused);
+        const current = yield* read.getDossier({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.strictEqual(current.trend.presentation?.status, "current");
+        assert.strictEqual(current.trend.presentation?.title, changed.presentation.title);
+        // Unchanged evidence is still reused.
+        assert.isTrue((yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM })).reused);
       }),
     ),
   );

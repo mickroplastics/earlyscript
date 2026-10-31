@@ -2,9 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import type { TrendPresentationProfile } from "@t3tools/provider-core/server/textGeneration";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * Bytes of Earlywindow's `profiles/singularidev.v1.json` (profile/1, version 1). The engine
@@ -41,21 +40,13 @@ export function presentationProfileFromBytes(
   return { version, hash: `sha256:${hash}`, text: profileText(JSON.parse(bytes) as ProfileFile) };
 }
 
-export interface EditorialChannelProfileShape {
-  /** The profile the assistant writes against; its version and hash enter the input hash. */
-  readonly current: Effect.Effect<TrendPresentationProfile>;
-}
+const SINGULARIDEV_V1 = presentationProfileFromBytes(SINGULARIDEV_PROFILE_V1, 1);
 
 /**
- * Channel profile for the assistant's trend presentations. Fixed to SingulariDev v1 until
- * versioned profiles live in editorial.sqlite; that unit replaces `layer`, nothing else.
+ * The channel profile the assistant writes against; its version and hash enter the input
+ * identity, so reads and generation must take it from here. Fixed to SingulariDev v1 until
+ * versioned profiles live in editorial.sqlite: that unit reads them here with `sql`.
  */
-export class EditorialChannelProfile extends Context.Service<
-  EditorialChannelProfile,
-  EditorialChannelProfileShape
->()("t3/editorial/channelProfile/EditorialChannelProfile") {}
-
-export const layer = Layer.sync(EditorialChannelProfile, () => {
-  const profile = presentationProfileFromBytes(SINGULARIDEV_PROFILE_V1, 1);
-  return EditorialChannelProfile.of({ current: Effect.succeed(profile) });
-});
+export const currentPresentationProfile = (
+  _sql: SqlClient.SqlClient,
+): Effect.Effect<TrendPresentationProfile> => Effect.succeed(SINGULARIDEV_V1);

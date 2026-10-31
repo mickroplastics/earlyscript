@@ -7,10 +7,7 @@ import {
   type EditorialPresentationTarget,
   type EditorialTrendPresentation,
 } from "@t3tools/contracts";
-import {
-  hashTrendPresentationInput,
-  type TrendPresentationGenerationInput,
-} from "@t3tools/provider-core/server/textGeneration";
+import type { TrendPresentationGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -26,11 +23,10 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
-import * as ChannelProfile from "./channelProfile.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { nowIso } from "./persistence/support.ts";
-import * as DossierSource from "./presentationDossierSource.ts";
-import type { PresentationDossier } from "./presentationDossierSource.ts";
+import { loadPresentationDossiers, type PresentationDossier } from "./presentationDossierSource.ts";
+import { EditorialRunDirectory } from "./RunDirectory.ts";
 import {
   encodeStrings,
   parseStrings,
@@ -99,7 +95,8 @@ const toResult = (
 ): EditorialPresentationResult => ({
   runId: EditorialRunId.make(row.run_id),
   dossierId: EditorialDossierId.make(row.dossier_id),
-  presentation,
+  // Written for the input the dossier has now.
+  presentation: { ...presentation, status: "current" },
   warnings: parseStrings(row.warnings_json),
   reused,
 });
@@ -131,8 +128,8 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const config = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
-  const profiles = yield* ChannelProfile.EditorialChannelProfile;
-  const dossiers = yield* DossierSource.PresentationDossierSource;
+  const directory = yield* EditorialRunDirectory;
+  const loadRun = (runId: string) => loadPresentationDossiers(directory, sql, runId);
 
   // A row left pending by a previous process never finishes; say so instead of hiding it.
   yield* sql`
@@ -168,23 +165,21 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    const profile = yield* profiles.current;
+    // The identity was computed with the dossier; cwd and model stay outside it.
     const input: TrendPresentationGenerationInput = {
+      ...dossier.input,
       // Claude runs this operation in a temporary directory; Codex gets a directory
       // without project instructions.
       cwd: config.stateDir,
       modelSelection: settings.textGenerationModelSelection,
-      profile,
-      trend: dossier.trend,
-      evidence: dossier.evidence,
     };
-    return { input, inputHash: hashTrendPresentationInput(input) };
+    return { input, inputHash: dossier.inputHash };
   });
 
   const loadDossier = Effect.fn("EditorialPresentationService.loadDossier")(function* (
     target: EditorialPresentationTarget,
   ) {
-    const run = yield* dossiers.loadRun(target.runId);
+    const run = yield* loadRun(target.runId);
     const dossier = run.find((candidate) => candidate.dossierId === target.dossierId);
     if (dossier === undefined) return yield* dossierNotFound(target);
     return dossier;
@@ -314,11 +309,8 @@ const make = Effect.gen(function* () {
   const runProgress: EditorialPresentationServiceShape["runProgress"] = Effect.fn(
     "EditorialPresentationService.runProgress",
   )(function* (runId) {
-    const run = yield* dossiers.loadRun(runId);
-    const hashes = new Map<string, string>();
-    for (const dossier of run) {
-      hashes.set(dossier.dossierId, (yield* generationInput(dossier)).inputHash);
-    }
+    const run = yield* loadRun(runId);
+    const hashes = new Map(run.map((dossier) => [dossier.dossierId, dossier.inputHash]));
     const rows = yield* sql<{
       readonly dossier_id: string;
       readonly input_hash: string;
@@ -354,7 +346,7 @@ const make = Effect.gen(function* () {
   const ensureAll: EditorialPresentationServiceShape["ensureAll"] = Effect.fn(
     "EditorialPresentationService.ensureAll",
   )(function* (runId, options) {
-    const run = yield* dossiers.loadRun(runId);
+    const run = yield* loadRun(runId);
     yield* Effect.forEach(
       run,
       (dossier) =>
@@ -376,7 +368,7 @@ const make = Effect.gen(function* () {
   )(function* (runId) {
     if (jobs.get(runId)?.running !== true) {
       // Fails here, not in the background, when the run does not exist.
-      yield* dossiers.loadRun(runId);
+      yield* loadRun(runId);
       const job: RunJob = {
         running: true,
         startedAt: yield* nowIso,
@@ -425,7 +417,4 @@ const make = Effect.gen(function* () {
 });
 
 /** Needs the shared `EditorialRunDirectory`, which `editorial/layer.ts` mounts below it. */
-export const layer = Layer.effect(EditorialPresentationService, make).pipe(
-  Layer.provide(ChannelProfile.layer),
-  Layer.provide(DossierSource.layer),
-);
+export const layer = Layer.effect(EditorialPresentationService, make);

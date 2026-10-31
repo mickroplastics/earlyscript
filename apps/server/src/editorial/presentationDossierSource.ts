@@ -1,53 +1,50 @@
 import { EditorialPresentationError } from "@t3tools/contracts";
-import type {
-  TrendPresentationEvidence,
-  TrendPresentationTrend,
+import {
+  hashTrendPresentationInput,
+  type TrendPresentationGenerationInput,
 } from "@t3tools/provider-core/server/textGeneration";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as SqlClient from "effect/sql/SqlClient";
 
-import { EditorialRunDirectory, type IndexedDossier } from "./RunDirectory.ts";
+import { currentPresentationProfile } from "./channelProfile.ts";
+import type { EditorialRunDirectoryShape, IndexedDossier } from "./RunDirectory.ts";
+
+/** What the model reads: the generation input without where and with which model it runs. */
+type TrendPresentationPromptInput = Omit<
+  TrendPresentationGenerationInput,
+  "cwd" | "modelSelection"
+>;
 
 /** Evidence items sent to the assistant, in the engine's selection order. */
 const PRESENTATION_EVIDENCE_LIMIT = 12;
 
-/** What the assistant reads about one dossier: deterministic engine data and its evidence. */
+/**
+ * One dossier as the assistant reads it, with the identity of that input. Reads and
+ * generation both build it here, so a stored presentation is current exactly when its
+ * `input_hash` equals `inputHash`.
+ */
 export interface PresentationDossier {
   readonly runId: string;
   readonly dossierId: string;
   /** The inbox's trend identity (`trendKey.ts`): `signal.id`, else a hash of the terms. */
   readonly trendKey: string;
-  readonly trend: TrendPresentationTrend;
-  readonly evidence: ReadonlyArray<TrendPresentationEvidence>;
+  readonly input: TrendPresentationPromptInput;
+  /** Profile, engine data, evidence, language and prompt version; not the model or cwd. */
+  readonly inputHash: string;
 }
 
-export interface PresentationDossierSourceShape {
-  /** Every dossier of the run, in file order. */
-  readonly loadRun: (
-    runId: string,
-  ) => Effect.Effect<ReadonlyArray<PresentationDossier>, EditorialPresentationError>;
-}
-
-/**
- * Dossiers as the presentation service needs them, from the shared run directory: same
- * cache, ranks, coverage, link validation and trend keys as the inbox.
- */
-export class PresentationDossierSource extends Context.Service<
-  PresentationDossierSource,
-  PresentationDossierSourceShape
->()("t3/editorial/presentationDossierSource") {}
-
-function toPresentationDossier(runId: string, dossier: IndexedDossier): PresentationDossier {
+function presentationDossierOf(
+  runId: string,
+  dossier: IndexedDossier,
+  profile: TrendPresentationPromptInput["profile"],
+): PresentationDossier {
   const excerpts = new Map(
     (dossier.file.evidence ?? []).map((item) => [item.item_id, item.excerpt ?? ""]),
   );
   const { summary } = dossier;
-  return {
-    runId,
-    dossierId: summary.dossierId,
-    trendKey: dossier.trendKey.key,
+  const input: TrendPresentationPromptInput = {
+    profile,
     trend: {
       id: dossier.trendKey.key,
       terms: summary.terms,
@@ -75,33 +72,39 @@ function toPresentationDossier(runId: string, dossier: IndexedDossier): Presenta
       url: item.externalUrl ?? item.permalink ?? "",
     })),
   };
+  return {
+    runId,
+    dossierId: summary.dossierId,
+    trendKey: dossier.trendKey.key,
+    input,
+    inputHash: hashTrendPresentationInput(input),
+  };
 }
 
-const make = Effect.gen(function* () {
-  const directory = yield* EditorialRunDirectory;
-
-  const loadRun: PresentationDossierSourceShape["loadRun"] = Effect.fn(
-    "PresentationDossierSource.loadRun",
-  )(function* (runId) {
-    const entry = yield* directory
-      .find(runId)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new EditorialPresentationError({ reason: "run-not-found", message: cause.message }),
-        ),
-      );
-    if (Option.isNone(entry)) {
-      return yield* new EditorialPresentationError({
-        reason: "run-not-found",
-        message: `Run ${runId} is not in the runs directory.`,
-      });
-    }
-    const loaded = yield* directory.load(entry.value);
-    return loaded.dossiers.map((dossier) => toPresentationDossier(runId, dossier));
-  });
-
-  return PresentationDossierSource.of({ loadRun });
+/**
+ * Every dossier of the run with its current input identity, from the shared run directory:
+ * same cache, ranks, coverage, link validation and trend keys as the inbox.
+ */
+export const loadPresentationDossiers = Effect.fn("loadPresentationDossiers")(function* (
+  directory: EditorialRunDirectoryShape,
+  sql: SqlClient.SqlClient,
+  runId: string,
+) {
+  const entry = yield* directory
+    .find(runId)
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EditorialPresentationError({ reason: "run-not-found", message: cause.message }),
+      ),
+    );
+  if (Option.isNone(entry)) {
+    return yield* new EditorialPresentationError({
+      reason: "run-not-found",
+      message: `Run ${runId} is not in the runs directory.`,
+    });
+  }
+  const loaded = yield* directory.load(entry.value);
+  const profile = yield* currentPresentationProfile(sql);
+  return loaded.dossiers.map((dossier) => presentationDossierOf(runId, dossier, profile));
 });
-
-export const layer = Layer.effect(PresentationDossierSource, make);

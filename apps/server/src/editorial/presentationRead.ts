@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import type { EditorialReadServiceShape } from "./EditorialReadService.ts";
+import { loadPresentationDossiers } from "./presentationDossierSource.ts";
+import type { EditorialRunDirectoryShape } from "./RunDirectory.ts";
 
 /** A row of `editorial_presentations` (migration 005). */
 export interface PresentationRow {
@@ -71,29 +73,50 @@ export function presentationOfRow(row: PresentationRow): EditorialTrendPresentat
 
 const NO_PRESENTATIONS: ReadonlyMap<string, EditorialTrendPresentation> = new Map();
 
-/** Latest ready presentation of each dossier of the run, by dossier id. */
-export const readyPresentations = (sql: SqlClient.SqlClient, runId: string) =>
-  sql<PresentationRow>`
-    SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
-    WHERE run_id = ${runId} AND status = 'ready'
-    ORDER BY revision ASC
-  `.pipe(
-    Effect.map((rows) => {
-      // The highest ready revision of each dossier wins.
-      const byDossier = new Map<string, EditorialTrendPresentation>();
-      for (const row of rows) {
-        const presentation = presentationOfRow(row);
-        if (presentation !== null) byDossier.set(row.dossier_id, presentation);
+/**
+ * The presentation each dossier of the run shows: the latest ready revision written for its
+ * current input (`current`), else the latest ready one written for an earlier input
+ * (`stale`), which stays visible until someone regenerates it. Earlier revisions are history.
+ */
+export const presentationsForRun = Effect.fn("EditorialPresentationRead.presentationsForRun")(
+  function* (sql: SqlClient.SqlClient, directory: EditorialRunDirectoryShape, runId: string) {
+    const dossiers = yield* loadPresentationDossiers(directory, sql, runId);
+    const currentHash = new Map(dossiers.map((dossier) => [dossier.dossierId, dossier.inputHash]));
+    const rows = yield* sql<PresentationRow>`
+      SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
+      WHERE run_id = ${runId} AND status = 'ready'
+      ORDER BY revision ASC
+    `;
+    const current = new Map<string, EditorialTrendPresentation>();
+    const latest = new Map<string, EditorialTrendPresentation>();
+    for (const row of rows) {
+      const presentation = presentationOfRow(row);
+      if (presentation === null) continue;
+      latest.set(row.dossier_id, presentation);
+      if (currentHash.get(row.dossier_id) === row.input_hash) {
+        current.set(row.dossier_id, presentation);
       }
-      return byDossier as ReadonlyMap<string, EditorialTrendPresentation>;
-    }),
-    // A storage failure must not hide the inbox: the engine's terms are shown instead.
-    Effect.catch((cause) =>
-      Effect.logWarning("editorial: cannot read trend presentations", { runId, cause }).pipe(
-        Effect.as(NO_PRESENTATIONS),
+    }
+    const shown = new Map<string, EditorialTrendPresentation>();
+    for (const [dossierId, presentation] of latest) {
+      const own = current.get(dossierId);
+      shown.set(
+        dossierId,
+        own === undefined ? { ...presentation, status: "stale" } : { ...own, status: "current" },
+      );
+    }
+    return shown as ReadonlyMap<string, EditorialTrendPresentation>;
+  },
+  // A storage or directory failure must not hide the inbox: the engine's terms are shown.
+  (effect, _sql, _directory, runId) =>
+    effect.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("editorial: cannot read trend presentations", { runId, cause }).pipe(
+          Effect.as(NO_PRESENTATIONS),
+        ),
       ),
     ),
-  );
+);
 
 const attach = <T extends EditorialTrendSummary>(
   trend: T,
@@ -104,11 +127,13 @@ const attach = <T extends EditorialTrendSummary>(
 };
 
 /**
- * Fills `presentation` in the inbox and dossier reads when a ready one exists. Reads the
- * table with the read service's own client, so the read side never depends on generation.
+ * Fills `presentation` in the inbox and dossier reads, with its `status` against the input
+ * the dossier has now. Uses the read service's own client and run directory, so the read
+ * side never depends on generation.
  */
 export function withPresentations(
   sql: SqlClient.SqlClient,
+  directory: EditorialRunDirectoryShape,
   read: EditorialReadServiceShape,
 ): EditorialReadServiceShape {
   return {
@@ -118,7 +143,7 @@ export function withPresentations(
         Effect.flatMap((inbox) =>
           (inbox.run === null
             ? Effect.succeed(NO_PRESENTATIONS)
-            : readyPresentations(sql, inbox.run.runId)
+            : presentationsForRun(sql, directory, inbox.run.runId)
           ).pipe(
             Effect.map((presentations) => ({
               ...inbox,
@@ -130,7 +155,7 @@ export function withPresentations(
     getDossier: (input) =>
       read.getDossier(input).pipe(
         Effect.flatMap((dossier) =>
-          readyPresentations(sql, dossier.run.runId).pipe(
+          presentationsForRun(sql, directory, dossier.run.runId).pipe(
             Effect.map((presentations) => ({
               ...dossier,
               trend: attach(dossier.trend, presentations),
