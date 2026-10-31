@@ -21,6 +21,10 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`, `01f65c0c49`, `21a7582128` y `e10a0ddf3e`; ningún archivo de upstream tocado.
 16. Hilo de video, interfaz (`es/video-thread`), base `0d84824fea`, con `main` fusionado en `01f65c0c49`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `client-runtime`, `ThreadDetailsPanel.tsx` y `ChatHeader.tsx`, y `flushFileSaveSession` en `fileSaveSessions.ts`.
 17. Lectura de corridas nativas del motor (`es/dossier-native`), base `ed5c3a2903`, con `main` fusionado en `0d84824fea` y `3e4c6c0741`; único archivo de upstream tocado: `packages/contracts/src/editorial.ts`.
+18. Catálogo de fuentes y Ajustes › Fuentes (`es/source-catalog`), pendiente de fusión.
+19. Fuentes de Earlywindow: arXiv, Wikipedia, npm, Stack Exchange, Bluesky (`es/sources-earlywindow`), pendiente de fusión.
+20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), pendiente de fusión.
+21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -242,12 +246,12 @@ Cada valor de marca se define una sola vez en `packages/shared/src/earlyscriptBr
 
 ## Archivos nuestros
 
-| Archivo                                                          | Contenido                                                                                                                                                         |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/shared/src/earlyscriptBrand.ts`                        | Nombre del producto, directorio base, puertos por defecto, esquema de URL, identificadores de escritorio y nombres de binario.                                    |
-| `docs/upstream-divergence.md`                                    | Este registro.                                                                                                                                                    |
+| Archivo                                                          | Contenido                                                                                                                                                                                                            |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/shared/src/earlyscriptBrand.ts`                        | Nombre del producto, directorio base, puertos por defecto, esquema de URL, identificadores de escritorio y nombres de binario.                                                                                       |
+| `docs/upstream-divergence.md`                                    | Este registro.                                                                                                                                                                                                       |
 | `README.md` y `docs/README-t3code.md`                            | README propio de Earlyscript (propósito académico, problema y solución, requisitos, ejecución, pipeline, carpetas, pruebas, fuentes, limitaciones); el README de T3 Code se movió íntegro a `docs/README-t3code.md`. |
-| `apps/desktop/resources/linux/cc.biste.earlyscript.metainfo.xml` | Metadatos AppStream del paquete `.deb`: id `cc.biste.earlyscript`, nombre, lanzador `earlyscript-desktop.desktop` e icono. Sustituye al de T3 Code en el paquete. |
+| `apps/desktop/resources/linux/cc.biste.earlyscript.metainfo.xml` | Metadatos AppStream del paquete `.deb`: id `cc.biste.earlyscript`, nombre, lanzador `earlyscript-desktop.desktop` e icono. Sustituye al de T3 Code en el paquete.                                                    |
 
 ## Documentación de upstream
 
