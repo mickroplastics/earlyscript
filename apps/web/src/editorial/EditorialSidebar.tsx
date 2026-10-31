@@ -70,7 +70,7 @@ function SpaceTabs({
 }) {
   const navigate = useNavigate();
   const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
-  // Until the inbox has read state (U3), "new" counts every trend of the latest run.
+  // New trends of the latest run, without snoozed or dismissed ones; live from the server.
   const newCount = inbox?.newCount ?? 0;
 
   const open = (next: EditorialSpace) => {

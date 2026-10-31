@@ -1,5 +1,12 @@
-import { EditorialDossierId, EditorialRunId, EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EditorialDossierId,
+  EditorialRunId,
+  EditorialTrendKey,
+  EnvironmentId,
+} from "@t3tools/contracts";
+import { RotateCcwIcon } from "lucide-react";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { SidebarMenu, SidebarProvider } from "../components/ui/sidebar";
@@ -28,6 +35,17 @@ const QUANTUM = {
   sources: ["hn"],
   sparkline: [2, 2, 1, 0, 0, 0, 0, 2, 0, 1, 5, 2, 0, 1],
   isNew: true,
+  trendKey: EditorialTrendKey.make("sig_69a4b83dd577"),
+};
+
+const AT = "2026-10-31T08:00:00.000Z";
+const SEEN = {
+  isNew: false,
+  seenRunId: RUN_ID,
+  seenAt: AT,
+  snoozed: null,
+  dismissed: null,
+  production: null,
 };
 
 describe("TrendSparkline", () => {
@@ -59,5 +77,62 @@ describe("TrendInboxRow", () => {
       .element(link)
       .toHaveAttribute("href", `/editorial/env-1/trends/dos_bbb80d57481e?run=${RUN_ID}`);
     expect(link.element().textContent).toContain("11 publ. · 11 autores · puntaje #13");
+  });
+
+  it("links a trend in production to its thread beside the dossier link", async () => {
+    const onContextMenu = vi.fn();
+    await using screen = await render(
+      <SidebarProvider defaultOpen>
+        <SidebarMenu>
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{
+              ...QUANTUM,
+              isNew: false,
+              inbox: { ...SEEN, production: { threadId: "thread-video", linkedAt: AT } },
+            }}
+            isActive={false}
+            onContextMenu={onContextMenu}
+          />
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    const thread = screen.getByRole("link", { name: /^En producción: abrir el hilo de video/ });
+    await expect.element(thread).toHaveAttribute("href", "/env-1/thread-video");
+    await expect.element(thread).toHaveTextContent("en producción");
+    // Two sibling links, never one inside the other.
+    expect(screen.container.querySelector("a a")).toBeNull();
+
+    const dossier = screen.getByRole("link", { name: /^quantum computing ibm open/ });
+    await userEvent.click(dossier, { button: "right" });
+    expect(onContextMenu).toHaveBeenCalledWith(
+      expect.objectContaining({ dossierId: QUANTUM.dossierId }),
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+    );
+  });
+
+  it("offers a dismissed trend's way back and keeps its reason for the tooltip", async () => {
+    const reopen = vi.fn();
+    await using screen = await render(
+      <SidebarProvider defaultOpen>
+        <SidebarMenu>
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{
+              ...QUANTUM,
+              isNew: false,
+              inbox: { ...SEEN, dismissed: { at: AT, reason: "Ya cubierto" } },
+            }}
+            isActive={false}
+            action={{ label: "Reabrir", Icon: RotateCcwIcon, onClick: reopen }}
+          />
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    await expect
+      .element(screen.getByRole("link", { name: /Descartada: Ya cubierto/ }))
+      .toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Reabrir: / }), { force: true });
+    expect(reopen).toHaveBeenCalledOnce();
   });
 });

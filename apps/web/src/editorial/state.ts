@@ -112,4 +112,10 @@ export const editorialEnvironment = {
     tag: EDITORIAL_WS_METHODS.reopen,
     onSuccess: bumpInbox,
   }),
+  /** "Crear hilo de video": answers with the trend's thread when it already has one. */
+  createVideo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:create-video",
+    tag: EDITORIAL_WS_METHODS.createVideo,
+    onSuccess: bumpInbox,
+  }),
 };

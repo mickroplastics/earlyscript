@@ -5,17 +5,39 @@ import type {
   EditorialRunId,
   EditorialSourceCoverage,
   EditorialTrendDossier,
+  EditorialTrendInboxState,
+  EditorialTrendKey,
+  EditorialTrendSummary,
   EnvironmentId,
 } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
-import { CircleCheckIcon, ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type MouseEvent, type ReactNode } from "react";
+import {
+  ChevronDownIcon,
+  CircleCheckIcon,
+  ExternalLinkIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+import { useEffect, useEffectEvent, useState, type MouseEvent, type ReactNode } from "react";
 
 import { useOpenLink } from "../browser/useOpenLink";
+import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Group, GroupSeparator } from "../components/ui/group";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { useClientSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import {
   coverageStatus,
@@ -26,17 +48,19 @@ import {
   formatDay,
   formatDecimal,
   growthText,
+  snoozeStateText,
   sourceLabel,
   trendSourceText,
   whyHereReasons,
 } from "./editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "./EditorialPage";
 import { editorialEnvironment } from "./state";
+import { useTrendActions, type TrendActions } from "./trendActions";
+import { TrendDismissDialog } from "./TrendDismissDialog";
 import { useTrendInbox } from "./TrendInbox";
 
 const SPACE_LABEL = "Tendencias";
 const EVIDENCE_PAGE_SIZE = 6;
-const NEXT_UNIT_TOOLTIP = "Disponible en la siguiente unidad.";
 
 function DossierSection({
   title,
@@ -249,31 +273,167 @@ function EvidenceList({
   );
 }
 
-function PendingAction({
-  label,
-  variant,
+/** "Seguir observando": growth by default, or one of the thread snooze times. */
+function KeepWatchingControl({
+  environmentId,
+  trendKey,
+  actions,
 }: {
-  readonly label: string;
-  readonly variant: "default" | "outline";
+  readonly environmentId: EnvironmentId;
+  readonly trendKey: EditorialTrendKey;
+  readonly actions: TrendActions;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const [open, setOpen] = useState(false);
+  const presets = open
+    ? // oxlint-disable-next-line react/purity -- Presets are resolved only while the menu is open, so each opening reads a fresh time.
+      resolveSnoozePresets(new Date(), timestampFormat, environmentId)
+    : [];
   return (
-    <Tooltip>
-      {/* A disabled button gets no pointer events; the wrapper keeps the reason reachable. */}
-      <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-        <Button size="sm" variant={variant} disabled>
-          {label}
-        </Button>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{NEXT_UNIT_TOOLTIP}</TooltipPopup>
-    </Tooltip>
+    <Group aria-label="Seguir observando">
+      <Button size="sm" variant="outline" onClick={() => void actions.keepWatching(trendKey)}>
+        Seguir observando
+      </Button>
+      <GroupSeparator />
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger
+          render={<Button size="icon-sm" variant="outline" aria-label="Observar hasta…" />}
+        >
+          <ChevronDownIcon />
+        </MenuTrigger>
+        <MenuPopup side="top" align="end">
+          <MenuItem onClick={() => void actions.keepWatching(trendKey)}>Hasta que crezca</MenuItem>
+          <MenuSeparator />
+          {presets.map((preset) => (
+            <MenuItem
+              key={preset.id}
+              onClick={() => {
+                const picked = pickSnoozePreset(presets, preset.id, timestampFormat, environmentId);
+                if (picked) void actions.keepWatching(trendKey, picked);
+              }}
+            >
+              {preset.label}
+              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+            </MenuItem>
+          ))}
+          <MenuItem
+            onClick={async () => {
+              const choice = await requestCustomSnooze();
+              if (choice) void actions.keepWatching(trendKey, choice);
+            }}
+          >
+            Personalizado…
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+    </Group>
+  );
+}
+
+function trendStateText(state: EditorialTrendInboxState | undefined): string | null {
+  if (state?.dismissed) return `Descartada: ${state.dismissed.reason}`;
+  if (state?.snoozed) return snoozeStateText(state.snoozed);
+  if (state?.production) return "En producción.";
+  return null;
+}
+
+/** The three exits of the dossier, each replaced by its way back once taken. */
+function TrendDecision({
+  environmentId,
+  trend,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly trend: EditorialTrendSummary;
+}) {
+  const actions = useTrendActions(environmentId);
+  const [dismissing, setDismissing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const { trendKey, inbox: state } = trend;
+  const title = trend.presentation?.title ?? trend.label;
+  const status = trendStateText(state);
+  return (
+    <div className="flex flex-col gap-2 border-t border-border pt-4">
+      {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
+      <div role="group" aria-label="Decisión" className="flex flex-wrap gap-2">
+        {trendKey === undefined ? (
+          <p className="text-sm text-muted-foreground">
+            Este servidor no identifica la tendencia entre corridas; actualízalo para decidir.
+          </p>
+        ) : (
+          <>
+            {state?.production ? (
+              <Button
+                size="sm"
+                render={
+                  <Link
+                    to="/$environmentId/$threadId"
+                    params={{
+                      environmentId,
+                      threadId: ThreadId.make(state.production.threadId),
+                    }}
+                  />
+                }
+              >
+                Abrir hilo de video
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={creating}
+                onClick={async () => {
+                  setCreating(true);
+                  await actions.createVideo({ ...trend, trendKey });
+                  setCreating(false);
+                }}
+              >
+                Crear hilo de video
+              </Button>
+            )}
+            {state?.snoozed ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void actions.returnToInbox(trendKey)}
+              >
+                Volver a la bandeja
+              </Button>
+            ) : state?.dismissed ? null : (
+              <KeepWatchingControl
+                environmentId={environmentId}
+                trendKey={trendKey}
+                actions={actions}
+              />
+            )}
+            {state?.dismissed ? (
+              <Button size="sm" variant="outline" onClick={() => void actions.reopen(trendKey)}>
+                Reabrir
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setDismissing(true)}>
+                Descartar…
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+      {dismissing && trendKey !== undefined ? (
+        <TrendDismissDialog
+          trendTitle={title}
+          onConfirm={(reason) => actions.dismiss(trendKey, reason)}
+          onClose={() => setDismissing(false)}
+        />
+      ) : null}
+    </div>
   );
 }
 
 export function TrendDossierView({
+  environmentId,
   dossier,
   evidence,
   onEvidencePage,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly dossier: EditorialTrendDossier;
   /** The evidence page shown; the dossier's own first page until another one loads. */
   readonly evidence: EditorialTrendDossier;
@@ -360,15 +520,7 @@ export function TrendDossierView({
         </DossierSection>
       </div>
 
-      <div
-        role="group"
-        aria-label="Decisión"
-        className="flex flex-wrap gap-2 border-t border-border pt-4"
-      >
-        <PendingAction label="Crear hilo de video" variant="default" />
-        <PendingAction label="Seguir observando" variant="outline" />
-        <PendingAction label="Descartar…" variant="outline" />
-      </div>
+      <TrendDecision environmentId={environmentId} trend={trend} />
     </>
   );
 }
@@ -427,6 +579,15 @@ function LoadedTrendDossierPage({
   );
   const dossier = AsyncResult.getOrElse(result, () => null);
   const page = AsyncResult.getOrElse(pageResult, () => null);
+  const { markRead } = useTrendActions(environmentId);
+  const unreadKey = dossier?.trend.isNew ? dossier.trend.trendKey : undefined;
+  const recordRead = useEffectEvent((trendKey: EditorialTrendKey) => {
+    void markRead({ trendKey, runId, dossierId });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opening a dossier records it as read on the server, as visiting a thread does
+  useEffect(() => {
+    if (unreadKey !== undefined) recordRead(unreadKey);
+  }, [unreadKey]);
   if (dossier === null) {
     return result._tag === "Failure" ? (
       <EditorialEmptyPage
@@ -444,6 +605,7 @@ function LoadedTrendDossierPage({
       title={dossier.trend.presentation?.title ?? dossier.trend.label}
     >
       <TrendDossierView
+        environmentId={environmentId}
         dossier={dossier}
         evidence={page ?? dossier}
         onEvidencePage={setEvidenceOffset}
