@@ -258,13 +258,9 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
   const video = live?.view.video ?? null;
   if (live === null || video === null) return null;
 
-  const run = async <A,>(action: () => Promise<A>): Promise<A> => {
+  const run = <A,>(action: () => Promise<A>): Promise<A> => {
     setBusy(true);
-    try {
-      return await action();
-    } finally {
-      setBusy(false);
-    }
+    return action().finally(() => setBusy(false));
   };
   const scriptPath = video.script.path;
 

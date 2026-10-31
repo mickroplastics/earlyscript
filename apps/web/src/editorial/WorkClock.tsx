@@ -248,13 +248,9 @@ export function WorkClock({ threadRef }: { readonly threadRef: ScopedThreadRef }
   });
   if (live === null || video === null) return null;
 
-  const run = async (action: () => Promise<unknown>) => {
+  const run = (action: () => Promise<unknown>) => {
     setBusy(true);
-    try {
-      await action();
-    } finally {
-      setBusy(false);
-    }
+    return action().finally(() => setBusy(false));
   };
   return (
     <div className={cn("flex shrink-0 items-center", busy && "opacity-80")}>
