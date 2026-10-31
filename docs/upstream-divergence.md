@@ -21,6 +21,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`, `01f65c0c49`, `21a7582128` y `e10a0ddf3e`; ningún archivo de upstream tocado.
 16. Hilo de video, interfaz (`es/video-thread`), base `0d84824fea`, con `main` fusionado en `01f65c0c49`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `client-runtime`, `ThreadDetailsPanel.tsx` y `ChatHeader.tsx`, y `flushFileSaveSession` en `fileSaveSessions.ts`.
 17. Lectura de corridas nativas del motor (`es/dossier-native`), base `ed5c3a2903`, con `main` fusionado en `0d84824fea` y `3e4c6c0741`; único archivo de upstream tocado: `packages/contracts/src/editorial.ts`.
+20. Fuentes Hugging Face y dev.to del motor (`es/sources-hf-devto`, unidad S3), base `f75eebfae2`; ningún archivo de upstream tocado.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1177,3 +1178,44 @@ Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
 
 Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).
+
+## 20. Fuentes Hugging Face y dev.to (rama `es/sources-hf-devto`, 31 de octubre de 2026)
+
+Base: `f75eebfae2`. Cero archivos de upstream modificados y ninguna dependencia nueva. Archivos nuevos: `packages/trend-engine/src/sources/{huggingface,devto}.ts` con sus pruebas y tres fixtures en `src/testkit/` (`hf-models-pages.json`, `hf-daily-papers-2026-10-30.json`, `devto-latest-pages.json`), recortados de respuestas reales del 31 de octubre. Archivos propios modificados: `SourceId` en `packages/editorial-contracts/src/source.ts` (una línea: `huggingface` y `devto`), `src/sources/{http,shared,index}.ts` y la CLI, que ahora acepta cualquier id registrado en `SOURCES`. `engine.v1.json` sigue con `hn,github`: las fuentes nuevas solo capturan y no entran al motor.
+
+Cliente HTTP (`src/sources/http.ts`):
+
+- Una tabla `HOSTS` reúne por fuente la pausa entre peticiones, el límite de bytes y el presupuesto de tiempo por día. HN y GitHub conservan sus valores y su `User-Agent`. Hugging Face pausa 700 ms (350 ms con `HF_TOKEN`), acepta 2 MiB por respuesta y tiene 10 minutos por día. dev.to pausa 3 s, acepta 4 MiB y tiene 15 minutos por día.
+- Las fuentes nuevas envían `User-Agent: Earlyscript/0.1.5 (+https://git.r.biste.cc/miguel/earlyscript)`. `HF_TOKEN` se lee solo de la variable de entorno y viaja como `Authorization: Bearer`; no se guarda ni se escribe en las notas.
+- La cabecera `RateLimit: "api";r=<restantes>;t=<segundos>` del Hub (borrador IETF) bloquea la fuente hasta el reinicio de la ventana, más 1,5 s, cuando `r=0` o la respuesta es un 429. Se suma al tratamiento existente de `Retry-After` y `x-ratelimit-reset`. Los cubos `api` y `resolvers` del Hub comparten el bloqueo: es una simplificación conservadora.
+- `GetResponse` acepta `"text"` para leer las tarjetas de modelo y expone `next`, el destino de `Link: <...>; rel="next"` (RFC 8288).
+
+Hugging Face (`huggingface.ts`), política `sample`:
+
+- Modelos: `GET /api/models?sort=createdAt&direction=-1&limit=1000`, paginado con el cursor de `Link`. El listado no admite filtro de fecha. Se recorre una sola vez por rango de días, del más nuevo al más viejo, y solo se guardan en memoria los modelos con al menos un like. De los creados en el día UTC se eligen los 50 primeros por likes actuales, después por descargas y después por id. El cuerpo es el `README.md` de cada uno (`/{id}/resolve/main/README.md`, del cubo `resolvers`) pasado a texto: sin cabecera YAML, bloques de código, imágenes ni reglas de tabla, y recortado a 4000 caracteres. Sin tarjeta, el cuerpo son las etiquetas sin espacio de nombres. Hay un tope de 200 páginas por corrida, unos dos meses hacia atrás a unos 3500 modelos por día.
+- Papers: `GET /api/daily_papers?date=<día>&limit=100&p=<n>`, documentado en el OpenAPI del Hub (`/.well-known/openapi.json`: `limit` hasta 100, `p`, `date`, `week`, `month`, `sort`). Entran todos los papers de ese día de Daily Papers. `published_at` es `submittedOnDailyAt` (el día de su publicación en Daily Papers, no la fecha de arXiv), el autor es quien lo envió, `external_url` es el resumen de arXiv y `githubRepo` se convierte en entidad `github:`.
+- Id `itm_hf_model_<org/nombre>` e `itm_hf_paper_<arXiv id>`. La cobertura siempre es `partial`, porque los modelos se eligen por popularidad actual, y pasa a `unavailable` solo si fallan a la vez el listado de modelos y los papers. La nota registra los modelos elegidos, las tarjetas que faltan y el número de papers.
+- Datasets: no se capturan. Eran opcionales y no aportan al perfil más que los modelos.
+
+dev.to (`devto.ts`), política `census`:
+
+- `/api/articles?tag=<tag>` se ordena por popularidad y no por fecha. En una prueba del 31 de octubre, tres páginas de 1000 de `tag=ai` mezclaban del 27 al 31 de octubre con más de 550 inversiones cada una, así que no permite saber cuándo termina un día. `GET /api/articles/latest?per_page=1000&page=<n>` está «ordered strictly by descending publication date» según la documentación v1 y no mostró ninguna inversión en 3000 artículos. Se recorre hasta pasar el inicio del día, una sola vez por rango de días, y la etiqueta se filtra aquí. Si una página llega fuera de orden, el recorrido se detiene y la nota lo registra.
+- Etiquetas (al menos una): `ai`, `llm`, `agents`, `machinelearning`, `programming`, `devtools`, `opensource`, `python`, `typescript`, `rust`, elegidas a partir del perfil del canal. No filtran por afinidad; eso lo hace el motor.
+- El cuerpo es `description` del listado (unos 150 caracteres), porque `body_markdown` solo viene al pedir cada artículo: unos 2000 artículos por día a 10 peticiones cada 30 s serían unos 100 minutos por día. `canonical_url` fuera de dev.to pasa a `external_url` y, si apunta a GitHub, a entidad.
+- La cobertura es `complete` si el recorrido pasó el inicio del día y el día había terminado antes de la primera página. Es `partial` o `unavailable` en estos casos: el día sigue abierto (`day not over`), el listado terminó antes, hubo un fallo, o se alcanzó el tope de 300 páginas, unos dos meses. La nota cuenta los ítems por etiqueta y las páginas recorridas. La paginación es por número de página: los artículos nuevos repiten algunos de la página anterior (se unen por id) y un artículo borrado durante el recorrido puede desplazar otro fuera de la vista.
+
+Licencias y condiciones:
+
+- Hugging Face Hub: límites leídos en `huggingface.co/docs/hub/rate-limits` (500 peticiones de API y 3000 de resolvers por IP cada 5 minutos en anónimo; 1000 y 5000 con cuenta gratuita). Las Condiciones de servicio del Hub son *por confirmar*, porque no se leyeron. El contenido de cada repositorio (tarjetas de modelo) sigue su propia licencia, declarada en la cabecera YAML que la limpieza descarta. Los resúmenes de papers son de sus autores, con la licencia que cada uno eligió en arXiv. El listado `/api/models` no está en el OpenAPI; sus parámetros salen del cliente `huggingface_hub` (*por confirmar* en la documentación oficial).
+- dev.to: API pública de lectura sin clave. La documentación v1 (`developers.forem.com/api/v1`) no publica límites ni condiciones. La exigencia de `user-agent` y el límite de 10 peticiones cada 30 s vienen de la revisión previa de la referencia beta (v0) y quedan *por confirmar*. El contenido pertenece a sus autores; las condiciones de reutilización de DEV son *por confirmar*. El corpus guarda título, descripción, autor y enlace, no el texto completo.
+
+Captura real en Beatriz (31 de octubre de 2026, 03:47 a 03:49 UTC, sin `HF_TOKEN`): `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31` en `~/earlyscript-data/live/corpus-s3-prueba/`, 112 s, código de salida 0, ningún error ni 429.
+
+| Fuente | Día | Estado | Ítems | Detalle |
+|---|---|---|---:|---|
+| huggingface | 2026-10-29 | partial | 67 | 50 modelos (0 sin tarjeta) y 17 papers |
+| huggingface | 2026-10-30 | partial | 89 | 50 modelos (0 sin tarjeta) y 39 papers |
+| devto | 2026-10-29 | complete | 2169 | 12 páginas; `ai` 1616, `opensource` 327, `python` 322, `programming` 300 |
+| devto | 2026-10-30 | complete | 1832 | 12 páginas; `ai` 1354, `opensource` 356, `programming` 288, `python` 250 |
+
+dev.to aporta entre 1800 y 2200 ítems por día, más que HN, y tres cuartas partes llevan `ai`. Antes de que entre al motor hace falta decidir si se acota (menos etiquetas, un mínimo de reacciones o una muestra) y comprobar en un backtest que no empeora P@5.
