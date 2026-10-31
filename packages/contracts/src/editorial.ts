@@ -183,6 +183,8 @@ export const EditorialEvidenceItem = Schema.Struct({
   itemId: Schema.String,
   source: Schema.String,
   title: Schema.String,
+  /** The engine's excerpt of the item's body; empty when the item has none (a link post). */
+  excerpt: Schema.String,
   author: Schema.NullOr(Schema.String),
   publishedAt: IsoDateTime,
   permalink: Schema.NullOr(Schema.String),

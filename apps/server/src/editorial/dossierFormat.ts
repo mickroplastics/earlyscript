@@ -214,6 +214,7 @@ function evidenceItems(file: Dossier): ReadonlyArray<EditorialEvidenceItem> {
     itemId: item.item_id,
     source: item.source,
     title: item.title,
+    excerpt: item.excerpt,
     author: item.author,
     publishedAt: item.published_at,
     permalink: webUrlOrNull(item.permalink),

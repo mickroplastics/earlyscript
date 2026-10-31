@@ -190,6 +190,17 @@ describe("EditorialReadService", () => {
           from: "2026-10-23T14:01:41.000Z",
           to: "2026-10-29T11:38:56.000Z",
         });
+
+        // Link posts keep an empty excerpt; a text post keeps the engine's excerpt.
+        const workers = yield* service.getDossier({ runId: NATIVE_RUN_ID, dossierId: WORKERS });
+        assert.deepStrictEqual(
+          workers.evidence.map((item) => item.excerpt),
+          [
+            "",
+            "",
+            "How about we stop giving your skills to these guys who are putting us out of work?",
+          ],
+        );
       }),
     ),
   );
