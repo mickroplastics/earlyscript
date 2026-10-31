@@ -150,6 +150,40 @@ describe("editorial migration continuity", () => {
     }).pipe(Effect.ensuring(removeDir(dir)));
   });
 
+  it.effect("marks runs indexed before 006 as read by import interpretation 1", () => {
+    const dir = makeTempDir();
+    const dbPath = NodePath.join(dir, "indexed.sqlite");
+    return Effect.gen(function* () {
+      yield* applyOnly(dbPath, [1, 2, 3, 4]);
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO editorial_runs (
+            run_id, cutoff_at, engine_status, sources_json, coverage_json, artifact_path,
+            artifact_version, content_hash, dossier_count, import_state, skipped_files_json,
+            imported_at, updated_at
+          )
+          VALUES (
+            'run_a', '2026-10-19T00:00:00.000Z', 'ok', '[]', 'null', '/runs/run_a', 'v1',
+            'sha256:a', 0, 'imported', '[]', '2026-10-30', '2026-10-30'
+          )
+        `;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+      const rows = yield* Effect.gen(function* () {
+        const sql = yield* EditorialDatabase.EditorialSql;
+        return yield* sql<{ readonly run_id: string; readonly interpretation_version: number }>`
+          SELECT run_id, interpretation_version FROM editorial_runs
+        `;
+      }).pipe(
+        Effect.provide(
+          EditorialDatabase.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      );
+      assert.deepStrictEqual(rows, [{ run_id: "run_a", interpretation_version: 1 }]);
+    }).pipe(Effect.ensuring(removeDir(dir)));
+  });
+
   it.effect("runs 004 again over its own result without changing the schema", () => {
     const dir = makeTempDir();
     const dbPath = NodePath.join(dir, "again.sqlite");

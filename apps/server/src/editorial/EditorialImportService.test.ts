@@ -32,6 +32,10 @@ const QUANTUM_FILE = "13-dos_bbb80d57481e.json";
 const QUANTUM_DOSSIER = EditorialDossierId.make("dos_bbb80d57481e");
 const QUANTUM = EditorialTrendKey.make("sig_69a4b83dd577");
 const CHINA = EditorialTrendKey.make("sig_833479e1f4de");
+const CHINA_DOSSIER = EditorialDossierId.make("dos_ead8cfa066df");
+const JUDGE = EditorialTrendKey.make("sig_7c382e796d60");
+const JUDGE_DOSSIER = EditorialDossierId.make("dos_82c53bb05e52");
+const RUN_ID = EditorialRunId.make(FIXTURE_RUN_ID);
 const { IMPORT_POLL_INTERVAL } = EditorialImportService;
 const RUN_2 = "run_20261020_20261028T003754_aaaaaa";
 
@@ -41,6 +45,12 @@ const mtimeAt = (seconds: number) => Date.UTC(2030, 0, 1) / 1000 + seconds;
 const events = Effect.gen(function* () {
   const log = yield* EditorialEventLog;
   return yield* log.readSince(0);
+});
+
+/** Every column of the operator's inbox state, by trend key. */
+const inboxRows = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  return yield* sql`SELECT * FROM editorial_trend_inbox ORDER BY trend_key`;
 });
 
 const countRows = (table: "editorial_runs" | "editorial_dossiers") =>
@@ -425,6 +435,129 @@ describe("EditorialImportService", () => {
           rows.filter((row) => row.trend_key === QUANTUM).map((row) => row.dossier_id),
           ["dos_bbb80d57481e", "dos_bbb80d57481e"],
         );
+      }),
+    ),
+  );
+
+  it.effect("reindexes runs an earlier interpretation indexed and keeps the operator's state", () =>
+    withEditorial(({ dir, runDir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sql = yield* EditorialSql;
+        const importer = yield* EditorialImportService.EditorialImportService;
+        const inbox = yield* EditorialInboxCommands;
+        yield* addNativeFixtureRun(dir);
+        yield* importer.sync;
+
+        // The operator's state, which lives under the trend key.
+        yield* inbox.markRead(SESSION, {
+          trendKey: CHINA,
+          runId: RUN_ID,
+          dossierId: CHINA_DOSSIER,
+        });
+        yield* inbox.snooze(SESSION, { trendKey: JUDGE });
+        yield* inbox.dismiss(SESSION, { trendKey: QUANTUM, reason: "Already covered" });
+        yield* sql`
+          UPDATE editorial_trend_inbox
+          SET production_thread_id = 'thread-1', production_linked_at = '2026-10-30T10:00:00.000Z'
+          WHERE trend_key = ${CHINA}
+        `;
+        const stateBefore = yield* inboxRows;
+
+        // What version 1 left, with the same files and content hashes: the native run as a
+        // partial run without dossiers, and competition ranks (quantum and judge share #2).
+        yield* sql`UPDATE editorial_runs SET interpretation_version = 1`;
+        yield* sql`
+          UPDATE editorial_runs
+          SET dossier_count = 0, config_version = NULL, sources_json = '[]',
+            import_state = 'partial'
+          WHERE run_id = ${NATIVE_FIXTURE_RUN_ID}
+        `;
+        yield* sql`DELETE FROM editorial_dossiers WHERE run_id = ${NATIVE_FIXTURE_RUN_ID}`;
+        yield* sql`
+          UPDATE editorial_dossiers SET volume_rank = 2 WHERE dossier_id = ${JUDGE_DOSSIER}
+        `;
+        // The native run keeps its inventory: only the version tells it apart. Earlywindow's
+        // run.json is touched: its inventory changes and only its content hash is equal.
+        const runJson = path.join(runDir, "run.json");
+        yield* fs.utimes(runJson, mtimeAt(5), mtimeAt(5));
+        const eventsBefore = (yield* events).length;
+
+        const report = yield* importer.sync;
+        assert.deepStrictEqual(report.runs, [
+          { runId: FIXTURE_RUN_ID, outcome: "updated" },
+          { runId: NATIVE_FIXTURE_RUN_ID, outcome: "updated" },
+        ]);
+        const updated = (yield* events).slice(eventsBefore);
+        assert.deepStrictEqual(
+          updated.map((event) => [
+            event.type,
+            event.aggregateId,
+            (event.payload as { readonly previousInterpretationVersion: number })
+              .previousInterpretationVersion,
+          ]),
+          [
+            ["run.updated", FIXTURE_RUN_ID, 1],
+            ["run.updated", NATIVE_FIXTURE_RUN_ID, 1],
+          ],
+        );
+
+        assert.strictEqual(yield* countRows("editorial_dossiers"), 5);
+        const runs = yield* sql<{
+          readonly run_id: string;
+          readonly dossier_count: number;
+          readonly config_version: string | null;
+          readonly sources_json: string;
+          readonly import_state: string;
+          readonly interpretation_version: number;
+        }>`
+          SELECT run_id, dossier_count, config_version, sources_json, import_state,
+            interpretation_version
+          FROM editorial_runs ORDER BY run_id
+        `;
+        assert.deepStrictEqual(
+          runs.map((row) => [
+            row.run_id,
+            row.dossier_count,
+            row.config_version,
+            JSON.parse(row.sources_json),
+            row.import_state,
+            row.interpretation_version,
+          ]),
+          [
+            [FIXTURE_RUN_ID, 3, "engine.v0.02", ["hn", "github"], "imported", 2],
+            [NATIVE_FIXTURE_RUN_ID, 2, "earlyscript.engine.v1", ["hn", "github"], "imported", 2],
+          ],
+        );
+        const ranks = yield* sql<{ readonly dossier_id: string; readonly volume_rank: number }>`
+          SELECT dossier_id, volume_rank FROM editorial_dossiers ORDER BY dossier_id
+        `;
+        assert.deepStrictEqual(
+          ranks.map((row) => [row.dossier_id, row.volume_rank]),
+          [
+            ["dos_38ceab3f670f", 3],
+            ["dos_47ea4d4f2ccc", 1],
+            ["dos_82c53bb05e52", 3],
+            ["dos_bbb80d57481e", 2],
+            ["dos_ead8cfa066df", 1],
+          ],
+        );
+
+        // Read, snooze, dismissal and production link are the same rows as before.
+        assert.deepStrictEqual(yield* inboxRows, stateBefore);
+        const trends = new Map(
+          (yield* (yield* EditorialReadService).getInbox({
+            runId: EditorialRunId.make(RUN_ID),
+          })).trends.map((trend) => [trend.trendKey, trend]),
+        );
+        assert.strictEqual(trends.get(CHINA)?.inbox?.seenRunId, RUN_ID);
+        assert.strictEqual(trends.get(CHINA)?.inbox?.production?.threadId, "thread-1");
+        assert.ok(trends.get(JUDGE)?.inbox?.snoozed);
+        assert.strictEqual(trends.get(QUANTUM)?.inbox?.dismissed?.reason, "Already covered");
+        assert.strictEqual(trends.get(JUDGE)?.volumeRank, 3);
+
+        assert.deepStrictEqual((yield* importer.sync).runs, []);
       }),
     ),
   );

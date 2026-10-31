@@ -1075,7 +1075,7 @@ Decisiones reversibles:
 
 ## 17. Lectura de corridas nativas (rama `es/dossier-native`, 31 de octubre de 2026)
 
-Base: `ed5c3a2903`, fusionada con `0d84824fea` (§12). Archivo de upstream modificado: `packages/contracts/src/editorial.ts`, solo comentarios y `EditorialRankComponent.value`, que pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo. Archivos propios: `apps/server/src/editorial/{dossierFormat,RunDirectory,EditorialReadService,EditorialImportService}.ts` con sus pruebas, el fixture `fixtures/native-runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con la evidencia recortada a tres ítems; fuera de `fixtures/runs` para no cambiar las pruebas que copian ese directorio) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
+Base: `ed5c3a2903`, fusionada con `0d84824fea` (§12) y `3e4c6c0741` (§14). Archivo de upstream modificado: `packages/contracts/src/editorial.ts`: `EditorialRankComponent.value` pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo; `EditorialEvidenceItem` gana `excerpt`; el resto son comentarios. Archivos propios: `apps/server/src/editorial/{dossierFormat,RunDirectory,EditorialReadService,EditorialImportService,presentationDossierSource}.ts` con sus pruebas, la migración `persistence/Migrations/006_EditorialImportInterpretation.ts`, `apps/web/src/editorial/TrendDossierPage.tsx`, el fixture `fixtures/native-runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con tres evidencias cada uno, una con extracto; fuera de `fixtures/runs` para no cambiar las pruebas que copian ese directorio) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
 
 Un solo decodificador para el lector y el importador, en `dossierFormat.ts`, que `RunDirectory` usa:
 
@@ -1090,4 +1090,12 @@ Reemplaza la viñeta «Posición por volumen» de §8 y la limitación de §12 s
 - `editorial_runs` de una corrida nativa guarda ahora `config_version` y `sources_json` de su `config`; antes quedaban nulos porque el run.json se leía con el esquema de Earlywindow.
 - Los fixtures de Earlywindow recuperan `retrieved_at`, que el esquema estricto exige.
 
-Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos.
+Versión de interpretación del índice:
+
+- `IMPORT_INTERPRETATION_VERSION` (`EditorialImportService.ts`) numera cómo el importador lee los archivos: 1 es §12 (solo `dossier/1`, puestos de competencia) y 2 es esta sección. Se guarda por corrida en `editorial_runs.interpretation_version`; la migración 006 añade la columna con 1 para las filas existentes y comprueba antes si ya existe. Si otra rama trae su propia 006, una de las dos se renumera al fusionar.
+- Una corrida indexada con otra versión se lee de nuevo aunque coincidan ruta, inventario de mtimes y hash de contenido: la versión entra en los dos saltos de `sync` y en el de `importLoaded`, también en el de las corridas `invalid`. La reindexación reemplaza sus filas de `editorial_dossiers` y los metadatos de la corrida y publica `run.updated` con `interpretationVersion` y `previousInterpretationVersion`. No toca `editorial_trend_inbox` ni `editorial_presentations`: leída, snooze, descarte y producción siguen bajo la misma clave de tendencia.
+- Hay que subir la constante cuando un cambio en `dossierFormat.ts` o en la proyección haría que los mismos archivos se indexaran distinto.
+
+Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en publicaciones de enlace), la entrada del asistente (`presentationDossierSource.ts`) lo toma de ahí en lugar de recorrer otra vez el archivo y la ficha lo muestra bajo el título, en tres líneas como máximo.
+
+Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.

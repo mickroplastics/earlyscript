@@ -21,6 +21,13 @@ import { type EditorialPersistenceError, toPersistenceError } from "./persistenc
 import { nowIso, parseIso } from "./persistence/support.ts";
 import { selectLatestRun, selectTrendDossier, snoozeMetricValue } from "./runIndex.ts";
 
+/**
+ * How run files are read into the index (dossierFormat.ts). Bump it when the same files would
+ * index differently: runs of another version are read again even if their files did not
+ * change. 1: dossier/1 and competition ranks (§12); 2: both formats, engine positions (§17).
+ */
+const IMPORT_INTERPRETATION_VERSION = 2;
+
 /** How often the server looks for new or changed run directories. */
 export const IMPORT_POLL_INTERVAL = Duration.seconds(30);
 
@@ -68,12 +75,18 @@ interface IndexedVersion {
   readonly content_hash: string | null;
   readonly import_state: "imported" | "partial" | "invalid";
   readonly skipped_files_json: string;
+  readonly interpretation_version: number;
 }
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const INDEXED_COLUMNS =
-  "run_id, artifact_version, artifact_path, content_hash, import_state, skipped_files_json";
+  "run_id, artifact_version, artifact_path, content_hash, import_state, skipped_files_json, " +
+  "interpretation_version";
+
+/** Indexed by this importer: same files and same reading. */
+const isCurrent = (row: IndexedVersion) =>
+  row.interpretation_version === IMPORT_INTERPRETATION_VERSION;
 
 const coverageOf = (loaded: LoadedRun): unknown =>
   loaded.entry.run.coverage ?? loaded.dossiers[0]?.file.coverage ?? null;
@@ -113,11 +126,13 @@ const make = Effect.gen(function* () {
             AND content_hash IS NULL AND run_id <> ${run.run_id}
         `;
         // Same content under new mtimes (a copy, a touch): record where it is, nothing else.
-        // The hash covers the skipped files, so a partial run that is fixed is not unchanged.
+        // The hash covers the skipped files, so a partial run that is fixed is not unchanged;
+        // a run indexed by another interpretation is read again.
         if (
           existing !== undefined &&
           existing.content_hash === loaded.contentHash &&
-          existing.import_state !== "invalid"
+          existing.import_state !== "invalid" &&
+          isCurrent(existing)
         ) {
           yield* sql`
             UPDATE editorial_runs
@@ -137,13 +152,16 @@ const make = Effect.gen(function* () {
           previousContentHash: existing?.content_hash ?? null,
           previousImportState: existing?.import_state ?? null,
           logicalHash: run.logical_hash,
+          interpretationVersion: IMPORT_INTERPRETATION_VERSION,
+          previousInterpretationVersion: existing?.interpretation_version ?? null,
         };
         yield* sql`
           INSERT INTO editorial_runs (
             run_id, cutoff_at, finished_at, engine_status, run_schema_version, engine_version,
             config_version, config_hash, corpus_hash, corpus_used_hash, logical_hash,
             sources_json, coverage_json, artifact_path, artifact_version, content_hash,
-            dossier_count, import_state, skipped_files_json, imported_at, updated_at
+            dossier_count, import_state, skipped_files_json, interpretation_version,
+            imported_at, updated_at
           )
           VALUES (
             ${run.run_id}, ${cutoffAt.value}, ${finishedAt}, ${run.status},
@@ -152,7 +170,7 @@ const make = Effect.gen(function* () {
             ${encodeJson(run.sources)}, ${encodeJson(coverageOf(loaded))},
             ${loaded.entry.directory}, ${loaded.entry.version}, ${loaded.contentHash},
             ${loaded.dossiers.length}, ${importState}, ${encodeJson(loaded.skippedFiles)},
-            ${at}, ${at}
+            ${IMPORT_INTERPRETATION_VERSION}, ${at}, ${at}
           )
           ON CONFLICT (run_id) DO UPDATE SET
             cutoff_at = excluded.cutoff_at, finished_at = excluded.finished_at,
@@ -165,8 +183,12 @@ const make = Effect.gen(function* () {
             artifact_path = excluded.artifact_path,
             artifact_version = excluded.artifact_version, content_hash = excluded.content_hash,
             dossier_count = excluded.dossier_count, import_state = excluded.import_state,
-            skipped_files_json = excluded.skipped_files_json, updated_at = excluded.updated_at
+            skipped_files_json = excluded.skipped_files_json,
+            interpretation_version = excluded.interpretation_version,
+            updated_at = excluded.updated_at
         `;
+        // Dossier rows are derived from the files; the operator's state lives in
+        // editorial_trend_inbox under the trend key, which this import does not touch.
         yield* sql`DELETE FROM editorial_dossiers WHERE run_id = ${run.run_id}`;
         for (const dossier of loaded.dossiers) {
           const summary = dossier.summary;
@@ -237,7 +259,9 @@ const make = Effect.gen(function* () {
         // Still invalid for the same reason (a touch): record the version, nothing else.
         if (known?.import_state === "invalid" && known.skipped_files_json === skippedFiles) {
           yield* sql`
-            UPDATE editorial_runs SET artifact_version = ${invalid.version}, updated_at = ${at}
+            UPDATE editorial_runs
+            SET artifact_version = ${invalid.version},
+              interpretation_version = ${IMPORT_INTERPRETATION_VERSION}, updated_at = ${at}
             WHERE run_id = ${known.run_id}
           `;
           return { result: "unchanged" as const, events: [] };
@@ -248,11 +272,12 @@ const make = Effect.gen(function* () {
             INSERT INTO editorial_runs (
               run_id, cutoff_at, finished_at, engine_status, sources_json, coverage_json,
               artifact_path, artifact_version, content_hash, dossier_count, import_state,
-              skipped_files_json, imported_at, updated_at
+              skipped_files_json, interpretation_version, imported_at, updated_at
             )
             VALUES (
               ${invalid.name}, NULL, NULL, 'unknown', '[]', 'null', ${invalid.directory},
-              ${invalid.version}, NULL, 0, 'invalid', ${skippedFiles}, ${at}, ${at}
+              ${invalid.version}, NULL, 0, 'invalid', ${skippedFiles},
+              ${IMPORT_INTERPRETATION_VERSION}, ${at}, ${at}
             )
             ON CONFLICT (run_id) DO NOTHING
             RETURNING run_id
@@ -270,7 +295,8 @@ const make = Effect.gen(function* () {
           yield* sql`
             UPDATE editorial_runs
             SET import_state = 'invalid', skipped_files_json = ${skippedFiles},
-              artifact_version = ${invalid.version}, updated_at = ${at}
+              artifact_version = ${invalid.version},
+              interpretation_version = ${IMPORT_INTERPRETATION_VERSION}, updated_at = ${at}
             WHERE run_id = ${runId}
           `;
         }
@@ -351,7 +377,13 @@ const make = Effect.gen(function* () {
     const runs: Array<RunImport> = [];
     for (const item of invalid) {
       const known = byPath.get(item.directory);
-      if (known?.import_state === "invalid" && known.artifact_version === item.version) continue;
+      if (
+        known?.import_state === "invalid" &&
+        known.artifact_version === item.version &&
+        isCurrent(known)
+      ) {
+        continue;
+      }
       runs.push({ runId: known?.run_id ?? item.name, outcome: yield* importInvalid(item, known) });
     }
     // Oldest first, so run.imported events follow cutoff order.
@@ -360,7 +392,8 @@ const make = Effect.gen(function* () {
       if (
         known !== undefined &&
         known.artifact_version === entry.version &&
-        known.artifact_path === entry.directory
+        known.artifact_path === entry.directory &&
+        isCurrent(known)
       ) {
         continue;
       }
