@@ -1,15 +1,11 @@
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import type { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { VideoThreadMode } from "./persistence/EditorialModel.ts";
-
-/** A thread whose mode is not known yet is asked again after this long. */
-const UNREGISTERED_TTL_MS = 2_000;
-const MAX_UNREGISTERED_ENTRIES = 2_000;
 
 export class ManualThreadAgentBlockedError extends Schema.TaggedError<ManualThreadAgentBlockedError>()(
   "ManualThreadAgentBlockedError",
@@ -34,42 +30,81 @@ export interface ManualThreadPolicyShape {
 }
 
 /**
- * Manual video thread guard for the orchestrator and the provider turn start
- * (docs/upstream-divergence.md §10). The default allows everything, so layers
- * without the editorial database keep upstream behavior.
+ * Manual video thread guard for the orchestrator, the effect worker and the
+ * provider turn start (docs/upstream-divergence.md §10). Required, so a layer
+ * that forgets it fails to build instead of letting agents through; tests
+ * without the editorial database provide `allowAll`.
  */
-export class ManualThreadPolicy extends Context.Reference<ManualThreadPolicyShape>(
-  "t3/editorial/ManualThreadPolicy",
-  { defaultValue: () => ({ assertAgentAllowed: () => Effect.void }) },
-) {}
+export class ManualThreadPolicy extends Context.Service<
+  ManualThreadPolicy,
+  ManualThreadPolicyShape
+>()("t3/editorial/ManualThreadPolicy") {}
 
-/** Planned orchestration work that starts or continues a provider turn. */
-const AGENT_EFFECT_TYPES: ReadonlySet<string> = new Set([
-  "provider-turn.start",
-  "provider-turn.steer",
-  "provider-turn.restart",
-  "provider-runtime.continue",
-]);
+/** Upstream behavior, for tests that build the orchestration layers without the editorial database. */
+export const allowAll = Layer.succeed(
+  ManualThreadPolicy,
+  ManualThreadPolicy.of({
+    assertAgentAllowed: Effect.fn("ManualThreadPolicy.allowAll")(function* () {}),
+  }),
+);
+
+type EffectType = OrchestrationEffectRequestV2["type"];
+
+/**
+ * Every orchestration effect, by whether it starts, continues or unblocks
+ * provider work ("agent") or only stops, cleans up or snapshots ("safe").
+ * A new upstream effect type fails the typecheck until it is classified here.
+ */
+export const EFFECT_WORK = {
+  // Continues a run restarted by the provider.
+  "provider-runtime.continue": "agent",
+  // Tears a session down; it never makes the provider produce output.
+  "provider-session.detach": "safe",
+  "provider-turn.start": "agent",
+  // Stops a turn.
+  "provider-turn.interrupt": "safe",
+  // Sends a message into a running turn.
+  "provider-turn.steer": "agent",
+  // Starts a replacement turn.
+  "provider-turn.restart": "agent",
+  // An approval or an answer lets a waiting provider turn go on.
+  "runtime-request.respond": "agent",
+  // Rewinds the provider thread and, at most, restores files to a checkpoint; no model call.
+  "provider-thread.rollback": "safe",
+  // Snapshots the workspace with the VCS; no model call.
+  "checkpoint.capture": "safe",
+  // Release resources the thread holds.
+  "scheduled-tasks.cleanup": "safe",
+  "terminal.cleanup": "safe",
+  "preview.cleanup": "safe",
+  "attachment.cleanup": "safe",
+  // Sends the thread's messages to a text generation model.
+  "thread-title.generate": "agent",
+  // Stops delegated tasks.
+  "delegated-tasks.stop": "safe",
+} as const satisfies Record<EffectType, "agent" | "safe">;
+
+const isAgentEffect = (type: EffectType) => EFFECT_WORK[type] === "agent";
 
 interface PlannedWork {
   readonly events: ReadonlyArray<{ readonly type: string; readonly threadId: string }>;
   readonly effects: ReadonlyArray<{
     readonly threadId: string;
-    readonly request: { readonly type: string };
+    readonly request: { readonly type: EffectType };
   }>;
 }
 
 /**
  * Threads in a command plan that would get agent work: a new run (started,
- * queued or deferred) or a provider turn effect. Checking the plan instead of
- * the command type covers every command that can lead to a run, including
- * ones added upstream later.
+ * queued or deferred) or an agent effect. Checking the plan instead of the
+ * command type covers every command that can lead to a run, including ones
+ * added upstream later.
  */
 export const threadsWithAgentWork = (plan: PlannedWork): ReadonlyArray<string> => [
   ...new Set([
     ...plan.events.filter((event) => event.type === "run.created").map((event) => event.threadId),
     ...plan.effects
-      .filter((effect) => AGENT_EFFECT_TYPES.has(effect.request.type))
+      .filter((effect) => isAgentEffect(effect.request.type))
       .map((effect) => effect.threadId),
   ]),
 ];
@@ -78,37 +113,41 @@ export const threadsWithAgentWork = (plan: PlannedWork): ReadonlyArray<string> =
 export const assertPlanAllowed = (policy: ManualThreadPolicyShape, plan: PlannedWork) =>
   Effect.forEach(threadsWithAgentWork(plan), policy.assertAgentAllowed, { discard: true });
 
-type CachedMode =
-  | { readonly kind: "registered"; readonly mode: VideoThreadMode }
-  | { readonly kind: "unregistered"; readonly expiresAt: number };
+/**
+ * Checks an outbox effect right before it runs, which covers effects enqueued
+ * before the thread was registered and replay-safe effects requeued after a
+ * restart. `provider-turn.start` is left to the provider turn start, which
+ * settles the run visibly.
+ */
+export const assertEffectAllowed = (
+  policy: ManualThreadPolicyShape,
+  effect: { readonly threadId: string; readonly request: { readonly type: EffectType } },
+) =>
+  effect.request.type !== "provider-turn.start" && isAgentEffect(effect.request.type)
+    ? policy.assertAgentAllowed(effect.threadId)
+    : Effect.void;
+
+const isBlockedError = Schema.is(ManualThreadAgentBlockedError);
+
+/** A refusal because the thread is manual; it never changes, so retrying is pointless. */
+export const isManualThreadRefusal = (error: unknown): boolean =>
+  isBlockedError(error) && error.reason === "manual-thread";
 
 const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
-  // The mode of a registered thread never changes, so it stays cached. A
-  // thread that is not registered is asked again shortly: createVideo
-  // registers before it launches, so no dispatch precedes the registration.
-  const cache = new Map<string, CachedMode>();
+  // The mode of a registered thread never changes, so it stays cached. An
+  // unregistered thread is asked every time: caching "not registered" let an
+  // agent in right after registerVideoThread or createVideo committed.
+  const registered = new Map<string, VideoThreadMode>();
 
   const readMode = Effect.fn("ManualThreadPolicy.readMode")(function* (threadId: string) {
-    const now = yield* Clock.currentTimeMillis;
-    const cached = cache.get(threadId);
-    if (cached?.kind === "registered") return cached.mode;
-    if (cached !== undefined && cached.expiresAt > now) return undefined;
+    const cached = registered.get(threadId);
+    if (cached !== undefined) return cached;
     const rows = yield* sql<{ readonly mode: VideoThreadMode }>`
       SELECT mode FROM editorial_video_threads WHERE thread_id = ${threadId}
     `;
     const mode = rows[0]?.mode;
-    if (mode === undefined && cache.size >= MAX_UNREGISTERED_ENTRIES) {
-      for (const [key, entry] of cache) {
-        if (entry.kind === "unregistered" && entry.expiresAt <= now) cache.delete(key);
-      }
-    }
-    cache.set(
-      threadId,
-      mode === undefined
-        ? { kind: "unregistered", expiresAt: now + UNREGISTERED_TTL_MS }
-        : { kind: "registered", mode },
-    );
+    if (mode !== undefined) registered.set(threadId, mode);
     return mode;
   });
 

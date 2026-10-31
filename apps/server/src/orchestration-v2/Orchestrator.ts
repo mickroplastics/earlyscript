@@ -13682,6 +13682,7 @@ export const layer: Layer.Layer<
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
+  | ManualThreadPolicy.ManualThreadPolicy
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2

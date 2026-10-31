@@ -28,6 +28,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -115,11 +116,12 @@ const unusedEnrichment = {
 };
 
 const layerRuntime = (dbPath: string) => {
-  const layerPlatform = Layer.merge(
+  const layerPlatform = Layer.mergeAll(
     NodeServices.layer,
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
+    ManualThreadPolicy.allowAll,
   );
   const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-project-upgrade-",

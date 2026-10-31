@@ -21,6 +21,7 @@ import * as RunFinalization from "./RunFinalizationService.ts";
 import * as RuntimeRequests from "./RuntimeRequestService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 
 it.effect.each([
   ["starts the next turn after a post-capture Git status failure", false],
@@ -98,7 +99,10 @@ it.effect.each([
     ),
   );
   const outbox = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
-  const worker = EffectWorker.layer.pipe(Layer.provideMerge(Layer.merge(executor, outbox)));
+  const worker = EffectWorker.layer.pipe(
+    Layer.provideMerge(Layer.merge(executor, outbox)),
+    Layer.provide(ManualThreadPolicy.allowAll),
+  );
 
   return Effect.gen(function* () {
     const queue = yield* EffectOutbox.EffectOutboxV2;

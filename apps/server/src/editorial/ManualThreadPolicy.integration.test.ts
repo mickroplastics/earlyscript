@@ -10,17 +10,18 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
+  RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
@@ -28,6 +29,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -57,6 +59,8 @@ import {
   TEST_ENVIRONMENT_ID,
 } from "./persistence/EditorialDatabase.testkit.ts";
 import * as EditorialPersistence from "./persistenceLayer.ts";
+import * as EditorialRuntime from "./runtimeLayer.ts";
+import { layerWorkspaceFiles } from "./videoThread.testkit.ts";
 
 // Every way the map (07-mapa-de-integracion.md §8) lists for work to reach a
 // thread, run against the real orchestrator, launch service, thread
@@ -99,7 +103,7 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
       ),
   } as ProviderAdapter.ProviderAdapterV2["Service"];
   const layerDatabase = SqlitePersistence.layerMemory;
-  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistryRequiringPolicy(
     { name: "manual-thread-policy" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
@@ -148,31 +152,27 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
       ),
     ),
   );
-  // The editorial storage sits below the orchestration layers, as in server.ts.
   const layerEditorialStorage = EditorialPersistence.layerFromDatabase(
     EditorialDatabase.layerFromPath(dbPath),
   ).pipe(Layer.provide(NodeServices.layer));
-  const layerEditorialThreads = EditorialThreadService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerT3,
-        Layer.mock(ServerEnvironment.ServerEnvironment)({
-          getEnvironmentId: Effect.succeed(TEST_ENVIRONMENT_ID),
-        }),
-      ),
-    ),
-  );
   const layerFiles = ServerConfig.layerTest(process.cwd(), { prefix: "manual-policy-" }).pipe(
     Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   );
-  return Layer.mergeAll(
-    layerT3,
-    layerScheduledTasks,
-    layerEditorialThreads,
-    layerOrchestrator,
+  // The composition server.ts uses: the orchestration layers get ManualThreadPolicy
+  // only from the editorial storage, so a wrong mount fails to build.
+  return EditorialRuntime.aroundOrchestration(
+    Layer.mergeAll(layerT3, layerScheduledTasks, layerOrchestrator),
+    layerEditorialStorage,
   ).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(TEST_ENVIRONMENT_ID),
+        }),
+        layerWorkspaceFiles,
+      ),
+    ),
     Layer.provideMerge(layerDatabase),
-    Layer.provideMerge(layerEditorialStorage),
     Layer.provideMerge(layerFiles),
   );
 };
@@ -381,9 +381,7 @@ describe("ManualThreadPolicy at every entry", () => {
             mode: "manual",
           }),
         );
-        // Past the policy's cache of "not registered".
-        yield* TestClock.adjust(Duration.seconds(3));
-
+        // Drained right after the registration commits: nothing may slip through.
         yield* worker.drain();
         const afterReplay = yield* orchestrator.getThreadProjection(threadId);
         for (const run of afterReplay.runs.filter((candidate) => candidate.status === "queued")) {
@@ -413,6 +411,80 @@ describe("ManualThreadPolicy at every entry", () => {
               item.type === "error" && item.title === "No agent runs in a manual video thread",
           ),
         );
+      }),
+    ),
+  );
+
+  it.effect("thread.metadata.update: refuses a title regeneration in a manual thread only", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const regenerate = (threadId: ThreadId, id: string) =>
+          orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`command:${id}`),
+            threadId,
+            regenerateTitle: true,
+          });
+        const manual = yield* createVideo("op:title-manual", "manual");
+        assertBlocked(yield* Effect.flip(regenerate(manual, "title-manual")));
+        // Renaming by hand stays possible.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:rename-manual"),
+          threadId: manual,
+          title: "Video: QEC",
+        });
+        const assisted = yield* createVideo("op:title-assisted", "assisted");
+        yield* regenerate(assisted, "title-assisted");
+      }),
+    ),
+  );
+
+  it.effect("effects left in the outbox by a restart: agent effects fail at once", () =>
+    withHarness(() =>
+      Effect.gen(function* () {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const manual = yield* createVideo("op:outbox-manual", "manual");
+        const assisted = yield* createVideo("op:outbox-assisted", "assisted");
+        const requests = [
+          {
+            type: "runtime-request.respond",
+            providerSessionId: ProviderSessionId.make("provider-session:outbox"),
+            requestId: RuntimeRequestId.make("runtime-request:outbox"),
+            decision: "accept",
+          },
+          { type: "thread-title.generate", kind: { type: "regenerate" } },
+          { type: "provider-runtime.continue", sourceRunId: RunId.make("run:outbox") },
+        ] as const;
+        const pending = [manual, assisted].flatMap((threadId) =>
+          requests.map((request) => ({
+            id: `effect:${threadId}:${request.type}`,
+            commandId: CommandId.make(`command:${threadId}:${request.type}`),
+            threadId,
+            request,
+          })),
+        );
+        yield* EffectOutbox.EffectOutboxV2.use((outbox) => outbox.enqueue(pending)).pipe(
+          Effect.provide(EffectOutbox.layer),
+        );
+        yield* worker.drain();
+
+        const settled = yield* EffectOutbox.EffectOutboxV2.use((outbox) =>
+          Effect.forEach(pending, (effect) => outbox.get(effect.id)),
+        ).pipe(Effect.provide(EffectOutbox.layer));
+        for (const [index, effect] of settled.entries()) {
+          assert.isTrue(Option.isSome(effect));
+          if (Option.isNone(effect)) continue;
+          const refused = (effect.value.lastError ?? "").includes("manual video thread");
+          if (pending[index]?.threadId === manual) {
+            assert.strictEqual(effect.value.status, "failed", effect.value.request.type);
+            assert.strictEqual(effect.value.attemptCount, 1, effect.value.request.type);
+            assert.isTrue(refused, effect.value.request.type);
+          } else {
+            assert.isFalse(refused, effect.value.request.type);
+          }
+        }
       }),
     ),
   );

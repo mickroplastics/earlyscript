@@ -1,11 +1,16 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as TestClock from "effect/testing/TestClock";
 
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import { ManualThreadPolicy, threadsWithAgentWork } from "./ManualThreadPolicy.ts";
+import {
+  assertEffectAllowed,
+  assertPlanAllowed,
+  EFFECT_WORK,
+  isManualThreadRefusal,
+  ManualThreadPolicy,
+  threadsWithAgentWork,
+} from "./ManualThreadPolicy.ts";
 import { withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.ts";
 
 const register = (threadId: string, mode: "manual" | "assisted") =>
@@ -36,15 +41,13 @@ describe("ManualThreadPolicy", () => {
     ),
   );
 
-  it.effect("asks again about an unregistered thread after a short while", () =>
+  it.effect("blocks a thread right after it is registered as manual", () =>
     withEditorialDatabase(
       Effect.gen(function* () {
         const policy = yield* ManualThreadPolicy;
         yield* policy.assertAgentAllowed("thread-late");
         yield* register("thread-late", "manual");
-        // Cached as unregistered for two seconds.
-        yield* policy.assertAgentAllowed("thread-late");
-        yield* TestClock.adjust(Duration.seconds(3));
+        // No clock adjustment: "not registered" is never cached.
         const blocked = yield* Effect.flip(policy.assertAgentAllowed("thread-late"));
         assert.strictEqual(blocked.reason, "manual-thread");
       }),
@@ -83,9 +86,72 @@ describe("ManualThreadPolicy", () => {
           { threadId: "c", request: { type: "provider-turn.start" } },
           { threadId: "d", request: { type: "thread-title.generate" } },
           { threadId: "e", request: { type: "provider-runtime.continue" } },
+          { threadId: "f", request: { type: "runtime-request.respond" } },
+          { threadId: "g", request: { type: "provider-turn.interrupt" } },
+          { threadId: "h", request: { type: "checkpoint.capture" } },
         ],
       }),
-      ["b", "c", "e"],
+      ["b", "c", "d", "e", "f"],
     );
   });
+
+  it("classifies every effect type", () => {
+    assert.deepStrictEqual(
+      Object.entries(EFFECT_WORK)
+        .filter(([, work]) => work === "agent")
+        .map(([type]) => type)
+        .toSorted(),
+      [
+        "provider-runtime.continue",
+        "provider-turn.restart",
+        "provider-turn.start",
+        "provider-turn.steer",
+        "runtime-request.respond",
+        "thread-title.generate",
+      ],
+    );
+  });
+
+  it.effect("refuses answers and title generation planned for a manual thread only", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const policy = yield* ManualThreadPolicy;
+        yield* register("thread-manual", "manual");
+        yield* register("thread-assisted", "assisted");
+        const plan = (
+          threadId: string,
+          type: "runtime-request.respond" | "thread-title.generate",
+        ) => assertPlanAllowed(policy, { events: [], effects: [{ threadId, request: { type } }] });
+
+        for (const type of ["runtime-request.respond", "thread-title.generate"] as const) {
+          const blocked = yield* Effect.flip(plan("thread-manual", type));
+          assert.strictEqual(blocked.reason, "manual-thread");
+          yield* plan("thread-assisted", type);
+        }
+        // Stopping and cleaning up a manual thread stays possible.
+        yield* assertPlanAllowed(policy, {
+          events: [],
+          effects: [{ threadId: "thread-manual", request: { type: "provider-turn.interrupt" } }],
+        });
+      }),
+    ),
+  );
+
+  it.effect("checks outbox effects before they run, except the turn start", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const policy = yield* ManualThreadPolicy;
+        yield* register("thread-manual", "manual");
+        const effect = (
+          type: "runtime-request.respond" | "provider-turn.start" | "terminal.cleanup",
+        ) => assertEffectAllowed(policy, { threadId: "thread-manual", request: { type } });
+
+        const blocked = yield* Effect.flip(effect("runtime-request.respond"));
+        assert.isTrue(isManualThreadRefusal(blocked));
+        // The provider turn start settles the run itself.
+        yield* effect("provider-turn.start");
+        yield* effect("terminal.cleanup");
+      }),
+    ),
+  );
 });

@@ -144,6 +144,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ManualThreadPolicy.ManualThreadPolicy
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {

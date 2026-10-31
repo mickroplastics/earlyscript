@@ -33,7 +33,7 @@ export interface VideoWorkspace {
   readonly write: (relativePath: string, contents: string) => Effect.Effect<void>;
 }
 
-const layerWorkspaceFiles = WorkspaceFileSystem.layer.pipe(
+export const layerWorkspaceFiles = WorkspaceFileSystem.layer.pipe(
   Layer.provide(Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void })),
   Layer.provide(WorkspacePaths.layer),
   Layer.provide(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
