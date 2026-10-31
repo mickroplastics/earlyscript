@@ -48,6 +48,7 @@ import * as EarlyscriptAnalytics from "./earlyscript/analytics.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
 import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
+import * as EditorialLayer from "./editorial/layer.ts";
 import * as EditorialPersistence from "./editorial/persistenceLayer.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
@@ -636,6 +637,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  Layer.provideMerge(EditorialLayer.layer),
   Layer.provideMerge(EditorialPersistence.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
