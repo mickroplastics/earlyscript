@@ -86,6 +86,9 @@ export function credentialHeaders(
     ? credential.headers
     : {};
 }
+/** Longest Retry-After honoured on a 502, 503 or 504; a longer one blocks the source this long. */
+export const MAX_SERVER_RETRY_AFTER_MS = 3_600_000;
+
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
   nextStart: number;
@@ -294,6 +297,20 @@ export function createHttpClient(
       const resetMs = Number(resetHeader) * 1000 - wall();
       if (resetHeader !== null && Number.isFinite(resetMs) && (limited || quotaLeft === "0"))
         state.blockedUntil = Math.max(state.blockedUntil, now() + resetMs + 1500);
+      // A busy server's Retry-After is honoured as a quota block is; absurd values stop at an hour.
+      const busy = response.status === 502 || response.status === 503 || response.status === 504;
+      if (busy && Number.isFinite(retryMs) && retryMs > 0) {
+        state.blockedUntil = Math.max(
+          state.blockedUntil,
+          now() + Math.min(retryMs, MAX_SERVER_RETRY_AFTER_MS),
+        );
+        if (state.blockedUntil >= deadline) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new SourceFailure(
+            `HTTP ${response.status}; Retry-After ${Math.round(retryMs / 1000)} s exceeds the day time budget`,
+          );
+        }
+      }
       const quotaWindow = rateLimitHeader(response.headers.get("ratelimit"));
       if (quotaWindow && (limited || quotaWindow.remaining === 0))
         state.blockedUntil = Math.max(state.blockedUntil, now() + quotaWindow.resetMs + 1500);

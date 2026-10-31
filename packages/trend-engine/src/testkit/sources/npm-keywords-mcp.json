@@ -1,4 +1,5 @@
 {
+  "_comment": "Shape of five registry search results of keywords:mcp on 31 October 2026; maintainer and publisher user names replaced by invented ones.",
   "objects": [
     {
       "downloads": {
@@ -23,19 +24,19 @@
         },
         "maintainers": [
           {
-            "username": "jspahrsummers"
+            "username": "example-maintainer-a"
           },
           {
-            "username": "pcarleton"
+            "username": "example-maintainer-b"
           },
           {
-            "username": "fweinberger"
+            "username": "example-maintainer-c"
           },
           {
-            "username": "thedsp"
+            "username": "example-maintainer-d"
           },
           {
-            "username": "ochafik-ant"
+            "username": "example-maintainer-e"
           }
         ]
       }
@@ -63,19 +64,19 @@
         },
         "maintainers": [
           {
-            "username": "matheuss"
+            "username": "example-maintainer-f"
           },
           {
-            "username": "rauchg"
+            "username": "example-maintainer-g"
           },
           {
-            "username": "matt.straka"
+            "username": "example-maintainer-h"
           },
           {
-            "username": "vercel-release-bot"
+            "username": "example-maintainer-i"
           },
           {
-            "username": "zeit-bot"
+            "username": "example-maintainer-j"
           }
         ]
       }
@@ -103,19 +104,19 @@
         },
         "maintainers": [
           {
-            "username": "jspahrsummers"
+            "username": "example-maintainer-a"
           },
           {
-            "username": "pcarleton"
+            "username": "example-maintainer-b"
           },
           {
-            "username": "fweinberger"
+            "username": "example-maintainer-c"
           },
           {
-            "username": "thedsp"
+            "username": "example-maintainer-d"
           },
           {
-            "username": "ochafik-ant"
+            "username": "example-maintainer-e"
           }
         ]
       }
@@ -143,19 +144,19 @@
         },
         "maintainers": [
           {
-            "username": "jspahrsummers"
+            "username": "example-maintainer-a"
           },
           {
-            "username": "pcarleton"
+            "username": "example-maintainer-b"
           },
           {
-            "username": "fweinberger"
+            "username": "example-maintainer-c"
           },
           {
-            "username": "thedsp"
+            "username": "example-maintainer-d"
           },
           {
-            "username": "ochafik-ant"
+            "username": "example-maintainer-e"
           }
         ]
       }
@@ -183,22 +184,22 @@
         },
         "maintainers": [
           {
-            "username": "jspahrsummers"
+            "username": "example-maintainer-a"
           },
           {
-            "username": "pcarleton"
+            "username": "example-maintainer-b"
           },
           {
-            "username": "fweinberger"
+            "username": "example-maintainer-c"
           },
           {
-            "username": "thedsp"
+            "username": "example-maintainer-d"
           },
           {
-            "username": "ochafik-ant"
+            "username": "example-maintainer-e"
           },
           {
-            "username": "cliffhall"
+            "username": "example-maintainer-k"
           }
         ]
       }

@@ -131,7 +131,8 @@ describe("editorial sources RPC", () => {
         assert.strictEqual(entryOf(view, "arxiv").rankBlocked, "no-backtest");
         assert.strictEqual(entryOf(view, "wikipedia").rankBlocked, "no-backtest");
         assert.strictEqual(entryOf(view, "stackexchange").rankBlocked, "not-ready");
-        assert.strictEqual(entryOf(view, "bluesky").collectBlocked, "blocked");
+        assert.strictEqual(entryOf(view, "lobsters").collectBlocked, "blocked");
+        assert.strictEqual(entryOf(view, "bluesky").collectBlocked, "pending-review");
         assert.strictEqual(entryOf(view, "stackexchange").collectBlocked, "pending-review");
         assert.isNull(entryOf(view, "arxiv").collectBlocked);
         assert.strictEqual(entryOf(view, "hn").updatedAt, null);
