@@ -7,13 +7,14 @@ import { useEffect, type ComponentProps } from "react";
 import ThreadSidebar from "../components/Sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../components/sidebar/SidebarChrome";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
-import { SidebarContent, SidebarGroup } from "../components/ui/sidebar";
+import { SidebarGroup } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../state/environments";
 import { compactCount, isThreadRouteId, resolveRouteSpace, spaceTabName } from "./editorial.logic";
 import { selectEnvironmentSpace, useSpaceStore, type EditorialSpace } from "./spaceStore";
+import { ResultsNavigation } from "./results/ResultsNavigation";
 import { TrendInbox, useTrendInbox } from "./TrendInbox";
 
 const SPACES: ReadonlyArray<{
@@ -151,18 +152,6 @@ function SpaceTabs({
   );
 }
 
-function ResultsSidebar() {
-  return (
-    <SidebarContent className="min-h-full">
-      <SidebarGroup>
-        <div className="px-2 py-6 text-center text-xs text-muted-foreground/60">
-          Aquí verás tiempos, utilidad y métricas cuando haya fichas decididas.
-        </div>
-      </SidebarGroup>
-    </SidebarContent>
-  );
-}
-
 /**
  * The main sidebar with Earlyscript's spaces: Threads (upstream's sidebar, untouched), Trends
  * and Results. The space switch sits under the title bar in every space: it renders first so
@@ -196,7 +185,7 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
                 activeDossierId={routeDossierId ? EditorialDossierId.make(routeDossierId) : null}
               />
             ) : (
-              <ResultsSidebar />
+              <ResultsNavigation environmentId={environmentId} />
             )}
             <SidebarChromeFooter />
           </>

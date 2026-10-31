@@ -77,6 +77,8 @@ export const EditorialEventType = Schema.Literals([
   "trend.reopened",
   "trend.production-linked",
   "video-thread.registered",
+  "video-thread.launched",
+  "video-thread.launch-failed",
   "work.started",
   "work.paused",
   "work.resumed",
@@ -86,12 +88,16 @@ export const EditorialEventType = Schema.Literals([
   "work.resolved",
   "decision.recorded",
   "script.version-saved",
+  "script.head-restored",
   "capture.saved",
   "result.saved",
+  "run.imported",
+  "run.updated",
+  "run.invalidated",
 ]);
 export type EditorialEventType = typeof EditorialEventType.Type;
 
-export const EditorialAggregateKind = Schema.Literals(["trend", "video_thread"]);
+export const EditorialAggregateKind = Schema.Literals(["trend", "video_thread", "run"]);
 export type EditorialAggregateKind = typeof EditorialAggregateKind.Type;
 
 export const EditorialEvent = Schema.Struct({
@@ -101,6 +107,8 @@ export const EditorialEvent = Schema.Struct({
   aggregateId: Schema.String,
   operationId: Schema.NullOr(Schema.String),
   actor: EditorialActor,
+  /** The authenticated session that issued a human command; null for system events. */
+  actorSessionId: Schema.NullOr(Schema.String),
   payload: Schema.Unknown,
   createdAt: Schema.String,
 });

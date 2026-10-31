@@ -24,7 +24,7 @@ import {
   type VideoResult,
 } from "./persistence/EditorialModel.ts";
 import {
-  type EditorialConflictError,
+  EditorialConflictError,
   EditorialInvalidInputError,
   EditorialNotFoundError,
   type EditorialPersistenceError,
@@ -44,6 +44,8 @@ const MAX_SCRIPT_SNAPSHOT_BYTES = 1024 * 1024;
 
 export interface ActorOption {
   readonly actor?: EditorialActor | undefined;
+  /** Authenticated session behind a human command, recorded on its event. */
+  readonly actorSessionId?: string | undefined;
 }
 
 export interface MarkReadInput extends ActorOption {
@@ -64,6 +66,10 @@ export interface SnoozeInput extends ActorOption {
 export interface UnsnoozeInput extends ActorOption {
   readonly trendKey: string;
   readonly cause: UnsnoozeCause;
+  /** For `growth`: the run and value that met the condition, kept on the event. */
+  readonly observed?:
+    | { readonly runId: string; readonly metric: string; readonly value: number }
+    | undefined;
 }
 
 export interface DismissInput extends ActorOption {
@@ -82,7 +88,10 @@ export interface RecordDecisionInput extends ActorOption {
   readonly utility: number;
   /** Required for edit and reject. */
   readonly reason?: string | undefined;
-  /** A version saved with saveScriptVersion for this thread. */
+  /**
+   * The latest version saved with saveScriptVersion for this thread. Required
+   * once the thread has a saved version; any other hash is a conflict.
+   */
   readonly scriptVersionHash?: string | undefined;
   /** A retry with the same id returns the decision already recorded. */
   readonly operationId?: string | undefined;
@@ -144,7 +153,10 @@ export class EditorialCommandService extends Context.Service<
     readonly recordDecision: (
       input: RecordDecisionInput,
     ) => Effect.Effect<Decision, ThreadCommandError | EditorialConflictError>;
-    /** Content-addressed: saving the same content twice returns the first version. */
+    /**
+     * Content-addressed: saving the same content twice returns the first
+     * version. The saved version becomes the thread's head either way.
+     */
     readonly saveScriptVersion: (
       input: SaveScriptVersionInput,
     ) => Effect.Effect<ScriptVersion, ThreadCommandError>;
@@ -261,7 +273,7 @@ const make = Effect.gen(function* () {
   const inboxCommand = Effect.fn("EditorialCommandService.inboxCommand")(function* <E>(
     operation: string,
     trendKey: string,
-    actor: EditorialActor,
+    who: ActorOption,
     apply: (
       current: TrendInboxState,
       at: string,
@@ -282,7 +294,8 @@ const make = Effect.gen(function* () {
           type: change.type,
           aggregateKind: "trend",
           aggregateId: trendKey,
-          actor,
+          actor: who.actor ?? "operator",
+          actorSessionId: who.actorSessionId,
           payload: change.payload,
           createdAt: at,
         });
@@ -292,7 +305,7 @@ const make = Effect.gen(function* () {
   });
 
   const markRead: EditorialCommandService["Service"]["markRead"] = (input) =>
-    inboxCommand("editorial.markRead", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.markRead", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         const runId = yield* requireText("editorial.markRead", "runId", input.runId);
         const runCutoffAt = yield* requireIso(
@@ -321,7 +334,7 @@ const make = Effect.gen(function* () {
     );
 
   const snooze: EditorialCommandService["Service"]["snooze"] = (input) =>
-    inboxCommand("editorial.snooze", input.trendKey, input.actor ?? "operator", (_current, at) =>
+    inboxCommand("editorial.snooze", input.trendKey, input, (_current, at) =>
       Effect.gen(function* () {
         if (input.until === undefined && input.returnWhen === undefined) {
           return yield* invalid("editorial.snooze", "until or returnWhen is required");
@@ -352,7 +365,7 @@ const make = Effect.gen(function* () {
     );
 
   const unsnooze: EditorialCommandService["Service"]["unsnooze"] = (input) =>
-    inboxCommand("editorial.unsnooze", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.unsnooze", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         if (current.snoozedAt === null) return undefined;
         yield* sql`
@@ -361,12 +374,18 @@ const make = Effect.gen(function* () {
             updated_at = ${at}
           WHERE trend_key = ${input.trendKey}
         `;
-        return { type: "trend.unsnoozed" as const, payload: { cause: input.cause } };
+        return {
+          type: "trend.unsnoozed" as const,
+          payload:
+            input.observed === undefined
+              ? { cause: input.cause }
+              : { cause: input.cause, observed: input.observed },
+        };
       }),
     );
 
   const dismiss: EditorialCommandService["Service"]["dismiss"] = (input) =>
-    inboxCommand("editorial.dismiss", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.dismiss", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         const reason = yield* requireText("editorial.dismiss", "reason", input.reason);
         if (current.dismissedAt !== null && current.dismissedReason === reason) return undefined;
@@ -381,7 +400,7 @@ const make = Effect.gen(function* () {
     );
 
   const reopen: EditorialCommandService["Service"]["reopen"] = (input) =>
-    inboxCommand("editorial.reopen", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.reopen", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         if (current.dismissedAt === null) return undefined;
         yield* sql`
@@ -397,26 +416,22 @@ const make = Effect.gen(function* () {
     );
 
   const linkProduction: EditorialCommandService["Service"]["linkProduction"] = (input) =>
-    inboxCommand(
-      "editorial.linkProduction",
-      input.trendKey,
-      input.actor ?? "operator",
-      (current, at) =>
-        Effect.gen(function* () {
-          yield* requireVideoThread(sql, input.threadId);
-          if (current.productionThreadId === input.threadId) return undefined;
-          yield* ensureInboxRow(sql, input.trendKey, at);
-          yield* sql`
+    inboxCommand("editorial.linkProduction", input.trendKey, input, (current, at) =>
+      Effect.gen(function* () {
+        yield* requireVideoThread(sql, input.threadId);
+        if (current.productionThreadId === input.threadId) return undefined;
+        yield* ensureInboxRow(sql, input.trendKey, at);
+        yield* sql`
             UPDATE editorial_trend_inbox
             SET production_thread_id = ${input.threadId}, production_linked_at = ${at},
               updated_at = ${at}
             WHERE trend_key = ${input.trendKey}
           `;
-          return {
-            type: "trend.production-linked" as const,
-            payload: { threadId: input.threadId, previousThreadId: current.productionThreadId },
-          };
-        }),
+        return {
+          type: "trend.production-linked" as const,
+          payload: { threadId: input.threadId, previousThreadId: current.productionThreadId },
+        };
+      }),
     );
 
   const getInboxState: EditorialCommandService["Service"]["getInboxState"] = Effect.fn(
@@ -501,6 +516,17 @@ const make = Effect.gen(function* () {
             return yield* new EditorialNotFoundError({ entity: "script_version", id: hash });
           }
         }
+        // The decision is about the script as last saved, not a version read earlier.
+        const head = yield* selectScriptHead(sql, input.threadId);
+        if (head !== hash) {
+          return yield* new EditorialConflictError({
+            operation,
+            detail:
+              head === null
+                ? "the thread has no saved script version to decide on"
+                : `the script version changed: the decision references ${hash ?? "no version"}, the latest saved is ${head}`,
+          });
+        }
         const clockEvents = yield* stopClock(sql, {
           threadId: input.threadId,
           at,
@@ -560,7 +586,21 @@ const make = Effect.gen(function* () {
     return yield* threadCommand(operation, input.threadId, (at) =>
       Effect.gen(function* () {
         const existing = yield* selectScriptVersion(sql, input.threadId, contentHash);
-        if (existing !== undefined) return { result: existing, events: [] };
+        if (existing !== undefined) {
+          if ((yield* selectScriptHead(sql, input.threadId)) === contentHash) {
+            return { result: existing, events: [] };
+          }
+          yield* setScriptHead(sql, input.threadId, contentHash);
+          const restored = yield* appendEvent(sql, {
+            type: "script.head-restored",
+            aggregateKind: "video_thread",
+            aggregateId: input.threadId,
+            actor,
+            payload: { versionId: existing.versionId, contentHash },
+            createdAt: at,
+          });
+          return { result: existing, events: [restored] };
+        }
         const versionId = yield* newId;
         yield* sql`
             INSERT INTO editorial_script_versions (
@@ -571,6 +611,7 @@ const make = Effect.gen(function* () {
               ${actor}, ${at}
             )
           `;
+        yield* setScriptHead(sql, input.threadId, contentHash);
         const event = yield* appendEvent(sql, {
           type: "script.version-saved",
           aggregateKind: "video_thread",
@@ -759,5 +800,16 @@ const selectScriptVersion = (sql: SqlClient.SqlClient, threadId: string, content
           },
     ),
   );
+
+const selectScriptHead = (sql: SqlClient.SqlClient, threadId: string) =>
+  sql<{ readonly script_head_hash: string | null }>`
+    SELECT script_head_hash FROM editorial_video_threads WHERE thread_id = ${threadId}
+  `.pipe(Effect.map((rows) => rows[0]?.script_head_hash ?? null));
+
+const setScriptHead = (sql: SqlClient.SqlClient, threadId: string, contentHash: string) =>
+  sql`
+    UPDATE editorial_video_threads SET script_head_hash = ${contentHash}
+    WHERE thread_id = ${threadId}
+  `;
 
 export const layer = Layer.effect(EditorialCommandService, make);

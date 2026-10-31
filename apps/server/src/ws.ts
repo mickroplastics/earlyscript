@@ -240,8 +240,8 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
-import * as EditorialLayer from "./editorial/layer.ts";
 import * as EditorialRpc from "./editorial/rpc.ts";
+import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
 import * as EditorialPresentationRpc from "./editorial/presentationRpc.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
@@ -1866,11 +1866,12 @@ export const layerWsRpc = (
         return result;
       });
 
-      const editorialHandlers = yield* EditorialRpc.makeHandlers.pipe(
-        Effect.provide(EditorialLayer.layer),
+      const editorialHandlers = (yield* EditorialRpc.EditorialRpcHandlers).forSession(
+        currentSession,
       );
       const upstreamHandlers = ServerWsRpcGroup.of({
         ...editorialHandlers,
+        ...(yield* EditorialResultsRpc.EditorialResultsRpcHandlers),
         ...(yield* EditorialPresentationRpc.makeHandlers),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({

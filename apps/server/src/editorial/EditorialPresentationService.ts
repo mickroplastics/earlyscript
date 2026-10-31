@@ -20,7 +20,6 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
-import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type * as SqlClient from "effect/sql/SqlClient";
 
@@ -32,7 +31,13 @@ import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { nowIso } from "./persistence/support.ts";
 import * as DossierSource from "./presentationDossierSource.ts";
 import type { PresentationDossier } from "./presentationDossierSource.ts";
-import { EditorialPresentationReader } from "./presentationRead.ts";
+import {
+  encodeStrings,
+  parseStrings,
+  PRESENTATION_COLUMNS,
+  presentationOfRow,
+  type PresentationRow,
+} from "./presentationRead.ts";
 
 /** Generations in flight while drafting a whole run. Two keep a cheap model busy without
  * piling CLI processes on the operator's machine. */
@@ -73,69 +78,7 @@ export class EditorialPresentationService extends Context.Service<
   EditorialPresentationServiceShape
 >()("t3/editorial/EditorialPresentationService") {}
 
-type PresentationStatus = "pending" | "ready" | "failed";
-
-interface PresentationRow {
-  readonly presentation_id: string;
-  readonly run_id: string;
-  readonly dossier_id: string;
-  readonly input_hash: string;
-  readonly revision: number;
-  readonly prompt_version: string | null;
-  readonly provider: string | null;
-  readonly model: string | null;
-  readonly title: string | null;
-  readonly what_happened: string | null;
-  readonly why_it_matters: string | null;
-  readonly video_angle: string | null;
-  readonly cited_item_ids_json: string;
-  readonly warnings_json: string;
-  readonly generated_at: string | null;
-  readonly status: PresentationStatus;
-}
-
-const StringListJson = Schema.fromJsonString(Schema.Array(Schema.String));
-const decodeStrings = Schema.decodeUnknownOption(StringListJson);
-const encodeStrings = Schema.encodeSync(StringListJson);
-
-const parseStrings = (json: string): ReadonlyArray<string> =>
-  Option.getOrElse(decodeStrings(json), () => []);
-
-/** A ready row as the contract shows it; `null` for anything else. */
-function presentationOfRow(row: PresentationRow): EditorialTrendPresentation | null {
-  if (
-    row.status !== "ready" ||
-    row.title === null ||
-    row.what_happened === null ||
-    row.why_it_matters === null ||
-    row.video_angle === null ||
-    row.provider === null ||
-    row.model === null ||
-    row.prompt_version === null ||
-    row.generated_at === null
-  ) {
-    return null;
-  }
-  return {
-    title: row.title,
-    summary: {
-      whatHappened: row.what_happened,
-      whyItMatters: row.why_it_matters,
-      videoAngle: row.video_angle,
-    },
-    citedItemIds: parseStrings(row.cited_item_ids_json),
-    provider: row.provider,
-    model: row.model,
-    promptVersion: row.prompt_version,
-    generatedAt: row.generated_at,
-  };
-}
-
-const ROW_COLUMNS = `
-  presentation_id, run_id, dossier_id, input_hash, revision, prompt_version, provider, model,
-  title, what_happened, why_it_matters, video_angle, cited_item_ids_json, warnings_json,
-  generated_at, status
-`;
+type PresentationStatus = PresentationRow["status"];
 
 const storageFailed = (operation: string) => (cause: unknown) =>
   new EditorialPresentationError({
@@ -168,7 +111,7 @@ const latestReadyForHash = (
   inputHash: string,
 ) =>
   sql<PresentationRow>`
-    SELECT ${sql.literal(ROW_COLUMNS)} FROM editorial_presentations
+    SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
     WHERE run_id = ${runId} AND dossier_id = ${dossierId} AND input_hash = ${inputHash}
       AND status = 'ready'
     ORDER BY revision DESC
@@ -315,7 +258,7 @@ const make = Effect.gen(function* () {
       WHERE presentation_id = ${presentationId}
     `.pipe(Effect.mapError(storageFailed("markReady")));
     const rows = yield* sql<PresentationRow>`
-      SELECT ${sql.literal(ROW_COLUMNS)} FROM editorial_presentations
+      SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
       WHERE presentation_id = ${presentationId}
     `.pipe(Effect.mapError(storageFailed("readGenerated")));
     const row = rows[0];
@@ -471,51 +414,18 @@ const make = Effect.gen(function* () {
     return yield* runProgress(runId);
   });
 
-  const readyPresentations = (runId: string) =>
-    sql<PresentationRow>`
-      SELECT ${sql.literal(ROW_COLUMNS)} FROM editorial_presentations
-      WHERE run_id = ${runId} AND status = 'ready'
-      ORDER BY revision ASC
-    `.pipe(
-      Effect.map((rows) => {
-        // The highest ready revision of each dossier wins.
-        const byDossier = new Map<string, EditorialTrendPresentation>();
-        for (const row of rows) {
-          const presentation = presentationOfRow(row);
-          if (presentation !== null) byDossier.set(row.dossier_id, presentation);
-        }
-        return byDossier as ReadonlyMap<string, EditorialTrendPresentation>;
-      }),
-      // A storage failure must not hide the inbox: the engine's terms are shown instead.
-      Effect.catch((cause) =>
-        Effect.logWarning("editorial: cannot read trend presentations", { runId, cause }).pipe(
-          Effect.as(new Map<string, EditorialTrendPresentation>()),
-        ),
-      ),
-    );
-
-  return {
-    service: EditorialPresentationService.of({
-      ensure,
-      regenerate,
-      ensureAll,
-      startRun,
-      runProgress,
-      awaitRun,
-    }),
-    reader: EditorialPresentationReader.of({ readyPresentations }),
-  };
+  return EditorialPresentationService.of({
+    ensure,
+    regenerate,
+    ensureAll,
+    startRun,
+    runProgress,
+    awaitRun,
+  });
 });
 
-/** Generation service and its read side over the same database, without the dossier source. */
-export const layerWithoutSource = Layer.effectContext(
-  make.pipe(
-    Effect.map(({ service, reader }) =>
-      Context.make(EditorialPresentationService, service).pipe(
-        Context.add(EditorialPresentationReader, reader),
-      ),
-    ),
-  ),
-).pipe(Layer.provide(ChannelProfile.layer));
-
-export const layer = layerWithoutSource.pipe(Layer.provide(DossierSource.layer));
+/** Needs the shared `EditorialRunDirectory`, which `editorial/layer.ts` mounts below it. */
+export const layer = Layer.effect(EditorialPresentationService, make).pipe(
+  Layer.provide(ChannelProfile.layer),
+  Layer.provide(DossierSource.layer),
+);

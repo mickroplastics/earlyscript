@@ -68,6 +68,7 @@ import {
   makeProviderReplayGate,
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
+import * as ManualThreadPolicy from "../../editorial/ManualThreadPolicy.ts";
 
 export function makeReplayServerConfig(
   scenario: string,
@@ -256,6 +257,17 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   return layerWithRegistry(scenario, layerRegistry, options);
 }
 
+type ReplayRegistryOptions = {
+  readonly databaseLayer?: Layer.Layer<
+    SqlClient.SqlClient,
+    MigrationError | PlatformError.PlatformError | SqlError
+  >;
+  readonly runEffectWorker?: boolean;
+  readonly runContinuationWorker?: boolean;
+  readonly recoverOnStartup?: boolean;
+  readonly continueThreadsAfterServerUpdate?: boolean;
+};
+
 export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<
@@ -263,16 +275,7 @@ export function layerWithRegistry<Error>(
     Error,
     McpProviderSessions.McpProviderSessions
   >,
-  options: {
-    readonly databaseLayer?: Layer.Layer<
-      SqlClient.SqlClient,
-      MigrationError | PlatformError.PlatformError | SqlError
-    >;
-    readonly runEffectWorker?: boolean;
-    readonly runContinuationWorker?: boolean;
-    readonly recoverOnStartup?: boolean;
-    readonly continueThreadsAfterServerUpdate?: boolean;
-  } = {},
+  options: ReplayRegistryOptions = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
@@ -280,6 +283,32 @@ export function layerWithRegistry<Error>(
   | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder,
   Error | MigrationError | PlatformError.PlatformError | SqlError
+> {
+  return layerWithRegistryRequiringPolicy(scenario, registryLayer, options).pipe(
+    Layer.provide(ManualThreadPolicy.allowAll),
+  );
+}
+
+/**
+ * Earlyscript: the replay runtime without a manual thread policy, for tests
+ * that mount the editorial layers as the server does (docs/upstream-divergence.md §10).
+ */
+export function layerWithRegistryRequiringPolicy<Error>(
+  scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
+  registryLayer: Layer.Layer<
+    ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+    Error,
+    McpProviderSessions.McpProviderSessions
+  >,
+  options: ReplayRegistryOptions = {},
+): Layer.Layer<
+  | Orchestrator.OrchestratorV2
+  | EffectWorker.OrchestrationEffectWorkerV2
+  | EventSink.EventSinkV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | CommandOutputRecorder.CommandOutputRecorder,
+  Error | MigrationError | PlatformError.PlatformError | SqlError,
+  ManualThreadPolicy.ManualThreadPolicy
 > {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,

@@ -131,6 +131,7 @@ import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 import {
   applyToProjection,
   emptyProjection,
@@ -1000,6 +1001,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+  // Earlyscript: manual video threads never get agent work (docs/upstream-divergence.md §10).
+  const manualThreadPolicy = yield* ManualThreadPolicy.ManualThreadPolicy;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>,
@@ -13028,6 +13031,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const plan = yield* dispatchOnce(command).pipe(
+      // Earlyscript: refused like any plan failure, so the rejection gets its receipt.
+      Effect.tap((planned) =>
+        ManualThreadPolicy.assertPlanAllowed(manualThreadPolicy, planned).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        ),
+      ),
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
@@ -13666,6 +13682,7 @@ export const layer: Layer.Layer<
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
   | IdAllocator.IdAllocatorV2
+  | ManualThreadPolicy.ManualThreadPolicy
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2

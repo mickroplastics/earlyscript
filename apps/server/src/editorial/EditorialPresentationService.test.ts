@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
-
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EditorialDossierId, EditorialRunId, TextGenerationError } from "@t3tools/contracts";
 import type {
@@ -18,21 +14,17 @@ import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as EditorialPresentation from "./EditorialPresentationService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
-import { makeWithRunsDir as makeReadService } from "./EditorialReadService.ts";
+import { EditorialImportService } from "./EditorialImportService.ts";
+import { EditorialReadService } from "./EditorialReadService.ts";
 import { SINGULARIDEV_PROFILE_V1, presentationProfileFromBytes } from "./channelProfile.ts";
-import { EditorialSql, EDITORIAL_DATABASE_FILENAME } from "./persistence/EditorialDatabase.ts";
-import { layerAt, makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
-import {
-  makeWithRunsDir as makeDossierSource,
-  PresentationDossierSource,
-} from "./presentationDossierSource.ts";
-import { EditorialPresentationReader } from "./presentationRead.ts";
+import { withEditorial } from "./editorialLayer.testkit.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
+import { readyPresentations } from "./presentationRead.ts";
 
 const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
 const QUANTUM = EditorialDossierId.make("dos_bbb80d57481e");
 const CHINA = EditorialDossierId.make("dos_ead8cfa066df");
 const JUDGE = EditorialDossierId.make("dos_82c53bb05e52");
-const FIXTURE_RUNS_DIR = NodePath.join(import.meta.dirname, "fixtures", "runs");
 
 interface Generator {
   readonly calls: Ref.Ref<ReadonlyArray<TrendPresentationGenerationInput>>;
@@ -97,34 +89,24 @@ const makeGenerator = Effect.gen(function* () {
   } satisfies Generator;
 });
 
-const presentationLayer = (dbPath: string, generator: Generator) =>
-  EditorialPresentation.layerWithoutSource.pipe(
-    Layer.provide(Layer.effect(PresentationDossierSource, makeDossierSource(FIXTURE_RUNS_DIR))),
+const presentationLayer = (generator: Generator) =>
+  EditorialPresentation.layer.pipe(
     Layer.provide(textGenerationLayer(generator)),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "editorial-presentation-" })),
-    Layer.provideMerge(layerAt(dbPath)),
-    Layer.provide(NodeServices.layer),
   );
 
-/** Runs `effect` with the presentation service over a fresh database and the fixture run. */
-const withPresentations = <A, E>(
-  effect: (
-    generator: Generator,
-  ) => Effect.Effect<
-    A,
-    E,
-    EditorialPresentationService | EditorialPresentationReader | EditorialSql
-  >,
-) =>
-  Effect.gen(function* () {
-    const dir = makeTempDir();
-    const generator = yield* makeGenerator;
-    return yield* effect(generator).pipe(
-      Effect.provide(presentationLayer(NodePath.join(dir, EDITORIAL_DATABASE_FILENAME), generator)),
-      Effect.ensuring(removeDir(dir)),
-    );
-  });
+/**
+ * Runs `effect` with the presentation service over the editorial services of a fresh
+ * database and a copy of the fixture run (shared run directory, read side, importer).
+ */
+const withDrafting = <A, E, R>(effect: (generator: Generator) => Effect.Effect<A, E, R>) =>
+  withEditorial(() =>
+    Effect.gen(function* () {
+      const generator = yield* makeGenerator;
+      return yield* effect(generator).pipe(Effect.provide(presentationLayer(generator)));
+    }),
+  );
 
 const presentationRows = Effect.gen(function* () {
   const sql = yield* EditorialSql;
@@ -152,7 +134,7 @@ describe("EditorialPresentationService", () => {
   });
 
   it.effect("ensure generates once and returns the stored presentation for the same input", () =>
-    withPresentations((generator) =>
+    withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
         const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
@@ -184,10 +166,10 @@ describe("EditorialPresentationService", () => {
   );
 
   it.effect("regenerate adds a revision, keeps the previous row and reads back the newest", () =>
-    withPresentations((generator) =>
+    withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
-        const reader = yield* EditorialPresentationReader;
+        const sql = yield* EditorialSql;
         const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
         const regenerated = yield* service.regenerate({ runId: RUN_ID, dossierId: QUANTUM });
 
@@ -204,7 +186,7 @@ describe("EditorialPresentationService", () => {
             [2, "ready", regenerated.presentation.title],
           ],
         );
-        const ready = yield* reader.readyPresentations(RUN_ID);
+        const ready = yield* readyPresentations(sql, RUN_ID);
         assert.strictEqual(ready.get(QUANTUM)?.title, regenerated.presentation.title);
         // ensure now returns the newest revision without generating.
         const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
@@ -215,7 +197,7 @@ describe("EditorialPresentationService", () => {
   );
 
   it.effect("ensureAll records a failure, keeps going and resumes only what is missing", () =>
-    withPresentations((generator) =>
+    withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
         yield* Ref.set(generator.failing, new Set(["sig_833479e1f4de"]));
@@ -250,7 +232,7 @@ describe("EditorialPresentationService", () => {
   );
 
   it.effect("startRun drafts in the background and reports progress until it finishes", () =>
-    withPresentations((generator) =>
+    withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
         const gate = yield* Deferred.make<void>();
@@ -278,7 +260,7 @@ describe("EditorialPresentationService", () => {
   );
 
   it.effect("an unknown dossier fails without writing a row", () =>
-    withPresentations(() =>
+    withDrafting(() =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
         const error = yield* service
@@ -291,37 +273,37 @@ describe("EditorialPresentationService", () => {
   );
 
   it.effect("marks rows left pending by a previous process as failed", () =>
-    Effect.gen(function* () {
-      const dir = makeTempDir();
-      const dbPath = NodePath.join(dir, EDITORIAL_DATABASE_FILENAME);
-      const generator = yield* makeGenerator;
-      yield* Effect.gen(function* () {
+    withEditorial(() =>
+      Effect.gen(function* () {
         const sql = yield* EditorialSql;
         yield* sql`
           INSERT INTO editorial_presentations (
             presentation_id, run_id, dossier_id, trend_key, input_hash, revision, requested_at, status
           ) VALUES ('p-1', ${RUN_ID}, ${JUDGE}, 'sig', 'sha256:x', 1, '2026-10-31T00:00:00.000Z', 'pending')
         `;
-      }).pipe(Effect.provide(presentationLayer(dbPath, generator)));
-      const rows = yield* presentationRows.pipe(
-        Effect.provide(presentationLayer(dbPath, generator)),
-        Effect.ensuring(removeDir(dir)),
-      );
-      assert.deepStrictEqual(
-        rows.map((row) => [row.status, row.error]),
-        [["failed", "interrupted by a server restart"]],
-      );
-    }),
+        const generator = yield* makeGenerator;
+        // Building the service is the restart.
+        const rows = yield* presentationRows.pipe(Effect.provide(presentationLayer(generator)));
+        assert.deepStrictEqual(
+          rows.map((row) => [row.status, row.error]),
+          [["failed", "interrupted by a server restart"]],
+        );
+      }),
+    ),
   );
 });
 
 describe("EditorialReadService with presentations", () => {
   it.effect("fills presentation in the inbox and the dossier only where one is ready", () =>
-    withPresentations(() =>
+    withDrafting(() =>
       Effect.gen(function* () {
+        yield* (yield* EditorialImportService).sync;
+        const read = yield* EditorialReadService;
+        const before = yield* read.getInbox({});
+        assert.isTrue(before.trends.every((trend) => trend.presentation === undefined));
+
         const service = yield* EditorialPresentationService;
         const drafted = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
-        const read = yield* makeReadService(FIXTURE_RUNS_DIR);
 
         const inbox = yield* read.getInbox({});
         const byId = new Map(inbox.trends.map((trend) => [trend.dossierId, trend]));
@@ -334,15 +316,7 @@ describe("EditorialReadService with presentations", () => {
         assert.deepStrictEqual(dossier.trend.presentation, drafted.presentation);
         const other = yield* read.getDossier({ runId: RUN_ID, dossierId: JUDGE });
         assert.isUndefined(other.trend.presentation);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }),
     ),
-  );
-
-  it.effect("reads without presentation when the reader is not mounted", () =>
-    Effect.gen(function* () {
-      const read = yield* makeReadService(FIXTURE_RUNS_DIR);
-      const inbox = yield* read.getInbox({});
-      assert.isTrue(inbox.trends.every((trend) => !("presentation" in trend)));
-    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

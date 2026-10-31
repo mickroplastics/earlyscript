@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as EditorialCommandService from "./EditorialCommandService.ts";
-import * as EditorialThreadService from "./EditorialThreadService.ts";
+import * as ManualThreadPolicy from "./ManualThreadPolicy.ts";
 import * as WorkClockService from "./WorkClockService.ts";
 import * as EditorialDatabase from "./persistence/EditorialDatabase.ts";
 import * as EditorialEventLog from "./persistence/EditorialEventLog.ts";
@@ -22,9 +22,9 @@ const layerRecoverOpenIntervals = Layer.effectDiscard(
 );
 
 /**
- * Editorial storage and state services over `editorial.sqlite`. Publishes
- * `EditorialSql` for the other editorial services (read side, RPC), never the
- * global `SqlClient`.
+ * Editorial storage over `editorial.sqlite`; publishes `EditorialSql`, never the
+ * global `SqlClient`. Must sit below the orchestration layers, which read
+ * `ManualThreadPolicy` from it; thread launchers live in `videoThreadLayer.ts`.
  */
 export const layerFromDatabase = <E, R>(
   database: Layer.Layer<EditorialDatabase.EditorialSql, E, R>,
@@ -34,7 +34,7 @@ export const layerFromDatabase = <E, R>(
       Layer.mergeAll(
         EditorialCommandService.layer,
         WorkClockService.layer,
-        EditorialThreadService.layer,
+        ManualThreadPolicy.layer,
       ),
     ),
     Layer.provideMerge(EditorialEventLog.layer),

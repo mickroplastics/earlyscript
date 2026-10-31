@@ -12,6 +12,24 @@ export class EditorialPersistenceError extends Schema.TaggedError<EditorialPersi
   }
 }
 
+/**
+ * The editorial Migrator skips every id at or below the latest applied one, so a hole in the
+ * manifest, or a registered migration below that id that never ran, would never be applied.
+ * The editorial layer refuses to start instead.
+ */
+export class EditorialMigrationGapError extends Schema.TaggedError<EditorialMigrationGapError>()(
+  "EditorialMigrationGapError",
+  {
+    reason: Schema.Literals(["manifest-gap", "unapplied-below-latest", "not-replayable"]),
+    ids: Schema.Array(Schema.Number),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Editorial migrations are not continuous (${this.reason}: ${this.ids.join(", ")}). ${this.detail}`;
+  }
+}
+
 export class EditorialNotFoundError extends Schema.TaggedError<EditorialNotFoundError>()(
   "EditorialNotFoundError",
   {

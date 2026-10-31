@@ -2,24 +2,22 @@
 
 Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos propios que añade. Es la lista de revisión de cada fusión desde `upstream-main`: si upstream cambió uno de estos archivos, comprobar que nuestro cambio sigue aplicado y que no apareció un literal nuevo de T3 Code al lado. Las líneas corresponden al último commit que tocó el enganche; tras una fusión, buscar el enganche por su texto (`EarlyscriptBrand`, `earlyscriptFlags`, `Earlyscript*`, `earlyscript/`, `visible*`).
 
-Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
-
-Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
+Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su propia base de comparación. El número de cada línea es el de su sección:
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`; ampliada por `es/brand-2` (icono propio y superficies de uso diario, base `815f5f2a04`), ver la subsección de recorte.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
 3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 4. Funciones escondidas (`es/flags-lote-a`), base `cf8174bd47`, con `main` fusionado en `c7c2cb720a`.
-5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; upstream tocado: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
+5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`. Incluye la subsección de rendimiento del apilado (`es/engine-perf`).
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
-8. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único enganche: `apps/server/src/server.ts`.
+8. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 9. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único archivo de upstream tocado: `apps/server/src/server.ts`.
-
-10. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
-
-11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
-12. Presentación de tendencias en la interfaz (`es/trend-presentation-ui`), base `638a6cf64e`.
+10. Hilo de video, servidor (`es/video-thread-server`).
+11. Fuentes en vivo del motor (`es/live-sources`).
+12. Importador de corridas, bandeja con estado y escritura editorial (`es/editorial-write`), base `ed5c3a2903`; enganche en `apps/server/src/server.ts` junto a Resultados.
+13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
+14. Presentación de tendencias en la interfaz (`es/trend-presentation-ui`), base `638a6cf64e`, con `main` fusionado en `0d84824fea`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -655,7 +653,7 @@ Archivos de upstream tocados:
 | --------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
 | `apps/server/src/server.ts` | 51, 639 | Importa `editorial/persistenceLayer.ts` y lo monta en `layerRuntimeCoreDependenciesBase`, junto a `layerPersistence`. |
 
-`persistenceLayer.ts` publica `EditorialSql`, `EditorialEventLog`, `EditorialCommandService`, `WorkClockService` y `EditorialThreadService`. Al construirse marca como `needs_resolution` los segmentos del reloj que quedaron abiertos por una caída. La unidad de lectura y RPC consume esos servicios desde su propio `editorial/layer.ts`; si también provee `persistenceLayer.layer`, Effect lo memoiza y se construye una sola vez.
+`persistenceLayer.ts` publica `EditorialSql`, `EditorialEventLog`, `EditorialCommandService`, `WorkClockService` y `EditorialThreadService` (desde §10, `ManualThreadPolicy` en lugar de `EditorialThreadService`, que pasó a `videoThreadLayer.ts`). Al construirse marca como `needs_resolution` los segmentos del reloj que quedaron abiertos por una caída. La unidad de lectura y RPC consume esos servicios desde su propio `editorial/layer.ts`; si también provee `persistenceLayer.layer`, Effect lo memoiza y se construye una sola vez.
 
 Esquema de `001_EditorialFoundation`:
 
@@ -696,6 +694,57 @@ Decisiones reversibles:
 - Las versiones del guion se identifican por contenido: guardar el mismo texto devuelve la versión existente. Tope de 1 MiB por versión.
 - `registerVideoThread` devuelve la fila persistida cuando la operación ya existe, aunque el reintento proponga otro `ThreadId`. Un `ThreadId` ya registrado por otra operación es un conflicto.
 - Sin worker de lectura ni de checkpoint en la base editorial: tiene poco volumen y se escribe a mano.
+
+## 10. Hilo de video: servidor
+
+Base: `d505a14ede`. Rama `es/video-thread-server`. Crear un hilo de video desde Tendencias, impedir en el servidor que un agente corra en un hilo manual, guardar versiones del guion leídas del workspace del hilo y exponer `script_check` como única herramienta MCP editorial. Sin interfaz: la consumen U5b (hilo de video) y U6 (modo manual). Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §6, §7, §8 y §9.
+
+Archivos nuevos en `apps/server/src/editorial/`:
+
+- `ManualThreadPolicy.ts`: `ManualThreadPolicy` (`Context.Service` obligatorio) con `assertAgentAllowed(threadId)`, que consulta `editorial_video_threads.mode`; la capa `allowAll`, que conserva el comportamiento de upstream en pruebas sin base editorial; `EFFECT_WORK`, que clasifica cada tipo de efecto de `EffectOutbox` como `agent` o `safe`; `threadsWithAgentWork` y `assertPlanAllowed`, que buscan en un plan del orquestador los eventos `run.created` y los efectos `agent`; `assertEffectAllowed`, para el worker de efectos; error `ManualThreadAgentBlockedError` con motivo `manual-thread` o `policy-unavailable`.
+- `ScriptVersionService.ts`: `readScript`, `snapshot` y `decide`; error `ScriptFileError`.
+- `DossierEvidence.ts`: puerto `Context.Reference` para cargar la evidencia del expediente del hilo. Por defecto no conoce ninguno y `script_check` informa `compared: false`. Lo proveerá el servicio de lectura.
+- `mcp/tools.ts` y `mcp/handlers.ts`: `EditorialToolkit` con `script_check` solamente.
+- `videoThreadLayer.ts`: monta `EditorialThreadService` y `ScriptVersionService`.
+- `runtimeLayer.ts`: `aroundOrchestration(orchestration, storage)`, la composición que usa `server.ts`: almacenamiento editorial (con `ManualThreadPolicy`) debajo de la orquestación y `videoThreadLayer.ts` encima. `ManualThreadPolicy.integration.test.ts` arma la misma función.
+- `persistence/Migrations/003_EditorialScriptHead.ts`: columna `editorial_video_threads.script_head_hash`, rellenada con la versión más reciente ya guardada.
+- `videoThread.testkit.ts` y pruebas: `ManualThreadPolicy.test.ts`, `ManualThreadPolicy.integration.test.ts`, `ScriptVersionService.test.ts`, `mcp/handlers.test.ts`.
+
+Archivos propios modificados: `EditorialThreadService.ts` (`createVideo` y `markLaunchState`), `EditorialCommandService.ts` (cabeza del guion), `persistence/EditorialModel.ts` (eventos `video-thread.launched`, `video-thread.launch-failed` y `script.head-restored`), `persistence/Migrations.ts`, `persistenceLayer.ts`, `persistence/EditorialDatabase.testkit.ts` y sus pruebas.
+
+Archivos de upstream tocados:
+
+| Archivo                                                                        | Líneas                                  | Alcance                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`                             | 134, 1004-1005, 13034-13046, 13685      | Requiere `ManualThreadPolicy` y, tras planificar un comando, rechaza el plan con `OrchestratorCommandRejectedError` si crea un run o un efecto `agent` en un hilo manual. El rechazo deja su recibo.                                                                                                                                             |
+| `apps/server/src/orchestration-v2/ProviderTurnStartService.ts`                 | 58, 147, 163, 496-510                   | Requiere `ManualThreadPolicy`. Antes de abrir sesión, marca el run como fallido (`manual-thread-agent-blocked`) si el hilo es manual. Cubre runs encolados, que no pasan por la admisión.                                                                                                                                                        |
+| `apps/server/src/orchestration-v2/EffectWorker.ts`                             | 31, 626-628, 635, 773-790, 814-817, 829 | Requiere `ManualThreadPolicy`. Antes de ejecutar un efecto `agent` distinto de `provider-turn.start`, lo rechaza si el hilo es manual y lo marca `failed` sin reintentos. Cubre efectos encolados antes del registro y los reencolados tras un reinicio (`provider-runtime.continue`, `thread-title.generate`).                                  |
+| `apps/server/src/mcp/McpHttpServer.ts`                                         | 82-83, 1166-1171                        | `layerEditorialToolkit` registra `EditorialToolkit` y `layer` lo une a `layerTools`, sin tocar la lista ni el presupuesto de herramientas de upstream.                                                                                                                                                                                           |
+| `apps/server/src/server.ts`                                                    | 52, 632-634, 641                        | Envuelve `layerOrchestrationApplication` con `EditorialRuntime.aroundOrchestration(…, EditorialPersistence.layer)` y quita el montaje suelto de `EditorialPersistence.layer`. Sin la base editorial debajo, el servidor no compila (`ManualThreadPolicy` queda sin proveer).                                                                     |
+| `apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts`            | 71, 260-270, 278, 286-311               | `layerWithRegistry` provee `ManualThreadPolicy.allowAll`, así que sus usuarios de upstream no cambian; `layerWithRegistryRequiringPolicy` deja la política al llamador.                                                                                                                                                                          |
+| Pruebas de upstream que arman el orquestador, el worker o el arranque de turno | importación y 1 a 4 líneas cada una     | Proveen `ManualThreadPolicy.allowAll`: `runtimeLayer.test.ts` y `DelegatedCompletionDelivery.test.ts` (en `layerPlatformTest`), `ProjectSettingsUpgrade.integration.test.ts` (en `layerPlatform`), `EffectWorker.test.ts` (3), `FoundationPersistence.test.ts` (6), `ProviderTurnStartService.test.ts` (2) y `RunFinalizationQueue.test.ts` (1). |
+| `apps/server/package.json`                                                     | 77                                      | `@earlyscript/editorial-script` como dependencia de workspace, como los demás paquetes puros que se empaquetan.                                                                                                                                                                                                                                  |
+| `pnpm-lock.yaml`                                                               | 943-945                                 | Enlace del paquete anterior. En una fusión, regenerar con `pnpm install`.                                                                                                                                                                                                                                                                        |
+
+Comportamiento:
+
+- `createVideo` registra primero el hilo con su `operationId`, después lo lanza con `ThreadLaunchService.launch` sin `initialMessage` (crear el hilo no arranca un agente), con `commandId` `editorial:create-video:<operationId>`, título `Video: <título>` y ruta de guion `videos/<slug>-<id>.md` por defecto. Luego vincula la tendencia y arranca el reloj en Explorar (manual) o Leer (asistido). Un reintento con el mismo `operationId` reutiliza el hilo, no lanza otro y no abre otro segmento; con otro modo o expediente es un conflicto. Un lanzamiento fallido queda como `failed` y el reintento lanza el mismo `ThreadId`.
+- `ManualThreadPolicy` guarda el modo de un hilo registrado mientras vive el proceso, porque no cambia. Un hilo sin registrar se consulta en cada comprobación: no se guarda "sin registro", así que un hilo bloquea en cuanto `registerVideoThread` o `createVideo` confirman la fila. Si la base no se puede leer, bloquea cualquier hilo cuyo modo no conozca todavía; con la base sana, los hilos no editoriales no se ven afectados.
+- Clasificación de efectos (`EFFECT_WORK`, con `satisfies Record<tipo, "agent" | "safe">`: un tipo nuevo de upstream rompe el typecheck hasta clasificarlo). `agent`: `provider-turn.start`, `provider-turn.steer`, `provider-turn.restart`, `provider-runtime.continue`, `runtime-request.respond` (una aprobación o respuesta deja seguir al turno) y `thread-title.generate` (envía los mensajes del hilo a un modelo). `safe`: `provider-session.detach`, `provider-turn.interrupt` y `delegated-tasks.stop` (detienen trabajo), `provider-thread.rollback` (rebobina y, como mucho, restaura archivos; sin llamada al modelo), `checkpoint.capture` (instantánea del VCS) y las cuatro limpiezas `*.cleanup`. En un hilo manual se rechazan en la admisión y, si ya estaban en el outbox, en el worker; renombrar a mano y detener siguen permitidos.
+- La cabeza del guion es la última versión guardada; volver a guardar un texto anterior la restaura (`script.head-restored`). `recordDecision` exige que `scriptVersionHash` sea la cabeza; sin versiones, que no se indique ninguna. `ScriptVersionService.decide` toma antes una instantánea del archivo, de modo que una edición posterior a lo que vio el cliente produce un conflicto. Si el archivo no existe, solo decide cuando el hilo nunca guardó una versión y la decisión no nombra ninguna; si hubo guion o se nombra un hash, rechaza con `ScriptFileError` motivo `not-found` hasta que el operador restaure o reemplace el archivo.
+- `readScript` rechaza rutas absolutas, `~`, `..` y symlinks que salen del workspace (worktree del hilo, o el checkout del proyecto si no tiene). Solo lee hilos de video registrados.
+
+Decisiones reversibles:
+
+- `EditorialThreadService` se movió de `persistenceLayer.ts` a `videoThreadLayer.ts`. Necesita `ThreadLaunchService`, que vive encima de la orquestación, mientras que el orquestador necesita `ManualThreadPolicy`, que vive debajo. Revertir obliga a separar `createVideo` del registro.
+- `ManualThreadPolicy` es un `Context.Service` obligatorio. Un error de montaje falla al compilar en vez de apagar la guarda; el costo es proveer `allowAll` en las pruebas de upstream listadas arriba. La alternativa anterior, un `Context.Reference` que permitía todo, se descartó por eso.
+- No hay caché de "sin registro": cada comprobación de un hilo no editorial hace una lectura por clave primaria en `editorial.sqlite`. La alternativa es invalidar la caché desde `registerVideoThread` y `createVideo` tras el commit.
+- Se revisa el plan del comando, no el tipo de comando: cubre comandos que upstream agregue después. La clasificación de efectos está en `EFFECT_WORK`.
+- Un efecto rechazado por hilo manual falla sin reintentos; un `runtime-request.respond` rechazado así no registra `runtime-request.delivery.fail`. En la práctica no ocurre: un hilo manual no tiene sesión de proveedor y, tras un reinicio, el outbox cancela los efectos ligados al proceso.
+- Ante una base ilegible, bloquear (`policy-unavailable`) en vez de permitir.
+- `decide` acepta un guion ausente solo en un hilo que nunca tuvo versión y sin hash; lee `script_head_hash` directamente con `EditorialSql`.
+- `script_check` corta los diagnósticos y las citas desconocidas en 200 (`truncated: true`). Un expediente con forma inválida se informa como error de la herramienta.
+- `@earlyscript/editorial-script` va en `devDependencies`, como `@t3tools/contracts` y `@t3tools/shared`, porque el servidor se empaqueta.
 
 ## 5. Motor de tendencias (paso 1) (rama `es/engine-1`, 30 de octubre de 2026)
 
@@ -801,37 +850,187 @@ Puntos de extensión:
 - Bandeja con estado (U3): `EditorialTrendSummary.isNew` y `EditorialInbox.newCount` se calculan hoy como «todas las de la corrida más reciente» en `loadRunDossiers`; con `editorial_trend_inbox`, la revisión vista decide `isNew`. `resolveLandingTarget` es el sitio de la regla «corrida nueva abre Tendencias». Las acciones del expediente (`PendingAction`) esperan los comandos de escritura y su scope de operación.
 - Redacción por asistente (U7): `EditorialTrendSummary.presentation` es opcional; la fila y el expediente ya muestran su título y las tres partes del resumen, con «Redactado por el asistente» y los términos del motor a la vista.
 
+### Rendimiento del apilado (rama `es/engine-perf`, 30 de octubre de 2026)
+
+Solo cambia `packages/trend-engine/src/cluster.ts`; se añaden `src/cluster.test.ts` y `src/testkit/cluster.reference.ts`, copia de `stackItems` de `d505a14ede` que las pruebas usan como referencia. El resultado no cambia: el apilado depende del orden de llegada y del umbral, así que cada coseno se suma en el orden y la precisión de `dot()` y solo se omite un centroide cuando una cota exacta prueba que no puede superar el umbral.
+
+Perfil anterior: el 97 % del tiempo era `dot()` (576,6 s de 594,5 s). Son 290.979.221 cosenos de 1024 dimensiones, unos 298.000 millones de multiplicaciones a 0,52 GMAC/s en una sola cadena de sumas dependientes. La recolección de basura (0,05 %), la normalización de centroides (0,05 %) y el filtro de señales activas (0,7 %) no pesaban.
+
+Cambios:
+
+1. Centroides activos en un `Float32Array` contiguo, un espacio por señal, con espacios reutilizados al vencer la ventana.
+2. Cuatro centroides por pasada con sumas independientes, sin asignaciones por comparación.
+3. Poda en 1/2, 5/8, 3/4 y 7/8 de las dimensiones: suma parcial más el producto de las normas del resto (Cauchy-Schwarz), con holgura de 1e-9 para el redondeo. Quedan 158.700 millones de multiplicaciones, el 53 % del total; el 94 % de ellas está antes de la mitad.
+4. Hasta la mitad, los ítems pasan de dos en dos: cada coordenada se lee una vez para ambos, con ocho sumas independientes. El segundo ítem recalcula solo el centroide que el primero modificó o abrió.
+
+Corrida completa en Beatriz (corpus `~/earlywindow-data/corpus`, corte `2026-10-19T00:00:00Z`, `singularidev.v1.json`, `config/engine.v1.json`, caché caliente y 0 inferencias):
+
+| Código                 | Corrida                               | Total   | Apilado | Memoria pico | `logical_hash`         | `signals_hash`         |
+| ---------------------- | ------------------------------------- | ------- | ------- | ------------ | ---------------------- | ---------------------- |
+| `d505a14ede` (antes)   | `run_20261019_20261030T225322_7e6c85` | 594,3 s | 593,0 s | 578 MiB      | `sha256:ea8025e7…2bc8` | `sha256:d32dfb81…5ec4` |
+| `df15d94cd1` (después) | `run_20261019_20261030T234145_b156e3` | 62,9 s  | 61,2 s  | 565 MiB      | `sha256:ea8025e7…2bc8` | `sha256:d32dfb81…5ec4` |
+
+El apilado es 9,7 veces más rápido y la corrida 9,5 veces. La corrida de la tabla se hizo en `7863543463`, con el mismo árbol que `df15d94cd1`: solo cambió después el mensaje de un commit anterior. `engine check` y `engine check --rerun` coinciden. Banco sobre la entrada volcada, cada versión fijada a un núcleo P con las tres en paralelo: referencia 430 a 446 s, poda con cuatro centroides 160 s y pares 75 s, con el mismo hash estricto de ids, miembros, fechas y bytes de centroides. Evidencia en `~/earlyscript-data/engine-perf/README.md`.
+
+No se intentó: una cota más ajustada con proyecciones (PCA), porque con un coseno medio de 0,43 entre ítems la cota del resto seguiría siendo holgada y cada centroide modificado tendría que proyectarse de nuevo (estimación, no medida); índices aproximados, porque cambian el resultado; ni hilos, WebAssembly o código nativo, fuera del alcance de la unidad.
+
+## 12. Importador y escritura editorial
+
+Base: `638a6cf64e`, con `main` fusionada en `ed5c3a2903` (trae `es/video-thread-server` y la migración 003). Rama `es/editorial-write`. El servidor indexa las corridas del motor en `editorial.sqlite`, combina cada expediente con el estado de bandeja y expone las escrituras humanas de la bandeja por el WebSocket existente, con una suscripción de snapshot y deltas. La capa editorial se construye una vez por servidor, no por conexión. Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §2, §6 y §7.
+
+Archivos nuevos en `apps/server/src/editorial/`:
+
+- `RunDirectory.ts`: `EditorialRunDirectory`, el lector de `run.json` y `dossier/1` con la caché por mtime, extraído de `EditorialReadService`. Calcula el sha256 de cada expediente y de la corrida.
+- `EditorialImportService.ts`: `sync` indexa las corridas cuyo directorio cambió, de la más antigua a la más reciente, y devuelve los snoozes vencidos o cumplidos. `layerWatch` lo ejecuta al arrancar y cada 30 segundos en una fibra del servidor; un fallo se registra y se reintenta en el siguiente paso.
+- `EditorialInboxCommands.ts`: comandos humanos de la bandeja. Reciben la sesión, resuelven el corte de la corrida y la línea base del snooze desde el índice y delegan en `EditorialCommandService`.
+- `inboxState.ts` (reglas de nueva y snooze vigente), `inboxStream.ts` (suscripción), `runIndex.ts` (consultas del índice) y `trendKey.ts` (identidad de tendencia).
+- `persistence/Migrations/004_EditorialRuns.ts`.
+- `apps/server/scripts/repair-editorial-migrations.ts` y su prueba: reparación manual de una base de desarrollo con un hueco de migraciones (ver «Continuidad de migraciones»).
+- Pruebas: `EditorialImportService.test.ts`, `rpc.test.ts`, `editorialLayer.testkit.ts`; `EditorialReadService.test.ts` reescrita sobre la base. En cliente, `apps/web/src/editorial/state.test.ts`.
+
+Archivos editoriales cambiados: `EditorialReadService.ts` (lee el índice y el estado; sin lectura directa del directorio), `rpc.ts` (handlers por sesión), `layer.ts`, `dossierFormat.ts` (`signal.id`, procedencia de `run.json`, `isNew` lo pone el lector), `EditorialCommandService.ts` (sesión en los eventos de bandeja, `observed` en `unsnooze`), `persistence/EditorialEventLog.ts` (`subscribe`, `actor_session_id`), `persistence/EditorialModel.ts` (agregado `run`, eventos `run.imported`, `run.updated` y `run.invalidated`), `persistence/Migrations.ts` (comprobación de continuidad y reparación), `persistence/Errors.ts` (`EditorialMigrationGapError`), `persistence/EditorialDatabase.testkit.ts` (`applyOnly`), `packages/contracts/src/editorial.ts` y `apps/web/src/editorial/state.ts`.
+
+Archivos de upstream tocados:
+
+| Archivo                                     | Líneas      | Alcance                                                                                                                                                                                                                                                                           |
+| ------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/server.ts`                 | 51, 633-634 | Importa `editorial/layer.ts` y lo monta justo encima de `EditorialRuntime.aroundOrchestration(…, EditorialPersistence.layer)` (§10), que le da `EditorialSql`, `EditorialEventLog` y `EditorialCommandService`. La persistencia se monta una sola vez, debajo de la orquestación. |
+| `apps/server/src/ws.ts`                     | 243, 1867   | Quita la capa editorial por conexión; lee `EditorialRpcHandlers` y los liga a `currentSession`. `layerWsRpc` no gana requisitos.                                                                                                                                                  |
+| `packages/client-runtime/src/rpc/client.ts` | 7, 75-76    | Añade `editorial.subscribe` a `EnvironmentSubscriptionRpcTag`, la lista de métodos de stream; sin eso el cliente lo trataría como unario.                                                                                                                                         |
+
+`RpcAuthorization.ts` y `RpcInstrumentation.ts` no cambian: siguen esparciendo `EDITORIAL_RPC_REQUIRED_SCOPES` y `EDITORIAL_RPC_AGGREGATES`, que ahora incluyen los métodos nuevos.
+
+Esquema de `004_EditorialRuns`:
+
+- `editorial_runs`: `run_id`, `cutoff_at` (nulo solo en una corrida `invalid` nunca indexada), `finished_at`, `engine_status`, `run_schema_version`, `engine_version`, `config_version`, `config_hash`, `corpus_hash` (de Earlywindow o `corpus.corpus_manifest_hash`), `corpus_used_hash`, `logical_hash`, `sources_json`, `coverage_json` (de `run.json` o del primer expediente), `artifact_path`, `artifact_version` (nombres y mtimes), `content_hash` (nulo en la misma situación), `dossier_count`, `import_state` (`imported`, `partial` o `invalid`), `skipped_files_json` (lista de `{file, reason}`), `imported_at`, `updated_at`.
+- `editorial_dossiers`: clave (`run_id`, `dossier_id`); `trend_key`, `trend_key_rule`, `file_path`, `content_hash`, `label`, `items_7d`, `items_28d`, `authors_7d`, `score`, `growth`, `affinity`, `volume_rank`, `score_rank`, `last_activity_day`. Índice por (`trend_key`, `run_id`).
+- `editorial_events` se reconstruye (SQLite no amplía un `CHECK`): `aggregate_kind` admite `run` y se añade `actor_session_id`. Se copian las filas con su `seq` y se recrean los índices.
+- 004 es idempotente: crea tablas e índices con `IF NOT EXISTS`, reconstruye `editorial_events` solo si le falta `actor_session_id` y, si `editorial_runs` tiene la forma de un borrador anterior sin `invalid`, borra `editorial_dossiers` y `editorial_runs` y las crea de nuevo. Son un índice derivado de los archivos; el importador los vuelve a llenar en el siguiente paso sin repetir anuncios, porque `run.imported` conserva su `operation_id`.
+
+API RPC (grupo `EditorialRpcGroup`, mismo socket y middleware de scopes):
+
+| Método                 | Scope                   | Entrada                                   |
+| ---------------------- | ----------------------- | ----------------------------------------- |
+| `editorial.listRuns`   | `orchestration:read`    | `{}`                                      |
+| `editorial.getInbox`   | `orchestration:read`    | `runId?`, `sort?`, `offset?`, `limit?`    |
+| `editorial.getDossier` | `orchestration:read`    | `runId`, `dossierId`, página de evidencia |
+| `editorial.subscribe`  | `orchestration:read`    | `since?`, `sort?` (stream)                |
+| `editorial.markRead`   | `orchestration:operate` | `trendKey`, `runId`, `dossierId`          |
+| `editorial.snooze`     | `orchestration:operate` | `trendKey`, `until?`, `returnWhen?`       |
+| `editorial.unsnooze`   | `orchestration:operate` | `trendKey`                                |
+| `editorial.dismiss`    | `orchestration:operate` | `trendKey`, `reason` (1 a 500 caracteres) |
+| `editorial.reopen`     | `orchestration:operate` | `trendKey`                                |
+
+Ninguna entrada lleva actor. El handler registra `actor = operator` y el `sessionId` de la sesión autenticada; un campo `actor` en el payload se descarta al decodificar. `linkProduction` queda interno: lo llamará la creación del hilo de video, no una ruta de la interfaz. `EDITORIAL_WRITE_METHODS` enumera las escrituras; `rpc.test.ts` comprueba que ni `mcp/`, ni `editorial/mcp/`, ni `orchestration-v2/`, ni `provider/`, ni el contrato de orquestación nombran esos métodos ni importan los servicios de comando.
+
+Desviaciones respecto al mapa:
+
+- Scope de escritura: `orchestration:operate`, no un scope editorial nuevo. Uno nuevo cambiaría `auth.ts`, las concesiones, los padres heredados y la pantalla de emparejamiento. `operate` ya separa actuar de observar en los hilos.
+- Sin modo degradado desde disco. `EditorialPersistence.layer` está montado en `server.ts` y el servidor no arranca sin `editorial.sqlite`, así que la lectura siempre tiene base. Las pruebas de upstream que arman `layerWsRpc` con dobles reciben handlers que responden `unavailable` (valor por defecto de la `Context.Reference`).
+- Las corridas del formato `earlyscript.dossier/1` del motor nuevo no se leen todavía: el lector solo acepta `dossier/1`, como en §8. El índice ya guarda `corpus_used_hash` y `logical_hash` de su `run.json`.
+- `EditorialTrendSummary.trendKey` y `inbox` son opcionales en el contrato para no romper las pruebas de componentes de §8, que construyen resúmenes sin ellos. El servidor los envía siempre.
+- `DossierEvidence` (§10, ya en `main`) espera que el lado de lectura le dé el expediente de un hilo. Esta rama no la provee todavía: su valor por defecto responde que no hay expediente. `EditorialRunDirectory.find` y `load` son la búsqueda que necesita.
+- `EditorialRunSummary.cutoffAt` pasa a `NullOr` en el contrato, por las corridas inválidas que nunca tuvieron corte; `importState` y `skippedFiles` son opcionales para no romper los resúmenes que arman las pruebas de §8. `runGroupLabel` en el cliente escribe «sin corte» en ese caso, que la bandeja nunca muestra.
+
+Decisiones reversibles:
+
+- `trend_key`: regla `signal-id` (el `signal.id` del motor, `sig_` más sha256 del primer ítem de la señal) y, sin id, regla `top-terms` (`terms_` más los primeros 12 hexadecimales del sha256 de los términos en minúsculas y ordenados; sin términos, del id del expediente). Cada fila guarda su regla. El punto de extensión para la regla del motor (paso 2) es `trendKeyOf`: se añade una regla y se migran las filas de bandeja de forma explícita; nunca se recalculan claves existentes. Los títulos generados no entran en la clave.
+- Nueva: nunca abierta, o abierta en una corrida anterior y con ítems en la curva desde el corte de esa corrida (`last_activity_day >= seen_run_cutoff_at`). Es la regla de actividad no vista de los hilos. Una tendencia en snooze o descartada no cuenta como nueva. La alternativa literal, «revisión vista distinta de la actual», marcaría como nuevas todas las tendencias que continúan de un día a otro.
+- Umbral de regreso: sin `until` ni `returnWhen`, el snooze espera `items7d >= max(base + 3, ceil(base × 1,5))`, con la base tomada por el servidor de la última corrida indexada (`SNOOZE_GROWTH_FACTOR`, `SNOOZE_GROWTH_MIN_DELTA`). El cliente puede elegir `items7d`, `authors7d`, `items28d` o `score` y el valor; la base la pone siempre el servidor y el objetivo debe superarla. El importador compara contra la última corrida en cada paso y escribe `trend.unsnoozed` con `cause: growth`, actor `system` y `observed`. Un `until` vencido da `cause: expired`.
+- Idempotencia: una corrida con el mismo `content_hash` y el mismo estado no reescribe expedientes ni emite evento, aunque cambien los mtimes. `content_hash` cubre `run.json`, el hash de cada expediente y cada archivo omitido con su motivo.
+- Eventos de corrida: `run.imported` anuncia una corrida nueva para el índice y lleva `operation_id = run.imported:<run_id>:<content_hash>`; es el único deduplicado, para que un índice reconstruido desde los mismos archivos no anuncie de nuevo. Cada transición del contenido vigente de una corrida ya indexada publica `run.updated`, sin `operation_id`, con `contentHash`, `previousContentHash`, `importState`, `previousImportState`, `skippedFiles` y la secuencia del evento; la vuelta a un hash anterior (A → B → A) también. `run.invalidated` se publica cuando una corrida pasa a `invalid`.
+- Inventario de omitidos: un expediente que no decodifica se guarda en `skipped_files_json` como `{file, reason}` (motivo en una línea, hasta 300 caracteres) y deja la corrida en `partial`. Añadir solo un archivo corrupto cambia el hash y el estado; arreglarlo devuelve la corrida a `imported`.
+- Corridas inválidas: un directorio con `run.json` que no lee o no decodifica ya no desaparece del diagnóstico. Si una corrida indexada vivía en ese directorio (`artifact_path`), queda `invalid` con sus metadatos, su `content_hash` y sus expedientes; si no, se crea una fila con el nombre de la carpeta como `run_id`, `engine_status = unknown`, sin corte ni hashes, y `skipped_files_json = [{file: "run.json", reason}]`. `getInbox`, `getTrendState` y los snoozes por crecimiento la ignoran (`selectLatestRun` filtra `invalid`); pedirla por `runId` responde `unreadable` y `markRead` sobre ella, `not-found`. `listRuns` la muestra con `importState` y `skippedFiles`. Al repararse, la corrida vuelve a `imported` con `run.updated`, y la fila provisional con el nombre de la carpeta se borra si el `run_id` real es otro. Un directorio sin `run.json` no es una corrida y se ignora, como antes.
+- Un directorio de corrida borrado conserva su fila en el índice; la lectura de esa corrida responde `unreadable`.
+- Suscripción: primer elemento `snapshot` con `seq`; después un `trend` por evento de tendencia, con el estado actual y `newCount`, y un `snapshot` nuevo tras cada evento de corrida (`run.imported`, `run.updated`, `run.invalidated`). Con `since`, se reproduce el hueco si tiene como máximo 500 eventos, no contiene un evento de corrida y no supera el último `seq`; en otro caso, snapshot. La suscripción a los eventos se toma antes de leer, y los elementos llevan estado actual, así que un duplicado no daña.
+- Los comandos del cliente refrescan las lecturas abiertas con una señal por entorno (`inboxRevision`); la vista en vivo (`liveInbox`) aplica los deltas sin reordenar filas.
+- Sondeo cada 30 segundos (`IMPORT_POLL_INTERVAL`), más una importación antes de `listRuns`, `getInbox` y `subscribe`. Los lectores MCP reciben `EditorialReadService`, que no importa ni escribe.
+
+Continuidad de migraciones:
+
+- Manifiesto tras la fusión: `[1 EditorialFoundation, 2 EditorialOrdering, 3 EditorialScriptHead, 4 EditorialRuns]`. El `Migrator` de Effect omite todo id menor o igual que el último aplicado, así que una base que aplicó `[1, 2, 4]` nunca recibiría la 003.
+- `runEditorialMigrations` llama antes a `checkEditorialMigrationContinuity`: el manifiesto debe registrar `1..n` en orden, sin huecos, y ningún id registrado menor que el máximo aplicado en la base puede faltar en ella. Si falla, `EditorialMigrationGapError` (`manifest-gap` o `unapplied-below-latest`, con los ids) hace fallar la capa de persistencia y el servidor no arranca. El mensaje indica el comando de reparación.
+- Reparación manual, nunca automática: `node apps/server/scripts/repair-editorial-migrations.ts --db <ruta>/editorial.sqlite`. Copia la base con `VACUUM INTO` a `<ruta>.before-repair-<ms>.sqlite`, borra los marcadores por encima del primer id ausente y vuelve a migrar en orden. Solo borra marcadores de migraciones declaradas repetibles (`REPLAYABLE_MIGRATION_IDS`, hoy la 004); en otro caso responde `not-replayable` y pide restaurar una copia. Sin hueco, no toca el archivo.
+- Pruebas: `EditorialDatabase.test.ts` (manifiesto `[1, 2, 4]` rechazado, base con `[1, 2, 4]` que no abre con `[1, 2, 3, 4]`, actualización desde `[1, 2, 3]` con el mismo esquema que una base nueva, 004 repetida sin cambios) y `scripts/repair-editorial-migrations.test.ts` (reparación de `[1, 2, 4]` con un `editorial_runs` del borrador anterior).
+
+Listo para U4b: `editorialEnvironment.liveInbox`, `markRead`, `snooze`, `unsnooze`, `dismiss` y `reopen` en `state.ts`; `trend.inbox` con `snoozed`, `dismissed` y `production`; contadores `newCount`, `snoozedCount` y `dismissedCount`. Las acciones de `PendingAction` pueden llamar a estos comandos. Para las herramientas MCP de lectura: `EditorialReadService` (`listRuns`, `getInbox`, `getDossier`, `getTrendState`) y `EditorialRunDirectory` montados una vez en `server.ts`.
+
+## 13. Espacio Resultados
+
+Base: `638a6cf64e`, fusionada con `main` en `ed5c3a2903`. Rama `es/results-space`. Tercer espacio del sidebar, solo lectura sobre `editorial.sqlite`: tiempo por ficha asistido frente a manual, utilidad media, afirmaciones con cita, bandeja de tendencias, métricas de video y registro de decisiones. Decisiones 7 y 9 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §12 y §14 (U8).
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialResults.ts` (esquemas, `EditorialResultsRpcGroup` con `editorial.results.summary` y `editorial.results.decisions`, `EDITORIAL_RESULTS_WS_METHODS`, `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES` con `orchestration:read`, `EditorialResultsError`).
+- Servidor, en `apps/server/src/editorial/`: `EditorialResultsService.ts` (lecturas con `EditorialSql`, cuantiles y agregados), `resultsRpc.ts` (handlers como `Context.Reference` con valor por defecto `unavailable`, agregados de trazas y capa), `resultsFixture.testkit.ts` (seis hilos, tres asistidos y tres manuales, escritos con `EditorialThreadService`, `WorkClockService` y `EditorialCommandService` bajo `TestClock`) y `EditorialResultsService.test.ts`.
+- Cliente: `apps/web/src/editorial/resultsState.ts` y, en `apps/web/src/editorial/results/`, `ResultsPage.tsx`, `ResultsNavigation.tsx`, `results.logic.ts` y sus pruebas (`results.logic.test.ts`, `ResultsPage.browser.test.tsx`).
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                              |
+| ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialResultsRpcGroup` y lo compone con `.merge` después del grupo editorial.                            |
+| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialResults.ts`.                                                                                     |
+| `apps/server/src/ws.ts`                               | 245, 1874 | Esparce los handlers de Resultados, leídos de su `Reference`, junto a `editorialHandlers`.                           |
+| `apps/server/src/server.ts`                           | 52, 634   | Monta `resultsRpc.layer` en `layerRuntimeCoreDependenciesBase`, sobre `EditorialRuntime.aroundOrchestration` (§10).  |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES`.                                                                     |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_RESULTS_RPC_AGGREGATES`.                                                                          |
+| `apps/server/package.json`                            | 77        | `@earlyscript/editorial-script` como dependencia de desarrollo del workspace, igual que en `es/video-thread-server`. |
+| `pnpm-lock.yaml`                                      | 943-945   | Importer de esa dependencia, idéntico al de `es/video-thread-server`.                                                |
+
+Archivo propio tocado: `apps/web/src/editorial/EditorialSidebar.tsx`, que monta `ResultsNavigation` en lugar del aviso fijo. La ruta `_chat.editorial.$environmentId.results.tsx` ya existía y ahora monta `ResultsPage`; `routeTree.gen.ts` no cambia.
+
+Decisiones reversibles:
+
+- Montaje: los handlers viven en una `Context.Reference` (`EditorialResultsRpcHandlers`) construida una vez en `server.ts`; `ws.ts` solo los esparce. `layerWsRpc` conserva su firma y las pruebas de upstream que lo montan con dobles reciben `unavailable`. Es el mismo patrón que `es/editorial-write` usa para `EditorialRpcHandlers`; si ambos se fusionan, los dos grupos pueden compartir una sola `Reference`.
+- Unidad de análisis: la decisión vigente de cada hilo de video, que es la más reciente por `decided_at`. Las anteriores siguen en el registro, marcadas «reemplazada», y no entran en los agregados.
+- Tiempos: las duraciones que `recordDecision` guarda con la decisión, ya sin pausas. Un hilo cuya decisión tiene `clock_definitive = 0` queda fuera de todas las estadísticas de tiempo y se cuenta aparte; su total aparece en la tabla con «≥». Una etapa que no corrió en un hilo no aporta un cero: ese hilo no entra en el n de la etapa.
+- Estadísticos: mediana y cuartiles por interpolación lineal entre estadísticos de orden (tipo 7 de R), con n, mínimo y máximo. Ningún porcentaje de reducción ni «ahorro»: la página muestra las dos medianas y su diferencia con los dos n, y una nota de que la comparación de la tesis es por pares, sobre el mismo tema y con revisores externos.
+- Comparaciones de la decisión 9: explorar (manual `explore` frente a asistido `explore` más `read`, porque leer el expediente reemplaza la exploración a mano; nulo si ninguna corrió), escribir (`write` frente a `write`) y proceso completo (total frente a total, solo hilos con cobertura completa). Escribir y proceso completo se muestran por separado y nunca se suman.
+- Cobertura: cada decisión lleva las etapas registradas (duración no nula; cero milisegundos cuenta como registrada) y `coverage`. Es `complete` si el hilo asistido registró `read`, `write` y `decide` (su `explore` es opcional: exploró el motor) o si el manual registró `explore`, `write` y `decide`; si falta alguna, `partial`. La regla está en `coverageOf` de `EditorialResultsService.ts`. Un hilo con un solo minuto de `write` queda fuera de «Proceso completo» y entra en la comparación `recorded`, «Total de etapas registradas», que toma todos los hilos con reloj definitivo y se muestra como línea bajo las tarjetas con el aviso «Cobertura parcial: incluye N hilos…». Cada comparación informa los hilos parciales que contiene; el resumen por modo, `partialCoverage`. La fila «Total registrado» de la tabla por etapa usa el total de todos los hilos con reloj, como `recorded`.
+- Afirmaciones con cita: `checkScript` de `@earlyscript/editorial-script` sobre el `snapshot` de `editorial_script_versions` cuyo hash nombra la decisión, sin expediente. Cuenta oraciones con un marcador de cita propio o heredado del párrafo; no mide respaldo semántico ni el 90 % de la tesis. La proporción por modo suma afirmaciones de todos los guiones (no promedia proporciones). Una decisión sin versión no aporta. El conteo se guarda en memoria por hash, hasta 500 entradas.
+- Utilidad: la que registra el operador con la decisión (1 a 5), con media, n y distribución. Las valoraciones de revisores externos y las versiones de rúbrica no están en esta base y no se mezclan aquí.
+- Bandeja: cuatro conteos independientes sobre `editorial_trend_inbox`: leídas (`seen_at`), en observación (`snoozed_at` sin descarte), descartadas (`dismissed_at`) y en producción (`production_thread_id`).
+- Métricas de video: la observación más reciente por `observed_at`, solo descriptiva, sin atribución al sistema ni al modo.
+- Página: tarjetas de las tres comparaciones; gráfico de barras SVG por etapa (barra = mediana, trazo = RIC, línea discontinua = etapa sin registro), con escala común y sin librería; la misma información en una tabla; tabla de decisiones paginada de 20 en 20 con filtro por modo. Los colores de serie son `primary` (asistido) y `muted-foreground` (manual): el repositorio no define tokens `--chart-*`. El nombre del hilo sale del shell de T3 si existe (con enlace al hilo); si no, de la tendencia o de los primeros ocho caracteres del id.
+- Estado vacío: «Aún no hay decisiones registradas. Resultados se llena con cada hilo de video que cierres.» La bandeja aparece antes de la primera decisión solo si algún conteo es mayor que cero.
+- `ResultsNavigation` lista las secciones de la página como anclas (`useLinkProps` con `hash` y `hashScrollIntoView`), no ítems. Todas apuntan a la misma ruta y el router marca activas a todas con `aria-current="page"`, que `Link` aplica después de cualquier prop y que `activeOptions` no puede apagar sin `includeHash` (que dejaría `page` en la seleccionada). `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active` de las props del enlace; solo la sección que nombra el hash recibe `aria-current="location"` (`sectionAriaCurrent`).
+- Decisiones tiene tres estados (`ResultsDecisionsState`): «Cargando decisiones…» mientras la página no llegó, un aviso de error con el motivo (`decisionsFailureText`: base no disponible, base ilegible, entorno sin autorización o entorno sin respuesta) y el botón «Reintentar», que refresca el átomo de esa página con `useAtomRefresh`, o la tabla. Tendencias trata el fallo con un aviso y la carga sin contenido; aquí el resumen ya está en pantalla, así que la sección explica lo que falta en lugar de desaparecer.
+- Texto del aviso descriptivo: «Estas diferencias son descriptivas», sin la palabra «ahorro».
+
 ## 14. Presentación de tendencias en la interfaz
 
-Base: `638a6cf64e`. Rama `es/trend-presentation-ui`. Une la operación `generateTrendPresentation` (§7) con el espacio Tendencias (§8) y la base editorial (§9): el servidor redacta y guarda un título de una línea y un resumen de tres partes por ficha de tendencia, las lecturas de bandeja y ficha los devuelven en `presentation` y la interfaz los muestra con el rótulo «Redactado por el asistente», las palabras del motor a la vista y las citas `[itemId]` convertidas en enlaces a la evidencia. Decisión 2 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §5 y §12. Redactar es siempre una acción humana: nada redacta solo.
+Base: `638a6cf64e`, con `main` fusionado en `0d84824fea` (importador y `EditorialRunDirectory` de §12, Resultados de §13, migraciones 3 y 4). Rama `es/trend-presentation-ui`. Une la operación `generateTrendPresentation` (§7) con el espacio Tendencias (§8) y la base editorial (§9): el servidor redacta y guarda un título de una línea y un resumen de tres partes por ficha de tendencia, las lecturas de bandeja y ficha los devuelven en `presentation` y la interfaz los muestra con el rótulo «Redactado por el asistente», las palabras del motor a la vista y las citas `[itemId]` convertidas en enlaces a la evidencia. Decisión 2 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §5 y §12. Redactar es siempre una acción humana: nada redacta solo.
 
 Archivos nuevos:
 
 - Contrato: `packages/contracts/src/editorialPresentation.ts` (`EditorialPresentationRpcGroup` con `editorial.presentation.ensure`, `regenerate`, `ensureRun` y `getRunProgress`; `EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES`; `EditorialPresentationError`). No cambia `editorial.ts`: usa su `EditorialTrendPresentation`.
-- Servidor, en `apps/server/src/editorial/`: `EditorialPresentationService.ts` (servicio y su lado de lectura), `presentationRead.ts` (`EditorialPresentationReader` y `withPresentations`), `presentationDossierSource.ts` (lectura de los `dossier/1` para el redactor), `channelProfile.ts` (perfil fijo), `presentationRpc.ts`, `persistence/Migrations/005_EditorialPresentations.ts` y `EditorialPresentationService.test.ts`.
+- Servidor, en `apps/server/src/editorial/`: `EditorialPresentationService.ts`, `presentationRead.ts` (fila, `readyPresentations` y `withPresentations`), `presentationDossierSource.ts` (las fichas de una corrida, leídas por `EditorialRunDirectory`, en la forma que pide el redactor), `channelProfile.ts` (perfil fijo), `presentationRpc.ts`, `persistence/Migrations/005_EditorialPresentations.ts` y `EditorialPresentationService.test.ts`.
 - Cliente, en `apps/web/src/editorial/`: `presentationState.ts` y `TrendPresentationRunButton.tsx`.
 
 Archivos de upstream tocados:
 
-| Archivo                                               | Líneas    | Alcance                                                                                                                                                                                        |
-| ----------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialPresentationRpcGroup` y lo compone con `.merge` después de `EditorialRpcGroup`.                                                                                              |
-| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialPresentation.ts`.                                                                                                                                                          |
-| `packages/provider-core/src/server/textGeneration.ts` | 25        | Reexporta `hashTrendPresentationInput`, que el servicio necesita antes de generar para buscar la fila guardada.                                                                                |
-| `apps/server/src/ws.ts`                               | 245, 1874 | Importa `presentationRpc.ts` y esparce sus handlers tras los editoriales. El servicio es opcional (`Effect.serviceOption`): `layerWsRpc` y sus dobles no ganan requisitos.                     |
-| `apps/server/src/server.ts`                           | 52, 631   | Importa el servicio y lo añade al final del `Layer.mergeAll` de `layerRuntimeCoreDependenciesBase`, donde ya tiene `EditorialSql`, `TextGeneration`, `ServerSettingsService` y `ServerConfig`. |
-| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES`.                                                                                                                                          |
-| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_PRESENTATION_RPC_AGGREGATES`.                                                                                                                                               |
+| Archivo                                               | Líneas    | Alcance                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 38, 2146  | Importa `EditorialPresentationRpcGroup` y lo compone con `.merge` después de `EditorialRpcGroup`.                                                                                                                                                                                                                                                                |
+| `packages/contracts/src/index.ts`                     | 73        | Reexporta `editorialPresentation.ts`.                                                                                                                                                                                                                                                                                                                            |
+| `packages/provider-core/src/server/textGeneration.ts` | 25        | Reexporta `hashTrendPresentationInput`, que el servicio necesita antes de generar para buscar la fila guardada.                                                                                                                                                                                                                                                  |
+| `apps/server/src/ws.ts`                               | 245, 1875 | Importa `presentationRpc.ts` y esparce sus handlers tras los editoriales. El servicio es opcional (`Effect.serviceOption`): `layerWsRpc` y sus dobles no ganan requisitos.                                                                                                                                                                                       |
+| `apps/server/src/server.ts`                           | 55, 634   | Importa el servicio y lo añade al final del `Layer.mergeAll` de `layerRuntimeCoreDependenciesBase`. Queda encima de `EditorialLayer.layer` (que publica `EditorialRunDirectory`) y de la persistencia que monta `EditorialRuntime.aroundOrchestration`, y tiene debajo `TextGeneration`, `ServerSettingsService` y `ServerConfig`. No monta persistencia propia. |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 5, 47     | Esparce `EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES`.                                                                                                                                                                                                                                                                                                            |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 10, 19    | Esparce `EDITORIAL_PRESENTATION_RPC_AGGREGATES`.                                                                                                                                                                                                                                                                                                                 |
 
 Archivos propios de otras unidades tocados:
 
-| Archivo                                                                                                | Líneas    | Alcance                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/server/src/editorial/EditorialReadService.ts`                                                    | 31, 242   | Importa `withPresentations` y envuelve el objeto que devuelve `makeWithRunsDir`. Sin el lector en contexto devuelve el servicio sin cambios. |
-| `apps/server/src/editorial/persistence/Migrations.ts`                                                  | 6, 14     | Registra la migración 5.                                                                                                                     |
-| `apps/web/src/editorial/TrendInbox.tsx`                                                                | 23, 68-70 | Monta `TrendPresentationRunButton` en la cabecera de la lista, antes del menú de orden.                                                      |
-| `apps/web/src/editorial/TrendDossierPage.tsx`, `TrendInboxRow.tsx`, `editorial.logic.ts` y sus pruebas | varias    | Bloque redactado, citas, acciones, título en la fila con los términos en tooltip, `citationSegments` y `runPresentationProgressText`.        |
-| `apps/web/src/routes/_chat.editorial.$environmentId.trends.tsx`                                        | 13        | «expediente» pasa a «ficha de tendencia».                                                                                                    |
+| Archivo                                                                                                | Líneas    | Alcance                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/editorial/EditorialReadService.ts`                                                    | 32, 262   | Importa `withPresentations` y envuelve el objeto que devuelve `make` con el `EditorialSql` que el servicio ya tiene. No añade requisitos. |
+| `apps/server/src/editorial/dossierFormat.ts`                                                           | 109       | `excerpt` opcional en la evidencia de `DossierFile`, para que el redactor lo lea por `EditorialRunDirectory`.                             |
+| `apps/web/src/editorial/state.ts`                                                                      | 21        | Exporta `bumpInbox`, que las órdenes de redacción usan para refrescar bandeja y ficha.                                                    |
+| `apps/server/src/editorial/persistence/Migrations.ts`                                                  | 11, 21    | Registra la migración 5 tras la 3 y la 4; el manifiesto queda `[1, 2, 3, 4, 5]` y pasa `checkEditorialMigrationContinuity`.               |
+| `apps/web/src/editorial/TrendInbox.tsx`                                                                | 23, 68-70 | Monta `TrendPresentationRunButton` en la cabecera de la lista, antes del menú de orden.                                                   |
+| `apps/web/src/editorial/TrendDossierPage.tsx`, `TrendInboxRow.tsx`, `editorial.logic.ts` y sus pruebas | varias    | Bloque redactado, citas, acciones, título en la fila con los términos en tooltip, `citationSegments` y `runPresentationProgressText`.     |
+| `apps/web/src/routes/_chat.editorial.$environmentId.trends.tsx`                                        | 13        | «expediente» pasa a «ficha de tendencia».                                                                                                 |
 
 Esquema de `005_EditorialPresentations`: `editorial_presentations` con `presentation_id`, `run_id`, `dossier_id`, `trend_key`, `input_hash`, `revision`, `prompt_version`, `provider`, `model`, `title`, `what_happened`, `why_it_matters`, `video_angle`, `cited_item_ids_json`, `warnings_json`, `requested_at`, `generated_at`, `status` (`pending`, `ready`, `failed`) y `error`. Una fila `ready` exige texto y procedencia completos (`CHECK`). Única por `run_id + dossier_id + input_hash + revision`.
 
@@ -841,7 +1040,8 @@ Comportamiento:
 - `regenerate` siempre genera y añade una revisión; las anteriores quedan. Las lecturas muestran la revisión `ready` más alta de cada ficha.
 - `ensureAll(runId, { concurrency })` recorre la corrida, salta las que ya están listas para su hash, registra cada fallo como fila `failed` con su error y sigue con las demás. `startRun` lo lanza en segundo plano en el ámbito del servicio, una vez por corrida a la vez; `runProgress` cuenta listas y fallidas frente al hash actual. Una fila que quedó `pending` por una caída se marca `failed` («interrupted by a server restart») al arrancar.
 - La selección de modelo sale de `textGenerationModelSelection` de los ajustes, como los títulos de hilo. El fallback de cuota y el aislamiento de §7 siguen aplicando.
-- Lectura: `withPresentations` añade `presentation` a `getInbox` y `getDossier` cuando hay una fila `ready`. Un fallo al leer la tabla se registra y la bandeja sale con los términos del motor.
+- Lectura: `withPresentations` añade `presentation` a `getInbox` y `getDossier` cuando hay una fila `ready`, con el mismo cliente `EditorialSql` del servicio de lectura. Como el servicio de lectura se construye una vez en `server.ts` por debajo del de presentación, la lectura no depende de él ni de la generación. Un fallo al leer la tabla se registra y la bandeja sale con los términos del motor.
+- Nota sobre el prompt v2 (sin cambiar): en la prueba real un resumen escribió «la fuente hn», con la clave cruda de la fuente.
 - Interfaz: la ficha muestra «Redactado por el asistente», el título, «Términos del motor: …» y las insignias, las tres partes («Qué pasó», «Por qué importa al canal», «Ángulo de video») con citas numeradas en superíndice que abren la evidencia, el modelo y la fecha, y «Regenerar». Sin presentación, un recuadro con «Redactar con el asistente». Los errores se muestran en su sitio, sin toast. La evidencia de la ficha lleva su número para que la cita se pueda seguir. La fila del sidebar usa el título redactado y deja los términos en el tooltip y en texto para lectores de pantalla. La cabecera de la lista tiene «Redactar todas las de esta corrida» con un contador `listas/total` mientras redacta.
 - «Expediente» pasa a «Ficha de tendencia» en los textos visibles; los identificadores (`dossier`, `TrendDossierPage`) no cambian.
 
@@ -850,9 +1050,9 @@ Desviaciones respecto al encargo:
 - Unicidad con `revision`: el encargo pedía unicidad por `run_id + dossier_id + input_hash` y, a la vez, que `regenerate` añadiera una fila sin borrar la anterior con el mismo hash. Las dos cosas solo caben con una columna de revisión.
 - Cuarto método `getRunProgress` (lectura, `orchestration:read`): sin él, el cliente tendría que consultar el progreso llamando a `ensureRun`, que vuelve a lanzar la corrida y reintenta los fallos en cada consulta.
 - `awaitRun` en el servicio, no expuesto por RPC: espera la redacción en segundo plano de una corrida. Lo usan las pruebas y lo podrá usar la corrida nocturna.
-- `presentationDossierSource.ts` vuelve a leer los `dossier/1` de la corrida con las reglas de `dossierFormat.ts` (puestos, cobertura, validación de enlaces), porque el contrato de lectura no trae los extractos de la evidencia ni `signal.id`. Duplica la resolución del directorio de corridas (`EARLYSCRIPT_EDITORIAL_RUNS_DIR` o `~/earlyscript-data/runs`) y el recorrido por `run_id`. Cuando exista un servicio compartido del directorio de corridas (`EditorialRunDirectory` de `es/editorial-write`), su `layer` es lo único que hay que reemplazar.
+- `presentationDossierSource.ts` lee la corrida por `EditorialRunDirectory` (`find` y `load`): misma caché, puestos, cobertura, validación de enlaces e identidad de tendencia (`trendKey.ts`) que la bandeja. El extracto de cada evidencia llega por el campo opcional `excerpt` añadido a `DossierFile`; el contrato de lectura sigue sin traerlo.
 
-Riesgo de fusión: el `Migrator` de Effect solo ejecuta migraciones con id mayor que la última aplicada. Si una base aplica la 5 antes de que existan la 3 (`es/video-thread-server`) y la 4 (`es/editorial-write`), esas dos no se ejecutarán nunca en ella. Fusionar esta rama después de las que traen la 3 y la 4, o renumerar antes de fusionar.
+Orden de migraciones: el `Migrator` de Effect solo ejecuta migraciones con id mayor que la última aplicada. La 5 llega después de la 3 y la 4 de `main`, así que una base al día las aplica en orden.
 
 Decisiones reversibles:
 
@@ -860,9 +1060,9 @@ Decisiones reversibles:
 - Concurrencia 2 en `ensureAll` y `startRun` (`ENSURE_RUN_CONCURRENCY`).
 - Hasta 12 evidencias por ficha, en el orden del motor (`PRESENTATION_EVIDENCE_LIMIT`), igual que el límite del prompt; la ficha pide 12 ítems para resolver las citas que caen fuera de su primera página de 6.
 - `ensure` compara solo el `input_hash`, como pide el encargo: un prompt nuevo no invalida las presentaciones guardadas hasta que alguien pulse «Regenerar».
-- `trend_key`: `trend_key` del expediente si existe, si no `signal.id`, si no el id de la ficha. También es el `trend.id` que lee el modelo.
+- `trend_key`: la clave de `trendKey.ts` que usa la bandeja (`signal.id`, si no un hash de los términos). También es el `trend.id` que lee el modelo.
 - `growth` y `affinity` ausentes se envían como 0.
 - `cwd` de la operación: el directorio de estado del servidor (Claude corre en un temporal; Codex no carga instrucciones del proyecto).
 - Idioma: el predeterminado del prompt, `es`.
 - Scopes: `orchestration:operate` para redactar (gasta inferencia, como `pullRequestsGenerateReviewGuide`), `orchestration:read` para el progreso.
-- Refresco en el cliente: tras redactar se refrescan las lecturas de bandeja (los tres órdenes) y de la ficha (6 y 12 evidencias) con `registry.refresh`, porque esas consultas aún no tienen señal de revisión. Durante una corrida, la bandeja se refresca cada vez que cambia el número de listas. Cuando la bandeja tenga su átomo de revisión, cambiarlo por ese.
+- Refresco en el cliente: las órdenes de redacción llaman a `bumpInbox`, la señal de revisión de bandeja y ficha de `state.ts`. Durante una corrida, la progresión vuelve a llamarla cada vez que cambia el número de listas.
