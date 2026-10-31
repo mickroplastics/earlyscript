@@ -47,7 +47,7 @@ const deletedThreads = new Set<string>();
 class T3DomainEvents extends Context.Service<
   T3DomainEvents,
   PubSub.PubSub<{ readonly type: string; readonly threadId: string }>
->()("test/T3DomainEvents") {}
+>()("t3/editorial/manualMode.test/T3DomainEvents") {}
 
 /** Deletes a thread in T3 as the orchestrator does: the shell, then the domain event. */
 const deleteInT3 = (threadId: string) =>
