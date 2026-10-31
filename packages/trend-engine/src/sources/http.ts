@@ -32,8 +32,17 @@ export interface HttpOptions {
   readonly requestTimeoutMs?: number;
   /** Return 2xx bodies as text (feeds, model cards, robots.txt); default only for `rss`. */
   readonly text?: boolean;
+  /** A throttle the provider declares in its JSON body, read on 2xx and 4xx responses. */
+  readonly throttle?: (body: unknown) => DeclaredThrottle;
   /** Never attach the source's credentials (robots.txt clients). */
   readonly anonymous?: boolean;
+}
+/** Stack Exchange declares backoff and quota in the body instead of in headers. */
+export interface DeclaredThrottle {
+  /** Milliseconds before the next request may start; 0 for none. */
+  readonly blockMs: number;
+  /** This response is a refusal and is retried after the block. */
+  readonly limited: boolean;
 }
 
 /** Secret headers of a source, bound to the one origin (scheme, host and port) that issued them. */
@@ -77,6 +86,9 @@ export function credentialHeaders(
     ? credential.headers
     : {};
 }
+/** Longest Retry-After honoured on a 502, 503 or 504; a longer one blocks the source this long. */
+export const MAX_SERVER_RETRY_AFTER_MS = 3_600_000;
+
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
   nextStart: number;
@@ -94,6 +106,13 @@ export const MAX_RESPONSE_BYTES = {
   lobsters: 1024 * 1024,
   rss: 4 * 1024 * 1024,
   huggingface: 2 * 1024 * 1024,
+  // One page each: 200 arXiv abstracts, a 1000-article top list, 100 questions with
+  // bodies, 250 npm search results, 100 Bluesky posts.
+  arxiv: 4 * 1024 * 1024,
+  wikipedia: 2 * 1024 * 1024,
+  stackexchange: 4 * 1024 * 1024,
+  npm: 4 * 1024 * 1024,
+  bluesky: 2 * 1024 * 1024,
 } as const;
 export type HttpSource = keyof typeof MAX_RESPONSE_BYTES;
 
@@ -103,6 +122,12 @@ export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
   github: 6500,
   lobsters: 2000,
   rss: 1000,
+  // arXiv API terms: one request every three seconds on a single connection.
+  arxiv: 3000,
+  wikipedia: 400,
+  stackexchange: 1000,
+  npm: 1000,
+  bluesky: 1000,
   // Anonymous Hub API quota: 500 requests per 5-minute window per IP; halved with HF_TOKEN.
   huggingface: 700,
 };
@@ -110,6 +135,34 @@ export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
 /** Time budget per collected day where 5 minutes is short: a listing walked back from today. */
 const DAY_TIMEOUT_MS: Partial<Record<HttpSource, number>> = {
   huggingface: 600_000,
+};
+
+/** Stack Exchange throttles in the body: `backoff` seconds, a daily `quota_remaining` and error 502 `throttle_violation`. */
+export function stackExchangeThrottle(body: unknown): DeclaredThrottle {
+  const se: {
+    backoff?: unknown;
+    quota_remaining?: unknown;
+    error_name?: unknown;
+    error_message?: unknown;
+  } = typeof body === "object" && body !== null ? body : {};
+  const available =
+    typeof se.error_message === "string"
+      ? /available in (\d+) seconds/.exec(se.error_message)
+      : null;
+  return {
+    blockMs: Math.max(
+      0,
+      typeof se.backoff === "number" ? se.backoff * 1000 + 500 : 0,
+      se.quota_remaining === 0 ? 86_400_000 : 0,
+      available ? Number(available[1]) * 1000 + 1500 : 0,
+    ),
+    limited: se.error_name === "throttle_violation",
+  };
+}
+
+/** Throttles declared in response bodies, per source. */
+const DECLARED_THROTTLES: Partial<Record<HttpSource, (body: unknown) => DeclaredThrottle>> = {
+  stackexchange: stackExchangeThrottle,
 };
 
 /** Collector name, protocol version and contact, as polite crawlers identify themselves. */
@@ -180,6 +233,20 @@ export function createHttpClient(
       );
     if (ms > 0) await wait(ms);
   }
+  const throttle = options.throttle ?? DECLARED_THROTTLES[source];
+  /** Applies a body-declared block to the shared state and returns it. */
+  function declare(text: string): DeclaredThrottle {
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // A non-JSON body declares nothing.
+    }
+    const declared = throttle!(body);
+    if (declared.blockMs > 0)
+      state.blockedUntil = Math.max(state.blockedUntil, now() + declared.blockMs);
+    return declared;
+  }
   return async (url, extraHeaders = {}) => {
     for (let attempt = 0; attempt <= 3; attempt++) {
       const blocked = state.blockedUntil - now();
@@ -230,6 +297,20 @@ export function createHttpClient(
       const resetMs = Number(resetHeader) * 1000 - wall();
       if (resetHeader !== null && Number.isFinite(resetMs) && (limited || quotaLeft === "0"))
         state.blockedUntil = Math.max(state.blockedUntil, now() + resetMs + 1500);
+      // A busy server's Retry-After is honoured as a quota block is; absurd values stop at an hour.
+      const busy = response.status === 502 || response.status === 503 || response.status === 504;
+      if (busy && Number.isFinite(retryMs) && retryMs > 0) {
+        state.blockedUntil = Math.max(
+          state.blockedUntil,
+          now() + Math.min(retryMs, MAX_SERVER_RETRY_AFTER_MS),
+        );
+        if (state.blockedUntil >= deadline) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new SourceFailure(
+            `HTTP ${response.status}; Retry-After ${Math.round(retryMs / 1000)} s exceeds the day time budget`,
+          );
+        }
+      }
       const quotaWindow = rateLimitHeader(response.headers.get("ratelimit"));
       if (quotaWindow && (limited || quotaWindow.remaining === 0))
         state.blockedUntil = Math.max(state.blockedUntil, now() + quotaWindow.resetMs + 1500);
@@ -251,7 +332,23 @@ export function createHttpClient(
         continue;
       }
       if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
+        let declared: DeclaredThrottle = { blockMs: 0, limited: false };
+        // A 4xx of a declared-throttle API carries its refusal and its wait in the JSON body.
+        if (throttle) {
+          const text = await readBounded(response, controller, MAX_RESPONSE_BYTES[source]).catch(
+            (error: unknown) => {
+              if (error instanceof SourceFailure) throw error;
+              return "";
+            },
+          );
+          declared = declare(text);
+        } else await response.body?.cancel().catch(() => undefined);
+        if (declared.limited) {
+          if (attempt === 3)
+            throw new SourceFailure(`rate_limited: HTTP ${response.status}; retry limit reached`);
+          await delay(Math.max(1000 * 2 ** attempt, state.blockedUntil - now()), true);
+          continue;
+        }
         return {
           observed_at: new Date(wall()).toISOString(),
           status: response.status,
@@ -265,6 +362,7 @@ export function createHttpClient(
         const text = await readBounded(response, controller, MAX_RESPONSE_BYTES[source]);
         // Feeds, model cards and robots.txt are text; the JSON APIs are parsed here.
         body = (options.text ?? source === "rss") ? text : JSON.parse(text);
+        if (throttle) declare(text);
       } catch (error) {
         if (error instanceof SourceFailure) throw error;
         if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");

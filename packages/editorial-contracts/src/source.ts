@@ -46,6 +46,13 @@ export const SourceDescriptor = Schema.Struct({
   selection: Schema.Record(Schema.String, Schema.String),
   /** `sample`: a ranked sample, so `partial` is its full collection; `census`: only `complete` is full. */
   coverage_policy: Schema.Literals(["census", "sample"]),
+  /**
+   * A documented exception to the host's robots.txt, for an API whose own terms authorise the
+   * adapter's calls. Every day collected under it says so in its coverage note.
+   */
+  robots_override: Schema.optionalKey(
+    Schema.Struct({ reason: Schema.String, terms_url: Schema.String }),
+  ),
 });
 export type SourceDescriptor = typeof SourceDescriptor.Type;
 

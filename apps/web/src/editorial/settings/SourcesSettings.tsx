@@ -210,6 +210,14 @@ function SourceGovernanceCard({ governance }: { readonly governance: SourceGover
           </GovernanceField>
           <GovernanceField label="Costo">{COST_LABEL[governance.cost]}</GovernanceField>
           <GovernanceField label="Cobertura">{COVERAGE_LABEL[governance.coverage]}</GovernanceField>
+          {governance.robotsOverride ? (
+            <GovernanceField label="Excepción a robots.txt">
+              {governance.robotsOverride.reason} «{governance.robotsOverride.quote}»{" "}
+              <ExternalLink href={governance.robotsOverride.termsUrl}>
+                Términos de la API
+              </ExternalLink>
+            </GovernanceField>
+          ) : null}
           <GovernanceField label="Notas">{governance.notes}</GovernanceField>
         </dl>
       </CollapsiblePanel>

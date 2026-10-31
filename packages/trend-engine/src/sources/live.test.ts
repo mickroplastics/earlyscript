@@ -10,7 +10,8 @@ import { liveSources, fixtureSources } from "./index.ts";
 import { collectCorpus } from "../collect.ts";
 import { hashCorpus, readCorpus } from "../corpus.ts";
 import { sha256 } from "../hash.ts";
-import type { Item } from "@earlyscript/editorial-contracts/item";
+import * as Schema from "effect/Schema";
+import { Item } from "@earlyscript/editorial-contracts/item";
 
 const day = "2026-10-15";
 const until = "2026-10-16";
@@ -262,4 +263,27 @@ describe("live sources", () => {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
   });
+});
+
+const decodeItem = Schema.decodeUnknownSync(Item);
+// Real requests: run with EARLYSCRIPT_LIVE_TESTS=1. Each source keeps its own pause and robots.txt.
+describe.skipIf(process.env.EARLYSCRIPT_LIVE_TESTS !== "1")("live providers", () => {
+  // A fixed recent day keeps wall-clock reads out of tests; override for a fresh check.
+  const liveDay = process.env.EARLYSCRIPT_LIVE_DAY ?? "2026-10-29";
+  it.each(["arxiv", "wikipedia", "npm", "stackexchange", "bluesky"] as const)(
+    "%s collects one UTC day or records why it may not",
+    async (id) => {
+      // 50 s of the day budget keeps the test under the project's 60 s ceiling; a cut day is partial.
+      const [adapter] = liveSources([id], { dayTimeoutMs: 50_000 });
+      const { items, coverage } = await adapter!.collectDay(liveDay);
+      expect(coverage).toMatchObject({ source: id, day: liveDay, items: items.length });
+      // An unavailable day must say why (robots.txt, quota, network); any other has items.
+      if (coverage?.status === "unavailable") expect(coverage.note).toBeTruthy();
+      else expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(decodeItem(item).source).toBe(id);
+        expect(item.published_at.startsWith(`${liveDay}T`)).toBe(true);
+      }
+    },
+  );
 });

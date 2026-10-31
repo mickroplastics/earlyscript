@@ -4,6 +4,7 @@ import type { DayResult, SourceAdapter } from "./adapter.ts";
 import {
   createHttpClient,
   MAX_RESPONSE_BYTES,
+  type FrozenResponse,
   type GetResponse,
   type HttpOptions,
   type HttpSource,
@@ -15,6 +16,11 @@ import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
 import { collectLobstersDay } from "./lobsters.ts";
 import { collectRssDay, type CachedFeed } from "./rss.ts";
 import { RSS_FEEDS } from "./rss-feeds.ts";
+import { collectArxivDay } from "./arxiv.ts";
+import { collectWikipediaDay } from "./wikipedia.ts";
+import { collectNpmDay, NPM_MIN_WEEKLY_DOWNLOADS } from "./npm.ts";
+import { collectStackExchangeDay } from "./stackexchange.ts";
+import { collectBlueskyDay } from "./bluesky.ts";
 
 import { fixtureAdapter } from "./fixture.ts";
 
@@ -52,6 +58,56 @@ export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
     // Models are chosen by present-day likes: a declared sample, as GitHub.
     coverage_policy: "sample",
   },
+  arxiv: {
+    id: "arxiv",
+    label: "arXiv",
+    selection: {
+      arxiv:
+        "cs.AI, cs.CL, cs.SE and cs.LG submissions per UTC day by submittedDate; first 1000; complete only 4 days after the day",
+    },
+    coverage_policy: "census",
+    // export.arxiv.org/robots.txt disallows every path; the API terms authorise this use.
+    robots_override: {
+      reason:
+        "arXiv API Terms of Use allow the legacy API at one request every three seconds on a single connection, though export.arxiv.org/robots.txt disallows /",
+      terms_url: "https://info.arxiv.org/help/api/tou.html",
+    },
+  },
+  wikipedia: {
+    id: "wikipedia",
+    label: "Wikipedia",
+    selection: {
+      wikipedia:
+        "en.wikipedia all-access top 1000 per UTC day; non-article pages excluded; no summaries (robots.txt): title, URL, views and rank only",
+    },
+    coverage_policy: "sample",
+  },
+  npm: {
+    id: "npm",
+    label: "npm",
+    selection: {
+      npm: `Registry search keywords:ai,llm,agent,mcp,cli; first 1,250 results per query; latest version date on the day; at least ${NPM_MIN_WEEKLY_DOWNLOADS} present weekly downloads; top 100 by them`,
+    },
+    coverage_policy: "sample",
+  },
+  stackexchange: {
+    id: "stackexchange",
+    label: "Stack Exchange",
+    selection: {
+      stackexchange:
+        "stackoverflow and ai questions per UTC creation day; sort:votes; first 300 per site; anonymous quota; capture only, not for the writer",
+    },
+    coverage_policy: "sample",
+  },
+  bluesky: {
+    id: "bluesky",
+    label: "Bluesky",
+    selection: {
+      bluesky:
+        "searchPosts lang=en over llm|agent|open source|github|developer|python|typescript|rust per UTC day; one page per window; purge by author or URI",
+    },
+    coverage_policy: "sample",
+  },
 };
 
 /** The feed list is the selection: adding a feed changes the corpus hash. */
@@ -77,6 +133,17 @@ const COLLECTORS: Readonly<
   hn: () => (day, get) => collectHnDay(day, get),
   github: () => (day, get) => collectGithubDay(day, get),
   huggingface: huggingfaceCollector,
+  // Ported from Earlywindow (es/sources-earlywindow): each gates its own URLs with robots.
+  // The arXiv API answers Atom XML, read through the text client.
+  arxiv: () => (day, _get, robots, getText) => collectArxivDay(day, getText, robots),
+  wikipedia: () => (day, get, robots) => collectWikipediaDay(day, get, robots),
+  // npm search pages do not depend on the day: one collect run reads each once.
+  npm: () => {
+    const pages = new Map<string, FrozenResponse>();
+    return (day, get, robots) => collectNpmDay(day, memoized(get, pages), robots);
+  },
+  stackexchange: () => (day, get, robots) => collectStackExchangeDay(day, get, robots),
+  bluesky: () => (day, get, robots) => collectBlueskyDay(day, get, robots),
 };
 
 export function sourceDescriptor(id: SourceId): SourceDescriptor {
@@ -155,6 +222,17 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
   };
 }
 
+/** Caches 200 responses for the life of one adapter (one collect run). */
+function memoized(get: GetResponse, memo: Map<string, FrozenResponse>): GetResponse {
+  return async (url, headers) => {
+    const hit = memo.get(url);
+    if (hit) return hit;
+    const response = await get(url, headers);
+    if (response.status === 200) memo.set(url, response);
+    return response;
+  };
+}
+
 const isHttpSource = (id: SourceId): id is HttpSource => id in MAX_RESPONSE_BYTES;
 
 export function liveSources(
@@ -173,19 +251,38 @@ export function liveSources(
     const collect = makeCollector();
     return {
       descriptor,
-      collectDay: (day) => {
+      collectDay: async (day) => {
         // Collectors gate their own URLs; a redirect away from them is gated per hop.
         // robots.txt goes without credentials; model cards carry them on their own origin only.
         const anonymous = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
         const text = createHttpClient(id, { ...options, text: true }, state);
         const json = createHttpClient(id, options, state);
-        const robots = robotsGate(() => anonymous, rules);
-        return collect(
+        const override = descriptor.robots_override;
+        let overridden = false;
+        const robots = robotsGate(
+          () => anonymous,
+          rules,
+          override
+            ? {
+                override,
+                onOverride: () => {
+                  overridden = true;
+                },
+              }
+            : undefined,
+        );
+        const result = await collect(
           day,
           followRedirects(() => json, robots),
           robots,
           followRedirects(() => text, robots),
         );
+        // A day collected past a robots.txt Disallow records the documented exception.
+        if (!overridden || !override || !result.coverage) return result;
+        const note = [`robots_override: ${override.reason}`, result.coverage.note]
+          .filter(Boolean)
+          .join("; ");
+        return { ...result, coverage: { ...result.coverage, note } };
       },
     };
   });
