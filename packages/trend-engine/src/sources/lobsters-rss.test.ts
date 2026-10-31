@@ -333,7 +333,7 @@ describe("rss", () => {
       expect(feed.feedUrl).toMatch(/^https:\/\//);
       expect(feed.license.length).toBeGreaterThan(0);
     }
-    expect(SOURCES.rss.selection.rss).toBe(RSS_FEEDS.map((feed) => feed.feedUrl).join(" "));
+    expect(SOURCES.rss?.selection.rss).toBe(RSS_FEEDS.map((feed) => feed.feedUrl).join(" "));
   });
 });
 
@@ -500,6 +500,7 @@ describe("user feeds", () => {
       ok: true,
       url,
       title: "Simon Willison's Weblog",
+      link: "https://simonwillison.net/",
       entries: 3,
       latest: "2026-10-30T22:00:00.000Z",
     });
@@ -507,7 +508,7 @@ describe("user feeds", () => {
       url,
       options({ [url]: () => new Response(`<rss><channel><title>Empty</title></channel></rss>`) }),
     );
-    expect(rss).toEqual({ ok: true, url, title: "Empty", entries: 0, latest: null });
+    expect(rss).toEqual({ ok: true, url, title: "Empty", link: null, entries: 0, latest: null });
     expect(
       await validateFeed(url, options({ [url]: () => new Response("<html><p>hi</p></html>") })),
     ).toMatchObject({ ok: false, error: "not-a-feed" });

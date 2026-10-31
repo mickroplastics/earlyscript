@@ -7,7 +7,7 @@ import type { Item } from "@earlyscript/editorial-contracts/item";
 import type { CoverageRecord, SourceDescriptor } from "@earlyscript/editorial-contracts/source";
 import { collectCorpus } from "./collect.ts";
 import { readCorpus } from "./corpus.ts";
-import { fixtureSources, SOURCES, type SourceAdapter } from "./sources/index.ts";
+import { fixtureSources, sourceDescriptor, type SourceAdapter } from "./sources/index.ts";
 
 const day = "2026-10-30";
 const window = { from: day, to: "2026-10-31" };
@@ -68,12 +68,12 @@ describe("collectCorpus with sample and census sources", () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "collect-sample-"));
     try {
       // Sol's scenario: a top 500 of 600 whose ranking changes between captures.
-      const sample = scripted(SOURCES.huggingface, [
+      const sample = scripted(sourceDescriptor("huggingface"), [
         { ids: range(0, 500), status: "partial" },
         { ids: range(100, 600), status: "partial" },
         { ids: [], status: "unavailable" },
       ]);
-      const census = scripted(SOURCES.hn, [
+      const census = scripted(sourceDescriptor("hn"), [
         { ids: range(0, 3), status: "partial" },
         { ids: range(3, 5), status: "partial" },
         { ids: [], status: "partial" },

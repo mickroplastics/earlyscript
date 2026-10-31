@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import { huggingfaceCollector, hfModelsUrl } from "./huggingface.ts";
 import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
-import { fixtureSources, liveSources, SOURCES } from "./index.ts";
+import { fixtureSources, liveSources, sourceDescriptor } from "./index.ts";
 import { robotsAllows, robotsRules, type RobotsGate } from "./robots.ts";
 import { collectCorpus } from "../collect.ts";
 import { readCorpus } from "../corpus.ts";
@@ -261,7 +261,7 @@ describe("Hugging Face source", () => {
   });
 
   it("declares the fallback body in its selection", () => {
-    expect(SOURCES.huggingface.selection.huggingface).toContain(
+    expect(sourceDescriptor("huggingface").selection.huggingface).toContain(
       "without a usable card (absent, empty, refused by robots.txt, over 2 MiB) body = the model tags",
     );
   });
@@ -327,7 +327,7 @@ describe("Hugging Face in a corpus/1 collection", () => {
         adapters: fixtureSources(root, ["huggingface"]),
       });
       expect(corpus.verified).toBe(true);
-      expect(SOURCES.huggingface.coverage_policy).toBe("sample");
+      expect(sourceDescriptor("huggingface").coverage_policy).toBe("sample");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
