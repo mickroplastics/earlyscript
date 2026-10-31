@@ -1,31 +1,38 @@
 {
-  "items": [
-    {
-      "tags": ["hardware", "hardware-evaluation"],
-      "owner": {
-        "display_name": "quarague"
-      },
-      "creation_date": 1793259585,
-      "question_id": 50824,
-      "link": "https://ai.stackexchange.com/questions/50824/can-i-run-open-weight-models-on-regular-ddr-ram-instead-of-gpus",
-      "title": "Can I run open weight models on regular DDR ram instead of GPUs?",
-      "body": "<p>If I want to run an open weight model on my local server the general assumption is that I need GPUs with enough ram to fit the model. Nvidia offers various GPUs in the RTX series and there are a few other options as well. I was pondering whether I can use regular DDR4 or DDR5 ram on a server instead.</p>\n<p>DDR ram is much cheaper than GPUs and in a corporate setting one may already have a server with say 0.5 TB or 1 TB DDR ram already standing around for other uses. That would allow running some fairly large models. My understanding is that the key difference between GPUs and DDR ram is the access speed, with values around 25-100 GB/s for DDR ram versus 936 GB/s or 1792 GB/s for RTX GPUs.</p>\n<p>Is that the major difference and does a factor 20 in access speed translate to roughly a factor of 20 in AI model response time? On GPUs for most common queries you get a response in a few seconds so if I'm willing to way for a couple of minutes instead is that the only drawback for switching to cheaper DDR ram?</p>\n",
-      "content_license": "CC BY-SA 4.0"
-    },
-    {
-      "tags": ["neural-networks", "weights", "human-inspired", "hallucinations"],
-      "owner": {
-        "display_name": "Deepak Ponvel Chermakani"
-      },
-      "creation_date": 1793302641,
-      "question_id": 50827,
-      "link": "https://ai.stackexchange.com/questions/50827/why-humans-need-to-continue-studying-in-the-ai-era",
-      "title": "Why humans need to continue studying in the AI era",
-      "body": "<p>While AI systems are indeed powerful, the following two facts are known in general:</p>\n<ol>\n<li><p>AI systems not based on some form of brute force search are probabilistic and can make errors and hallucinations, that need humans to verify and correct.</p>\n</li>\n<li><p>The weights (or synaptic strengths) between neurons in our human brain vary continuously on the real line, whereas the weights between neurons in AI Artificial Neural Networks are limited to rationals. So there will always be real states achievable by the human brain that can never be achieved by AI.</p>\n</li>\n</ol>\n<p>So though AI is better than humans in many ways, there will always be some ways in which humans are better than AI.</p>\n<p>Therefore, humans should continue studying different subjects, and use AI only as a reference tool, and not rely completely on AI generated results.</p>\n<p>Look forward to your opinions on my post.</p>\n",
-      "content_license": "CC BY-SA 4.0"
-    }
-  ],
-  "has_more": false,
-  "quota_max": 300,
-  "quota_remaining": 298
+ "_comment": "Synthetic questions in the shape of /2.3/questions?filter=withbody on ai.stackexchange; no real users or posts.",
+ "items": [
+  {
+   "tags": [
+    "hardware",
+    "hardware-evaluation"
+   ],
+   "owner": {
+    "display_name": "example-asker-one"
+   },
+   "creation_date": 1793259585,
+   "question_id": 90001,
+   "link": "https://ai.stackexchange.com/questions/90001/example-question-about-running-models-on-cpu-memory",
+   "title": "Example question: can a model run from CPU memory?",
+   "body": "<p>If I want to run an example model on a server, do I need a GPU?</p>\n<p>This body is <em>synthetic</em> &amp; only keeps the shape of a real question.</p>",
+   "content_license": "CC BY-SA 4.0"
+  },
+  {
+   "tags": [
+    "neural-networks",
+    "example"
+   ],
+   "owner": {
+    "display_name": "example-asker-two"
+   },
+   "creation_date": 1793302641,
+   "question_id": 90002,
+   "link": "https://ai.stackexchange.com/questions/90002/example-question-about-studying",
+   "title": "Example question about studying with assistants",
+   "body": "<p>A second synthetic question.</p>\n<ol>\n<li><p>First point.</p></li>\n<li><p>Second point.</p></li>\n</ol>",
+   "content_license": "CC BY-SA 4.0"
+  }
+ ],
+ "has_more": false,
+ "quota_max": 300,
+ "quota_remaining": 298
 }

@@ -72,7 +72,7 @@ export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
     label: "Wikipedia",
     selection: {
       wikipedia:
-        "en.wikipedia all-access top 1000 per UTC day; non-article pages excluded; summaries for the first 50 where en.wikipedia.org robots.txt allows /api/",
+        "en.wikipedia all-access top 1000 per UTC day; non-article pages excluded; no summaries (robots.txt): title, URL, views and rank only",
     },
     coverage_policy: "sample",
   },

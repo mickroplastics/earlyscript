@@ -1,208 +1,209 @@
 {
-  "objects": [
-    {
-      "downloads": {
-        "weekly": 86757508
-      },
-      "package": {
-        "name": "@modelcontextprotocol/sdk",
-        "version": "1.32.2",
-        "date": "2026-10-23T18:11:38.362Z",
-        "description": "Model Context Protocol implementation for TypeScript",
-        "links": {
-          "homepage": "https://modelcontextprotocol.io",
-          "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
-          "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
-          "npm": "https://www.npmjs.com/package/@modelcontextprotocol/sdk"
-        },
-        "publisher": {
-          "username": "GitHub Actions",
-          "trustedPublisher": {
-            "id": "github"
-          }
-        },
-        "maintainers": [
-          {
-            "username": "jspahrsummers"
-          },
-          {
-            "username": "pcarleton"
-          },
-          {
-            "username": "fweinberger"
-          },
-          {
-            "username": "thedsp"
-          },
-          {
-            "username": "ochafik-ant"
-          }
-        ]
-      }
+ "_comment": "Shape of five registry search results of keywords:mcp on 31 October 2026; maintainer and publisher user names replaced by invented ones.",
+ "objects": [
+  {
+   "downloads": {
+    "weekly": 86757508
+   },
+   "package": {
+    "name": "@modelcontextprotocol/sdk",
+    "version": "1.32.2",
+    "date": "2026-10-23T18:11:38.362Z",
+    "description": "Model Context Protocol implementation for TypeScript",
+    "links": {
+     "homepage": "https://modelcontextprotocol.io",
+     "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
+     "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
+     "npm": "https://www.npmjs.com/package/@modelcontextprotocol/sdk"
     },
-    {
-      "downloads": {
-        "weekly": 41889127
-      },
-      "package": {
-        "name": "ai",
-        "version": "7.0.159",
-        "date": "2026-10-30T22:18:53.918Z",
-        "description": "AI SDK by Vercel - build apps like ChatGPT, Claude, Gemini, and more with a single interface for any model using the Vercel AI Gateway or go direct to OpenAI, Anthropic, Google, or any other model provider.",
-        "links": {
-          "homepage": "https://ai-sdk.dev/docs",
-          "repository": "https://github.com/vercel/ai",
-          "bugs": "https://github.com/vercel/ai/issues",
-          "npm": "https://www.npmjs.com/package/ai"
-        },
-        "publisher": {
-          "username": "GitHub Actions",
-          "trustedPublisher": {
-            "id": "github"
-          }
-        },
-        "maintainers": [
-          {
-            "username": "matheuss"
-          },
-          {
-            "username": "rauchg"
-          },
-          {
-            "username": "matt.straka"
-          },
-          {
-            "username": "vercel-release-bot"
-          },
-          {
-            "username": "zeit-bot"
-          }
-        ]
-      }
+    "publisher": {
+     "username": "GitHub Actions",
+     "trustedPublisher": {
+      "id": "github"
+     }
     },
-    {
-      "downloads": {
-        "weekly": 26915435
-      },
-      "package": {
-        "name": "@modelcontextprotocol/core",
-        "version": "2.4.0",
-        "date": "2026-10-23T18:19:54.299Z",
-        "description": "Model Context Protocol for TypeScript \u2014 public Zod schemas (spec + OAuth/OpenID)",
-        "links": {
-          "homepage": "https://modelcontextprotocol.io",
-          "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
-          "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
-          "npm": "https://www.npmjs.com/package/@modelcontextprotocol/core"
-        },
-        "publisher": {
-          "username": "GitHub Actions",
-          "trustedPublisher": {
-            "id": "github"
-          }
-        },
-        "maintainers": [
-          {
-            "username": "jspahrsummers"
-          },
-          {
-            "username": "pcarleton"
-          },
-          {
-            "username": "fweinberger"
-          },
-          {
-            "username": "thedsp"
-          },
-          {
-            "username": "ochafik-ant"
-          }
-        ]
-      }
+    "maintainers": [
+     {
+      "username": "example-maintainer-a"
+     },
+     {
+      "username": "example-maintainer-b"
+     },
+     {
+      "username": "example-maintainer-c"
+     },
+     {
+      "username": "example-maintainer-d"
+     },
+     {
+      "username": "example-maintainer-e"
+     }
+    ]
+   }
+  },
+  {
+   "downloads": {
+    "weekly": 41889127
+   },
+   "package": {
+    "name": "ai",
+    "version": "7.0.159",
+    "date": "2026-10-30T22:18:53.918Z",
+    "description": "AI SDK by Vercel - build apps like ChatGPT, Claude, Gemini, and more with a single interface for any model using the Vercel AI Gateway or go direct to OpenAI, Anthropic, Google, or any other model provider.",
+    "links": {
+     "homepage": "https://ai-sdk.dev/docs",
+     "repository": "https://github.com/vercel/ai",
+     "bugs": "https://github.com/vercel/ai/issues",
+     "npm": "https://www.npmjs.com/package/ai"
     },
-    {
-      "downloads": {
-        "weekly": 13952416
-      },
-      "package": {
-        "name": "@modelcontextprotocol/client",
-        "version": "2.4.0",
-        "date": "2026-10-23T18:21:05.614Z",
-        "description": "Model Context Protocol implementation for TypeScript - Client package",
-        "links": {
-          "homepage": "https://modelcontextprotocol.io",
-          "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
-          "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
-          "npm": "https://www.npmjs.com/package/@modelcontextprotocol/client"
-        },
-        "publisher": {
-          "username": "GitHub Actions",
-          "trustedPublisher": {
-            "id": "github"
-          }
-        },
-        "maintainers": [
-          {
-            "username": "jspahrsummers"
-          },
-          {
-            "username": "pcarleton"
-          },
-          {
-            "username": "fweinberger"
-          },
-          {
-            "username": "thedsp"
-          },
-          {
-            "username": "ochafik-ant"
-          }
-        ]
-      }
+    "publisher": {
+     "username": "GitHub Actions",
+     "trustedPublisher": {
+      "id": "github"
+     }
     },
-    {
-      "downloads": {
-        "weekly": 21176440
-      },
-      "package": {
-        "name": "@modelcontextprotocol/server",
-        "version": "2.4.0",
-        "date": "2026-10-23T18:20:13.773Z",
-        "description": "Model Context Protocol implementation for TypeScript - Server package",
-        "links": {
-          "homepage": "https://modelcontextprotocol.io",
-          "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
-          "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
-          "npm": "https://www.npmjs.com/package/@modelcontextprotocol/server"
-        },
-        "publisher": {
-          "username": "GitHub Actions",
-          "trustedPublisher": {
-            "id": "github"
-          }
-        },
-        "maintainers": [
-          {
-            "username": "jspahrsummers"
-          },
-          {
-            "username": "pcarleton"
-          },
-          {
-            "username": "fweinberger"
-          },
-          {
-            "username": "thedsp"
-          },
-          {
-            "username": "ochafik-ant"
-          },
-          {
-            "username": "cliffhall"
-          }
-        ]
-      }
-    }
-  ],
-  "total": 84716
+    "maintainers": [
+     {
+      "username": "example-maintainer-f"
+     },
+     {
+      "username": "example-maintainer-g"
+     },
+     {
+      "username": "example-maintainer-h"
+     },
+     {
+      "username": "example-maintainer-i"
+     },
+     {
+      "username": "example-maintainer-j"
+     }
+    ]
+   }
+  },
+  {
+   "downloads": {
+    "weekly": 26915435
+   },
+   "package": {
+    "name": "@modelcontextprotocol/core",
+    "version": "2.4.0",
+    "date": "2026-10-23T18:19:54.299Z",
+    "description": "Model Context Protocol for TypeScript \u2014 public Zod schemas (spec + OAuth/OpenID)",
+    "links": {
+     "homepage": "https://modelcontextprotocol.io",
+     "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
+     "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
+     "npm": "https://www.npmjs.com/package/@modelcontextprotocol/core"
+    },
+    "publisher": {
+     "username": "GitHub Actions",
+     "trustedPublisher": {
+      "id": "github"
+     }
+    },
+    "maintainers": [
+     {
+      "username": "example-maintainer-a"
+     },
+     {
+      "username": "example-maintainer-b"
+     },
+     {
+      "username": "example-maintainer-c"
+     },
+     {
+      "username": "example-maintainer-d"
+     },
+     {
+      "username": "example-maintainer-e"
+     }
+    ]
+   }
+  },
+  {
+   "downloads": {
+    "weekly": 13952416
+   },
+   "package": {
+    "name": "@modelcontextprotocol/client",
+    "version": "2.4.0",
+    "date": "2026-10-23T18:21:05.614Z",
+    "description": "Model Context Protocol implementation for TypeScript - Client package",
+    "links": {
+     "homepage": "https://modelcontextprotocol.io",
+     "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
+     "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
+     "npm": "https://www.npmjs.com/package/@modelcontextprotocol/client"
+    },
+    "publisher": {
+     "username": "GitHub Actions",
+     "trustedPublisher": {
+      "id": "github"
+     }
+    },
+    "maintainers": [
+     {
+      "username": "example-maintainer-a"
+     },
+     {
+      "username": "example-maintainer-b"
+     },
+     {
+      "username": "example-maintainer-c"
+     },
+     {
+      "username": "example-maintainer-d"
+     },
+     {
+      "username": "example-maintainer-e"
+     }
+    ]
+   }
+  },
+  {
+   "downloads": {
+    "weekly": 21176440
+   },
+   "package": {
+    "name": "@modelcontextprotocol/server",
+    "version": "2.4.0",
+    "date": "2026-10-23T18:20:13.773Z",
+    "description": "Model Context Protocol implementation for TypeScript - Server package",
+    "links": {
+     "homepage": "https://modelcontextprotocol.io",
+     "repository": "git+https://github.com/modelcontextprotocol/typescript-sdk.git",
+     "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
+     "npm": "https://www.npmjs.com/package/@modelcontextprotocol/server"
+    },
+    "publisher": {
+     "username": "GitHub Actions",
+     "trustedPublisher": {
+      "id": "github"
+     }
+    },
+    "maintainers": [
+     {
+      "username": "example-maintainer-a"
+     },
+     {
+      "username": "example-maintainer-b"
+     },
+     {
+      "username": "example-maintainer-c"
+     },
+     {
+      "username": "example-maintainer-d"
+     },
+     {
+      "username": "example-maintainer-e"
+     },
+     {
+      "username": "example-maintainer-k"
+     }
+    ]
+   }
+  }
+ ],
+ "total": 84716
 }

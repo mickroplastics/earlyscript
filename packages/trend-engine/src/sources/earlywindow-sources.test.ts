@@ -86,8 +86,64 @@ describe("arXiv", () => {
   });
 });
 
+describe("arXiv feed validation", () => {
+  it("never reads a truncated feed as a complete day", async () => {
+    const feed = await fixture("arxiv-2026-10-26.xml");
+    const truncated = feed.slice(0, feed.lastIndexOf("</feed>"));
+    const result = await collectArxivDay(
+      "2026-10-26",
+      async () => ok(truncated, "2026-10-31T00:00:00.000Z"),
+      allow,
+    );
+    expect(result.coverage?.status).not.toBe("complete");
+    expect(result.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(result.coverage?.note).toContain("Malformed arXiv feed at start=0");
+  });
+});
+
+describe("Retry-After on a busy server", () => {
+  it("waits the declared seconds after a 503 before the next request", async () => {
+    let clock = 0;
+    const calls: Array<number> = [];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+      calls.push(clock);
+      return calls.length === 1
+        ? new Response("busy", { status: 503, headers: { "retry-after": "120" } })
+        : new Response("<feed/>");
+    });
+    const get = createHttpClient("arxiv", {
+      fetch: fetcher,
+      text: true,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    expect((await get("https://export.arxiv.org/api/query")).status).toBe(200);
+    expect(calls).toEqual([0, 120_000]);
+  });
+  it("gives up the day when a 502 or 504 asks for longer than its budget", async () => {
+    let clock = 0;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("", { status: 504, headers: { "retry-after": "3600" } }));
+    const get = createHttpClient("arxiv", {
+      fetch: fetcher,
+      text: true,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    await expect(get("https://export.arxiv.org/api/query")).rejects.toThrow(
+      "HTTP 504; Retry-After 3600 s exceeds the day time budget",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Wikipedia", () => {
-  it("keeps the top list and skips summaries that en.wikipedia.org robots.txt disallows", async () => {
+  it("keeps title, URL, views and rank only, and a short top list stays partial", async () => {
     const top = await json("wikipedia-top-2026-10-29.json");
     const urls: Array<string> = [];
     const result = await collectWikipediaDay(
@@ -96,33 +152,38 @@ describe("Wikipedia", () => {
         urls.push(url);
         return ok(top);
       },
-      robotsFrom({
-        "en.wikipedia.org": "User-agent: *\nAllow: /api/rest_v1/?doc\nDisallow: /api/\n",
-      }),
+      allow,
     );
+    // No summary requests, even where robots.txt would allow them.
     expect(urls).toEqual([wikipediaTopUrl("2026-10-29")]);
     // 15 ranked rows less Main_Page, Special:Search and Wikipedia:Featured_pictures.
     expect(result.items).toHaveLength(12);
     expect(result.items[0]).toMatchObject({
       id: "itm_wikipedia_2026-10-29_p0002",
       title: "Patrick Stewart",
+      permalink: "https://en.wikipedia.org/wiki/Patrick_Stewart",
       published_at: "2026-10-29T00:00:00.000Z",
       author: null,
       entities: ["wikipedia:Patrick_Stewart"],
     });
-    expect(result.coverage).toMatchObject({ status: "complete", items: 12 });
-    expect(result.coverage?.note).toContain("summaries skipped: robots_disallowed");
+    expect(result.items[0]?.body).toMatch(/^English Wikipedia page views on 2026-10-29: \d+\. Rank 2 of the 15 most viewed pages\.$/);
+    expect(result.coverage).toMatchObject({ status: "partial", items: 12 });
+    expect(result.coverage?.note).toContain("Top list has 15 of 1000 rows");
+    expect(result.coverage?.note).toContain("no summaries: robots.txt");
   });
-  it("adds summaries where robots.txt allows them", async () => {
+  it("is complete only when the top list has its 1000 rows", async () => {
     const top = await json("wikipedia-top-2026-10-29.json");
-    const summary = await json("wikipedia-summary.json");
-    const get = vi.fn<GetResponse>(async (url) =>
-      ok(new URL(url).hostname === "en.wikipedia.org" ? summary : top),
+    const rows = Array.from({ length: 1000 }, (_, index) => ({
+      article: index === 0 ? "Main_Page" : `Article_${index}`,
+      views: 1000 - index,
+      rank: index + 1,
+    }));
+    const result = await collectWikipediaDay(
+      "2026-10-29",
+      async () => ok({ items: [{ ...top.items[0], articles: rows }] }),
+      allow,
     );
-    const result = await collectWikipediaDay("2026-10-29", get, allow);
-    expect(get).toHaveBeenCalledTimes(13);
-    expect(result.items[0]?.body).toContain(summary.extract.slice(0, 40));
-    expect(result.coverage?.note).toContain("summaries 12/12, 0 not found");
+    expect(result.coverage).toMatchObject({ status: "complete", items: 999 });
   });
   it("marks a day whose top list is not published yet unavailable", async () => {
     const result = await collectWikipediaDay(
@@ -153,8 +214,11 @@ describe("Stack Exchange", () => {
     expect(new URL(urls[0]!).searchParams.get("fromdate")).toBe(
       String(Date.parse("2026-10-29T00:00:00Z") / 1000),
     );
-    expect(result.items.map((item) => item.id)).toEqual(["itm_se_ai_50824", "itm_se_ai_50827"]);
-    expect(result.items[0]?.body).toMatch(/^Tags: hardware, hardware-evaluation\. If I want/);
+    expect(result.items.map((item) => item.id)).toEqual(["itm_se_ai_90001", "itm_se_ai_90002"]);
+    expect(result.items[0]).toMatchObject({
+      author: "example-asker-one",
+      body: "Tags: hardware, hardware-evaluation. If I want to run an example model on a server, do I need a GPU? This body is synthetic & only keeps the shape of a real question.",
+    });
     expect(result.coverage).toMatchObject({
       status: "complete",
       items: 2,
@@ -239,7 +303,7 @@ describe("npm", () => {
     expect(result.items[0]).toMatchObject({
       id: "itm_npm_@modelcontextprotocol/sdk@1.32.2",
       // Trusted-publisher releases name the first maintainer instead of "GitHub Actions".
-      author: "jspahrsummers",
+      author: "example-maintainer-a",
       external_url: "https://github.com/modelcontextprotocol/typescript-sdk",
       entities: ["github:modelcontextprotocol/typescript-sdk"],
     });
