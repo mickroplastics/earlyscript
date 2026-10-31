@@ -2,16 +2,28 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 
-import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
 import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// Earlyscript editorial space: read-only views over the trend engine's runs. The server
-// reads `dossier/1` files from the runs directory; nothing here writes editorial state.
+// Earlyscript editorial space. Reads are views over the trend engine's runs, indexed in
+// editorial.sqlite by the server's importer. Writes change the human inbox state of a trend
+// (read, snoozed, dismissed); the server takes the actor from the authenticated session.
+// None of these methods is an MCP tool or an orchestration command.
 
 export const EDITORIAL_WS_METHODS = {
   listRuns: "editorial.listRuns",
   getInbox: "editorial.getInbox",
   getDossier: "editorial.getDossier",
+  subscribe: "editorial.subscribe",
+  markRead: "editorial.markRead",
+  snooze: "editorial.snooze",
+  unsnooze: "editorial.unsnooze",
+  dismiss: "editorial.dismiss",
+  reopen: "editorial.reopen",
 } as const;
 
 export const EditorialRunId = TrimmedNonEmptyString.pipe(Schema.brand("EditorialRunId"));
@@ -19,6 +31,44 @@ export type EditorialRunId = typeof EditorialRunId.Type;
 
 export const EditorialDossierId = TrimmedNonEmptyString.pipe(Schema.brand("EditorialDossierId"));
 export type EditorialDossierId = typeof EditorialDossierId.Type;
+
+/** Stable identity of a trend across runs; the server derives it from the dossier. */
+export const EditorialTrendKey = TrimmedNonEmptyString.pipe(Schema.brand("EditorialTrendKey"));
+export type EditorialTrendKey = typeof EditorialTrendKey.Type;
+
+/** Dossier metrics a "keep watching" snooze can wait on. */
+export const EditorialSnoozeMetric = Schema.Literals(["items7d", "authors7d", "items28d", "score"]);
+export type EditorialSnoozeMetric = typeof EditorialSnoozeMetric.Type;
+
+/** The trend comes back when `metric` reaches `atLeast` in an imported run. */
+export const EditorialSnoozeReturn = Schema.Struct({
+  metric: EditorialSnoozeMetric,
+  /** Value of the metric in the latest run when the snooze was recorded. */
+  baseline: Schema.Finite,
+  atLeast: Schema.Finite,
+});
+export type EditorialSnoozeReturn = typeof EditorialSnoozeReturn.Type;
+
+/**
+ * Human inbox state of a trend. Read, snoozed, dismissed and in production are independent:
+ * a trend in production keeps receiving evidence and stays visible.
+ */
+export const EditorialTrendInboxState = Schema.Struct({
+  /** Activity after the revision last opened, or never opened; never when snoozed or dismissed. */
+  isNew: Schema.Boolean,
+  seenRunId: Schema.NullOr(EditorialRunId),
+  seenAt: Schema.NullOr(IsoDateTime),
+  snoozed: Schema.NullOr(
+    Schema.Struct({
+      at: IsoDateTime,
+      until: Schema.NullOr(IsoDateTime),
+      returnWhen: Schema.NullOr(EditorialSnoozeReturn),
+    }),
+  ),
+  dismissed: Schema.NullOr(Schema.Struct({ at: IsoDateTime, reason: Schema.String })),
+  production: Schema.NullOr(Schema.Struct({ threadId: Schema.String, linkedAt: IsoDateTime })),
+});
+export type EditorialTrendInboxState = typeof EditorialTrendInboxState.Type;
 
 export const EditorialRunSummary = Schema.Struct({
   runId: EditorialRunId,
@@ -93,8 +143,11 @@ export const EditorialTrendSummary = Schema.Struct({
   sources: Schema.Array(Schema.String),
   /** Last 14 days of `items`; `null` for a day that was not captured. */
   sparkline: Schema.Array(Schema.NullOr(NonNegativeInt)),
-  /** Unread in the inbox. Until read state exists (U3), every trend of the latest run is new. */
+  /** Same as `inbox.isNew`, kept flat for the sort and older clients. */
   isNew: Schema.Boolean,
+  /** Always sent by servers with the importer; optional so older payloads still decode. */
+  trendKey: Schema.optionalKey(EditorialTrendKey),
+  inbox: Schema.optionalKey(EditorialTrendInboxState),
 });
 export type EditorialTrendSummary = typeof EditorialTrendSummary.Type;
 
@@ -162,7 +215,10 @@ export const EditorialInbox = Schema.Struct({
   sort: EditorialInboxSort,
   trends: Schema.Array(EditorialTrendSummary),
   total: NonNegativeInt,
+  /** New trends of the run, excluding snoozed and dismissed ones. */
   newCount: NonNegativeInt,
+  snoozedCount: NonNegativeInt,
+  dismissedCount: NonNegativeInt,
 });
 export type EditorialInbox = typeof EditorialInbox.Type;
 
@@ -179,10 +235,78 @@ export type EditorialGetDossierInput = typeof EditorialGetDossierInput.Type;
 export class EditorialReadError extends Schema.TaggedError<EditorialReadError>()(
   "EditorialReadError",
   {
-    reason: Schema.Literals(["run-not-found", "dossier-not-found", "unreadable"]),
+    reason: Schema.Literals(["run-not-found", "dossier-not-found", "unreadable", "unavailable"]),
     message: Schema.String,
   },
 ) {}
+
+export const EditorialMarkReadInput = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  /** The run and dossier the operator opened; the server reads the run's cutoff itself. */
+  runId: EditorialRunId,
+  dossierId: EditorialDossierId,
+});
+export type EditorialMarkReadInput = typeof EditorialMarkReadInput.Type;
+
+const EDITORIAL_REASON_MAX_CHARS = 500;
+
+export const EditorialSnoozeInput = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  until: Schema.optionalKey(IsoDateTime),
+  /**
+   * Growth target. The server takes the baseline from the latest imported run; without
+   * `until` or `returnWhen` it applies its documented default growth threshold.
+   */
+  returnWhen: Schema.optionalKey(
+    Schema.Struct({ metric: EditorialSnoozeMetric, atLeast: Schema.Finite }),
+  ),
+});
+export type EditorialSnoozeInput = typeof EditorialSnoozeInput.Type;
+
+export const EditorialTrendKeyInput = Schema.Struct({ trendKey: EditorialTrendKey });
+export type EditorialTrendKeyInput = typeof EditorialTrendKeyInput.Type;
+
+export const EditorialDismissInput = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(EDITORIAL_REASON_MAX_CHARS)),
+});
+export type EditorialDismissInput = typeof EditorialDismissInput.Type;
+
+export const EditorialTrendStateResult = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  state: EditorialTrendInboxState,
+});
+export type EditorialTrendStateResult = typeof EditorialTrendStateResult.Type;
+
+export class EditorialCommandError extends Schema.TaggedError<EditorialCommandError>()(
+  "EditorialCommandError",
+  {
+    reason: Schema.Literals(["invalid-input", "not-found", "storage", "unavailable"]),
+    message: Schema.String,
+  },
+) {}
+
+export const EditorialSubscribeInput = Schema.Struct({
+  /** Last `seq` the client applied. The server replays from it or sends a new snapshot. */
+  since: Schema.optionalKey(NonNegativeInt),
+  sort: Schema.optionalKey(EditorialInboxSort),
+});
+export type EditorialSubscribeInput = typeof EditorialSubscribeInput.Type;
+
+/**
+ * `snapshot` replaces the client's inbox: first item, after a gap too large to replay and after
+ * a run import. `trend` carries the current state of one trend; applying it twice is harmless.
+ */
+export const EditorialStreamItem = Schema.Union([
+  Schema.TaggedStruct("snapshot", { seq: NonNegativeInt, inbox: EditorialInbox }),
+  Schema.TaggedStruct("trend", {
+    seq: NonNegativeInt,
+    trendKey: EditorialTrendKey,
+    state: EditorialTrendInboxState,
+    newCount: NonNegativeInt,
+  }),
+]);
+export type EditorialStreamItem = typeof EditorialStreamItem.Type;
 
 const EditorialListRunsRpc = Rpc.make(EDITORIAL_WS_METHODS.listRuns, {
   payload: EditorialListRunsInput,
@@ -202,16 +326,80 @@ const EditorialGetDossierRpc = Rpc.make(EDITORIAL_WS_METHODS.getDossier, {
   error: Schema.Union([EditorialReadError, EnvironmentAuthorizationError]),
 });
 
+const EditorialSubscribeRpc = Rpc.make(EDITORIAL_WS_METHODS.subscribe, {
+  payload: EditorialSubscribeInput,
+  success: EditorialStreamItem,
+  error: Schema.Union([EditorialReadError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const commandError = Schema.Union([EditorialCommandError, EnvironmentAuthorizationError]);
+
+const EditorialMarkReadRpc = Rpc.make(EDITORIAL_WS_METHODS.markRead, {
+  payload: EditorialMarkReadInput,
+  success: EditorialTrendStateResult,
+  error: commandError,
+});
+
+const EditorialSnoozeRpc = Rpc.make(EDITORIAL_WS_METHODS.snooze, {
+  payload: EditorialSnoozeInput,
+  success: EditorialTrendStateResult,
+  error: commandError,
+});
+
+const EditorialUnsnoozeRpc = Rpc.make(EDITORIAL_WS_METHODS.unsnooze, {
+  payload: EditorialTrendKeyInput,
+  success: EditorialTrendStateResult,
+  error: commandError,
+});
+
+const EditorialDismissRpc = Rpc.make(EDITORIAL_WS_METHODS.dismiss, {
+  payload: EditorialDismissInput,
+  success: EditorialTrendStateResult,
+  error: commandError,
+});
+
+const EditorialReopenRpc = Rpc.make(EDITORIAL_WS_METHODS.reopen, {
+  payload: EditorialTrendKeyInput,
+  success: EditorialTrendStateResult,
+  error: commandError,
+});
+
 /** Merged into `WsRpcGroup`, so it shares the socket, the scope middleware and the typed client. */
 export const EditorialRpcGroup = RpcGroup.make(
   EditorialListRunsRpc,
   EditorialGetInboxRpc,
   EditorialGetDossierRpc,
+  EditorialSubscribeRpc,
+  EditorialMarkReadRpc,
+  EditorialSnoozeRpc,
+  EditorialUnsnoozeRpc,
+  EditorialDismissRpc,
+  EditorialReopenRpc,
 );
 
-/** Read-only methods; writes (U3) will need their own operate scope. */
+/**
+ * Reads need `orchestration:read`. Inbox writes need `orchestration:operate`, the scope that
+ * already separates acting from observing for threads; a session without it cannot change
+ * editorial state.
+ */
 export const EDITORIAL_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_WS_METHODS.listRuns]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.getInbox]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.getDossier]: AuthOrchestrationReadScope,
+  [EDITORIAL_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
+  [EDITORIAL_WS_METHODS.markRead]: AuthOrchestrationOperateScope,
+  [EDITORIAL_WS_METHODS.snooze]: AuthOrchestrationOperateScope,
+  [EDITORIAL_WS_METHODS.unsnooze]: AuthOrchestrationOperateScope,
+  [EDITORIAL_WS_METHODS.dismiss]: AuthOrchestrationOperateScope,
+  [EDITORIAL_WS_METHODS.reopen]: AuthOrchestrationOperateScope,
 } as const;
+
+/** Methods that change editorial state. Never registered as MCP tools or orchestration commands. */
+export const EDITORIAL_WRITE_METHODS = [
+  EDITORIAL_WS_METHODS.markRead,
+  EDITORIAL_WS_METHODS.snooze,
+  EDITORIAL_WS_METHODS.unsnooze,
+  EDITORIAL_WS_METHODS.dismiss,
+  EDITORIAL_WS_METHODS.reopen,
+] as const;
