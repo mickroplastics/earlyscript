@@ -295,7 +295,8 @@
       "published_at": "2026-10-15T18:26:30.000Z",
       "author": "xnx",
       "title": "Bringing the magic: Google breaks open a bottleneck in quantum computing",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:43.170Z"
     },
     {
       "item_id": "itm_hn_49623167",
@@ -304,8 +305,9 @@
       "external_url": "https://blog.teddy55.com/Posts/24.06/quantum-computing-with-qsharp",
       "published_at": "2026-09-09T08:27:14.000Z",
       "author": "Teddy__",
-      "title": "Teleporting \":3\" \u2013 an introduction to quantum computing",
-      "excerpt": ""
+      "title": "Teleporting \":3\" – an introduction to quantum computing",
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:48:56.211Z"
     },
     {
       "item_id": "itm_hn_50101678",
@@ -315,7 +317,8 @@
       "published_at": "2026-10-15T10:27:36.000Z",
       "author": "giuliomagnifico",
       "title": "The Aesthetics of Quantum Computing",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:42.671Z"
     },
     {
       "item_id": "itm_hn_49980821",
@@ -325,7 +328,8 @@
       "published_at": "2026-10-06T16:33:00.000Z",
       "author": "pierreneter",
       "title": "Show HN: Quantum computing experiments with honest classical baselines",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:31.243Z"
     },
     {
       "item_id": "itm_hn_50121939",
@@ -335,7 +339,8 @@
       "published_at": "2026-10-16T18:00:18.000Z",
       "author": "pretext",
       "title": "Designing more efficient quantum circuits with Claude",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:44.644Z"
     },
     {
       "item_id": "itm_hn_49837462",
@@ -345,7 +350,8 @@
       "published_at": "2026-09-24T22:15:28.000Z",
       "author": "DTec",
       "title": "Software-only quantum tool, it breaks RSA-2048 live",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:15.264Z"
     },
     {
       "item_id": "itm_hn_49624296",
@@ -355,7 +361,8 @@
       "published_at": "2026-09-09T10:41:43.000Z",
       "author": "Bluestein",
       "title": "Quantum Computing on a Commodore 64 in 200 Lines of Basic",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:48:56.211Z"
     },
     {
       "item_id": "itm_hn_49824984",
@@ -365,7 +372,8 @@
       "published_at": "2026-09-24T01:19:32.000Z",
       "author": "Rniznan",
       "title": "Qubits on NonQuantum HW Tested",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:14.763Z"
     },
     {
       "item_id": "itm_hn_50085302",
@@ -375,7 +383,8 @@
       "published_at": "2026-10-14T10:26:24.000Z",
       "author": "EvgeniyZh",
       "title": "AI Laser Locking for Quantum Computers: How QuEra Automates It",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:41.233Z"
     },
     {
       "item_id": "itm_hn_49662661",
@@ -385,7 +394,8 @@
       "published_at": "2026-09-11T18:04:26.000Z",
       "author": "Brajeshwar",
       "title": "Inside IBM's New Quantum Computing Fridges, 180 Times Colder Than Deep Space",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:48:59.981Z"
     }
   ],
   "evidence_status": "sufficient",

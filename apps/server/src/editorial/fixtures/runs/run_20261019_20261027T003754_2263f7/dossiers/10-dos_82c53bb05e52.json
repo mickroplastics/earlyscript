@@ -284,7 +284,8 @@
       "published_at": "2026-10-11T20:20:52.000Z",
       "author": "albertzeyer",
       "title": "The gap in shared understanding of LLM capability is widening",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:36.922Z"
     },
     {
       "item_id": "itm_hn_50087909",
@@ -294,7 +295,8 @@
       "published_at": "2026-10-14T13:59:46.000Z",
       "author": "mfalcon",
       "title": "Can LLMs audit a supermarket shelf yet?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:41.724Z"
     },
     {
       "item_id": "itm_hn_50110870",
@@ -304,7 +306,8 @@
       "published_at": "2026-10-15T21:51:01.000Z",
       "author": "d_silin",
       "title": "LLMs are not AGM (though some have internal monologue)",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:43.170Z"
     },
     {
       "item_id": "itm_hn_49841219",
@@ -314,7 +317,8 @@
       "published_at": "2026-09-25T07:19:46.000Z",
       "author": "saturn5k",
       "title": "What is LLM-as-a-Judge, and How It Works?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:15.851Z"
     },
     {
       "item_id": "itm_hn_50126478",
@@ -324,7 +328,8 @@
       "published_at": "2026-10-17T00:15:44.000Z",
       "author": "bitbasher",
       "title": "Ask HN: How (if at all) are you leveraging LLMs?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:45.495Z"
     },
     {
       "item_id": "itm_hn_50118237",
@@ -334,7 +339,8 @@
       "published_at": "2026-10-16T13:36:50.000Z",
       "author": "kaleman15",
       "title": "LLMs have a problem with functional programming",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:44.644Z"
     },
     {
       "item_id": "itm_hn_50138678",
@@ -344,7 +350,8 @@
       "published_at": "2026-10-18T07:12:11.000Z",
       "author": "hnaccount93",
       "title": "If you don't run your own LLM proxy how the fuck do you even know whats going on",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:47.124Z"
     },
     {
       "item_id": "itm_hn_50089207",
@@ -354,7 +361,8 @@
       "published_at": "2026-10-14T15:30:30.000Z",
       "author": "higeorge13",
       "title": "LLMs are bad at drawing diagrams. Or are they?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:41.724Z"
     },
     {
       "item_id": "itm_hn_50010936",
@@ -364,7 +372,8 @@
       "published_at": "2026-10-08T19:38:41.000Z",
       "author": "higeorge13",
       "title": "We have LLMs now. Why are the docs still wrong?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:35.245Z"
     },
     {
       "item_id": "itm_hn_49699590",
@@ -374,7 +383,8 @@
       "published_at": "2026-09-14T16:29:30.000Z",
       "author": "Betelbuddy",
       "title": "When LLM judges agree, should we believe them?",
-      "excerpt": ""
+      "excerpt": "",
+      "retrieved_at": "2026-10-21T18:49:02.546Z"
     }
   ],
   "evidence_status": "sufficient",

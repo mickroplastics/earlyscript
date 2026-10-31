@@ -940,6 +940,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@earlyscript/editorial-contracts':
+        specifier: workspace:*
+        version: link:../../packages/editorial-contracts
       '@earlyscript/editorial-script':
         specifier: workspace:*
         version: link:../../packages/editorial-script

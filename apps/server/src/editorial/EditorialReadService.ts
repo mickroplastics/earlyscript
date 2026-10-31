@@ -19,13 +19,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
-  AFFINITY_THRESHOLD,
+  affinityThreshold,
   compareTrends,
   DossierFile,
   evidenceRange,
   loadRunDossiers,
   RunFile,
   runSummary,
+  toDossiers,
   type LoadedDossier,
 } from "./dossierFormat.ts";
 
@@ -51,6 +52,7 @@ export class EditorialReadService extends Context.Service<
 
 interface LoadedRun {
   readonly summary: EditorialRunSummary;
+  readonly affinityThreshold: number;
   readonly dossiers: ReadonlyArray<LoadedDossier>;
 }
 
@@ -156,10 +158,11 @@ export const makeWithRunsDir = Effect.fn("EditorialReadService.make")(function* 
         ),
       { concurrency: 8 },
     );
-    const dossierFiles = files.flatMap((file) => (Option.isSome(file) ? [file.value] : []));
+    const dossiers = toDossiers(files.flatMap((file) => (Option.isSome(file) ? [file.value] : [])));
     const run: LoadedRun = {
-      summary: runSummary(entry.run, dossierFiles.length),
-      dossiers: loadRunDossiers(entry.run.run_id, dossierFiles, { isLatestRun }),
+      summary: runSummary(entry.run, dossiers.length),
+      affinityThreshold: affinityThreshold(entry.run),
+      dossiers: loadRunDossiers(entry.run.run_id, dossiers, { isLatestRun }),
     };
     cache.set(cacheKey, { version: entry.version, run });
     return run;
@@ -223,9 +226,9 @@ export const makeWithRunsDir = Effect.fn("EditorialReadService.make")(function* 
     return {
       trend: dossier.summary,
       run: run.value.summary,
-      rankMethod: dossier.file.rank.method ?? "unknown",
-      rankComponents: dossier.file.rank.components ?? [],
-      affinityThreshold: AFFINITY_THRESHOLD,
+      rankMethod: dossier.file.rankings.weighted.method,
+      rankComponents: dossier.file.rankings.weighted.components,
+      affinityThreshold: run.value.affinityThreshold,
       curve: dossier.curve,
       coverage: dossier.coverage,
       evidence: dossier.evidence.slice(

@@ -874,3 +874,17 @@ Corrida completa en Beatriz (corpus `~/earlywindow-data/corpus`, corte `2026-10-
 El apilado es 9,7 veces más rápido y la corrida 9,5 veces. La corrida de la tabla se hizo en `7863543463`, con el mismo árbol que `df15d94cd1`: solo cambió después el mensaje de un commit anterior. `engine check` y `engine check --rerun` coinciden. Banco sobre la entrada volcada, cada versión fijada a un núcleo P con las tres en paralelo: referencia 430 a 446 s, poda con cuatro centroides 160 s y pares 75 s, con el mismo hash estricto de ids, miembros, fechas y bytes de centroides. Evidencia en `~/earlyscript-data/engine-perf/README.md`.
 
 No se intentó: una cota más ajustada con proyecciones (PCA), porque con un coseno medio de 0,43 entre ítems la cota del resto seguiría siendo holgada y cada centroide modificado tendría que proyectarse de nuevo (estimación, no medida); índices aproximados, porque cambian el resultado; ni hilos, WebAssembly o código nativo, fuera del alcance de la unidad.
+
+## 12. Lectura de corridas nativas (rama `es/dossier-native`, 31 de octubre de 2026)
+
+Base: `ed5c3a2903`. Archivo de upstream modificado: `packages/contracts/src/editorial.ts`, solo comentarios y `EditorialRankComponent.value`, que pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo. Archivos propios: `apps/server/src/editorial/{dossierFormat,EditorialReadService}.ts` con sus pruebas, el fixture nativo `fixtures/runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con la evidencia recortada a tres ítems) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
+
+El lector trabaja con `Dossier` de `@earlyscript/editorial-contracts`. Cada expediente se decodifica con `Schema.Union([Dossier, EarlywindowDossier])`, que se discrimina por `schema_version`; los `dossier/1` de una corrida se convierten juntos con `fromEarlywindowRun`, porque sus posiciones dependen de la corrida entera. El run.json se decodifica con `Schema.Union([RunRecord, EarlywindowRunFile])`; el segundo exige que no haya `schema_version`, así que un run.json nativo roto se omite en vez de leerse como Earlywindow. Los fixtures de Earlywindow recuperan `retrieved_at`, que el esquema estricto exige.
+
+Reemplaza la viñeta «Posición por volumen» de la sección 8:
+
+- `volumeRank` y `scoreRank` son las posiciones del motor (`rankings.baseline` y `rankings.weighted`) entre los temas elegibles de la corrida, no puestos de competencia entre los expedientes emitidos. Los empates se resuelven por id de señal, la regla del motor y del backtest de Earlywindow. Se elimina `competitionRanks`.
+- `items7d`, `authors7d`, `growth`, `affinity` y `sources` salen de `trend` y `profile_fit`. En corridas nativas `sources` cubre todos los ítems del tema; en las de Earlywindow, la evidencia.
+- El umbral de afinidad es `config.profile.include_min` del run.json nativo; las corridas de Earlywindow siguen con 0,60.
+
+Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos.

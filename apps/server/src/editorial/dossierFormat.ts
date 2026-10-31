@@ -8,15 +8,26 @@ import {
   type EditorialSourceCoverage,
   type EditorialTrendSummary,
 } from "@t3tools/contracts";
+import {
+  DOSSIER_SCHEMA_VERSION,
+  Dossier,
+  type CurvePoint,
+} from "@earlyscript/editorial-contracts/dossier";
+import {
+  EarlywindowDossier,
+  fromEarlywindowRun,
+} from "@earlyscript/editorial-contracts/earlywindow";
+import { RUN_SCHEMA_VERSION, RunRecord } from "@earlyscript/editorial-contracts/run";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-// Reader for Earlywindow's `run.json` and `dossier/1` files. The engine keeps writing this
-// format, so these schemas only name the fields the editorial space shows; the rest is ignored.
+// Reader for the runs directory. The trend engine writes `earlyscript.run/1` and
+// `earlyscript.dossier/1`; Earlywindow's run.json and `dossier/1` are read for compatibility
+// and converted to the native `Dossier`, the only shape the editorial space works with.
 
-const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-
-export const RunFile = Schema.Struct({
+/** Earlywindow's run.json: no `schema_version`, so a broken native run.json cannot pass as one. */
+const EarlywindowRunFile = Schema.Struct({
+  schema_version: Schema.optionalKey(Schema.Never),
   run_id: Schema.String,
   cutoff_at: Schema.String,
   finished_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -24,81 +35,22 @@ export const RunFile = Schema.Struct({
   config_version: Schema.optionalKey(Schema.NullOr(Schema.String)),
   sources: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+
+export const RunFile = Schema.Union([RunRecord, EarlywindowRunFile]);
 export type RunFile = typeof RunFile.Type;
 
-export const DossierFile = Schema.Struct({
-  schema_version: Schema.Literal("dossier/1"),
-  dossier_id: Schema.String,
-  cutoff_at: Schema.String,
-  profile: Schema.optionalKey(
-    Schema.Struct({ include_score: Schema.optionalKey(Schema.NullOr(Schema.Finite)) }),
-  ),
-  signal: Schema.Struct({
-    label: Schema.String,
-    stage: Schema.optionalKey(Schema.String),
-    corroboration: Schema.optionalKey(Schema.String),
-    top_terms: Schema.optionalKey(Schema.Array(Schema.String)),
-  }),
-  curve: Schema.Array(
-    Schema.Struct({
-      day: Schema.String,
-      items: Count,
-      sources: Count,
-      authors: Count,
-      known: Schema.Boolean,
-    }),
-  ),
-  rank: Schema.Struct({
-    method: Schema.optionalKey(Schema.String),
-    score: Schema.Finite,
-    components: Schema.optionalKey(
-      Schema.Array(
-        Schema.Struct({
-          name: Schema.String,
-          value: Schema.Finite,
-          weight: Schema.Finite,
-          contribution: Schema.Finite,
-        }),
-      ),
-    ),
-  }),
-  coverage: Schema.optionalKey(
-    Schema.Struct({
-      window_days: Count,
-      by_source: Schema.Array(
-        Schema.Struct({
-          source: Schema.String,
-          days_complete: Count,
-          days_partial: Count,
-          days_unavailable: Count,
-        }),
-      ),
-    }),
-  ),
-  evidence: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        item_id: Schema.String,
-        source: Schema.String,
-        permalink: Schema.optionalKey(Schema.NullOr(Schema.String)),
-        external_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
-        published_at: Schema.String,
-        author: Schema.optionalKey(Schema.NullOr(Schema.String)),
-        title: Schema.String,
-      }),
-    ),
-  ),
-});
+/** One dossier file in either format; `toDossiers` converts a run's files to `Dossier`. */
+export const DossierFile = Schema.Union([Dossier, EarlywindowDossier]);
 export type DossierFile = typeof DossierFile.Type;
 
-/** engine.v0.02 `profile.include_min`; the run config lives outside the runs directory. */
-export const AFFINITY_THRESHOLD = 0.6;
+/** engine.v0.02 `profile.include_min`: an Earlywindow run.json does not carry its config. */
+const AFFINITY_THRESHOLD = 0.6;
 const CURVE_WINDOW_DAYS = 28;
 const SPARKLINE_DAYS = 14;
 const DAY_MS = 86_400_000;
 
 export interface LoadedDossier {
-  readonly file: DossierFile;
+  readonly file: Dossier;
   readonly summary: EditorialTrendSummary;
   readonly curve: ReadonlyArray<EditorialCurveDay>;
   readonly coverage: ReadonlyArray<EditorialSourceCoverage>;
@@ -106,15 +58,36 @@ export interface LoadedDossier {
 }
 
 export function runSummary(run: RunFile, dossierCount: number): EditorialRunSummary {
+  const config =
+    run.schema_version === RUN_SCHEMA_VERSION
+      ? { configVersion: run.config?.config_version ?? null, sources: run.config?.sources ?? [] }
+      : { configVersion: run.config_version ?? null, sources: run.sources ?? [] };
   return {
     runId: EditorialRunId.make(run.run_id),
     cutoffAt: run.cutoff_at,
     finishedAt: run.finished_at ?? null,
     status: run.status ?? "unknown",
-    configVersion: run.config_version ?? null,
-    sources: run.sources ?? [],
+    ...config,
     dossierCount,
   };
+}
+
+/** The `profile.include_min` the run applied. */
+export function affinityThreshold(run: RunFile): number {
+  return run.schema_version === RUN_SCHEMA_VERSION
+    ? (run.config?.profile.include_min ?? AFFINITY_THRESHOLD)
+    : AFFINITY_THRESHOLD;
+}
+
+/** Earlywindow dossiers take their ranking positions from the whole run, so they convert together. */
+export function toDossiers(files: ReadonlyArray<DossierFile>): ReadonlyArray<Dossier> {
+  const native = files.filter(
+    (file): file is Dossier => file.schema_version === DOSSIER_SCHEMA_VERSION,
+  );
+  const earlywindow = files.filter(
+    (file): file is EarlywindowDossier => file.schema_version === "dossier/1",
+  );
+  return [...native, ...fromEarlywindowRun(earlywindow)];
 }
 
 const dayKey = (ms: number) => DateTime.formatIsoDateUtc(DateTime.makeUnsafe(ms));
@@ -124,7 +97,7 @@ const dayKey = (ms: number) => DateTime.formatIsoDateUtc(DateTime.makeUnsafe(ms)
  * earlier days are zero; a day missing inside the curve was not captured.
  */
 export function windowCurve(
-  file: Pick<DossierFile, "curve" | "cutoff_at">,
+  file: Pick<Dossier, "cutoff_at"> & { readonly curve: ReadonlyArray<CurvePoint> },
   windowDays = CURVE_WINDOW_DAYS,
 ): ReadonlyArray<EditorialCurveDay> {
   const byDay = new Map(file.curve.map((day) => [day.day, day]));
@@ -147,9 +120,6 @@ export function windowCurve(
   return days;
 }
 
-const component = (file: DossierFile, name: string) =>
-  file.rank.components?.find((entry) => entry.name === name)?.value ?? null;
-
 const sum = (days: ReadonlyArray<EditorialCurveDay>, key: "items" | "authors") =>
   days.reduce((total, day) => total + day[key], 0);
 
@@ -164,12 +134,12 @@ export function webUrlOrNull(raw: string | null | undefined): string | null {
   }
 }
 
-function evidenceItems(file: DossierFile): ReadonlyArray<EditorialEvidenceItem> {
-  return (file.evidence ?? []).map((item) => ({
+function evidenceItems(file: Dossier): ReadonlyArray<EditorialEvidenceItem> {
+  return file.evidence.map((item) => ({
     itemId: item.item_id,
     source: item.source,
     title: item.title,
-    author: item.author ?? null,
+    author: item.author,
     publishedAt: item.published_at,
     permalink: webUrlOrNull(item.permalink),
     externalUrl: webUrlOrNull(item.external_url),
@@ -185,69 +155,42 @@ export function evidenceRange(
   return { from: dates[0]!, to: dates.at(-1)! };
 }
 
-interface TrendBase {
-  readonly file: DossierFile;
-  readonly curve: ReadonlyArray<EditorialCurveDay>;
-  readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
-  readonly items7d: number;
-  readonly authors7d: number;
-}
-
-/** Competition ranking ("1224"): equal values share the better rank. */
-export function competitionRanks(values: ReadonlyArray<number>): ReadonlyArray<number> {
-  return values.map((value) => 1 + values.filter((other) => other > value).length);
-}
-
 /**
- * Builds the inbox rows of one run. `isNew` marks every trend of the latest run until the
- * inbox has read state (U3); that is the extension point for unread counts.
+ * Builds the inbox rows of one run. Counts and both ranking positions are the engine's (for
+ * Earlywindow, what `fromEarlywindowRun` rebuilt). `isNew` marks every trend of the latest run
+ * until the inbox has read state (U3); that is the extension point for unread counts.
  */
 export function loadRunDossiers(
   runId: string,
-  files: ReadonlyArray<DossierFile>,
+  files: ReadonlyArray<Dossier>,
   options: { readonly isLatestRun: boolean },
 ): ReadonlyArray<LoadedDossier> {
-  const bases: ReadonlyArray<TrendBase> = files.map((file) => {
-    const curve = windowCurve(file, file.coverage?.window_days || CURVE_WINDOW_DAYS);
-    const lastWeek = curve.slice(-7);
-    const logAuthors = component(file, "log_authors_7d");
-    return {
-      file,
-      curve,
-      evidence: evidenceItems(file),
-      items7d: sum(lastWeek, "items"),
-      // The engine counts distinct authors for the week; summing days would double count.
-      authors7d:
-        logAuthors === null ? sum(lastWeek, "authors") : Math.round(Math.expm1(logAuthors)),
-    };
-  });
-  const volumeRanks = competitionRanks(bases.map((base) => base.items7d));
-  const scoreRanks = competitionRanks(bases.map((base) => base.file.rank.score));
-  return bases.map((base, index) => {
-    const { file, curve, evidence } = base;
+  return files.map((file) => {
+    const { trend, rankings } = file;
+    const curve = windowCurve(file, file.coverage.window_days || CURVE_WINDOW_DAYS);
+    const evidence = evidenceItems(file);
     const latestEvidence = evidence.reduce<EditorialEvidenceItem | null>(
       (latest, item) => (latest === null || item.publishedAt > latest.publishedAt ? item : latest),
       null,
     );
-    const sources = new Set(evidence.map((item) => item.source));
     const summary: EditorialTrendSummary = {
       dossierId: EditorialDossierId.make(file.dossier_id),
       runId: EditorialRunId.make(runId),
-      label: file.signal.label,
-      terms: file.signal.top_terms ?? [],
+      label: trend.label,
+      terms: trend.top_terms,
       subtitle: latestEvidence?.title ?? null,
-      stage: file.signal.stage ?? "unclassified",
-      corroboration: file.signal.corroboration ?? "unknown",
-      items7d: base.items7d,
+      stage: trend.stage,
+      corroboration: trend.corroboration,
+      items7d: trend.items_7d,
       items28d: sum(curve, "items"),
-      authors7d: base.authors7d,
-      volumeRank: volumeRanks[index] ?? 1,
-      scoreRank: scoreRanks[index] ?? 1,
-      score: file.rank.score,
-      growth: component(file, "growth"),
-      affinity: file.profile?.include_score ?? null,
-      sourceCount: Math.max(sources.size, ...curve.map((day) => day.sources)),
-      sources: [...sources].toSorted(),
+      authors7d: trend.authors_7d,
+      volumeRank: rankings.baseline.position,
+      scoreRank: rankings.weighted.position,
+      score: rankings.weighted.score,
+      growth: trend.growth,
+      affinity: file.profile_fit.include_score,
+      sourceCount: Math.max(trend.sources.length, ...curve.map((day) => day.sources)),
+      sources: trend.sources,
       sparkline: curve.slice(-SPARKLINE_DAYS).map((day) => (day.known ? day.items : null)),
       isNew: options.isLatestRun,
     };
@@ -255,9 +198,9 @@ export function loadRunDossiers(
       file,
       summary,
       curve,
-      coverage: (file.coverage?.by_source ?? []).map((entry) => ({
+      coverage: file.coverage.by_source.map((entry) => ({
         source: entry.source,
-        windowDays: file.coverage?.window_days ?? CURVE_WINDOW_DAYS,
+        windowDays: file.coverage.window_days,
         daysComplete: entry.days_complete,
         daysPartial: entry.days_partial,
         daysUnavailable: entry.days_unavailable,
