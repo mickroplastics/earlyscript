@@ -1,0 +1,348 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, describe, it } from "@effect/vitest";
+import { EditorialDossierId, EditorialRunId, TextGenerationError } from "@t3tools/contracts";
+import type {
+  TrendPresentationGenerationInput,
+  TrendPresentationGenerationResult,
+} from "@t3tools/provider-core/server/textGeneration";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+
+import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import * as EditorialPresentation from "./EditorialPresentationService.ts";
+import { EditorialPresentationService } from "./EditorialPresentationService.ts";
+import { makeWithRunsDir as makeReadService } from "./EditorialReadService.ts";
+import { SINGULARIDEV_PROFILE_V1, presentationProfileFromBytes } from "./channelProfile.ts";
+import { EditorialSql, EDITORIAL_DATABASE_FILENAME } from "./persistence/EditorialDatabase.ts";
+import { layerAt, makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
+import {
+  makeWithRunsDir as makeDossierSource,
+  PresentationDossierSource,
+} from "./presentationDossierSource.ts";
+import { EditorialPresentationReader } from "./presentationRead.ts";
+
+const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
+const QUANTUM = EditorialDossierId.make("dos_bbb80d57481e");
+const CHINA = EditorialDossierId.make("dos_ead8cfa066df");
+const JUDGE = EditorialDossierId.make("dos_82c53bb05e52");
+const FIXTURE_RUNS_DIR = NodePath.join(import.meta.dirname, "fixtures", "runs");
+
+interface Generator {
+  readonly calls: Ref.Ref<ReadonlyArray<TrendPresentationGenerationInput>>;
+  /** Trend ids (signal ids) whose generation fails. */
+  readonly failing: Ref.Ref<ReadonlySet<string>>;
+  /** When set, every generation waits for it before answering. */
+  readonly gate: Ref.Ref<Deferred.Deferred<void> | null>;
+}
+
+const answer = (
+  input: TrendPresentationGenerationInput,
+  call: number,
+): TrendPresentationGenerationResult => {
+  const first = input.evidence[0]?.itemId ?? "none";
+  return {
+    title: `Título ${call} de ${input.trend.terms.slice(0, 2).join(" ")}`,
+    summary: {
+      whatHappened: `Pasó algo [${first}].`,
+      whyItMatters: "Toca agentes de código.",
+      videoAngle: "Un video posible.",
+    },
+    citedItemIds: [first],
+    warnings: call === 1 ? [] : ["regenerated"],
+    provider: "claudeAgent",
+    model: "claude-haiku-5-5",
+    promptVersion: "trend-presentation.v2",
+    generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
+    inputHash: "provider-hash",
+  };
+};
+
+const textGenerationLayer = (generator: Generator) =>
+  Layer.succeed(
+    TextGeneration,
+    TextGeneration.of({
+      generateCommitMessage: () => Effect.die("unused"),
+      generatePrContent: () => Effect.die("unused"),
+      generateBranchName: () => Effect.die("unused"),
+      generateThreadTitle: () => Effect.die("unused"),
+      generateReviewGuide: () => Effect.die("unused"),
+      generateTrendPresentation: (input) =>
+        Effect.gen(function* () {
+          const gate = yield* Ref.get(generator.gate);
+          if (gate !== null) yield* Deferred.await(gate);
+          const calls = yield* Ref.updateAndGet(generator.calls, (all) => [...all, input]);
+          if ((yield* Ref.get(generator.failing)).has(input.trend.id)) {
+            return yield* new TextGenerationError({
+              operation: "generateTrendPresentation",
+              detail: "simulated failure",
+            });
+          }
+          return answer(input, calls.length);
+        }),
+    }),
+  );
+
+const makeGenerator = Effect.gen(function* () {
+  return {
+    calls: yield* Ref.make<ReadonlyArray<TrendPresentationGenerationInput>>([]),
+    failing: yield* Ref.make<ReadonlySet<string>>(new Set()),
+    gate: yield* Ref.make<Deferred.Deferred<void> | null>(null),
+  } satisfies Generator;
+});
+
+const presentationLayer = (dbPath: string, generator: Generator) =>
+  EditorialPresentation.layerWithoutSource.pipe(
+    Layer.provide(Layer.effect(PresentationDossierSource, makeDossierSource(FIXTURE_RUNS_DIR))),
+    Layer.provide(textGenerationLayer(generator)),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "editorial-presentation-" })),
+    Layer.provideMerge(layerAt(dbPath)),
+    Layer.provide(NodeServices.layer),
+  );
+
+/** Runs `effect` with the presentation service over a fresh database and the fixture run. */
+const withPresentations = <A, E>(
+  effect: (
+    generator: Generator,
+  ) => Effect.Effect<
+    A,
+    E,
+    EditorialPresentationService | EditorialPresentationReader | EditorialSql
+  >,
+) =>
+  Effect.gen(function* () {
+    const dir = makeTempDir();
+    const generator = yield* makeGenerator;
+    return yield* effect(generator).pipe(
+      Effect.provide(presentationLayer(NodePath.join(dir, EDITORIAL_DATABASE_FILENAME), generator)),
+      Effect.ensuring(removeDir(dir)),
+    );
+  });
+
+const presentationRows = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  return yield* sql<{
+    readonly dossier_id: string;
+    readonly trend_key: string;
+    readonly revision: number;
+    readonly status: string;
+    readonly title: string | null;
+    readonly error: string | null;
+  }>`
+    SELECT dossier_id, trend_key, revision, status, title, error
+    FROM editorial_presentations ORDER BY dossier_id, revision
+  `;
+});
+
+describe("EditorialPresentationService", () => {
+  it("hashes the fixed profile to the hash the engine recorded in the dossiers", () => {
+    const profile = presentationProfileFromBytes(SINGULARIDEV_PROFILE_V1, 1);
+    assert.strictEqual(
+      profile.hash,
+      "sha256:db510e303cb7f3cff7099230a00d36b1918f28a0e6aa6b8be01727649b8bb80d",
+    );
+    assert.include(profile.text, "Channel: SingulariDev");
+  });
+
+  it.effect("ensure generates once and returns the stored presentation for the same input", () =>
+    withPresentations((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const second = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.isFalse(first.reused);
+        assert.isTrue(second.reused);
+        assert.deepStrictEqual(second.presentation, first.presentation);
+        assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v2");
+
+        const calls = yield* Ref.get(generator.calls);
+        assert.strictEqual(calls.length, 1);
+        const input = calls[0]!;
+        // Deterministic engine data and evidence, never more than twelve items.
+        assert.strictEqual(input.trend.id, "sig_69a4b83dd577");
+        assert.deepStrictEqual(input.trend.terms.slice(0, 3), ["quantum", "computing", "ibm"]);
+        assert.isAtMost(input.evidence.length, 12);
+        assert.isTrue(input.evidence.every((item) => item.url.startsWith("https://")));
+        assert.strictEqual(input.profile.version, 1);
+
+        const rows = yield* presentationRows;
+        assert.deepStrictEqual(
+          rows.map((row) => [row.dossier_id, row.trend_key, row.revision, row.status]),
+          [[QUANTUM, "sig_69a4b83dd577", 1, "ready"]],
+        );
+      }),
+    ),
+  );
+
+  it.effect("regenerate adds a revision, keeps the previous row and reads back the newest", () =>
+    withPresentations((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const reader = yield* EditorialPresentationReader;
+        const first = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const regenerated = yield* service.regenerate({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.isFalse(regenerated.reused);
+        assert.notStrictEqual(regenerated.presentation.title, first.presentation.title);
+        assert.deepStrictEqual(regenerated.warnings, ["regenerated"]);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
+
+        const rows = yield* presentationRows;
+        assert.deepStrictEqual(
+          rows.map((row) => [row.revision, row.status, row.title]),
+          [
+            [1, "ready", first.presentation.title],
+            [2, "ready", regenerated.presentation.title],
+          ],
+        );
+        const ready = yield* reader.readyPresentations(RUN_ID);
+        assert.strictEqual(ready.get(QUANTUM)?.title, regenerated.presentation.title);
+        // ensure now returns the newest revision without generating.
+        const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.isTrue(again.reused);
+        assert.strictEqual(again.presentation.title, regenerated.presentation.title);
+      }),
+    ),
+  );
+
+  it.effect("ensureAll records a failure, keeps going and resumes only what is missing", () =>
+    withPresentations((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.failing, new Set(["sig_833479e1f4de"]));
+
+        const firstPass = yield* service.ensureAll(RUN_ID, { concurrency: 2 });
+        assert.deepStrictEqual(
+          [firstPass.total, firstPass.ready, firstPass.failed, firstPass.status],
+          [3, 2, 1, "idle"],
+        );
+        const failedRow = (yield* presentationRows).find((row) => row.dossier_id === CHINA);
+        assert.strictEqual(failedRow?.status, "failed");
+        assert.include(failedRow?.error ?? "", "simulated failure");
+
+        yield* Ref.set(generator.failing, new Set());
+        const secondPass = yield* service.ensureAll(RUN_ID);
+        assert.deepStrictEqual([secondPass.ready, secondPass.failed], [3, 0]);
+        const calls = yield* Ref.get(generator.calls);
+        // Three in the first pass, then only the failed dossier.
+        assert.strictEqual(calls.length, 4);
+        assert.strictEqual(calls[3]?.trend.id, "sig_833479e1f4de");
+        assert.deepStrictEqual(
+          (yield* presentationRows)
+            .filter((row) => row.dossier_id === CHINA)
+            .map((row) => [row.revision, row.status]),
+          [
+            [1, "failed"],
+            [2, "ready"],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("startRun drafts in the background and reports progress until it finishes", () =>
+    withPresentations((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const gate = yield* Deferred.make<void>();
+        yield* Ref.set(generator.gate, gate);
+
+        const started = yield* service.startRun(RUN_ID);
+        assert.deepStrictEqual([started.status, started.total, started.ready], ["running", 3, 0]);
+        assert.isNotNull(started.startedAt);
+        // A second request while it runs reports the same job instead of starting another.
+        const again = yield* service.startRun(RUN_ID);
+        assert.strictEqual(again.startedAt, started.startedAt);
+
+        yield* Deferred.succeed(gate, undefined);
+        const finished = yield* service.awaitRun(RUN_ID);
+        assert.deepStrictEqual([finished.status, finished.ready, finished.failed], ["idle", 3, 0]);
+        assert.isNotNull(finished.finishedAt);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 3);
+
+        const missing = yield* service
+          .startRun(EditorialRunId.make("run_missing"))
+          .pipe(Effect.flip);
+        assert.strictEqual(missing.reason, "run-not-found");
+      }),
+    ),
+  );
+
+  it.effect("an unknown dossier fails without writing a row", () =>
+    withPresentations(() =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const error = yield* service
+          .ensure({ runId: RUN_ID, dossierId: EditorialDossierId.make("dos_missing") })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "dossier-not-found");
+        assert.deepStrictEqual(yield* presentationRows, []);
+      }),
+    ),
+  );
+
+  it.effect("marks rows left pending by a previous process as failed", () =>
+    Effect.gen(function* () {
+      const dir = makeTempDir();
+      const dbPath = NodePath.join(dir, EDITORIAL_DATABASE_FILENAME);
+      const generator = yield* makeGenerator;
+      yield* Effect.gen(function* () {
+        const sql = yield* EditorialSql;
+        yield* sql`
+          INSERT INTO editorial_presentations (
+            presentation_id, run_id, dossier_id, trend_key, input_hash, revision, requested_at, status
+          ) VALUES ('p-1', ${RUN_ID}, ${JUDGE}, 'sig', 'sha256:x', 1, '2026-10-31T00:00:00.000Z', 'pending')
+        `;
+      }).pipe(Effect.provide(presentationLayer(dbPath, generator)));
+      const rows = yield* presentationRows.pipe(
+        Effect.provide(presentationLayer(dbPath, generator)),
+        Effect.ensuring(removeDir(dir)),
+      );
+      assert.deepStrictEqual(
+        rows.map((row) => [row.status, row.error]),
+        [["failed", "interrupted by a server restart"]],
+      );
+    }),
+  );
+});
+
+describe("EditorialReadService with presentations", () => {
+  it.effect("fills presentation in the inbox and the dossier only where one is ready", () =>
+    withPresentations(() =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const drafted = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const read = yield* makeReadService(FIXTURE_RUNS_DIR);
+
+        const inbox = yield* read.getInbox({});
+        const byId = new Map(inbox.trends.map((trend) => [trend.dossierId, trend]));
+        assert.deepStrictEqual(byId.get(QUANTUM)?.presentation, drafted.presentation);
+        assert.isUndefined(byId.get(CHINA)?.presentation);
+        // The engine's words stay next to the assistant's title.
+        assert.strictEqual(byId.get(QUANTUM)?.label, "quantum computing ibm open");
+
+        const dossier = yield* read.getDossier({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.deepStrictEqual(dossier.trend.presentation, drafted.presentation);
+        const other = yield* read.getDossier({ runId: RUN_ID, dossierId: JUDGE });
+        assert.isUndefined(other.trend.presentation);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("reads without presentation when the reader is not mounted", () =>
+    Effect.gen(function* () {
+      const read = yield* makeReadService(FIXTURE_RUNS_DIR);
+      const inbox = yield* read.getInbox({});
+      assert.isTrue(inbox.trends.every((trend) => !("presentation" in trend)));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
