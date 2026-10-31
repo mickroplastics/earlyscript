@@ -533,7 +533,7 @@ function scoreArm(
     // The frozen centroid must give back the similarities the run stored for its evidence.
     for (const evidence of dossier.evidence) {
       const vector = vectorOf.get(evidence.item_id);
-      if (!vector) continue;
+      if (!vector || evidence.similarity === null) continue;
       if (Math.abs(dot(vector, centroid) - evidence.similarity) > 1e-5) {
         throw new Error(`centroid of ${dossier.trend.id} does not match its evidence`);
       }
