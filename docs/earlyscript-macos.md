@@ -55,7 +55,7 @@ T3 Code real usa `~/.t3` y el puerto 3773 (en Gertrudis corre como servicio `t3`
 
 ## Motor
 
-La app lleva el motor dentro (`Contents/Resources/trend-engine`, con `onnxruntime-node` para Apple Silicon) y lo ejecuta con su propio Node (el de Electron, Node 24.22.1). La corrida nocturna y «Ejecutar ahora» no necesitan ningún checkout. Para usar otro motor, se define `EARLYSCRIPT_ENGINE_CLI` con la ruta de su `cli.ts` o `cli.mjs`. Si la app no encuentra el motor, la corrida queda con el aviso «No se encontró el motor de tendencias».
+La app lleva el motor dentro (`Contents/Resources/trend-engine`, con `onnxruntime-node` para Apple Silicon) y lo ejecuta con su propio Node (el de Electron, Node 24.22.1). La corrida nocturna y «Ejecutar ahora» no necesitan ningún checkout. Para usar otro motor, se define `EARLYSCRIPT_ENGINE_CLI` con la ruta de su `cli.ts` o `cli.mjs`. La app ejecuta ese archivo con sus propios permisos y lo prefiere al motor instalado: apunta solo a código de confianza. Si la app no encuentra el motor, la corrida queda con el aviso «No se encontró el motor de tendencias».
 
 Para lanzar el motor de la app a mano, por ejemplo para comprobar una corrida:
 
