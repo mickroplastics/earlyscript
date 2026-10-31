@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
+import { makeTranslator, useScopedLocale, type ScopedLocaleOptions } from "./scopedLocale";
 import { useSidebarLocale, useThreadAreaLocale } from "./ShellLocale";
 
 /** Counts every MutationObserver callback the page runs while `body` executes. */
@@ -70,11 +71,11 @@ function SidebarDouble({
   );
 }
 
-function ThreadDouble() {
+function ThreadDouble({ mode }: { readonly mode?: string }) {
   const [area, setArea] = useState<HTMLDivElement | null>(null);
   useThreadAreaLocale(area);
   return (
-    <div ref={setArea} className="contents" data-testid="thread">
+    <div ref={setArea} className="contents" data-testid="thread" data-editorial-thread-mode={mode}>
       <p>Send a message to start the conversation.</p>
       <div data-timeline-row-id="message-1">
         <p data-testid="message">Settled</p>
@@ -236,5 +237,76 @@ describe("shell locale scopes", () => {
       true,
     );
     await view!.unmount();
+  });
+  it("restores upstream's latest value, not the first one it translated", async () => {
+    const target = document.body.appendChild(document.createElement("div"));
+    target.innerHTML = '<span>Delete</span><input title="Delete" aria-label="Delete">';
+    const options: ScopedLocaleOptions = {
+      translate: makeTranslator([
+        { text: { Delete: "Borrar", Settings: "Ajustes", Copy: "Copiar" } },
+      ]),
+      roots: () => [target],
+    };
+    function Harness() {
+      useScopedLocale(target, options);
+      return null;
+    }
+    const text = target.querySelector("span")!.firstChild as Text;
+    const input = target.querySelector("input")!;
+    const view = await render(<Harness />);
+    await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+    expect(input.title).toBe("Borrar");
+    // Two upstream changes between known keys, then one to a string no table knows.
+    for (const [english, spanish] of [
+      ["Settings", "Ajustes"],
+      ["Copy", "Copiar"],
+    ] as const) {
+      text.nodeValue = english;
+      input.title = english;
+      input.setAttribute("aria-label", english);
+      await vi.waitFor(() => expect(text.nodeValue).toBe(spanish));
+      expect(input.title).toBe(spanish);
+      expect(input.getAttribute("aria-label")).toBe(spanish);
+    }
+    input.setAttribute("aria-label", "Something new");
+    await endBatch();
+    await view.unmount();
+    expect(text.nodeValue).toBe("Copy");
+    expect(input.title).toBe("Copy");
+    expect(input.getAttribute("aria-label")).toBe("Something new");
+    target.remove();
+  });
+
+  it("translates an ordinary thread too, and leaves no observer once unmounted", async () => {
+    const Native = window.MutationObserver;
+    let active = 0;
+    window.MutationObserver = class extends Native {
+      #observing = false;
+      override observe(target: Node, options?: MutationObserverInit) {
+        if (!this.#observing) active += 1;
+        this.#observing = true;
+        super.observe(target, options);
+      }
+      override disconnect() {
+        if (this.#observing) active -= 1;
+        this.#observing = false;
+        super.disconnect();
+      }
+    };
+    try {
+      const view = await render(<ThreadDouble mode="other" />);
+      const thread = view.getByTestId("thread").element();
+      // The whole shell is Earlyscript's: an ordinary (non-editorial) thread is in Spanish too.
+      await vi.waitFor(() =>
+        expect(thread.firstElementChild!.textContent).toBe(
+          "Escribe un mensaje para empezar la conversación.",
+        ),
+      );
+      expect(active).toBe(1);
+      await view.unmount();
+      expect(active).toBe(0);
+    } finally {
+      window.MutationObserver = Native;
+    }
   });
 });

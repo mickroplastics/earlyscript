@@ -49,7 +49,7 @@ const THREAD_ACTION_TEXT: Readonly<Record<string, string>> = {
   "Share with guest": "Compartir con un invitado",
   "Show all projects": "Mostrar todos los proyectos",
   "Turn into project": "Convertir en proyecto",
-  "Auto-settle behavior": "Resolución automática",
+  "Auto-settle behavior": "Marcar como resuelto automáticamente",
   Path: "Ruta",
   Branch: "Rama",
   Thread: "Hilo",
@@ -187,6 +187,14 @@ const THREAD_TEXT: Readonly<Record<string, string>> = {
   "Attach files": "Adjuntar archivos",
   "Markdown source": "Markdown sin formato",
   "Submit message": "Enviar el mensaje",
+  "Queue message": "Poner el mensaje en cola",
+  "Steer message": "Redirigir con el mensaje",
+  "Environment disconnected": "Entorno desconectado",
+  "Preparing worktree": "Preparando el worktree",
+  "New worktree": "Worktree nuevo",
+  "This device is offline": "Este dispositivo no tiene conexión",
+  "Could not reconnect environment": "No se pudo reconectar el entorno",
+  Retry: "Reintentar",
   "More composer controls": "Más controles",
   "Maximize panel": "Maximizar el panel",
   "Toggle thread details panel": "Mostrar u ocultar los detalles del hilo",
@@ -240,7 +248,17 @@ const THREAD_PATTERNS: LocaleTable["patterns"] = [
   [/^New thread on (.+)$/, "Nuevo hilo en la rama $1"],
   [/^Thread actions for (.+)$/, "Acciones del hilo $1"],
   [/^New thread in (.+)$/, "Nuevo hilo en $1"],
+  [
+    /^Run context: (.+), (.+)$/,
+    (match, translate) => `Contexto de ejecución: ${match[1]}, ${translate(match[2] ?? "")}`,
+  ],
   [/^Run context: (.+)$/, "Contexto de ejecución: $1"],
+  // Connection banner above the composer: the machine's name is a value.
+  [/^(.+) is reconnecting$/, "$1 se está reconectando"],
+  [/^(.+) is offline$/, "$1 está sin conexión"],
+  [/^T3 Code on (.+) did not answer$/, "El servidor en $1 no respondió"],
+  [/^T3 Code on (.+) did not accept this device$/, "El servidor en $1 no aceptó este dispositivo"],
+  [/^(.+) did not answer in time$/, "$1 no respondió a tiempo"],
   [
     /^Effort: (.+?) · Permissions: (.+?)((?: · .+)?)$/,
     (match, translate) =>
@@ -388,7 +406,10 @@ const SETTINGS_TEXT: Readonly<Record<string, string>> = {
     "Cuándo compactar un hilo de Claude inactivo de más de 200.000 tokens: al volver, justo antes de que caduque su caché de prompt o nunca. Cada proveedor de Claude puede cambiarlo.",
   Runtime: "Ejecución",
   "Binary path": "Ruta del binario",
-  "Shadow home path": "Ruta del home propio de la cuenta",
+  "Shadow home path": "Directorio personal de la cuenta",
+  "CODEX_HOME path": "Ruta de CODEX_HOME",
+  "Shared Codex config, sessions, and state.":
+    "Configuración, sesiones y estado compartidos de Codex.",
   "Launch arguments": "Argumentos de arranque",
   Environment: "Entorno",
   Variables: "Variables de entorno",
@@ -460,7 +481,12 @@ export const SIDEBAR_TABLE: LocaleTable = {
   patterns: SIDEBAR_PATTERNS,
   functions: [snoozeMenuLabel],
 };
-export const THREAD_TABLE: LocaleTable = { text: THREAD_TEXT, patterns: THREAD_PATTERNS };
+export const THREAD_TABLE: LocaleTable = {
+  // «8 models» under «Legacy models»: upstream writes « models» as its own node.
+  raw: { " models": " modelos" },
+  text: THREAD_TEXT,
+  patterns: THREAD_PATTERNS,
+};
 export const SETTINGS_TABLE: LocaleTable = {
   // «Applying settings for <project> on|across <environment>», and «9 of 10 on» in Appearance.
   raw: { on: "en", across: "en", " of ": " de ", " on": " activos" },

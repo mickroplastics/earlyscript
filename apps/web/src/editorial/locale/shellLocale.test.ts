@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { snoozePresetLabel } from "../editorial.logic";
 import { MANUAL_BROWSER_TABLE } from "../manualBrowserLocale";
 import { makeTranslator, type LocaleTable } from "./scopedLocale";
 import { relativeTimeEs, RELATIVE_TIME_TABLE } from "./shellRelativeTime";
@@ -60,6 +61,13 @@ const PATTERN_SAMPLES = [
   "In 1 hour (6:15 p. m.)",
   "Tomorrow (9:00 a. m.)",
   "Remove github.com/trending from history",
+  "Run context: agents, Current checkout",
+  "Run context: agents, New worktree",
+  "agents is reconnecting",
+  "agents is offline",
+  "T3 Code on agents did not answer",
+  "T3 Code on agents did not accept this device",
+  "agents did not answer in time",
 ];
 
 const SCOPES = { sidebar: SIDEBAR_LOCALE, thread: THREAD_LOCALE, settings: SETTINGS_LOCALE };
@@ -118,6 +126,23 @@ describe("shell locale tables", () => {
     expect(makeTranslator([])("Settled")).toBeUndefined();
   });
 
+  it("cover the strings Sol found in the covered zones", () => {
+    expect(SETTINGS_LOCALE.translate("CODEX_HOME path")).toBe("Ruta de CODEX_HOME");
+    expect(THREAD_LOCALE.translate(" models")).toBe(" modelos");
+    expect(THREAD_LOCALE.translate("models")).toBeUndefined();
+    expect(THREAD_LOCALE.translate("Environment disconnected")).toBe("Entorno desconectado");
+    expect(THREAD_LOCALE.translate("Run context: agents, Current checkout")).toBe(
+      "Contexto de ejecución: agents, Checkout actual",
+    );
+    expect(THREAD_LOCALE.translate("agents is reconnecting")).toBe("agents se está reconectando");
+    expect(THREAD_LOCALE.translate("T3 Code on agents did not answer")).toBe(
+      "El servidor en agents no respondió",
+    );
+    expect(THREAD_LOCALE.translate("This device is offline")).toBe(
+      "Este dispositivo no tiene conexión",
+    );
+  });
+
   it("tell a word apart by its spacing where upstream splits a sentence", () => {
     const settings = SETTINGS_LOCALE.translate;
     expect(settings("on")).toBe("en");
@@ -132,6 +157,35 @@ describe("shell locale tables", () => {
     expect(snoozeMenuLabel("In 3 hours (8:15 p. m.)")).toBe("En 3 horas (8:15 p. m.)");
     expect(snoozeMenuLabel("Next week")).toBe("La próxima semana");
     expect(snoozeMenuLabel("Toggle main sidebar (Ctrl+B)")).toBe("Toggle main sidebar (Ctrl+B)");
+  });
+});
+
+describe("inherited keys", () => {
+  const INHERITED = ["constructor", "toString", "__proto__", "hasOwnProperty", "valueOf"];
+
+  it("are never translations, in any scope or table kind", () => {
+    const tables = makeTranslator([
+      { raw: { on: "en" }, text: { Delete: "Borrar" }, functions: [snoozeMenuLabel] },
+    ]);
+    for (const key of INHERITED) {
+      for (const [name, scope] of Object.entries(SCOPES)) {
+        expect(scope.translate(key), `${name}: ${key}`).toBeUndefined();
+        expect(scope.translate(` ${key} `), `${name}: ${key}`).toBeUndefined();
+      }
+      expect(tables(key), key).toBeUndefined();
+      expect(snoozeMenuLabel(key)).toBe(key);
+      expect(snoozePresetLabel(key)).toBe(key);
+      expect(snoozePresetLabel(`Next ${key}`)).toBe(`Next ${key}`);
+      expect(snoozePresetLabel(`In 2 ${key}s`)).toBe(`In 2 ${key}s`);
+    }
+  });
+
+  it("do not leak through a table built with them as own keys either", () => {
+    const table = JSON.parse('{"__proto__": "x", "constructor": "y"}') as Record<string, string>;
+    const translate = makeTranslator([{ text: table }]);
+    expect(translate("__proto__")).toBe("x");
+    expect(translate("constructor")).toBe("y");
+    expect(translate("toString")).toBeUndefined();
   });
 });
 

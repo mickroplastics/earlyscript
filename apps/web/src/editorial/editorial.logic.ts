@@ -177,15 +177,20 @@ export function snoozePresetLabel(label: string): string {
   const duration = /^In (\d+) (minute|hour|day)s?$/.exec(label);
   if (duration) {
     const count = Number(duration[1]);
-    const units = DURATION_UNITS_ES[duration[2] ?? ""];
+    const units = ownValue(DURATION_UNITS_ES, duration[2] ?? "");
     if (units) return `En ${count} ${count === 1 ? units[0] : units[1]}`;
   }
   const next = /^Next (\w+)$/.exec(label);
-  const nextDay = next ? WEEKDAYS_ES[next[1] ?? ""] : undefined;
+  const nextDay = next ? ownValue(WEEKDAYS_ES, next[1] ?? "") : undefined;
   if (nextDay) return `El próximo ${nextDay}`;
-  const day = WEEKDAYS_ES[label];
+  const day = ownValue(WEEKDAYS_ES, label);
   if (day) return `El ${day}`;
-  return SNOOZE_LABELS_ES[label] ?? label;
+  return ownValue(SNOOZE_LABELS_ES, label) ?? label;
+}
+
+/** A table's own entry: `constructor` or `toString` are not labels. */
+function ownValue<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
 }
 
 export type TrendMenuAction =

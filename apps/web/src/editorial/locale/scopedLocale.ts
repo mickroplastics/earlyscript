@@ -22,31 +22,57 @@ export interface LocaleTable {
   readonly functions?: ReadonlyArray<(value: string) => string>;
 }
 
+/** A table's strings as own entries only: `constructor` or `__proto__` are never keys. */
+interface CompiledTable {
+  readonly raw: ReadonlyMap<string, string>;
+  readonly text: ReadonlyMap<string, string>;
+  readonly patterns: ReadonlyArray<LocalePattern>;
+  readonly functions: ReadonlyArray<(value: string) => string>;
+}
+
+const ownEntries = (record: Readonly<Record<string, string>> | undefined) =>
+  new Map(
+    Object.entries(record ?? {}).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+
+function compile(table: LocaleTable): CompiledTable {
+  return {
+    raw: ownEntries(table.raw),
+    text: ownEntries(table.text),
+    patterns: table.patterns ?? [],
+    functions: table.functions ?? [],
+  };
+}
+
 /** Translates a folded string, or undefined when no table knows it. */
 function translateFolded(
-  tables: ReadonlyArray<LocaleTable>,
+  tables: ReadonlyArray<CompiledTable>,
   folded: string,
   depth: number,
 ): string | undefined {
   for (const table of tables) {
-    const exact = table.text?.[folded];
+    const exact = table.text.get(folded);
     if (exact !== undefined) return exact;
   }
   if (depth > 1) return undefined;
   const nested = (value: string) => translateFolded(tables, value, depth + 1) ?? value;
   for (const table of tables) {
-    for (const [regex, replacement] of table.patterns ?? []) {
+    for (const [regex, replacement] of table.patterns) {
       const match = regex.exec(folded);
       if (match === null) continue;
-      return typeof replacement === "string"
-        ? folded.replace(regex, replacement)
-        : replacement(match, nested);
+      const next =
+        typeof replacement === "string"
+          ? folded.replace(regex, replacement)
+          : replacement(match, nested);
+      return typeof next === "string" ? next : undefined;
     }
   }
   for (const table of tables) {
-    for (const fn of table.functions ?? []) {
-      const next = fn(folded);
-      if (next !== folded) return next;
+    for (const fn of table.functions) {
+      const next: unknown = fn(folded);
+      if (typeof next === "string" && next !== folded) return next;
     }
   }
   return undefined;
@@ -59,15 +85,16 @@ export type Translator = (value: string | null) => string | undefined;
  * undefined when no table knows it or it would not change.
  */
 export function makeTranslator(tables: ReadonlyArray<LocaleTable>): Translator {
+  const compiled = tables.map(compile);
   return (value) => {
     if (value === null) return undefined;
-    for (const table of tables) {
-      const raw = table.raw?.[value];
+    for (const table of compiled) {
+      const raw = table.raw.get(value);
       if (raw !== undefined) return raw === value ? undefined : raw;
     }
     const folded = value.replace(/\s+/g, " ").trim();
     if (folded.length === 0) return undefined;
-    const translated = translateFolded(tables, folded, 0);
+    const translated = translateFolded(compiled, folded, 0);
     if (translated === undefined) return undefined;
     const lead = /^\s*/.exec(value)?.[0] ?? "";
     const trail = /\s*$/.exec(value)?.[0] ?? "";
@@ -140,23 +167,31 @@ export function useScopedLocale(
     const translateTree = (node: Node) => {
       if (node instanceof Text) {
         if (skipped(node.parentElement)) return;
-        const next = translate(node.nodeValue);
-        if (next === undefined) return;
-        texts.set(node, {
-          original: texts.get(node)?.original ?? node.nodeValue ?? "",
-          written: next,
-        });
-        node.nodeValue = next;
+        const current = node.nodeValue ?? "";
+        // Still our last write: nothing new from upstream.
+        if (texts.get(node)?.written === current) return;
+        const next = translate(current);
+        // Anything else is upstream's latest value, the one to restore on unmount.
+        if (next === undefined) texts.delete(node);
+        else {
+          texts.set(node, { original: current, written: next });
+          node.nodeValue = next;
+        }
         return;
       }
       if (!(node instanceof Element) || skipped(node)) return;
       for (const name of attributeNames) {
         const value = node.getAttribute(name);
+        const byName = attributes.get(node);
+        if (value === null || byName?.get(name)?.written === value) continue;
         const next = translate(value);
-        if (next === undefined || value === null) continue;
-        const byName = attributes.get(node) ?? new Map<string, Rewrite>();
-        byName.set(name, { original: byName.get(name)?.original ?? value, written: next });
-        attributes.set(node, byName);
+        if (next === undefined) {
+          byName?.delete(name);
+          continue;
+        }
+        const rewrites = byName ?? new Map<string, Rewrite>();
+        rewrites.set(name, { original: value, written: next });
+        attributes.set(node, rewrites);
         node.setAttribute(name, next);
       }
       // Skipped descendants are pruned by the check at the top of each call.
