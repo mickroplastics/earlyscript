@@ -3,6 +3,9 @@ import * as Migrator from "effect/sql/Migrator";
 
 import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
 import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
+// 003 is the video thread unit's. The Migrator skips ids below the latest applied one,
+// so 003 must be merged before 004 reaches a real database.
+import Migration0004 from "./Migrations/004_EditorialRuns.ts";
 
 // Same registration mechanism as persistence/Migrations.ts, with its own
 // numbering: these ids live in editorial.sqlite and never collide with T3's.
@@ -10,6 +13,7 @@ import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
 const migrationEntries = [
   [1, "EditorialFoundation", Migration0001],
   [2, "EditorialOrdering", Migration0002],
+  [4, "EditorialRuns", Migration0004],
 ] as const;
 
 export const editorialMigrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

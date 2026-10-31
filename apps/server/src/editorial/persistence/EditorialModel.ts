@@ -88,10 +88,11 @@ export const EditorialEventType = Schema.Literals([
   "script.version-saved",
   "capture.saved",
   "result.saved",
+  "run.imported",
 ]);
 export type EditorialEventType = typeof EditorialEventType.Type;
 
-export const EditorialAggregateKind = Schema.Literals(["trend", "video_thread"]);
+export const EditorialAggregateKind = Schema.Literals(["trend", "video_thread", "run"]);
 export type EditorialAggregateKind = typeof EditorialAggregateKind.Type;
 
 export const EditorialEvent = Schema.Struct({
@@ -101,6 +102,8 @@ export const EditorialEvent = Schema.Struct({
   aggregateId: Schema.String,
   operationId: Schema.NullOr(Schema.String),
   actor: EditorialActor,
+  /** The authenticated session that issued a human command; null for system events. */
+  actorSessionId: Schema.NullOr(Schema.String),
   payload: Schema.Unknown,
   createdAt: Schema.String,
 });
