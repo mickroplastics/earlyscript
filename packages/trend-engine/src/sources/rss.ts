@@ -65,6 +65,8 @@ function atomLink(entry: XmlElement, base: string): string | null {
 
 export interface FeedDocument {
   readonly title: string;
+  /** The site the feed declares (RSS channel `link`, Atom alternate link). */
+  readonly link: string | null;
   readonly entries: Array<FeedEntry>;
 }
 
@@ -82,6 +84,9 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
     const items = [...elements(channel, "item"), ...elements(root, "item")];
     return {
       title,
+      link: textOf(element(channel, "link")).trim()
+        ? absolute(textOf(element(channel, "link")), feedUrl)
+        : null,
       entries: items.map((item) => {
         const guid = textOf(element(item, "guid")).trim();
         const link =
@@ -105,6 +110,7 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
     const title = feedText(textOf(element(root, "title", "atom:title")));
     return {
       title,
+      link: atomLink(root, feedUrl),
       entries: elements(root, "entry", "atom:entry").map((entry) => {
         const link = atomLink(entry, feedUrl);
         return {
@@ -271,6 +277,7 @@ export type FeedValidation =
       readonly ok: true;
       readonly url: string;
       readonly title: string;
+      readonly link: string | null;
       readonly entries: number;
       /** ISO instant of the newest dated entry; null when no entry has a date. */
       readonly latest: string | null;
@@ -338,6 +345,7 @@ export async function validateFeed(
     ok: true,
     url,
     title: document.title,
+    link: document.link,
     entries: document.entries.length,
     latest: dates.length ? new Date(Math.max(...dates)).toISOString() : null,
   };

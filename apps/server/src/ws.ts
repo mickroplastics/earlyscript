@@ -244,6 +244,7 @@ import * as EditorialRpc from "./editorial/rpc.ts";
 import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
 import * as EditorialPresentationRpc from "./editorial/presentationRpc.ts";
 import * as EditorialVideoRpc from "./editorial/videoRpc.ts";
+import * as EditorialSourcesRpc from "./editorial/sourcesRpc.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1875,6 +1876,7 @@ export const layerWsRpc = (
         ...(yield* EditorialResultsRpc.EditorialResultsRpcHandlers),
         ...(yield* EditorialPresentationRpc.makeHandlers),
         ...(yield* EditorialVideoRpc.EditorialVideoRpcHandlers),
+        ...(yield* EditorialSourcesRpc.EditorialSourcesRpcHandlers),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

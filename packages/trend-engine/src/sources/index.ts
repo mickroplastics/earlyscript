@@ -1,7 +1,13 @@
 import type { RssFeed, SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
 import type { DayResult, SourceAdapter } from "./adapter.ts";
-import { createHttpClient, type GetResponse, type HttpOptions } from "./http.ts";
+import {
+  createHttpClient,
+  MAX_RESPONSE_BYTES,
+  type GetResponse,
+  type HttpOptions,
+  type HttpSource,
+} from "./http.ts";
 import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
@@ -12,7 +18,8 @@ import { RSS_FEEDS } from "./rss-feeds.ts";
 
 import { fixtureAdapter } from "./fixture.ts";
 
-export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
+// Partial: the catalog lists sources whose adapter has not landed yet.
+export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
   hn: {
     id: "hn",
     label: "Hacker News",
@@ -64,16 +71,25 @@ type Collector = (
   getText: GetResponse,
 ) => Promise<DayResult>;
 /** A fresh collector per adapter: listings walked once are kept between that adapter's days. */
-const COLLECTORS: Readonly<Record<Exclude<SourceId, "lobsters" | "rss">, () => Collector>> = {
+const COLLECTORS: Readonly<
+  Partial<Record<Exclude<SourceId, "lobsters" | "rss">, () => Collector>>
+> = {
   hn: () => (day, get) => collectHnDay(day, get),
   github: () => (day, get) => collectGithubDay(day, get),
   huggingface: huggingfaceCollector,
 };
 
-export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
+export function sourceDescriptor(id: SourceId): SourceDescriptor {
+  const descriptor = SOURCES[id];
+  if (!descriptor) throw new Error(`No adapter for source: ${id}`);
+  return descriptor;
+}
+
+export const isSampleSource = (id: SourceId): boolean =>
+  sourceDescriptor(id).coverage_policy === "sample";
 
 export const fixtureSources = (corpusDir: string, ids: ReadonlyArray<SourceId>) =>
-  ids.map((id) => fixtureAdapter(corpusDir, SOURCES[id]));
+  ids.map((id) => fixtureAdapter(corpusDir, sourceDescriptor(id)));
 
 export type { DayResult, SourceAdapter } from "./adapter.ts";
 
@@ -100,7 +116,7 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
   const state = { nextStart: 0, blockedUntil: 0 };
   const rules = new Map<string, ReadonlyArray<RobotsRule>>();
   return {
-    descriptor: SOURCES.lobsters,
+    descriptor: sourceDescriptor("lobsters"),
     collectDay: (day) => {
       const text = createHttpClient("lobsters", { ...options, text: true, anonymous: true }, state);
       const json = createHttpClient("lobsters", options, state);
@@ -139,6 +155,8 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
   };
 }
 
+const isHttpSource = (id: SourceId): id is HttpSource => id in MAX_RESPONSE_BYTES;
+
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
   options: HttpOptions = {},
@@ -147,11 +165,14 @@ export function liveSources(
   return ids.map((id) => {
     if (id === "lobsters") return lobstersAdapter(options);
     if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
+    const descriptor = sourceDescriptor(id);
+    const makeCollector = COLLECTORS[id];
+    if (!makeCollector || !isHttpSource(id)) throw new Error(`No live adapter for source: ${id}`);
     const state = { nextStart: 0, blockedUntil: 0 };
     const rules = new Map<string, ReadonlyArray<RobotsRule>>();
-    const collect = COLLECTORS[id]();
+    const collect = makeCollector();
     return {
-      descriptor: SOURCES[id],
+      descriptor,
       collectDay: (day) => {
         // Collectors gate their own URLs; a redirect away from them is gated per hop.
         // robots.txt goes without credentials; model cards carry them on their own origin only.

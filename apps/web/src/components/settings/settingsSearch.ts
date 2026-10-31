@@ -11,6 +11,7 @@ import {
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { settingsSearchItemVisible, visibleSettingsNavGroups } from "~/earlyscript/hiddenFeatures";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import * as EditorialSettings from "~/editorial/settings/settingsEntry";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
@@ -39,7 +40,8 @@ export type SettingsPath =
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
-  | "/settings/archived";
+  | "/settings/archived"
+  | typeof EditorialSettings.EDITORIAL_SETTINGS_PATH;
 
 export type SettingsSearchScope =
   | "environment"
@@ -110,6 +112,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": "Labs",
   "/settings/about": "About",
   "/settings/archived": "Archive",
+  [EditorialSettings.EDITORIAL_SETTINGS_PATH]: EditorialSettings.EDITORIAL_SETTINGS_LABEL,
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -128,6 +131,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/snap-shot",
     ],
   },
+  EditorialSettings.EDITORIAL_SETTINGS_NAV_GROUP,
   {
     heading: "Agents",
     paths: [
@@ -1175,6 +1179,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  ...EditorialSettings.EDITORIAL_SETTINGS_SEARCH_ITEMS,
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1204,6 +1209,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/labs": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",
+  [EditorialSettings.EDITORIAL_SETTINGS_PATH]: null,
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
