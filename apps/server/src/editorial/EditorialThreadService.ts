@@ -1,9 +1,22 @@
+import {
+  CommandId,
+  type ModelSelection,
+  type OrchestrationV2CreationSource,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type {
@@ -11,14 +24,17 @@ import type {
   VideoThread,
   VideoThreadLaunchState,
   VideoThreadMode,
+  WorkClockSummary,
 } from "./persistence/EditorialModel.ts";
 import {
   EditorialConflictError,
   EditorialInvalidInputError,
+  EditorialNotFoundError,
   type EditorialPersistenceError,
   toPersistenceError,
 } from "./persistence/Errors.ts";
-import { nowIso } from "./persistence/support.ts";
+import { makeNewId, nowIso } from "./persistence/support.ts";
+import { type WorkClockError, WorkClockService } from "./WorkClockService.ts";
 
 export interface RegisterVideoThreadInput {
   /** Generated once by the caller and reused on every retry of the same creation. */
@@ -41,10 +57,62 @@ export interface RegisterVideoThreadResult {
   readonly created: boolean;
 }
 
+export interface CreateVideoInput {
+  /** Generated once by the client when Miguel chooses to create; reused on every retry. */
+  readonly operationId: string;
+  readonly projectId: ProjectId;
+  readonly mode: VideoThreadMode;
+  /** Video title; the thread is titled "Video: <title>". */
+  readonly title: string;
+  /** Composer defaults of the client. A manual thread keeps them but never runs them. */
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
+  /** The project's own checkout when omitted, as a new composer thread. */
+  readonly workspaceStrategy?: ThreadLaunch.ThreadLaunchWorkspaceStrategy | undefined;
+  readonly creationSource?: OrchestrationV2CreationSource | undefined;
+  /** A trend chosen in Tendencias; links the trend to the thread as "in production". */
+  readonly trendKey?: string | undefined;
+  readonly runId?: string | undefined;
+  /** The immutable dossier attached to the thread, with its hash. */
+  readonly dossierId?: string | undefined;
+  readonly dossierHash?: string | undefined;
+  /** Relative to the thread workspace; `videos/<slug>-<id>.md` when omitted. */
+  readonly scriptPath?: string | undefined;
+}
+
+export interface CreateVideoResult {
+  readonly thread: VideoThread;
+  readonly clock: WorkClockSummary;
+  /** False when a retry found the operation already registered. */
+  readonly created: boolean;
+}
+
+export class EditorialVideoLaunchError extends Schema.TaggedError<EditorialVideoLaunchError>()(
+  "EditorialVideoLaunchError",
+  {
+    operationId: Schema.String,
+    threadId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Video thread ${this.threadId} was registered but its T3 thread could not be created.`;
+  }
+}
+
+export type CreateVideoError =
+  | EditorialPersistenceError
+  | EditorialInvalidInputError
+  | EditorialConflictError
+  | EditorialNotFoundError
+  | EditorialVideoLaunchError
+  | WorkClockError;
+
 /**
  * Durable link between a T3 thread and its editorial context. `createVideo`
- * (not here yet) registers first, then calls ThreadLaunchService.launch; a
- * retry resumes by operation id and launch_state, never launching twice.
+ * registers first, then calls ThreadLaunchService.launch; a retry resumes by
+ * operation id and launch_state, never launching twice.
  */
 export class EditorialThreadService extends Context.Service<
   EditorialThreadService,
@@ -58,6 +126,19 @@ export class EditorialThreadService extends Context.Service<
     readonly getVideoThread: (
       threadId: string,
     ) => Effect.Effect<Option.Option<VideoThread>, EditorialPersistenceError>;
+    /** Records whether the T3 thread exists; writes an event only when the state changes. */
+    readonly markLaunchState: (
+      threadId: string,
+      state: Exclude<VideoThreadLaunchState, "pending">,
+    ) => Effect.Effect<VideoThread, EditorialPersistenceError | EditorialNotFoundError>;
+    /**
+     * Registers, launches the T3 thread without a first message (creating it
+     * starts no agent), links the trend and starts the work clock: Explorar
+     * for a manual thread, Leer for an assisted one.
+     */
+    readonly createVideo: (
+      input: CreateVideoInput,
+    ) => Effect.Effect<CreateVideoResult, CreateVideoError>;
   }
 >()("t3/editorial/EditorialThreadService") {}
 
@@ -105,9 +186,33 @@ const nullable = (value: string | undefined) => {
   return trimmed.length === 0 ? null : trimmed;
 };
 
+const MAX_SLUG_LENGTH = 48;
+
+/** ASCII file stem from the title, so a script path reads like its video. */
+const slugify = (title: string) =>
+  title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_SLUG_LENGTH)
+    .replace(/-+$/g, "");
+
+export const defaultScriptPath = (title: string, threadId: string) => {
+  const slug = slugify(title);
+  const suffix = threadId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+  return `videos/${slug.length === 0 ? "video" : slug}-${suffix}.md`;
+};
+
 const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const eventLog = yield* EditorialEventLog;
+  const commands = yield* EditorialCommandService;
+  const clock = yield* WorkClockService;
+  const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const newId = yield* makeNewId;
 
   const registerVideoThread: EditorialThreadService["Service"]["registerVideoThread"] = Effect.fn(
     "EditorialThreadService.registerVideoThread",
@@ -187,7 +292,123 @@ const make = Effect.gen(function* () {
       Effect.mapError(toPersistenceError("editorial.getVideoThread")),
     );
 
-  return EditorialThreadService.of({ registerVideoThread, getVideoThread });
+  const markLaunchState: EditorialThreadService["Service"]["markLaunchState"] = Effect.fn(
+    "EditorialThreadService.markLaunchState",
+  )(function* (threadId, state) {
+    const operation = "editorial.markLaunchState";
+    return yield* eventLog.transact(
+      operation,
+      Effect.gen(function* () {
+        const current = yield* selectBy(sql, "thread_id", threadId);
+        if (Option.isNone(current)) {
+          return yield* new EditorialNotFoundError({ entity: "video_thread", id: threadId });
+        }
+        if (current.value.launchState === state) return { result: current.value, events: [] };
+        yield* sql`
+          UPDATE editorial_video_threads SET launch_state = ${state} WHERE thread_id = ${threadId}
+        `;
+        const event = yield* appendEvent(sql, {
+          type: state === "launched" ? "video-thread.launched" : "video-thread.launch-failed",
+          aggregateKind: "video_thread",
+          aggregateId: threadId,
+          actor: "system",
+          payload: { operationId: current.value.operationId, previous: current.value.launchState },
+          createdAt: yield* nowIso,
+        });
+        return { result: { ...current.value, launchState: state }, events: [event] };
+      }),
+    );
+  });
+
+  const createVideo: EditorialThreadService["Service"]["createVideo"] = Effect.fn(
+    "EditorialThreadService.createVideo",
+  )(function* (input) {
+    const operation = "editorial.createVideo";
+    const title = input.title.trim();
+    if (title.length === 0) {
+      return yield* new EditorialInvalidInputError({ operation, detail: "title is required" });
+    }
+    const dossierId = nullable(input.dossierId);
+    const dossierHash = nullable(input.dossierHash);
+    if ((dossierId === null) !== (dossierHash === null)) {
+      return yield* new EditorialInvalidInputError({
+        operation,
+        detail: "a dossier is attached with both dossierId and dossierHash",
+      });
+    }
+    const proposedThreadId = yield* newId;
+    const registered = yield* registerVideoThread({
+      operationId: input.operationId,
+      environmentId: yield* environment.getEnvironmentId,
+      threadId: proposedThreadId,
+      mode: input.mode,
+      trendKey: input.trendKey,
+      runId: input.runId,
+      dossierId: dossierId ?? undefined,
+      dossierHash: dossierHash ?? undefined,
+      scriptPath: nullable(input.scriptPath) ?? defaultScriptPath(title, proposedThreadId),
+      actor: "operator",
+    });
+    let thread = registered.thread;
+    // A retry must describe the same video; another one needs another operation id.
+    if (thread.mode !== input.mode || thread.dossierId !== dossierId) {
+      return yield* new EditorialConflictError({
+        operation,
+        detail: `operation ${input.operationId} already created a ${thread.mode} video thread`,
+      });
+    }
+    if (thread.launchState !== "launched") {
+      const threadId = ThreadId.make(thread.threadId);
+      // The command id derives from the operation, so a retry replays the
+      // launch receipt instead of creating a second thread.
+      yield* launches
+        .launch({
+          commandId: CommandId.make(`editorial:create-video:${thread.operationId}`),
+          threadId,
+          projectId: input.projectId,
+          title: `Video: ${title}`,
+          modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode ?? "approval-required",
+          interactionMode: input.interactionMode ?? "default",
+          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          createdBy: "user",
+          creationSource: input.creationSource ?? "web",
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            markLaunchState(thread.threadId, "failed").pipe(
+              Effect.ignore,
+              Effect.andThen(
+                Effect.fail(
+                  new EditorialVideoLaunchError({
+                    operationId: thread.operationId,
+                    threadId: thread.threadId,
+                    cause,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+      thread = yield* markLaunchState(thread.threadId, "launched");
+    }
+    if (thread.trendKey !== null) {
+      yield* commands.linkProduction({ trendKey: thread.trendKey, threadId: thread.threadId });
+    }
+    const summary = yield* clock.start(
+      thread.threadId,
+      thread.mode === "manual" ? "explore" : "read",
+      { operationId: `${thread.operationId}:clock` },
+    );
+    return { thread, clock: summary, created: registered.created };
+  });
+
+  return EditorialThreadService.of({
+    registerVideoThread,
+    getVideoThread,
+    markLaunchState,
+    createVideo,
+  });
 });
 
 export const layer = Layer.effect(EditorialThreadService, make);

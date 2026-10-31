@@ -3,8 +3,7 @@ import * as Migrator from "effect/sql/Migrator";
 
 import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
 import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
-// 003 is the video thread unit's. The Migrator skips ids below the latest applied one,
-// so 003 must be merged before 004 reaches a real database.
+import Migration0003 from "./Migrations/003_EditorialScriptHead.ts";
 import Migration0004 from "./Migrations/004_EditorialRuns.ts";
 
 // Same registration mechanism as persistence/Migrations.ts, with its own
@@ -13,6 +12,7 @@ import Migration0004 from "./Migrations/004_EditorialRuns.ts";
 const migrationEntries = [
   [1, "EditorialFoundation", Migration0001],
   [2, "EditorialOrdering", Migration0002],
+  [3, "EditorialScriptHead", Migration0003],
   [4, "EditorialRuns", Migration0004],
 ] as const;
 

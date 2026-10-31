@@ -28,6 +28,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -622,13 +623,16 @@ export const layerWithOptions = (
 ): Layer.Layer<
   OrchestrationEffectWorkerV2,
   never,
-  EffectOutbox.EffectOutboxV2 | OrchestrationEffectExecutorV2
+  | EffectOutbox.EffectOutboxV2
+  | OrchestrationEffectExecutorV2
+  | ManualThreadPolicy.ManualThreadPolicy
 > =>
   Layer.effect(
     OrchestrationEffectWorkerV2,
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
+      const manualThreadPolicy = yield* ManualThreadPolicy.ManualThreadPolicy;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
@@ -766,9 +770,24 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
-          const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
-            .pipe(boundExecution(effect), Effect.as("executed" as const));
+          // Earlyscript: agent effects never run in a manual video thread, including
+          // ones enqueued before it was registered or requeued after a restart
+          // (docs/upstream-divergence.md §10).
+          const execution = ManualThreadPolicy.assertEffectAllowed(manualThreadPolicy, effect).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause,
+                }),
+            ),
+            Effect.andThen(
+              executor.execute(effect, { willRetry: effect.attemptCount < maxAttempts }),
+            ),
+            boundExecution(effect),
+            Effect.as("executed" as const),
+          );
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
           );
@@ -792,6 +811,10 @@ export const layerWithOptions = (
 
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
+          // Earlyscript: a manual thread stays manual, so its refusal fails the effect at once.
+          const manualThreadRefusal = Option.exists(Cause.findErrorOption(exit.cause), (failure) =>
+            ManualThreadPolicy.isManualThreadRefusal(failure.cause),
+          );
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
             effectType: effect.request.type,
@@ -803,7 +826,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts || manualThreadRefusal
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

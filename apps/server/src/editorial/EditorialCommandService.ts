@@ -24,7 +24,7 @@ import {
   type VideoResult,
 } from "./persistence/EditorialModel.ts";
 import {
-  type EditorialConflictError,
+  EditorialConflictError,
   EditorialInvalidInputError,
   EditorialNotFoundError,
   type EditorialPersistenceError,
@@ -88,7 +88,10 @@ export interface RecordDecisionInput extends ActorOption {
   readonly utility: number;
   /** Required for edit and reject. */
   readonly reason?: string | undefined;
-  /** A version saved with saveScriptVersion for this thread. */
+  /**
+   * The latest version saved with saveScriptVersion for this thread. Required
+   * once the thread has a saved version; any other hash is a conflict.
+   */
   readonly scriptVersionHash?: string | undefined;
   /** A retry with the same id returns the decision already recorded. */
   readonly operationId?: string | undefined;
@@ -150,7 +153,10 @@ export class EditorialCommandService extends Context.Service<
     readonly recordDecision: (
       input: RecordDecisionInput,
     ) => Effect.Effect<Decision, ThreadCommandError | EditorialConflictError>;
-    /** Content-addressed: saving the same content twice returns the first version. */
+    /**
+     * Content-addressed: saving the same content twice returns the first
+     * version. The saved version becomes the thread's head either way.
+     */
     readonly saveScriptVersion: (
       input: SaveScriptVersionInput,
     ) => Effect.Effect<ScriptVersion, ThreadCommandError>;
@@ -510,6 +516,17 @@ const make = Effect.gen(function* () {
             return yield* new EditorialNotFoundError({ entity: "script_version", id: hash });
           }
         }
+        // The decision is about the script as last saved, not a version read earlier.
+        const head = yield* selectScriptHead(sql, input.threadId);
+        if (head !== hash) {
+          return yield* new EditorialConflictError({
+            operation,
+            detail:
+              head === null
+                ? "the thread has no saved script version to decide on"
+                : `the script version changed: the decision references ${hash ?? "no version"}, the latest saved is ${head}`,
+          });
+        }
         const clockEvents = yield* stopClock(sql, {
           threadId: input.threadId,
           at,
@@ -569,7 +586,21 @@ const make = Effect.gen(function* () {
     return yield* threadCommand(operation, input.threadId, (at) =>
       Effect.gen(function* () {
         const existing = yield* selectScriptVersion(sql, input.threadId, contentHash);
-        if (existing !== undefined) return { result: existing, events: [] };
+        if (existing !== undefined) {
+          if ((yield* selectScriptHead(sql, input.threadId)) === contentHash) {
+            return { result: existing, events: [] };
+          }
+          yield* setScriptHead(sql, input.threadId, contentHash);
+          const restored = yield* appendEvent(sql, {
+            type: "script.head-restored",
+            aggregateKind: "video_thread",
+            aggregateId: input.threadId,
+            actor,
+            payload: { versionId: existing.versionId, contentHash },
+            createdAt: at,
+          });
+          return { result: existing, events: [restored] };
+        }
         const versionId = yield* newId;
         yield* sql`
             INSERT INTO editorial_script_versions (
@@ -580,6 +611,7 @@ const make = Effect.gen(function* () {
               ${actor}, ${at}
             )
           `;
+        yield* setScriptHead(sql, input.threadId, contentHash);
         const event = yield* appendEvent(sql, {
           type: "script.version-saved",
           aggregateKind: "video_thread",
@@ -768,5 +800,16 @@ const selectScriptVersion = (sql: SqlClient.SqlClient, threadId: string, content
           },
     ),
   );
+
+const selectScriptHead = (sql: SqlClient.SqlClient, threadId: string) =>
+  sql<{ readonly script_head_hash: string | null }>`
+    SELECT script_head_hash FROM editorial_video_threads WHERE thread_id = ${threadId}
+  `.pipe(Effect.map((rows) => rows[0]?.script_head_hash ?? null));
+
+const setScriptHead = (sql: SqlClient.SqlClient, threadId: string, contentHash: string) =>
+  sql`
+    UPDATE editorial_video_threads SET script_head_hash = ${contentHash}
+    WHERE thread_id = ${threadId}
+  `;
 
 export const layer = Layer.effect(EditorialCommandService, make);

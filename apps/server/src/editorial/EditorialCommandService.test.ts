@@ -296,6 +296,53 @@ describe("EditorialCommandService thread records", () => {
     ),
   );
 
+  it.effect("decides only on the latest saved script version", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const commands = yield* EditorialCommandService;
+        yield* registerThread;
+        const save = (content: string) => commands.saveScriptVersion({ threadId: THREAD, content });
+        const decide = (scriptVersionHash?: string) =>
+          commands.recordDecision({
+            threadId: THREAD,
+            action: "accept",
+            utility: 4,
+            scriptVersionHash,
+          });
+
+        const first = yield* save("# Hook\n\nFirst draft [hn:1]\n");
+        const second = yield* save("# Hook\n\nSecond draft [hn:1]\n");
+        assert.strictEqual(
+          (yield* Effect.flip(decide(first.contentHash)))._tag,
+          "EditorialConflictError",
+        );
+        // Once a version exists, deciding without naming it is a conflict too.
+        assert.strictEqual((yield* Effect.flip(decide()))._tag, "EditorialConflictError");
+
+        // Saving the first text again restores its snapshot as the head.
+        const restored = yield* save("# Hook\n\nFirst draft [hn:1]\n");
+        assert.strictEqual(restored.versionId, first.versionId);
+        assert.strictEqual(
+          (yield* Effect.flip(decide(second.contentHash)))._tag,
+          "EditorialConflictError",
+        );
+        const decision = yield* decide(first.contentHash);
+        assert.strictEqual(decision.scriptVersionHash, first.contentHash);
+
+        assert.deepStrictEqual(
+          (yield* events).map((event) => event.type),
+          [
+            "video-thread.registered",
+            "script.version-saved",
+            "script.version-saved",
+            "script.head-restored",
+            "decision.recorded",
+          ],
+        );
+      }),
+    ),
+  );
+
   it.effect("keeps the pause length when deciding while paused", () =>
     withEditorialDatabase(
       Effect.gen(function* () {
