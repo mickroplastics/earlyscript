@@ -100,6 +100,8 @@ export const EditorialRssFeed = Schema.Struct({
   /** License note of a default feed; the operator's note of an added one. */
   note: Schema.NullOr(Schema.String),
   origin: Schema.Literals(["default", "user"]),
+  /** When the operator accepted private analysis without republication; null for defaults. */
+  acknowledgedAt: Schema.NullOr(IsoDateTime),
   /** Only a default feed can be excluded; the operator removes an added one instead. */
   excluded: Schema.Boolean,
   addedAt: Schema.NullOr(IsoDateTime),
@@ -135,6 +137,8 @@ export const EditorialAddFeedInput = Schema.Struct({
   /** Empty or absent: the site the feed declares. */
   siteUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(FEED_URL_MAX_CHARS))),
   note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
+  /** The operator's acceptance: private analysis, no republication, the site's terms respected. */
+  acknowledged: Schema.optionalKey(Schema.Boolean),
 });
 export type EditorialAddFeedInput = typeof EditorialAddFeedInput.Type;
 
@@ -174,6 +178,7 @@ export class EditorialSourcesError extends Schema.TaggedError<EditorialSourcesEr
       "too-large",
       "duplicate-feed",
       "unknown-feed",
+      "not-acknowledged",
     ]),
     message: Schema.String,
   },

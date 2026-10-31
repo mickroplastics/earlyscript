@@ -452,9 +452,13 @@ describe("editorial RSS feeds", () => {
         Effect.gen(function* () {
           const client = yield* operator;
           const sources = yield* EditorialSourcesService.EditorialSourcesService;
-          const added = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED });
+          const added = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
+            feedUrl: FEED,
+            acknowledged: true,
+          });
           const mine = added.rssFeeds.filter((feed) => feed.origin === "user");
           assert.strictEqual(mine.length, 1);
+          assert.isNotNull(mine[0]!.acknowledgedAt);
           assert.strictEqual(mine[0]!.name, "Example Engineering");
           assert.strictEqual(mine[0]!.siteUrl, "https://blog.example.com/");
           assert.match(mine[0]!.id, /^user-[0-9a-f]{12}$/);
@@ -465,6 +469,7 @@ describe("editorial RSS feeds", () => {
 
           const named = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
             feedUrl: `${web.base}/atom`,
+            acknowledged: true,
             name: "Mis notas",
             siteUrl: "https://notas.example.net/",
             note: "Probando",
@@ -475,16 +480,20 @@ describe("editorial RSS feeds", () => {
           const badSite = yield* Effect.flip(
             client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
               feedUrl: `${web.base}/page`,
+              acknowledged: true,
               siteUrl: "notas",
             }),
           );
           assert.strictEqual(reasonOf(badSite), "invalid-url");
           const duplicate = yield* Effect.flip(
-            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED }),
+            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED, acknowledged: true }),
           );
           assert.strictEqual(reasonOf(duplicate), "duplicate-feed");
           const refused = yield* Effect.flip(
-            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: `${web.base}/feed` }),
+            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
+              feedUrl: `${web.base}/feed`,
+              acknowledged: true,
+            }),
           );
           assert.strictEqual(reasonOf(refused), "robots-disallowed");
 
@@ -514,6 +523,25 @@ describe("editorial RSS feeds", () => {
           });
           assert.isFalse(restored.rssFeeds[0]!.excluded);
           assert.strictEqual((yield* sources.rssFeeds).length, RSS_FEEDS.length + 1);
+        }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("refuses a feed added without the operator's acceptance, before fetching it", () =>
+    Effect.gen(function* () {
+      const web = yield* localWeb(ROBOTS);
+      yield* withSources(
+        makeTempDir(),
+        Effect.gen(function* () {
+          const add = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.addFeed];
+          const missing = yield* Effect.flip(add({ feedUrl: `${web.base}/feed.xml` }));
+          assert.strictEqual(reasonOf(missing), "not-acknowledged");
+          const declined = yield* Effect.flip(
+            add({ feedUrl: `${web.base}/feed.xml`, acknowledged: false }),
+          );
+          assert.strictEqual(reasonOf(declined), "not-acknowledged");
+          assert.deepStrictEqual(web.requests, []);
         }),
       );
     }).pipe(Effect.scoped),

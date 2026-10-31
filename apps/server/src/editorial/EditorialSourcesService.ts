@@ -2,8 +2,13 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
-import { CoverageStatus, SourceId, UtcDay } from "@earlyscript/editorial-contracts/source";
-import { SOURCE_CATALOG, SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
+import { CoverageStatus, UtcDay } from "@earlyscript/editorial-contracts/source";
+import {
+  isCatalogSourceId,
+  SOURCE_CATALOG,
+  SOURCE_IDS,
+  type CatalogSourceId,
+} from "@earlyscript/editorial-contracts/sourceCatalog";
 import type { RssFeed } from "@earlyscript/editorial-contracts/source";
 import { RSS_FEEDS } from "@earlyscript/trend-engine/sources";
 import {
@@ -36,8 +41,8 @@ const MANIFEST_FILE = "corpus-manifest.json";
 const COVERAGE_FILE = "coverage.jsonl";
 
 export interface EnabledSources {
-  readonly collect: ReadonlyArray<SourceId>;
-  readonly rank: ReadonlyArray<SourceId>;
+  readonly collect: ReadonlyArray<CatalogSourceId>;
+  readonly rank: ReadonlyArray<CatalogSourceId>;
   /** The `rss` source's feeds: the default ones not excluded, then the operator's. */
   readonly rssFeeds: ReadonlyArray<RssFeed>;
 }
@@ -69,7 +74,7 @@ export interface EditorialSourcesServiceShape {
   ) => Effect.Effect<EditorialSourcesView, EditorialSourcesError>;
   /** Names the backtest that lets `source` into the engine; null withdraws it and its `rank`. */
   readonly recordBacktest: (
-    source: SourceId,
+    source: CatalogSourceId,
     runId: string | null,
   ) => Effect.Effect<void, EditorialSourcesError>;
 }
@@ -95,13 +100,13 @@ interface Stored {
   readonly updatedAt: string | null;
 }
 
-const defaultSetting = (source: SourceId): Stored => {
+const defaultSetting = (source: CatalogSourceId): Stored => {
   const baseline = SOURCE_CATALOG[source].engineBaseline;
   return { collect: baseline, rank: baseline, backtestRunId: null, updatedAt: null };
 };
 
 const rankBlockOf = (
-  source: SourceId,
+  source: CatalogSourceId,
   backtestRunId: string | null,
 ): EditorialSourceEntry["rankBlocked"] => {
   const entry = SOURCE_CATALOG[source];
@@ -109,12 +114,10 @@ const rankBlockOf = (
   return entry.engineBaseline || backtestRunId !== null ? null : "no-backtest";
 };
 
-const collectBlockOf = (source: SourceId): EditorialSourceEntry["collectBlocked"] => {
+const collectBlockOf = (source: CatalogSourceId): EditorialSourceEntry["collectBlocked"] => {
   const status = SOURCE_CATALOG[source].status;
   return status === "ready" ? null : status;
 };
-
-const isSourceId = Schema.is(SourceId);
 
 const CorpusManifestHead = Schema.Struct({
   schema_version: Schema.Literal("corpus/1"),
@@ -140,13 +143,17 @@ interface UserFeedRow {
   readonly site_url: string | null;
   readonly note: string | null;
   readonly added_at: string;
+  readonly acknowledged_at: string | null;
 }
 
 /** Stable across machines, so item ids (`itm_rss_<id>_<hash>`) stay the same. */
 const userFeedId = (feedUrl: string) =>
   `user-${NodeCrypto.createHash("sha256").update(feedUrl).digest("hex").slice(0, 12)}`;
 
-const USER_FEED_LICENSE = "Not verified; publisher copyright assumed (added by the operator)";
+const userFeedLicense = (acknowledgedAt: string | null) =>
+  acknowledgedAt === null
+    ? "Publisher copyright; titles and excerpts as syndicated"
+    : `Publisher copyright; titles and excerpts as syndicated; the operator accepted private analysis without republication on ${acknowledgedAt.slice(0, 10)}`;
 
 interface CorpusRead {
   readonly corpus: EditorialSourcesCorpus;
@@ -213,10 +220,10 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     SELECT source, collect, rank, backtest_run_id, updated_at FROM editorial_source_settings
   `.pipe(
     Effect.map((rows) => {
-      const stored = new Map<SourceId, Stored>();
+      const stored = new Map<CatalogSourceId, Stored>();
       for (const row of rows) {
         // A row from a build with more sources stays in the table untouched.
-        if (!isSourceId(row.source)) continue;
+        if (!isCatalogSourceId(row.source)) continue;
         stored.set(row.source, {
           collect: row.collect === 1,
           rank: row.rank === 1,
@@ -229,10 +236,10 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     Effect.mapError(storageError),
   );
 
-  const settingOf = (stored: ReadonlyMap<SourceId, Stored>, source: SourceId) =>
+  const settingOf = (stored: ReadonlyMap<CatalogSourceId, Stored>, source: CatalogSourceId) =>
     stored.get(source) ?? defaultSetting(source);
 
-  const effective = (source: SourceId, setting: Stored) => {
+  const effective = (source: CatalogSourceId, setting: Stored) => {
     const rankBlocked = rankBlockOf(source, setting.backtestRunId);
     const blocked = collectBlockOf(source);
     return {
@@ -244,7 +251,8 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   };
 
   const readUserFeeds = sql<UserFeedRow>`
-    SELECT feed_url, feed_id, name, site_url, note, added_at FROM editorial_rss_feeds
+    SELECT feed_url, feed_id, name, site_url, note, added_at, acknowledged_at
+    FROM editorial_rss_feeds
     ORDER BY added_at, feed_url
   `.pipe(Effect.mapError(storageError));
 
@@ -264,6 +272,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
       siteUrl: feed.siteUrl,
       note: feed.license,
       origin: "default",
+      acknowledgedAt: null,
       excluded: excluded.has(feed.id),
       addedAt: null,
     }));
@@ -274,6 +283,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
       siteUrl: row.site_url,
       note: row.note,
       origin: "user",
+      acknowledgedAt: row.acknowledged_at,
       excluded: false,
       addedAt: row.added_at,
     }));
@@ -292,7 +302,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
             name: feed.name,
             feedUrl: feed.feedUrl,
             siteUrl: feed.siteUrl ?? `${new URL(feed.feedUrl).origin}/`,
-            license: USER_FEED_LICENSE,
+            license: userFeedLicense(feed.acknowledgedAt),
             why: feed.note ?? "Added by the operator in Settings.",
           };
         }),
@@ -325,7 +335,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   }).pipe(Effect.withSpan("EditorialSourcesService.list"));
 
   const write = Effect.fn("EditorialSourcesService.write")(function* (
-    source: SourceId,
+    source: CatalogSourceId,
     next: Stored,
   ) {
     const updatedAt = yield* nowIso;
@@ -347,7 +357,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     input: EditorialSourcesUpdateInput,
   ) {
     const source = input.source;
-    if (!isSourceId(source)) {
+    if (!isCatalogSourceId(source)) {
       return yield* new EditorialSourcesError({
         reason: "unknown-source",
         message: `No source "${source}" in the catalog.`,
@@ -400,7 +410,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   );
 
   const recordBacktest = Effect.fn("EditorialSourcesService.recordBacktest")(function* (
-    source: SourceId,
+    source: CatalogSourceId,
     runId: string | null,
   ) {
     const current = settingOf(yield* readStored, source);
@@ -416,6 +426,12 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   const addFeed = Effect.fn("EditorialSourcesService.addFeed")(function* (
     input: EditorialAddFeedInput,
   ) {
+    if (input.acknowledged !== true) {
+      return yield* new EditorialSourcesError({
+        reason: "not-acknowledged",
+        message: "Adding a feed needs the operator's acceptance of private, non-republished use.",
+      });
+    }
     const normalized = normalizeHttpUrl(input.feedUrl);
     const givenSite = input.siteUrl?.trim() || null;
     const siteUrl = givenSite === null ? null : normalizeHttpUrl(givenSite);
@@ -438,11 +454,12 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     const note = input.note?.trim() || null;
     const addedAt = yield* nowIso;
     yield* sql`
-      INSERT INTO editorial_rss_feeds (feed_url, feed_id, name, site_url, note, added_at)
+      INSERT INTO editorial_rss_feeds (
+        feed_url, feed_id, name, site_url, note, added_at, acknowledged_at
+      )
       VALUES (
         ${check.feedUrl}, ${userFeedId(check.feedUrl)}, ${name}, ${siteUrl ?? check.siteUrl},
-        ${note},
-        ${addedAt}
+        ${note}, ${addedAt}, ${addedAt}
       )
     `.pipe(Effect.mapError(storageError));
     return yield* list;

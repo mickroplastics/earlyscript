@@ -3,6 +3,7 @@ import { ChevronRightIcon } from "lucide-react";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
@@ -19,6 +20,7 @@ export interface RssFeedControls {
     readonly name?: string;
     readonly siteUrl?: string;
     readonly note?: string;
+    readonly acknowledged: true;
   }) => Promise<FeedOutcome<void>>;
   readonly onRemove: (feedUrl: string) => void;
   readonly onTest: (feedUrl: string) => Promise<FeedOutcome<EditorialFeedCheck>>;
@@ -65,6 +67,9 @@ function FeedLine({ feed }: { readonly feed: EditorialRssFeed }) {
         )}
       </span>
       <span className="block truncate">{feed.feedUrl}</span>
+      {feed.origin === "default" && feed.note ? (
+        <span className="block truncate">{feed.note}</span>
+      ) : null}
     </span>
   );
 }
@@ -160,6 +165,7 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
   const [name, setName] = useState("");
   const [siteUrl, setSiteUrl] = useState("");
   const [note, setNote] = useState("");
+  const [acknowledged, setAcknowledged] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (event: FormEvent) => {
@@ -177,6 +183,7 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
       ...(name.trim() ? { name: name.trim() } : {}),
       ...(siteUrl.trim() ? { siteUrl: siteUrl.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
+      acknowledged: true,
     });
     setAdding(false);
     if (outcome.ok) {
@@ -184,6 +191,7 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
       setName("");
       setSiteUrl("");
       setNote("");
+      setAcknowledged(false);
     } else {
       setError(outcome.message);
     }
@@ -229,10 +237,17 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
           placeholder="Nota (opcional)"
           aria-label="Nota del feed"
         />
-        <Button size="sm" type="submit" disabled={adding || !feedUrl.trim()}>
+        <Button size="sm" type="submit" disabled={adding || !feedUrl.trim() || !acknowledged}>
           {adding ? "Comprobando…" : "Agregar feed"}
         </Button>
       </div>
+      <label className="flex cursor-pointer items-center gap-2">
+        <Checkbox
+          checked={acknowledged}
+          onCheckedChange={(checked) => setAcknowledged(checked === true)}
+        />
+        <span>Uso para análisis privado, sin republicar; respeto los términos de este sitio</span>
+      </label>
       {error ? (
         <p role="alert" className="text-destructive-foreground">
           {error}

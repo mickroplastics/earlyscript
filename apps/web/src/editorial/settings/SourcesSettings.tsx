@@ -1,7 +1,8 @@
-import { SourceId } from "@earlyscript/editorial-contracts/source";
 import {
   DELETION_NONE_DOCUMENTED,
+  isCatalogSourceId,
   SOURCE_CATALOG,
+  type CatalogSourceId,
   type SourceAccess,
   type SourceCost,
   type SourceCoveragePolicy,
@@ -25,7 +26,6 @@ import type {
 } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
-import * as Schema from "effect/Schema";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Badge } from "../../components/ui/badge";
@@ -82,8 +82,6 @@ const COVERAGE_LABEL: Readonly<Record<SourceCoveragePolicy, string>> = {
   sample: "Muestra declarada: un día parcial es su colección completa",
 };
 const LANGUAGE_LABEL: Readonly<Record<string, string>> = { en: "Inglés" };
-
-const isSourceId = Schema.is(SourceId);
 
 const dayFormat = new Intl.DateTimeFormat("es", {
   timeZone: "UTC",
@@ -299,7 +297,7 @@ export function SourcesSettingsView({
 }: {
   readonly view: EditorialSourcesView;
   readonly pending: ReadonlySet<string>;
-  readonly onChange: (source: SourceId, patch: SourcePatch) => void;
+  readonly onChange: (source: CatalogSourceId, patch: SourcePatch) => void;
   readonly feeds: RssFeedControls;
 }) {
   return (
@@ -310,7 +308,7 @@ export function SourcesSettingsView({
         status="Las fuentes nuevas se capturan y muestran cobertura; solo pesan en el motor tras un backtest."
       />
       {view.sources.map((entry) => {
-        if (!isSourceId(entry.source)) return null;
+        if (!isCatalogSourceId(entry.source)) return null;
         const source = entry.source;
         return (
           <SourceRow
@@ -402,7 +400,7 @@ function SourcesSettingsForEnvironment({
     onTest: async (feedUrl) => outcome(await validateFeed({ environmentId, input: { feedUrl } })),
   };
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
-  const onChange = async (source: SourceId, patch: SourcePatch) => {
+  const onChange = async (source: CatalogSourceId, patch: SourcePatch) => {
     setPending((current) => new Set(current).add(source));
     const result = await update({ environmentId, input: { source, ...patch } });
     setPending((current) => {

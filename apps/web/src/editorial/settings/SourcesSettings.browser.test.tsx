@@ -65,6 +65,7 @@ const VIEW: EditorialSourcesView = {
       name: "Example Engineering",
       feedUrl: "https://blog.example.com/feed.xml",
       origin: "user",
+      acknowledgedAt: "2026-10-31T10:00:00.000Z",
       note: "Blog del equipo",
       addedAt: "2026-10-31T10:00:00.000Z",
     }),
@@ -78,6 +79,7 @@ function feed(overrides: Partial<EditorialRssFeed> & Pick<EditorialRssFeed, "id"
     siteUrl: null,
     note: null,
     origin: "default",
+    acknowledgedAt: null,
     excluded: false,
     addedAt: null,
     ...overrides,
@@ -164,11 +166,17 @@ describe("SourcesSettingsView", () => {
     await userEvent.fill(page.getByLabelText("URL del feed"), "https://notes.example.org/atom");
     await userEvent.fill(page.getByLabelText("URL del sitio"), "https://notes.example.org/");
     await userEvent.fill(page.getByLabelText("Nota del feed"), "Notas");
+    // The acceptance is required: without it the form cannot be sent.
+    await expect.element(page.getByRole("button", { name: "Agregar feed" })).toBeDisabled();
+    await userEvent.click(
+      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
     expect(feeds.onAdd).toHaveBeenCalledWith({
       feedUrl: "https://notes.example.org/atom",
       siteUrl: "https://notes.example.org/",
       note: "Notas",
+      acknowledged: true,
     });
     await expect.element(page.getByLabelText("URL del feed")).toHaveValue("");
   });
@@ -184,6 +192,9 @@ describe("SourcesSettingsView", () => {
       <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={feeds} />,
     );
     await userEvent.fill(page.getByLabelText("URL del feed"), "https://lobste.rs/rss");
+    await userEvent.click(
+      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
     await expect
       .element(page.getByText("El robots.txt del sitio prohíbe esa ruta a Earlyscript."))
@@ -236,6 +247,9 @@ describe("SourcesSettingsView", () => {
     );
     const url = page.getByLabelText("URL del feed");
     await userEvent.fill(url, "https://lobste.rs/rss");
+    await userEvent.click(
+      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
+    );
     await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
     await expect.element(page.getByRole("alert")).toBeInTheDocument();
     await userEvent.fill(url, "not-a-url");

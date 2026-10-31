@@ -56,7 +56,14 @@ export type SourceGovernance = typeof SourceGovernance.Type;
 const MANUAL_CORPUS_DELETION =
   "Borrado manual del directorio del corpus o de sus archivos por día; no hay borrado por ítem ni registro de purgas.";
 
-export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
+/**
+ * Retired by its conditions of use: dev.to on 31 October 2026 (its use license allows only
+ * personal, non-commercial viewing). The id stays in SourceId until its adapter leaves.
+ */
+export type RetiredSourceId = Extract<SourceId, "devto">;
+export type CatalogSourceId = Exclude<SourceId, RetiredSourceId>;
+
+export const SOURCE_CATALOG: Readonly<Record<CatalogSourceId, SourceGovernance>> = {
   hn: {
     id: "hn",
     name: "Hacker News",
@@ -161,7 +168,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     coverage: "sample",
     engineBaseline: false,
     notes:
-      "Open Source Terms (10 de marzo de 2022) leídos: se permite replicar datos del registro por las API públicas; se prohíbe rastrear el sitio web, usar el registro como base de datos general y superar cinco millones de peticiones al mes. La política de rastreadores pide 1 petición por segundo o menos. Sin mención de IA. Falta la regla de paquete «conocido» (M28).",
+      "Open Source Terms (10 de marzo de 2022): se permite replicar datos del registro por las API públicas; se prohíbe rastrear el sitio web y usar el registro como base de datos general. La carga debe ser razonable, y cinco millones de peticiones en un mes ya incumplen ese umbral; una cifra menor no queda garantizada. La regla de 1 petición por segundo es para rastreadores experimentales del sitio web (https://docs.npmjs.com/policies/crawlers); Earlyscript la adopta como límite propio para la API del registro (decisión interna). Falta la regla de paquete «conocido» (M28).",
   },
   stackexchange: {
     id: "stackexchange",
@@ -210,7 +217,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     name: "Hugging Face Hub",
     origin: "https://huggingface.co/api",
     license: {
-      text: "Cada modelo, conjunto o artículo con su propia licencia; los repositorios públicos conceden a cada usuario una licencia de uso perpetua (Terms of Service).",
+      text: "Cada modelo, conjunto o artículo con su propia licencia; un repositorio público concede a cada usuario una licencia de uso «through our Services and functionalities» (ToS, «Your Content»).",
       url: "https://huggingface.co/terms-of-service",
     },
     termsReviewedAt: "2026-10-31",
@@ -224,28 +231,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     coverage: "sample",
     engineBaseline: false,
     notes:
-      "Terms of Service (15 de septiembre de 2022) leídos: no regulan el acceso automatizado ni mencionan IA o minería; el contenido con licencia abierta sigue bajo esa licencia; al cerrar una cuenta, Hugging Face borra su contenido en 90 días. Límite anónimo de 500 peticiones a la API cada 5 minutos por IP (página de rate limits, septiembre de 2025).",
-  },
-  devto: {
-    id: "devto",
-    name: "DEV (dev.to)",
-    origin: "https://dev.to/api",
-    license: {
-      text: "Licencia de uso de DEV: una copia temporal solo para visualización personal y no comercial; prohíbe copiar, usar comercialmente o replicar los materiales.",
-      url: "https://dev.to/terms",
-    },
-    termsReviewedAt: "2026-10-31",
-    termsUrl: "https://dev.to/terms",
-    access: "public",
-    retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
-    language: "en",
-    cost: "none",
-    status: "blocked",
-    coverage: "sample",
-    engineBaseline: false,
-    notes:
-      "Términos leídos (sin fecha publicada): la sección 2 solo permite ver una copia de forma personal y no comercial y prohíbe copiar o replicar; guardar artículos en el corpus choca con eso. La documentación de la API no trae términos propios. Bloqueada hasta pedir permiso a DEV o decidir retirarla. Sin mención de IA.",
+      "ToS (15 de septiembre de 2022): la licencia de un repositorio público a otros usuarios es perpetua pero acotada al uso mediante los servicios y funcionalidades de Hugging Face («Your Content»); el contenido con licencia abierta sigue bajo ella. Al cancelar una cuenta, Hugging Face usa «commercially reasonable efforts» para borrar en 90 días, salvo contribuciones a repositorios ajenos, copias suyas o de otros usuarios y lo retenido por ley o respaldo («Termination»). En esa lectura no encontré una cláusula sobre minería de textos ni sobre acceso automatizado; los ToS sí mencionan aprendizaje automático e inteligencia artificial (definiciones, servicios y exención de garantías). Límite anónimo: 500 peticiones a la API cada 5 minutos por IP (https://huggingface.co/docs/hub/rate-limits, septiembre de 2025).",
   },
   lobsters: {
     id: "lobsters",
@@ -273,22 +259,27 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     name: "RSS y Atom curados",
     origin: "Lista de feeds elegida por el operador",
     license: {
-      text: "Cada feed con su propia licencia; sin verificar sitio por sitio, se asume el copyright del editor.",
+      text: "Copyright de cada editor; sindicación publicada para redistribuir títulos y extractos.",
       url: null,
     },
-    termsReviewedAt: null,
+    termsReviewedAt: "2026-10-31",
     termsUrl: null,
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion:
+      "Borrado a petición con engine purge --source rss --url <enlace> | --feed <url del feed> | --author <nombre>.",
     language: "en",
     cost: "none",
-    status: "pending-review",
+    status: "ready",
     coverage: "census",
     engineBaseline: false,
     notes:
-      "Lista curada de 14 feeds. Se guarda solo título, enlace, autor y el extracto que publica el feed; el robots.txt de cada feed permite la ruta. Sin ranking cruzado hasta tener volumen.",
+      "Política de extracto (decisión de Miguel del 31 de octubre de 2026): se guarda solo título, enlace, autor y extracto de hasta 500 caracteres (body_kind, truncated); borrado a petición con engine purge --source rss --url|--feed|--author; retención del corpus congelado con revisión el 27 de noviembre de 2026; cada feed lleva su nota de licencia y el robots.txt de su sitio se comprueba en cada petición. Los feeds del operador exigen aceptar «uso para análisis privado, sin republicar» al agregarlos.",
   },
 };
 
-export const SOURCE_IDS: ReadonlyArray<SourceId> = SourceId.literals;
+/** Catalog order; a retired id is not listed. */
+export const SOURCE_IDS = Object.keys(SOURCE_CATALOG) as ReadonlyArray<CatalogSourceId>;
+
+export const isCatalogSourceId = (id: string): id is CatalogSourceId =>
+  Object.hasOwn(SOURCE_CATALOG, id);
