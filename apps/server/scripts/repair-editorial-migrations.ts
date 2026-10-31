@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// Development repair for an editorial.sqlite with a migration gap, e.g. [1, 2, 4]:
-// backs it up with VACUUM INTO, removes the markers above the gap and migrates again.
+// Development repair for an editorial.sqlite the server refuses: a gap ([1, 2, 4]) or a marker
+// under another migration's number after a merge renumbered it. Backs it up, moves and removes
+// markers, and migrates again, applying the skipped migration for real. Never deletes rows.
 //   node apps/server/scripts/repair-editorial-migrations.ts --db <path>/editorial.sqlite
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -18,9 +19,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Command, Flag } from "effect/cli";
 
 import {
-  findEditorialMigrationGap,
-  repairEditorialMigrationGap,
-  runEditorialMigrations,
+  editorialMigrations,
+  type EditorialMigrations,
 } from "../src/editorial/persistence/Migrations.ts";
 
 export class RepairEditorialDbMissingError extends Schema.TaggedError<RepairEditorialDbMissingError>()(
@@ -36,12 +36,19 @@ export interface RepairEditorialMigrationsResult {
   readonly databasePath: string;
   /** Null when there was nothing to repair and the file was left untouched. */
   readonly backupPath: string | null;
+  /** Markers moved to the id the manifest gives their name. */
+  readonly movedMarkers: ReadonlyArray<{
+    readonly name: string;
+    readonly from: number;
+    readonly to: number;
+  }>;
   readonly removedMarkers: ReadonlyArray<number>;
   readonly executedMigrations: ReadonlyArray<string>;
 }
 
 export const runRepairEditorialMigrations = Effect.fn("runRepairEditorialMigrations")(function* (
   databasePath: string,
+  migrations: EditorialMigrations = editorialMigrations,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -52,10 +59,11 @@ export const runRepairEditorialMigrations = Effect.fn("runRepairEditorialMigrati
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA foreign_keys = ON`;
-    if (Option.isNone(yield* findEditorialMigrationGap())) {
+    if (Option.isNone(yield* migrations.findProblem())) {
       return {
         databasePath: resolved,
         backupPath: null,
+        movedMarkers: [],
         removedMarkers: [],
         executedMigrations: [],
       } satisfies RepairEditorialMigrationsResult;
@@ -63,11 +71,19 @@ export const runRepairEditorialMigrations = Effect.fn("runRepairEditorialMigrati
     // The backup holds the file as it was before any marker is removed.
     const backupPath = `${resolved}.before-repair-${yield* Clock.currentTimeMillis}.sqlite`;
     yield* sql`VACUUM INTO ${backupPath}`;
-    const removedMarkers = yield* sql.withTransaction(repairEditorialMigrationGap());
-    const executed = yield* runEditorialMigrations();
+    const { movedMarkers, removedMarkers } = yield* sql.withTransaction(
+      Effect.gen(function* () {
+        const movedMarkers = yield* migrations.repairRenumbered();
+        const removedMarkers = yield* migrations.repairGap();
+        return { movedMarkers, removedMarkers };
+      }),
+    );
+    // Applies the skipped migration and replays the removed ones; startup checks pass after.
+    const executed = yield* migrations.run();
     return {
       databasePath: resolved,
       backupPath,
+      movedMarkers,
       removedMarkers,
       executedMigrations: executed.map(([id, name]) => `${id}_${name}`),
     } satisfies RepairEditorialMigrationsResult;
@@ -87,12 +103,15 @@ const repairEditorialMigrationsCommand = Command.make(
         return;
       }
       yield* Console.log(`Backup: ${result.backupPath}`);
+      for (const move of result.movedMarkers) {
+        yield* Console.log(`Marker moved: ${move.name} ${move.from} -> ${move.to}`);
+      }
       yield* Console.log(`Markers removed: ${result.removedMarkers.join(", ")}`);
       yield* Console.log(`Migrations applied: ${result.executedMigrations.join(", ")}`);
     }),
 ).pipe(
   Command.withDescription(
-    "Back up an editorial.sqlite with a migration gap, remove the markers above it and migrate again.",
+    "Back up an editorial.sqlite with a migration gap or a renumbered migration, move and remove markers, and migrate again.",
   ),
 );
 

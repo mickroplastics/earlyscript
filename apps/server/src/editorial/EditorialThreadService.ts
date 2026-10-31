@@ -71,7 +71,10 @@ export interface CreateVideoInput {
   /** The project's own checkout when omitted, as a new composer thread. */
   readonly workspaceStrategy?: ThreadLaunch.ThreadLaunchWorkspaceStrategy | undefined;
   readonly creationSource?: OrchestrationV2CreationSource | undefined;
-  /** A trend chosen in Tendencias; links the trend to the thread as "in production". */
+  /**
+   * A trend chosen in Tendencias. An assisted thread links the trend as "in production"; a
+   * manual one only records it, for the paired comparison on the same topic.
+   */
   readonly trendKey?: string | undefined;
   readonly runId?: string | undefined;
   /** The immutable dossier attached to the thread, with its hash. */
@@ -392,7 +395,10 @@ const make = Effect.gen(function* () {
         );
       thread = yield* markLaunchState(thread.threadId, "launched");
     }
-    if (thread.trendKey !== null) {
+    // The trend's production link names its assisted thread. A manual thread on the same
+    // topic keeps the trend key as the paired comparison's condition and links nothing, so the
+    // trend's "Crear hilo de video" still finds or creates the assisted one.
+    if (thread.trendKey !== null && thread.mode === "assisted") {
       yield* commands.linkProduction({ trendKey: thread.trendKey, threadId: thread.threadId });
     }
     const summary = yield* clock.start(

@@ -593,6 +593,19 @@ function TrendDecision({
                 Crear hilo de video
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={creating}
+              title="Mismo tema, sin asistente ni expediente: para comparar por pares"
+              onClick={async () => {
+                setCreating(true);
+                await actions.createVideo({ ...trend, trendKey }, "manual");
+                setCreating(false);
+              }}
+            >
+              Crear hilo manual
+            </Button>
             {state?.snoozed ? (
               <Button
                 size="sm"

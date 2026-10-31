@@ -29,6 +29,7 @@ const EXPECTED_TABLES = [
   "editorial_events",
   "editorial_rss_default_exclusions",
   "editorial_rss_feeds",
+  "editorial_browser_visits",
   "editorial_script_versions",
   "editorial_source_settings",
   "editorial_trend_inbox",

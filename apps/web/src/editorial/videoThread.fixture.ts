@@ -16,6 +16,7 @@ export const WRITING: EditorialVideoState = {
     runId: "run_20261019_20261027T003754_2263f7",
     dossierId: "dos_bbb80d57481e",
     trendTitle: "Computación cuántica: Google, IBM y hardware abierto",
+    deleted: false,
   },
   clock: {
     state: { _tag: "running", stage: "write", since: "2026-10-31T13:05:00.000Z" },
@@ -43,6 +44,8 @@ export const WRITING: EditorialVideoState = {
   },
   decision: null,
   results: [],
+  captures: [],
+  visits: [],
 };
 
 export const DECIDED: EditorialVideoState = {
@@ -63,5 +66,104 @@ export const DECIDED: EditorialVideoState = {
     },
     clockDefinitive: true,
     decidedAt: "2026-10-31T13:28:14.000Z",
+  },
+};
+
+/**
+ * A manual thread fourteen minutes into Explorar, with two captures and three pages loaded in
+ * the integrated browser; the script does not exist yet.
+ */
+export const MANUAL_EXPLORING: EditorialVideoState = {
+  thread: {
+    threadId: "thread-manual",
+    mode: "manual",
+    launchState: "launched",
+    createdAt: "2026-10-31T09:00:00.000Z",
+    trendKey: null,
+    runId: null,
+    dossierId: null,
+    trendTitle: null,
+    deleted: false,
+  },
+  clock: {
+    state: { _tag: "running", stage: "explore", since: "2026-10-31T09:00:00.000Z" },
+    stages: [{ stage: "explore", activeMs: 14 * MINUTE, segments: 1 }],
+    activeMs: 14 * MINUTE,
+    pausedMs: 0,
+    unresolved: [],
+    definitive: true,
+    asOf: "2026-10-31T09:14:00.000Z",
+  },
+  script: { path: "videos/manual-31-oct-threadma.md", exists: false, head: null, versionCount: 0 },
+  decision: null,
+  results: [],
+  captures: [
+    {
+      captureId: "capture-1",
+      url: "https://news.ycombinator.com/item?id=50061",
+      title: "Google breaks open a bottleneck in quantum computing",
+      note: "mucho debate sobre si es real",
+      capturedAt: "2026-10-31T09:06:00.000Z",
+    },
+    {
+      captureId: "capture-2",
+      url: "https://github.com/trending",
+      title: null,
+      note: null,
+      capturedAt: "2026-10-31T09:11:00.000Z",
+    },
+  ],
+  visits: [
+    {
+      visitId: "visit-3",
+      tabId: "tab-1",
+      url: "https://github.com/trending",
+      title: "Trending repositories on GitHub today",
+      origin: "server",
+      visitedAt: "2026-10-31T09:10:00.000Z",
+    },
+    {
+      visitId: "visit-2",
+      tabId: "tab-1",
+      url: "https://news.ycombinator.com/item?id=50061",
+      title: "Google breaks open a bottleneck in quantum computing",
+      origin: "server",
+      visitedAt: "2026-10-31T09:04:00.000Z",
+    },
+    {
+      visitId: "visit-1",
+      tabId: "tab-1",
+      url: "https://news.ycombinator.com/",
+      title: "Hacker News",
+      origin: "server",
+      visitedAt: "2026-10-31T09:01:00.000Z",
+    },
+  ],
+};
+
+/** The same thread nine minutes into Escribir, its script saved once. */
+export const MANUAL_WRITING: EditorialVideoState = {
+  ...MANUAL_EXPLORING,
+  clock: {
+    ...MANUAL_EXPLORING.clock,
+    state: { _tag: "running", stage: "write", since: "2026-10-31T09:22:00.000Z" },
+    stages: [
+      { stage: "explore", activeMs: 22 * MINUTE, segments: 1 },
+      { stage: "write", activeMs: 9 * MINUTE, segments: 1 },
+    ],
+    activeMs: 31 * MINUTE,
+    asOf: "2026-10-31T09:31:00.000Z",
+  },
+  script: {
+    path: "videos/manual-31-oct-threadma.md",
+    exists: true,
+    head: {
+      versionId: "version-m1",
+      contentHash: "c0ffee00aa11bb22cc33",
+      savedAt: "2026-10-31T09:30:00.000Z",
+      claims: 4,
+      cited: 3,
+    },
+    versionCount: 1,
   },
 };

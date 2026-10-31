@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { FileTextIcon, SaveIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { ThreadDetailsSection } from "../components/chat/ThreadDetailsSection";
 import { Badge } from "../components/ui/badge";
@@ -17,30 +17,21 @@ import { Input } from "../components/ui/input";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { VideoDecisionPanel, type VideoDecisionControls } from "./VideoDecisionPanel";
 import { VideoResultForm, type VideoResultControls } from "./VideoResultForm";
+import { openScript, useThreadWorkspaceRoot } from "./videoCommands";
+import { useVideoDecision } from "./useVideoDecision";
 import {
-  flushScriptWrites,
-  openScript,
-  useThreadWorkspaceRoot,
-  useVideoCommands,
-} from "./videoCommands";
-import {
-  EMPTY_DECISION_DRAFT,
   MODE_LABEL,
   STAGE_LABEL,
   claimsLabel,
-  emptyResultDraft,
   formatClock,
   formatSavedAt,
   interpolateClock,
   isoToLocalInput,
   resolvedEndIso,
   shortHash,
-  videoFailureReason,
-  videoFailureText,
   type DecisionDraft,
   type ResultDraft,
 } from "./videoThread.logic";
-import { toastManager } from "../components/ui/toast";
 import { useVideoThread } from "./videoState";
 
 interface VideoThreadSectionsControls {
@@ -80,7 +71,8 @@ function TrendLink({
   );
 }
 
-function UnresolvedInterval({
+/** Asks when a segment recovered after a restart ended; the manual workspace shows it too. */
+export function UnresolvedInterval({
   interval,
   busy,
   onResolve,
@@ -269,35 +261,43 @@ function VideoThreadSectionsView({
  */
 export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const live = useVideoThread(threadRef);
-  const nowMs = useNowSecond();
-  const commands = useVideoCommands(threadRef);
-  const workspaceRoot = useThreadWorkspaceRoot(threadRef);
-  const [busy, setBusy] = useState(false);
-  const [decisionDraft, setDecisionDraft] = useState<DecisionDraft>(EMPTY_DECISION_DRAFT);
-  const [refusedHash, setRefusedHash] = useState<string | null | undefined>(undefined);
-  const [resultDraft, setResultDraft] = useState<ResultDraft>(() => emptyResultDraft());
-  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
-  /** The clock state the block already asked to leave, so focus and pointer ask once. */
-  const engagedSince = useRef<string | null>(null);
   const video = live?.view.video ?? null;
   if (live === null || video === null) return null;
+  return (
+    <LiveVideoThreadSections threadRef={threadRef} video={video} receivedAtMs={live.receivedAtMs} />
+  );
+}
 
+function LiveVideoThreadSections({
+  threadRef,
+  video,
+  receivedAtMs,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly video: EditorialVideoState;
+  readonly receivedAtMs: number;
+}) {
+  const nowMs = useNowSecond();
+  const workspaceRoot = useThreadWorkspaceRoot(threadRef);
+  const [busy, setBusy] = useState(false);
   const run = <A,>(action: () => Promise<A>): Promise<A> => {
     setBusy(true);
     return action().finally(() => setBusy(false));
   };
+  const outcome = useVideoDecision({ threadRef, video, workspaceRoot, busy, run });
+  const { commands } = outcome;
   const scriptPath = video.script.path;
 
   return (
     <VideoThreadSectionsView
       environmentId={threadRef.environmentId}
       video={video}
-      receivedAtMs={live.receivedAtMs}
-      nowMs={Math.max(nowMs, live.receivedAtMs)}
-      decisionDraft={decisionDraft}
-      refusedHash={refusedHash}
-      decisionNotice={decisionNotice}
-      resultDraft={resultDraft}
+      receivedAtMs={receivedAtMs}
+      nowMs={Math.max(nowMs, receivedAtMs)}
+      decisionDraft={outcome.decisionDraft}
+      refusedHash={outcome.refusedHash}
+      decisionNotice={outcome.decisionNotice}
+      resultDraft={outcome.resultDraft}
       controls={{
         busy,
         onOpenScript:
@@ -311,96 +311,8 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
           void run(() =>
             commands.clock({ _tag: "resolve", intervalId, endedAt }, "No se resolvió el tramo"),
           ),
-        decision: {
-          busy,
-          onDraftChange: setDecisionDraft,
-          // Deciding starts when the operator turns to the block, not when the form is sent;
-          // the server still opens Decidir on submission if this never ran.
-          onEngage: () => {
-            const state = video.clock.state;
-            if (state._tag !== "idle" && state.stage === "decide") return;
-            // A stopped clock (after a recovery is resolved) has no `since`; the view's time
-            // stands in, so focus and pointer still ask once per view.
-            const key = state._tag === "idle" ? `idle:${video.clock.asOf}` : state.since;
-            if (engagedSince.current === key) return;
-            engagedSince.current = key;
-            void commands
-              .clock(
-                state._tag === "idle"
-                  ? { _tag: "start", stage: "decide" }
-                  : { _tag: "stage", stage: "decide" },
-                null,
-              )
-              .then((outcome) => {
-                if (!outcome.ok) engagedSince.current = null;
-              });
-          },
-          onGoToResolution: (intervalId) =>
-            document.getElementById(`video-resolve-${intervalId}`)?.focus(),
-          onReviewNewVersion: () => setRefusedHash(undefined),
-          onSubmit: (versionHash) =>
-            void run(async () => {
-              const { action, utility, reason } = decisionDraft;
-              if (action === null || utility === null) return;
-              setDecisionNotice(null);
-              // The editor autosaves after a pause: what is on screen may not be on disk yet.
-              // Write it, wait for the server, and decide only if the version is still the one
-              // the operator read.
-              if (workspaceRoot !== null && scriptPath !== null) {
-                const written = await flushScriptWrites({
-                  environmentId: threadRef.environmentId,
-                  cwd: workspaceRoot,
-                  relativePath: scriptPath,
-                });
-                if (!written) {
-                  setDecisionNotice(
-                    "No se pudo guardar el guion con tus últimos cambios. No se registró la decisión; revisa el editor y vuelve a intentarlo.",
-                  );
-                  return;
-                }
-              }
-              if (video.script.exists || video.script.head !== null) {
-                const snapshot = await commands.saveScript(null);
-                if (!snapshot.ok) {
-                  if (snapshot.error !== null) setDecisionNotice(videoFailureText(snapshot.error));
-                  return;
-                }
-                if ((snapshot.state.script.head?.contentHash ?? null) !== versionHash) {
-                  setRefusedHash(versionHash);
-                  return;
-                }
-              }
-              const outcome = await commands.decide({
-                action,
-                utility,
-                ...(reason.trim() ? { reason: reason.trim() } : {}),
-                scriptVersionHash: versionHash,
-              });
-              if (outcome.ok) {
-                setDecisionDraft(EMPTY_DECISION_DRAFT);
-                setRefusedHash(undefined);
-                return;
-              }
-              if (videoFailureReason(outcome.error) === "version-changed") {
-                setRefusedHash(versionHash);
-              } else if (outcome.error !== null) {
-                toastManager.add({
-                  type: "error",
-                  title: "No se registró la decisión",
-                  description: videoFailureText(outcome.error),
-                });
-              }
-            }),
-        },
-        result: {
-          busy,
-          onDraftChange: setResultDraft,
-          onSubmit: (input) =>
-            void run(async () => {
-              const outcome = await commands.saveResult(input);
-              if (outcome.ok) setResultDraft(emptyResultDraft());
-            }),
-        },
+        decision: outcome.decision,
+        result: outcome.result,
       }}
     />
   );
