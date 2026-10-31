@@ -318,12 +318,22 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
           // the server still opens Decidir on submission if this never ran.
           onEngage: () => {
             const state = video.clock.state;
-            if (state._tag === "idle" || state.stage === "decide") return;
-            if (engagedSince.current === state.since) return;
-            engagedSince.current = state.since;
-            void commands.clock({ _tag: "stage", stage: "decide" }, null).then((outcome) => {
-              if (!outcome.ok) engagedSince.current = null;
-            });
+            if (state._tag !== "idle" && state.stage === "decide") return;
+            // A stopped clock (after a recovery is resolved) has no `since`; the view's time
+            // stands in, so focus and pointer still ask once per view.
+            const key = state._tag === "idle" ? `idle:${video.clock.asOf}` : state.since;
+            if (engagedSince.current === key) return;
+            engagedSince.current = key;
+            void commands
+              .clock(
+                state._tag === "idle"
+                  ? { _tag: "start", stage: "decide" }
+                  : { _tag: "stage", stage: "decide" },
+                null,
+              )
+              .then((outcome) => {
+                if (!outcome.ok) engagedSince.current = null;
+              });
           },
           onGoToResolution: (intervalId) =>
             document.getElementById(`video-resolve-${intervalId}`)?.focus(),

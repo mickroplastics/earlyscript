@@ -322,6 +322,16 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
       .toEqual([expect.objectContaining({ command: { _tag: "stage", stage: "decide" } })]);
   });
 
+  // H3-R: a clock a resolved recovery left stopped starts again in Decidir, once.
+  it("starts Decidir from a stopped clock when the operator turns to the block", async () => {
+    using _setup = setup({ ...WRITING, clock: { ...WRITING.clock, state: { _tag: "idle" } } });
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await userEvent.click(screen.getByRole("button", { name: "Aceptar" }));
+    await expect
+      .poll(() => callsOf(CLOCK))
+      .toEqual([expect.objectContaining({ command: { _tag: "start", stage: "decide" } })]);
+  });
+
   // H4: once decided, the script opens as the decided snapshot, read-only.
   it("opens the decided version instead of the editable script", async () => {
     using _setup = setup(DECIDED);
