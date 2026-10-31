@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import { EditorialCommandService } from "./EditorialCommandService.ts";
+import type { RunInfo } from "./dossierFormat.ts";
 import { EditorialRunDirectory, type InvalidRunDirectory, type LoadedRun } from "./RunDirectory.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import {
@@ -33,11 +34,26 @@ export const IMPORT_POLL_INTERVAL = Duration.seconds(30);
 
 const MAX_INBOX_KEYS_PER_READ = 500;
 
-export type ImportOutcome = "imported" | "updated" | "unchanged" | "skipped" | "invalid";
+/**
+ * `superseded`: a nightly job of the same cutoff, configuration and profile accepted another
+ * run. `duplicate`: a run with the same inputs and logical hash is already indexed. `waiting`:
+ * that job has not chosen its run yet. None of the three is indexed or emits `run.imported`.
+ */
+export type ImportOutcome =
+  | "imported"
+  | "updated"
+  | "unchanged"
+  | "skipped"
+  | "invalid"
+  | "superseded"
+  | "duplicate"
+  | "waiting";
 
 export interface RunImport {
   readonly runId: string;
   readonly outcome: ImportOutcome;
+  /** For `superseded` and `duplicate`, the run kept in its place. */
+  readonly keptRunId?: string;
 }
 
 export interface SnoozeReturn {
@@ -65,6 +81,11 @@ export class EditorialImportService extends Context.Service<
      * first, and evaluates snoozes. Serialized: concurrent calls run one after another.
      */
     readonly sync: Effect.Effect<SyncReport, SyncError>;
+    /**
+     * Imports the run with this id, under the same admission rules as `sync`; the nightly job
+     * uses it for the run it accepted. Null when no run directory has that id.
+     */
+    readonly importRun: (runId: string) => Effect.Effect<RunImport | null, SyncError>;
   }
 >()("t3/editorial/EditorialImportService") {}
 
@@ -166,7 +187,7 @@ const make = Effect.gen(function* () {
           INSERT INTO editorial_runs (
             run_id, cutoff_at, finished_at, engine_status, run_schema_version, engine_version,
             config_version, config_hash, corpus_hash, corpus_used_hash, logical_hash,
-            sources_json, coverage_json, artifact_path, artifact_version, content_hash,
+            profile_hash, sources_json, coverage_json, artifact_path, artifact_version, content_hash,
             dossier_count, import_state, skipped_files_json, interpretation_version,
             imported_at, updated_at
           )
@@ -174,7 +195,7 @@ const make = Effect.gen(function* () {
             ${run.run_id}, ${cutoffAt.value}, ${finishedAt}, ${run.status},
             ${run.schema_version}, ${run.engine_version}, ${run.config_version},
             ${run.config_hash}, ${run.corpus_hash}, ${run.corpus_used_hash}, ${run.logical_hash},
-            ${encodeJson(run.sources)}, ${encodeJson(coverageOf(loaded))},
+            ${run.profile_hash}, ${encodeJson(run.sources)}, ${encodeJson(coverageOf(loaded))},
             ${loaded.entry.directory}, ${loaded.entry.version}, ${loaded.contentHash},
             ${loaded.dossiers.length}, ${importState}, ${encodeJson(loaded.skippedFiles)},
             ${IMPORT_INTERPRETATION_VERSION}, ${at}, ${at}
@@ -186,6 +207,7 @@ const make = Effect.gen(function* () {
             engine_version = excluded.engine_version, config_version = excluded.config_version,
             config_hash = excluded.config_hash, corpus_hash = excluded.corpus_hash,
             corpus_used_hash = excluded.corpus_used_hash, logical_hash = excluded.logical_hash,
+            profile_hash = excluded.profile_hash,
             sources_json = excluded.sources_json, coverage_json = excluded.coverage_json,
             artifact_path = excluded.artifact_path,
             artifact_version = excluded.artifact_version, content_hash = excluded.content_hash,
@@ -381,15 +403,104 @@ const make = Effect.gen(function* () {
       thisBuild: IMPORT_INTERPRETATION_VERSION,
     });
 
-  const sync = Effect.gen(function* () {
+  type Admission =
+    | { readonly _tag: "admit" }
+    | { readonly _tag: "wait" }
+    | {
+        readonly _tag: "exclude";
+        readonly reason: "superseded" | "duplicate";
+        readonly keptRunId: string;
+        readonly jobId: string | null;
+      };
+
+  /**
+   * Whether a run not indexed yet may be: the nightly job of its inputs decides first, then
+   * content. A run whose inputs no job shares (a manual `engine run`) is only deduplicated.
+   */
+  const admission = Effect.fn("EditorialImportService.admission")(function* (run: RunInfo) {
+    const cutoffAt = Option.getOrNull(parseIso(run.cutoff_at));
+    if (cutoffAt === null || run.config_hash === null || run.profile_hash === null) {
+      return { _tag: "admit" } satisfies Admission;
+    }
+    const jobs = yield* sql<{
+      readonly job_id: string;
+      readonly status: string;
+      readonly accepted_run_id: string | null;
+    }>`
+      SELECT job_id, status, accepted_run_id FROM editorial_jobs
+      WHERE cutoff_at = ${cutoffAt} AND config_hash = ${run.config_hash}
+        AND profile_hash = ${run.profile_hash}
+    `;
+    for (const job of jobs) {
+      if (job.accepted_run_id !== null) {
+        if (job.accepted_run_id === run.run_id) continue;
+        return {
+          _tag: "exclude",
+          reason: "superseded",
+          keptRunId: job.accepted_run_id,
+          jobId: job.job_id,
+        } satisfies Admission;
+      }
+      if (job.status === "pending" || job.status === "running") {
+        return { _tag: "wait" } satisfies Admission;
+      }
+    }
+    if (run.logical_hash === null) return { _tag: "admit" } satisfies Admission;
+    const same = yield* sql<{ readonly run_id: string }>`
+      SELECT run_id FROM editorial_runs
+      WHERE cutoff_at = ${cutoffAt} AND config_hash = ${run.config_hash}
+        AND profile_hash = ${run.profile_hash} AND logical_hash = ${run.logical_hash}
+        AND run_id <> ${run.run_id} AND import_state <> 'invalid'
+      ORDER BY imported_at
+      LIMIT 1
+    `;
+    const kept = same[0];
+    return kept === undefined
+      ? ({ _tag: "admit" } satisfies Admission)
+      : ({
+          _tag: "exclude",
+          reason: "duplicate",
+          keptRunId: kept.run_id,
+          jobId: null,
+        } satisfies Admission);
+  });
+
+  const exclude = Effect.fn("EditorialImportService.exclude")(function* (
+    entry: { readonly directory: string; readonly run: RunInfo },
+    decision: Extract<Admission, { _tag: "exclude" }>,
+  ) {
+    const at = yield* nowIso;
+    yield* sql`
+      INSERT INTO editorial_run_exclusions (
+        run_id, artifact_path, reason, kept_run_id, job_id, decided_at
+      )
+      VALUES (
+        ${entry.run.run_id}, ${entry.directory}, ${decision.reason}, ${decision.keptRunId},
+        ${decision.jobId}, ${at}
+      )
+      ON CONFLICT (run_id) DO NOTHING
+    `;
+  });
+
+  /** Imports the scanned runs `only` lets through, oldest cutoff first. */
+  const syncWhere = Effect.fn("EditorialImportService.syncWhere")(function* (
+    only: ((runId: string) => boolean) | null,
+  ) {
     const rows = yield* sql<IndexedVersion>`
       SELECT ${sql.literal(INDEXED_COLUMNS)} FROM editorial_runs
     `.pipe(Effect.mapError(toPersistenceError("editorial.indexedRuns")));
     const indexed = new Map(rows.map((row) => [row.run_id, row]));
     const byPath = new Map(rows.map((row) => [row.artifact_path, row]));
     const { entries, invalid } = yield* directory.scan;
+    const excluded = new Set(
+      (yield* sql<{ readonly run_id: string }>`
+        SELECT run_id FROM editorial_run_exclusions
+      `.pipe(Effect.mapError(toPersistenceError("editorial.excludedRuns")))).map(
+        (row) => row.run_id,
+      ),
+    );
     const runs: Array<RunImport> = [];
-    for (const item of invalid) {
+    for (const item of only === null ? invalid : []) {
       const known = byPath.get(item.directory);
       if (known !== undefined && isNewer(known)) {
         yield* keptNewer(known);
@@ -402,10 +513,15 @@ const make = Effect.gen(function* () {
       ) {
         continue;
       }
-      runs.push({ runId: known?.run_id ?? item.name, outcome: yield* importInvalid(item, known) });
+      runs.push({
+        runId: known?.run_id ?? item.name,
+        outcome: yield* importInvalid(item, known),
+      });
     }
     // Oldest first, so run.imported events follow cutoff order.
     for (const entry of entries.toReversed()) {
+      if (only !== null && !only(entry.run.run_id)) continue;
+      if (excluded.has(entry.run.run_id)) continue;
       const known = indexed.get(entry.run.run_id);
       if (known !== undefined && isNewer(known)) {
         yield* keptNewer(known);
@@ -419,14 +535,61 @@ const make = Effect.gen(function* () {
       ) {
         continue;
       }
+      // Only a run that is not indexed yet is admitted again; a reindex keeps its row.
+      if (known === undefined) {
+        const decision = yield* admission(entry.run).pipe(
+          Effect.mapError(toPersistenceError("editorial.admission")),
+        );
+        if (decision._tag === "wait") {
+          runs.push({ runId: entry.run.run_id, outcome: "waiting" });
+          continue;
+        }
+        if (decision._tag === "exclude") {
+          yield* exclude(entry, decision).pipe(
+            Effect.mapError(toPersistenceError("editorial.excludeRun")),
+          );
+          runs.push({
+            runId: entry.run.run_id,
+            outcome: decision.reason,
+            keptRunId: decision.keptRunId,
+          });
+          continue;
+        }
+      }
       const loaded = yield* directory.load(entry);
       runs.push({ runId: entry.run.run_id, outcome: yield* importLoaded(loaded) });
     }
     const returned = yield* returnSnoozed();
     return { runs, returned };
-  }).pipe(permit.withPermits(1), Effect.withSpan("EditorialImportService.sync"));
+  });
 
-  return EditorialImportService.of({ sync });
+  const sync = syncWhere(null).pipe(
+    permit.withPermits(1),
+    Effect.withSpan("EditorialImportService.sync"),
+  );
+
+  const importRun = Effect.fn("EditorialImportService.importRun")(function* (runId: string) {
+    const report = yield* syncWhere((candidate) => candidate === runId).pipe(permit.withPermits(1));
+    const found = report.runs.find((entry) => entry.runId === runId);
+    if (found !== undefined) return found;
+    // Not imported now: already indexed and unchanged, excluded before, or absent from disk.
+    const indexed = yield* sql<{ readonly run_id: string }>`
+      SELECT run_id FROM editorial_runs WHERE run_id = ${runId}
+    `.pipe(Effect.mapError(toPersistenceError("editorial.indexedRun")));
+    if (indexed.length > 0) return { runId, outcome: "unchanged" } satisfies RunImport;
+    const exclusion = yield* sql<{
+      readonly reason: "superseded" | "duplicate";
+      readonly kept_run_id: string;
+    }>`
+      SELECT reason, kept_run_id FROM editorial_run_exclusions WHERE run_id = ${runId}
+    `.pipe(Effect.mapError(toPersistenceError("editorial.exclusion")));
+    const row = exclusion[0];
+    return row === undefined
+      ? null
+      : ({ runId, outcome: row.reason, keptRunId: row.kept_run_id } satisfies RunImport);
+  });
+
+  return EditorialImportService.of({ sync, importRun });
 });
 
 export const layer = Layer.effect(EditorialImportService, make);

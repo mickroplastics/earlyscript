@@ -7,12 +7,16 @@ import { DEFAULT_CONFIG_PATH } from "@earlyscript/trend-engine/run";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EditorialPresentationError, EditorialRunId, type EditorialJob } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
-import { EditorialImportService } from "./EditorialImportService.ts";
+import { NATIVE_FIXTURE_RUN_ID } from "./editorialLayer.testkit.ts";
+import * as EditorialImportService from "./EditorialImportService.ts";
 import * as EditorialJobsService from "./EditorialJobsService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
@@ -23,7 +27,7 @@ import {
   removeDir,
   withEditorialDatabase,
 } from "./persistence/EditorialDatabase.testkit.ts";
-import { EditorialRunDirectory } from "./RunDirectory.ts";
+import * as RunDirectory from "./RunDirectory.ts";
 
 // Stands in for packages/trend-engine/src/cli.ts: writes the files the real commands write
 // and appends each command to trace.log. A `fail-<command>` file next to it makes it fail; a
@@ -97,18 +101,27 @@ if (command === "collect") {
   const config = JSON.parse(fs.readFileSync(opt("config"), "utf8"));
   const cutoff = new Date(Date.parse(opt("cutoff"))).toISOString();
   const runId = "run_" + cutoff.slice(0, 10).replaceAll("-", "") + "_" + process.pid;
-  fs.mkdirSync(path.join(opt("out"), runId), { recursive: true });
-  fs.writeFileSync(
-    path.join(opt("out"), runId, "run.json"),
-    JSON.stringify({
-      run_id: runId,
-      status: "ok",
-      cutoff_at: cutoff,
-      config_hash: sha(canonical(config)),
-      started_at: new Date().toISOString(),
-      profile: { hash: sha(fs.readFileSync(opt("profile"))) },
-    }),
-  );
+  const native = path.join(here, "native-fixture");
+  if (fs.existsSync(native)) {
+    // A complete native run the importer can read: the fixture under this run's id.
+    fs.cpSync(fs.readFileSync(native, "utf8"), path.join(opt("out"), runId), { recursive: true });
+    const file = path.join(opt("out"), runId, "run.json");
+    const run = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(file, JSON.stringify({ ...run, run_id: runId, started_at: new Date().toISOString() }));
+  } else {
+    fs.mkdirSync(path.join(opt("out"), runId), { recursive: true });
+    fs.writeFileSync(
+      path.join(opt("out"), runId, "run.json"),
+      JSON.stringify({
+        run_id: runId,
+        status: "ok",
+        cutoff_at: cutoff,
+        config_hash: sha(canonical(config)),
+        started_at: new Date().toISOString(),
+        profile: { hash: sha(fs.readFileSync(opt("profile"))) },
+      }),
+    );
+  }
   console.log(JSON.stringify({ run_id: runId, status: "ok", error: null, dossiers: 3 }));
   event("run done");
 } else if (command === "check") {
@@ -154,6 +167,10 @@ const makeFixture = () => {
     runDirs: () => NodeFS.readdirSync(runsDir).filter((name) => name.startsWith("run_")),
     /** Presentations: the first `awaitRun` waits for this before answering. */
     holdFirstDraft: null as Promise<void> | null,
+    /** Runs once, after the engine command line is logged and before its child is spawned. */
+    beforeSpawn: null as Effect.Effect<void> | null,
+    /** Runs once, right after a child is spawned and before its pid is published. */
+    afterSpawn: null as Effect.Effect<void> | null,
   };
 };
 
@@ -169,16 +186,87 @@ const progressOf = (runId: string) => ({
   finishedAt: null,
 });
 
+/**
+ * Node services whose engine launch runs the fixture's hooks: after the command line is
+ * logged (the claim already published its engine) and right after the child is spawned.
+ */
+const withSpawnHooks = (fx: Fixture) =>
+  Layer.mergeAll(
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return {
+          ...fs,
+          writeFileString: (...args: Parameters<FileSystem.FileSystem["writeFileString"]>) =>
+            fs.writeFileString(...args).pipe(
+              Effect.tap(() => {
+                const hook = args[1].startsWith("$ node") ? fx.beforeSpawn : null;
+                if (hook === null) return Effect.void;
+                fx.beforeSpawn = null;
+                return hook;
+              }),
+            ),
+        } satisfies FileSystem.FileSystem;
+      }),
+    ),
+    Layer.effect(
+      ChildProcessSpawner.ChildProcessSpawner,
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        return {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.tap(() => {
+                const hook = fx.afterSpawn;
+                if (hook === null) return Effect.void;
+                fx.afterSpawn = null;
+                return hook;
+              }),
+            ),
+        } satisfies ChildProcessSpawner.ChildProcessSpawner["Service"];
+      }),
+    ),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
 /** The jobs service over a fresh database, the stand-in engine, and doubles that trace. */
 const withJobs = <A, E>(
   fx: Fixture,
-  body: Effect.Effect<A, E, EditorialJobsService.EditorialJobsService | EditorialSql>,
+  body: Effect.Effect<
+    A,
+    E,
+    | EditorialJobsService.EditorialJobsService
+    | EditorialImportService.EditorialImportService
+    | EditorialSql
+  >,
   options: {
     readonly timing?: Partial<EditorialJobsService.EditorialJobsOptions>;
     readonly draftFails?: boolean;
+    /** The real importer over the fixture's runs directory, instead of a double. */
+    readonly realImport?: boolean;
   } = {},
 ) => {
   let draftsAwaited = 0;
+  const importer =
+    options.realImport === true
+      ? EditorialImportService.layer.pipe(
+          Layer.provideMerge(RunDirectory.layerWithRunsDir(fx.runsDir)),
+        )
+      : Layer.merge(
+          Layer.mock(EditorialImportService.EditorialImportService)({
+            sync: Effect.sync(() => {
+              fx.mark("import");
+              return { runs: [], returned: [] };
+            }),
+            importRun: (runId) =>
+              Effect.sync(() => {
+                fx.mark("import");
+                return { runId, outcome: "imported" as const };
+              }),
+          }),
+          Layer.mock(RunDirectory.EditorialRunDirectory)({ runsDir: fx.runsDir }),
+        );
   const jobs = EditorialJobsService.layerWith({
     engine: { cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH },
     jobsDir: NodePath.join(fx.root, "jobs"),
@@ -189,15 +277,10 @@ const withJobs = <A, E>(
     pollMs: 50,
     ...options.timing,
   }).pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         EditorialSourcesService.layerWithCorpusDir(fx.corpusDir),
-        Layer.mock(EditorialImportService)({
-          sync: Effect.sync(() => {
-            fx.mark("import");
-            return { runs: [], returned: [] };
-          }),
-        }),
+        importer,
         Layer.mock(EditorialPresentationService)({
           startRun: (runId) =>
             Effect.suspend(() => {
@@ -220,10 +303,9 @@ const withJobs = <A, E>(
               : Effect.promise(() => hold).pipe(Effect.as(progressOf(runId)));
           },
         }),
-        Layer.mock(EditorialRunDirectory)({ runsDir: fx.runsDir }),
       ),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(withSpawnHooks(fx)),
   );
   return withEditorialDatabase(body.pipe(Effect.provide(jobs))).pipe(
     Effect.ensuring(removeDir(fx.root)),
@@ -258,8 +340,24 @@ const processesCarrying = (prefix: string) =>
     .filter((line) => line.includes(`--lock-token ${prefix}`))
     .map((line) => Number(line.trim().split(/\s+/)[0]));
 
+/** Resolves once events.log holds `count` lines equal to `line`; watches, never polls. */
+const eventsReach = (fx: Fixture, line: string, count: number) =>
+  Effect.callback<void>((resume) => {
+    const reached = () => fx.events().filter((entry) => entry === line).length >= count;
+    const watcher = NodeFS.watch(fx.root, () => {
+      if (reached()) resume(Effect.void);
+    });
+    if (reached()) resume(Effect.void);
+    return Effect.sync(() => watcher.close());
+  });
+
+/** The native fixture's cutoff and engine configuration hash. */
+const NATIVE_CUTOFF = "2026-10-31T00:00:00.000Z";
+const NATIVE_CONFIG_HASH =
+  "sha256:290b9ddeec9bf5bc4e0512972d047c106623a3d050789fe0a8c145504d2e9095";
+
 /** A corpus that already reaches yesterday, so the job's first engine command is `run`. */
-const corpusUpToDate = (fx: Fixture, job: EditorialJob) => {
+const corpusUpToDate = (fx: Fixture, job: Pick<EditorialJob, "cutoffAt">) => {
   const today = job.cutoffAt.slice(0, 10);
   NodeFS.mkdirSync(fx.corpusDir, { recursive: true });
   NodeFS.writeFileSync(
@@ -282,9 +380,10 @@ const engineOf = Effect.gen(function* () {
     readonly engine_pid: number | null;
     readonly prev_engine_token: string | null;
     readonly prev_engine_pid: number | null;
+    readonly accepted_run_id: string | null;
   }>`
     SELECT lease_owner, lease_generation, engine_token, engine_pid, prev_engine_token,
-      prev_engine_pid
+      prev_engine_pid, accepted_run_id
     FROM editorial_jobs
   `;
   const row = rows[0];
@@ -565,6 +664,14 @@ describe("EditorialJobsService with two owners of one job", () => {
       Effect.gen(function* () {
         const jobs = yield* EditorialJobsService.EditorialJobsService;
         const sql = yield* EditorialSql;
+        // Every accepted run actually written, with the generation that wrote it.
+        yield* sql`CREATE TABLE accepted_log (generation INTEGER, run_id TEXT)`;
+        yield* sql`
+          CREATE TRIGGER log_accept AFTER UPDATE OF accepted_run_id ON editorial_jobs
+          BEGIN
+            INSERT INTO accepted_log VALUES (NEW.lease_generation, NEW.accepted_run_id);
+          END
+        `;
         yield* jobs.runNow;
         const former = yield* Effect.forkChild(jobs.runDue);
         yield* traceReaches(fx, "run");
@@ -582,6 +689,13 @@ describe("EditorialJobsService with two owners of one job", () => {
         assert.strictEqual(done.attempt, 2);
         assert.deepStrictEqual(fx.runDirs(), [done.artifacts.runId]);
         assert.deepStrictEqual(done.artifacts.notices, [{ code: "stale_engine_waited" }]);
+        // The former owner's child wrote the run, but only generation 2 could accept it.
+        const accepted = yield* sql<{ readonly generation: number; readonly run_id: string }>`
+          SELECT generation, run_id FROM accepted_log
+        `;
+        assert.isAbove(accepted.length, 0);
+        assert.isTrue(accepted.every((row) => row.generation === 2));
+        assert.isTrue(accepted.every((row) => row.run_id === done.artifacts.runId));
       }),
     );
   });
@@ -840,6 +954,72 @@ describe("EditorialJobsService with two owners of one job", () => {
           assert.isNotNull(engine.engine_pid);
           assert.match(engine.prev_engine_token ?? "", /:1$/);
         }),
+      );
+    },
+  );
+
+  it.live(
+    "both children of the accepted window finish: one run is imported, the other superseded",
+    () => {
+      const fx = makeFixture();
+      fx.slowRun(800);
+      NodeFS.writeFileSync(
+        NodePath.join(fx.root, "native-fixture"),
+        NodePath.join(import.meta.dirname, "fixtures", "native-runs", NATIVE_FIXTURE_RUN_ID),
+      );
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const importer = yield* EditorialImportService.EditorialImportService;
+          const sql = yield* EditorialSql;
+          const created = yield* jobs.runNow;
+          // The fixture's inputs are the job's: same configuration and profile, its cutoff.
+          assert.strictEqual(created.configHash, NATIVE_CONFIG_HASH);
+          yield* sql`UPDATE editorial_jobs SET cutoff_at = ${NATIVE_CUTOFF}`;
+          corpusUpToDate(fx, { ...created, cutoffAt: NATIVE_CUTOFF });
+
+          // The first claim publishes its engine, then stalls past its lease before spawning
+          // and again before naming its child, while a second claim runs its own engine.
+          const published = yield* Deferred.make<void>();
+          const launch = yield* Deferred.make<void>();
+          fx.beforeSpawn = Deferred.succeed(published, undefined).pipe(
+            Effect.andThen(Deferred.await(launch)),
+          );
+          const former = yield* Effect.forkChild(jobs.runDue);
+          yield* Deferred.await(published);
+          yield* sql`UPDATE editorial_jobs SET lease_until = ${PAST}`;
+          const current = yield* Effect.forkChild(jobs.runDue);
+          yield* traceReaches(fx, "run");
+          fx.afterSpawn = eventsReach(fx, "run done", 2);
+          yield* Deferred.succeed(launch, undefined);
+          yield* Fiber.join(current);
+          yield* Fiber.join(former);
+
+          // Both children finished their runs; the job kept the second claim's.
+          assert.strictEqual(fx.trace().filter((line) => line === "run").length, 2);
+          assert.strictEqual(fx.runDirs().length, 2);
+          const done = yield* onlyJob;
+          assert.strictEqual(done.status, "done");
+          const accepted = done.artifacts.runId ?? "";
+          const other = fx.runDirs().find((name) => name !== accepted) ?? "";
+          const report = yield* importer.sync;
+          assert.deepStrictEqual(
+            report.runs.map((run) => [run.runId, run.outcome]),
+            [[other, "superseded"]],
+          );
+          const runs = yield* sql<{ readonly run_id: string }>`SELECT run_id FROM editorial_runs`;
+          assert.deepStrictEqual(
+            runs.map((row) => row.run_id),
+            [accepted],
+          );
+          const imported = yield* sql<{ readonly aggregate_id: string }>`
+          SELECT aggregate_id FROM editorial_events WHERE type = 'run.imported'
+        `;
+          assert.strictEqual(imported.length, 1);
+          assert.strictEqual((yield* engineOf).accepted_run_id, accepted);
+        }),
+        { realImport: true },
       );
     },
   );

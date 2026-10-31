@@ -27,6 +27,7 @@ export default Effect.gen(function* () {
       engine_started_at TEXT,
       prev_engine_token TEXT,
       prev_engine_pid INTEGER,
+      accepted_run_id TEXT,
       status TEXT NOT NULL
         CHECK (status IN ('pending', 'running', 'done', 'failed', 'skipped')),
       error TEXT,
@@ -51,4 +52,20 @@ export default Effect.gen(function* () {
       updated_at TEXT NOT NULL
     )
   `;
+
+  // The run the job's current owner chose, the only one of the job's key the importer takes.
+  // Runs it does not take stay on disk and are recorded here, never indexed.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS editorial_run_exclusions (
+      run_id TEXT PRIMARY KEY,
+      artifact_path TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('superseded', 'duplicate')),
+      kept_run_id TEXT NOT NULL,
+      job_id TEXT,
+      decided_at TEXT NOT NULL
+    )
+  `;
+
+  // Content deduplication compares the profile too; rows indexed before this stay null.
+  yield* sql`ALTER TABLE editorial_runs ADD COLUMN profile_hash TEXT`;
 });

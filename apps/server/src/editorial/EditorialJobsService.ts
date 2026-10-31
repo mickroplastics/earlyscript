@@ -135,6 +135,7 @@ interface JobRow {
   readonly lease_owner: string | null;
   readonly lease_generation: number;
   readonly prev_engine_token: string | null;
+  readonly accepted_run_id: string | null;
   readonly status: EditorialJobStatus;
   readonly error: string | null;
   readonly artifacts_json: string;
@@ -142,7 +143,8 @@ interface JobRow {
 
 const JOB_COLUMNS =
   "job_id, kind, profile_hash, cutoff_at, config_hash, timezone, scheduled_for, started_at, " +
-  "finished_at, attempt, lease_until, lease_owner, lease_generation, prev_engine_token, status, " +
+  "finished_at, attempt, lease_until, lease_owner, lease_generation, prev_engine_token, " +
+  "accepted_run_id, status, " +
   "error, artifacts_json";
 
 interface SettingsRow {
@@ -720,6 +722,20 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       yield* owned(rows, "publish pid");
     });
 
+    /**
+     * Records the run this claim keeps, the only one of the job's key the importer will take;
+     * a former owner's choice fails here like any of its writes.
+     */
+    const acceptRun = Effect.fn("EditorialJobsService.acceptRun")(function* (runId: string) {
+      const rows = yield* sql<{ readonly job_id: string }>`
+        UPDATE editorial_jobs SET accepted_run_id = ${runId}
+        WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+          AND lease_generation = ${lease.generation} AND status = 'running'
+        RETURNING job_id
+      `.pipe(Effect.mapError(storage));
+      yield* owned(rows, "accept run");
+    });
+
     const work = Effect.gen(function* () {
       yield* fs.makeDirectory(jobDir, { recursive: true }).pipe(Effect.mapError(storage));
       yield* publish(row);
@@ -770,6 +786,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         token,
         publishEngine,
         publishPid,
+        acceptRun,
       };
 
       const phases = Effect.gen(function* () {
@@ -865,6 +882,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     readonly token: string;
     readonly publishEngine: Effect.Effect<void, EditorialJobsError | LeaseLost>;
     readonly publishPid: (pid: number) => Effect.Effect<void, EditorialJobsError | LeaseLost>;
+    readonly acceptRun: (runId: string) => Effect.Effect<void, EditorialJobsError | LeaseLost>;
   }
 
   /** Files of one claim: a former owner still running cannot overwrite the current one's. */
@@ -1062,6 +1080,14 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     } satisfies PhaseOutcome;
   });
 
+  const isJobRun = (job: JobRow, run: typeof RunJsonHead.Type) =>
+    run.status === "ok" &&
+    run.cutoff_at === job.cutoff_at &&
+    run.config_hash === job.config_hash &&
+    run.profile.hash === job.profile_hash &&
+    job.started_at !== null &&
+    run.started_at >= job.started_at;
+
   /** A run this job already wrote: same cutoff, configuration and profile, after it started. */
   const findRunOnDisk = Effect.fn("EditorialJobsService.findRunOnDisk")(function* (job: JobRow) {
     const names = yield* fs.readDirectory(runsDir).pipe(Effect.orElseSucceed(() => []));
@@ -1074,19 +1100,24 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       const head = Option.flatMap(text, decodeRunJsonHead);
       if (Option.isNone(head)) continue;
       const run = head.value;
-      if (
-        run.status === "ok" &&
-        run.cutoff_at === job.cutoff_at &&
-        run.config_hash === job.config_hash &&
-        run.profile.hash === job.profile_hash &&
-        job.started_at !== null &&
-        run.started_at >= job.started_at &&
-        (found === null || run.started_at > found.startedAt)
-      ) {
+      if (isJobRun(job, run) && (found === null || run.started_at > found.startedAt)) {
         found = { runId: run.run_id, startedAt: run.started_at };
       }
     }
     return found?.runId ?? null;
+  });
+
+  /** Whether the run a previous claim accepted is still on disk, finished and the job's. */
+  const acceptedOnDisk = Effect.fn("EditorialJobsService.acceptedOnDisk")(function* (job: JobRow) {
+    const runId = job.accepted_run_id;
+    if (runId === null) return null;
+    const text = yield* fs
+      .readFileString(path.join(runsDir, runId, "run.json"))
+      .pipe(Effect.option);
+    const head = Option.flatMap(text, decodeRunJsonHead);
+    return Option.isSome(head) && head.value.run_id === runId && isJobRun(job, head.value)
+      ? runId
+      : null;
   });
 
   const ensureProfileFile = Effect.gen(function* () {
@@ -1101,9 +1132,12 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   const runPhaseEngine = (ctx: PhaseContext) => afterPreviousEngine(ctx, runWithLock(ctx));
 
   const runWithLock = Effect.fn("EditorialJobsService.run")(function* (ctx: PhaseContext) {
+    // A run a previous claim already accepted stays the job's run.
+    const accepted = yield* acceptedOnDisk(ctx.job);
     // Read after the former engine ended: a former owner's child may have just written the run.
-    const onDisk = yield* findRunOnDisk(ctx.job);
+    const onDisk = accepted ?? (yield* findRunOnDisk(ctx.job));
     if (onDisk !== null) {
+      yield* ctx.acceptRun(onDisk);
       yield* ctx.save({ runId: onDisk, runDir: path.join(runsDir, onDisk) });
       return {
         status: "done",
@@ -1157,6 +1191,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         engineFailed,
       );
     }
+    yield* ctx.acceptRun(result.value.run_id);
     yield* ctx.save({
       runId: result.value.run_id,
       runDir: path.join(runsDir, result.value.run_id),
@@ -1198,7 +1233,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
 
   const importPhase = Effect.fn("EditorialJobsService.import")(function* (ctx: PhaseContext) {
     const runId = yield* runIdOf(ctx);
-    const report = yield* importer.sync.pipe(
+    // Only the accepted run: any other run of this key is superseded by the importer.
+    yield* ctx.acceptRun(runId);
+    const result = yield* importer.importRun(runId).pipe(
       Effect.mapError(
         (cause) =>
           new PhaseFailure({
@@ -1207,11 +1244,28 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           }),
       ),
     );
-    const outcome = report.runs.find((entry) => entry.runId === runId)?.outcome ?? "unchanged";
-    if (outcome === "invalid") {
-      return yield* fail(`The importer rejected ${runId}.`, { code: "import_failed" });
+    if (result === null) {
+      return yield* fail(`The run ${runId} is not on disk.`, { code: "import_failed" });
     }
-    return { status: "done", note: `Run ${outcome}.` } satisfies PhaseOutcome;
+    switch (result.outcome) {
+      case "imported":
+      case "updated":
+      case "unchanged":
+        return { status: "done", note: `Run ${result.outcome}.` } satisfies PhaseOutcome;
+      case "duplicate": {
+        // Same inputs and logical hash as a run already indexed: draft that one.
+        const kept = result.keptRunId ?? runId;
+        yield* ctx.save({ runId: kept, runDir: path.join(runsDir, kept) });
+        return {
+          status: "done",
+          note: `Run ${runId} has the content of ${kept}, already indexed.`,
+        } satisfies PhaseOutcome;
+      }
+      default:
+        return yield* fail(`The importer did not take ${runId}: ${result.outcome}.`, {
+          code: "import_failed",
+        });
+    }
   });
 
   const presentationsPhase = Effect.fn("EditorialJobsService.presentations")(function* (
