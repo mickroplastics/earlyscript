@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - plain library; ported from Earlywindow's src/engine/embed/model.ts.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalDate:off - plain library, ages partials by wall time; ported from Earlywindow's src/engine/embed/model.ts.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";

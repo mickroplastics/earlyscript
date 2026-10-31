@@ -25,7 +25,7 @@ describe("prepareModel", () => {
     const crashed = partial(exited);
     const unowned = partial(null);
     const stalled = partial(NodeProcess.pid);
-    NodeFS.utimesSync(stalled, new Date("2000-01-01"), new Date("2000-01-01"));
+    NodeFS.utimesSync(stalled, 946_684_800, 946_684_800); // 2000-01-01, seconds
     const live = partial(NodeProcess.pid);
 
     await expect(prepareModel(dir, false)).rejects.toThrow(/Model file missing/);
