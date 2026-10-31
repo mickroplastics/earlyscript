@@ -1238,10 +1238,10 @@ Una segunda pasada inmediata sin `--force` (37 s) volvió a pedir los dos días 
 
 4. Captura con el acotado y las páginas puente, sobre la fusión con S4 (`cc0d51a5f`), 04:12 a 04:14 UTC, 209 s, código de salida 0, sin errores, en `~/earlyscript-data/live/corpus-s3-acotado/`:
 
-| Fuente      | Día        | Estado   | Ítems | Detalle |
-| ----------- | ---------- | -------- | ----: | ------- |
-| huggingface | 2026-10-29 | partial  |    67 | 50 modelos (0 sin tarjeta) y 17 papers |
-| huggingface | 2026-10-30 | partial  |    89 | 50 modelos (0 sin tarjeta) y 39 papers |
+| Fuente      | Día        | Estado   | Ítems | Detalle                                                                                            |
+| ----------- | ---------- | -------- | ----: | -------------------------------------------------------------------------------------------------- |
+| huggingface | 2026-10-29 | partial  |    67 | 50 modelos (0 sin tarjeta) y 17 papers                                                             |
+| huggingface | 2026-10-30 | partial  |    89 | 50 modelos (0 sin tarjeta) y 39 papers                                                             |
 | devto       | 2026-10-29 | complete |   446 | 446 elegibles de 2161 etiquetados (21 %); `ai` 305, `programming` 73, `opensource` 73, `python` 72 |
 | devto       | 2026-10-30 | complete |   378 | 378 elegibles de 1845 etiquetados (20 %); `ai` 284, `opensource` 62, `programming` 58, `python` 51 |
 
