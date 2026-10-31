@@ -36,6 +36,7 @@ import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialInboxCommands } from "./EditorialInboxCommands.ts";
 import { withEditorial } from "./editorialLayer.testkit.ts";
 import { subscribeInbox, SUBSCRIBE_MAX_REPLAY } from "./inboxStream.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { EditorialRpcHandlers } from "./rpc.ts";
 
@@ -230,6 +231,67 @@ describe("editorial RPC authorization", () => {
             }).pipe(Effect.flip);
             assert.ok(mismatch._tag === "EditorialCommandError");
             assert.strictEqual(mismatch.reason, "not-found");
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
+  );
+
+  it.effect(
+    "finishes a creation that failed after linking production, without a second thread",
+    () =>
+      Effect.gen(function* () {
+        const launch = yield* makeLaunchDouble;
+        yield* withEditorial(
+          () =>
+            Effect.gen(function* () {
+              yield* (yield* EditorialImportService).sync;
+              const sql = yield* EditorialSql;
+              const inbox = yield* EditorialInboxCommands;
+              const intervals = sql<{ readonly n: number }>`
+              SELECT COUNT(*) AS n FROM editorial_work_intervals
+            `.pipe(Effect.map((rows) => rows[0]?.n));
+              // Storage fails after the thread is launched and linked, before the clock starts.
+              yield* sql.unsafe(
+                "CREATE TRIGGER fail_clock BEFORE INSERT ON editorial_work_intervals " +
+                  "BEGIN SELECT RAISE(ABORT, 'clock failure'); END",
+              );
+              yield* inbox.createVideo(SESSION, VIDEO_INPUT).pipe(Effect.flip);
+              yield* sql.unsafe("DROP TRIGGER fail_clock");
+              assert.strictEqual(yield* intervals, 0);
+
+              const retry = yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              assert.isFalse(retry.created);
+              assert.strictEqual(yield* intervals, 1);
+              assert.strictEqual((yield* Ref.get(launch.calls)).length, 1);
+
+              // A later click replays the started clock instead of opening another interval.
+              yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              assert.strictEqual(yield* intervals, 1);
+            }).pipe(Effect.scoped),
+          { launch: launch.layer },
+        );
+      }),
+  );
+
+  it.effect("registers one video for two concurrent clicks", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const sql = yield* EditorialSql;
+            const inbox = yield* EditorialInboxCommands;
+            const [first, second] = yield* Effect.all(
+              [inbox.createVideo(SESSION, VIDEO_INPUT), inbox.createVideo(SESSION, VIDEO_INPUT)],
+              { concurrency: 2 },
+            );
+            assert.strictEqual(first.threadId, second.threadId);
+            assert.strictEqual(
+              (yield* sql`SELECT thread_id FROM editorial_video_threads`).length,
+              1,
+            );
           }).pipe(Effect.scoped),
         { launch: launch.layer },
       );

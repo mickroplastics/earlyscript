@@ -54,8 +54,8 @@ export interface EditorialInboxCommandsShape {
   readonly dismiss: (session: EditorialSession, input: EditorialDismissInput) => Result;
   readonly reopen: (session: EditorialSession, input: EditorialTrendKeyInput) => Result;
   /**
-   * One assisted video thread per trend: a trend already in production answers with its
-   * thread, and a retry of the same dossier replays the registered operation.
+   * One assisted video thread per trend: a trend already in production resumes its thread's
+   * operation, and a retry of the same dossier replays it; either finishes a step left undone.
    */
   readonly createVideo: (
     session: EditorialSession,
@@ -228,31 +228,44 @@ const make = Effect.gen(function* () {
     "EditorialInboxCommands.createVideo",
   )(function* (_session, input) {
     const { dossier } = yield* requireTrendDossier(input);
-    const existing = yield* respond(input.trendKey);
-    if (existing.state.production !== null) {
-      return {
-        ...existing,
-        threadId: ThreadId.make(existing.state.production.threadId),
-        created: false,
-      };
-    }
+    const before = yield* respond(input.trendKey);
+    // A production link does not prove the operation finished (the clock may not have
+    // started): a trend's thread resumes its own operation, which replays the steps done.
+    const linked =
+      before.state.production === null
+        ? Option.none()
+        : yield* threads
+            .getVideoThread(before.state.production.threadId)
+            .pipe(Effect.mapError(fromCommandFailure));
+    const operation = Option.match(linked, {
+      onNone: () => ({
+        // Derived from the dossier, so a double click or a retry replays the same operation.
+        operationId: `editorial:trend-video:${input.runId}:${input.dossierId}`,
+        mode: "assisted" as const,
+        runId: input.runId,
+        dossierId: input.dossierId,
+        dossierHash: dossier.content_hash,
+      }),
+      onSome: (thread) => ({
+        operationId: thread.operationId,
+        mode: thread.mode,
+        runId: thread.runId ?? undefined,
+        dossierId: thread.dossierId ?? undefined,
+        dossierHash: thread.dossierHash ?? undefined,
+      }),
+    });
     const shown = yield* read
       .getDossier({ runId: input.runId, dossierId: input.dossierId, evidenceLimit: 1 })
       .pipe(Effect.mapError(commandError("not-found", "Cannot read the dossier")));
     const created = yield* threads
       .createVideo({
-        // Derived from the dossier, so a double click or a retry replays the same operation.
-        operationId: `editorial:trend-video:${input.runId}:${input.dossierId}`,
+        ...operation,
         projectId: input.projectId,
-        mode: "assisted",
         title: shown.trend.presentation?.title ?? shown.trend.label,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         creationSource: "web",
         trendKey: input.trendKey,
-        runId: input.runId,
-        dossierId: input.dossierId,
-        dossierHash: dossier.content_hash,
       })
       .pipe(Effect.mapError(fromCommandFailure));
     const { state } = yield* respond(input.trendKey);
