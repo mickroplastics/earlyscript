@@ -2,7 +2,11 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 
-import { AuthOrchestrationReadScope, EnvironmentAuthorizationError } from "./auth.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
 import { IsoDateTime, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
 
 // Earlyscript Results space: read-only aggregates over editorial.sqlite. Descriptive only:
@@ -12,6 +16,7 @@ import { IsoDateTime, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
 export const EDITORIAL_RESULTS_WS_METHODS = {
   summary: "editorial.results.summary",
   decisions: "editorial.results.decisions",
+  export: "editorial.results.export",
 } as const;
 
 export const EditorialResultsMode = Schema.Literals(["assisted", "manual"]);
@@ -132,6 +137,11 @@ export const EditorialResultsSummary = Schema.Struct({
   modes: Schema.Array(EditorialResultsModeSummary),
   comparisons: Schema.Array(EditorialResultsComparison),
   inbox: EditorialResultsInbox,
+  /**
+   * Current decisions left out of every statistic because a stored value is out of its domain
+   * (utility outside 1 to 5, a negative or absurd time, a negative count).
+   */
+  excludedByDomain: NonNegativeInt,
   /** Every decision recorded, superseded ones included. */
   decisionCount: NonNegativeInt,
   firstDecidedAt: Schema.NullOr(IsoDateTime),
@@ -218,6 +228,58 @@ export class EditorialResultsError extends Schema.TaggedError<EditorialResultsEr
   },
 ) {}
 
+/**
+ * Evidence package for the thesis. `full` stays on the operator's machine and keeps free text
+ * (reasons, capture notes, URLs); `share` keeps only the columns its manifest lists, with
+ * thread and trend ids replaced by stable indices and dates rounded to the day.
+ */
+export const EditorialEvidenceMode = Schema.Literals(["full", "share"]);
+export type EditorialEvidenceMode = typeof EditorialEvidenceMode.Type;
+
+/** `YYYY-MM-DD` (UTC day, inclusive) or an ISO date-time. */
+const EvidenceDateFilter = Schema.String.check(Schema.isMaxLength(40));
+
+export const EditorialEvidenceExportInput = Schema.Struct({
+  mode: EditorialEvidenceMode,
+  since: Schema.optionalKey(EvidenceDateFilter),
+  until: Schema.optionalKey(EvidenceDateFilter),
+  /**
+   * Absolute folder on the server's machine. The package goes into a subfolder named after the
+   * mode and day; without it, the files come back in the response (the web zips them).
+   */
+  directory: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))),
+});
+export type EditorialEvidenceExportInput = typeof EditorialEvidenceExportInput.Type;
+
+export const EditorialEvidenceFile = Schema.Struct({
+  name: Schema.String,
+  sha256: Schema.String,
+  bytes: NonNegativeInt,
+});
+export type EditorialEvidenceFile = typeof EditorialEvidenceFile.Type;
+
+export const EditorialEvidenceExportResult = Schema.Struct({
+  mode: EditorialEvidenceMode,
+  /** Hash over the data files' names and hashes; equal state gives an equal hash. */
+  packageHash: Schema.String,
+  files: Schema.Array(EditorialEvidenceFile),
+  /** Folder written on the server, or null when `contents` carries the files. */
+  directory: Schema.NullOr(Schema.String),
+  /** Name of the package folder (and of the zip the web builds). */
+  packageName: Schema.String,
+  /** File contents by name, manifest included; empty when written to `directory`. */
+  contents: Schema.Array(Schema.Struct({ name: Schema.String, content: Schema.String })),
+});
+export type EditorialEvidenceExportResult = typeof EditorialEvidenceExportResult.Type;
+
+export class EditorialEvidenceExportError extends Schema.TaggedError<EditorialEvidenceExportError>()(
+  "EditorialEvidenceExportError",
+  {
+    reason: Schema.Literals(["unavailable", "unreadable", "invalid-filter", "target"]),
+    message: Schema.String,
+  },
+) {}
+
 const EditorialResultsSummaryRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.summary, {
   payload: EditorialResultsSummaryInput,
   success: EditorialResultsSummary,
@@ -230,13 +292,23 @@ const EditorialResultsDecisionsRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.decis
   error: Schema.Union([EditorialResultsError, EnvironmentAuthorizationError]),
 });
 
+const EditorialResultsExportRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.export, {
+  payload: EditorialEvidenceExportInput,
+  success: EditorialEvidenceExportResult,
+  error: Schema.Union([EditorialEvidenceExportError, EnvironmentAuthorizationError]),
+});
+
 /** Merged into `WsRpcGroup` next to `EditorialRpcGroup`. */
 export const EditorialResultsRpcGroup = RpcGroup.make(
   EditorialResultsSummaryRpc,
   EditorialResultsDecisionsRpc,
+  EditorialResultsExportRpc,
 );
 
 export const EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_RESULTS_WS_METHODS.summary]: AuthOrchestrationReadScope,
   [EDITORIAL_RESULTS_WS_METHODS.decisions]: AuthOrchestrationReadScope,
+  // Writes files on the server's machine (or returns the private record), so it needs the
+  // same scope as the other editorial writes.
+  [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
 } as const;

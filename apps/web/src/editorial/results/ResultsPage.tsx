@@ -34,6 +34,7 @@ import { useQuietThreadShells } from "../../state/entities";
 import { formatDate } from "../editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
+import { EvidenceExportButton } from "./EvidenceExportButton";
 import {
   COMPARISON_TEXT,
   RESULTS_MODES,
@@ -46,6 +47,7 @@ import {
   coverageNote,
   decisionsFailureText,
   decisionThreadFallback,
+  domainNote,
   formatCount,
   formatDuration,
   formatInteger,
@@ -531,10 +533,13 @@ export function ResultsView({
   summary,
   decisions,
   threadTitles,
+  exportAction,
 }: {
   readonly summary: EditorialResultsSummary;
   readonly decisions: ResultsDecisionsControls;
   readonly threadTitles: ReadonlyMap<string, string>;
+  /** «Exportar evidencia»; the page mounts it, the view only places it. */
+  readonly exportAction?: ReactNode;
 }) {
   if (!hasDecisions(summary)) {
     return (
@@ -555,19 +560,23 @@ export function ResultsView({
   const assisted = modeSummary(summary, "assisted");
   const manual = modeSummary(summary, "manual");
   const provisional = provisionalNote(summary);
+  const outOfDomain = domainNote(summary);
   const state = decisions.state;
   const recorded = summary.comparisons.find((comparison) => comparison.key === "recorded");
   return (
     <>
-      <header className="flex min-w-0 flex-col gap-1">
-        <h1 className="text-xl font-semibold text-foreground">Resultados</h1>
-        <p className="text-sm text-muted-foreground">
-          {formatCount(summary.decisionCount, "decisión", "decisiones")}
-          {summary.firstDecidedAt && summary.lastDecidedAt
-            ? ` entre el ${formatDate(summary.firstDecidedAt)} y el ${formatDate(summary.lastDecidedAt)}`
-            : null}
-          {` · ${formatCount(assisted?.threads ?? 0, "hilo asistido", "hilos asistidos")} y ${formatCount(manual?.threads ?? 0, "manual", "manuales")} cerrados`}
-        </p>
+      <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">Resultados</h1>
+          <p className="text-sm text-muted-foreground">
+            {formatCount(summary.decisionCount, "decisión", "decisiones")}
+            {summary.firstDecidedAt && summary.lastDecidedAt
+              ? ` entre el ${formatDate(summary.firstDecidedAt)} y el ${formatDate(summary.lastDecidedAt)}`
+              : null}
+            {` · ${formatCount(assisted?.threads ?? 0, "hilo asistido", "hilos asistidos")} y ${formatCount(manual?.threads ?? 0, "manual", "manuales")} cerrados`}
+          </p>
+        </div>
+        {exportAction}
       </header>
 
       <Alert variant="info">
@@ -578,6 +587,12 @@ export function ResultsView({
           por pares, sobre el mismo tema y con revisores externos.
         </AlertDescription>
       </Alert>
+      {outOfDomain ? (
+        <Alert variant="warning">
+          <InfoIcon />
+          <AlertDescription>{outOfDomain}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <ResultsSection
         id="tiempos"
@@ -764,6 +779,7 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
       <ResultsView
         summary={summary}
         threadTitles={threadTitles}
+        exportAction={<EvidenceExportButton environmentId={environmentId} />}
         decisions={{
           state: decisionsState,
           onRetry: retryDecisions,

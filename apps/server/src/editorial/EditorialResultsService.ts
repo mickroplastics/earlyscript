@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
+import { decisionInDomain } from "./decisionDomain.ts";
 import { WORK_STAGES } from "./persistence/EditorialModel.ts";
 import { nowIso } from "./persistence/support.ts";
 
@@ -30,6 +31,14 @@ export interface EditorialResultsServiceShape {
   readonly decisions: (
     input: EditorialResultsDecisionsInput,
   ) => Effect.Effect<EditorialResultsDecisionPage, EditorialResultsError>;
+  /**
+   * Every decision, superseded ones included, most recent first (`decided_at`, then insertion
+   * order). For the evidence export, which filters by date and re-derives `current`.
+   */
+  readonly allDecisions: Effect.Effect<
+    ReadonlyArray<EditorialResultsDecision>,
+    EditorialResultsError
+  >;
 }
 
 /**
@@ -78,8 +87,11 @@ const COMPLETE_STAGES: Readonly<
 export const coverageOf = (
   mode: EditorialResultsMode,
   stages: ReadonlyArray<EditorialResultsStage>,
-): EditorialResultsCoverage =>
-  COMPLETE_STAGES[mode].every((stage) => stages.includes(stage)) ? "complete" : "partial";
+): EditorialResultsCoverage => {
+  // A stored mode outside the enum (the table is not STRICT) is never complete.
+  const required = COMPLETE_STAGES[mode] as ReadonlyArray<EditorialResultsStage> | undefined;
+  return required?.every((stage) => stages.includes(stage)) ? "complete" : "partial";
+};
 
 interface DecisionRow {
   readonly decision_id: string;
@@ -284,7 +296,17 @@ const make = Effect.gen(function* () {
     Effect.catchTags({ SqlError: unreadable("decisions") }),
   );
 
-  return EditorialResultsService.of({ summary, decisions });
+  const allDecisions: EditorialResultsServiceShape["allDecisions"] = selectDecisions(sql, {
+    currentOnly: false,
+    limit: -1,
+    offset: 0,
+  }).pipe(
+    Effect.map((rows) => rows.map(toDecision)),
+    Effect.catchTags({ SqlError: unreadable("allDecisions") }),
+    Effect.withSpan("EditorialResultsService.allDecisions"),
+  );
+
+  return EditorialResultsService.of({ summary, decisions, allDecisions });
 });
 
 function stageDuration(
@@ -321,10 +343,15 @@ const collect = (
  * Aggregates over the current decision of each thread. Time statistics leave out threads
  * whose clock is not definitive, so an unresolved segment never shortens a median.
  */
-const summarizeDecisions = (
+export const summarizeDecisions = (
   decisions: ReadonlyArray<EditorialResultsDecision>,
-): Pick<EditorialResultsSummary, "modes" | "comparisons"> => {
-  const current = decisions.filter((decision) => decision.current);
+): Pick<EditorialResultsSummary, "modes" | "comparisons" | "excludedByDomain"> => {
+  // A current decision with a value out of its domain (a utility of 999, a negative time) is
+  // counted apart and never enters a statistic.
+  const current = decisions.filter((decision) => decision.current && decisionInDomain(decision));
+  const excludedByDomain = decisions.filter(
+    (decision) => decision.current && !decisionInDomain(decision),
+  ).length;
   const byMode = (mode: EditorialResultsMode) => current.filter((entry) => entry.mode === mode);
   const timed = (mode: EditorialResultsMode) =>
     byMode(mode).filter((decision) => decision.clockDefinitive);
@@ -406,7 +433,7 @@ const summarizeDecisions = (
     // Every timed thread, whatever it recorded; the page warns about partial coverage.
     compare("recorded", timed, totalMs),
   ];
-  return { modes, comparisons };
+  return { modes, comparisons, excludedByDomain };
 };
 
 export const layer = Layer.effect(EditorialResultsService, make);

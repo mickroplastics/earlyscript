@@ -1,20 +1,28 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the user's home bounds where the export RPC writes.
+import * as NodeOS from "node:os";
+
 import {
   EDITORIAL_RESULTS_WS_METHODS,
+  EditorialEvidenceExportError,
   EditorialResultsError,
   type EditorialResultsRpcGroup,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
+import * as EditorialEvidenceExportService from "./EditorialEvidenceExportService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
+import { MANIFEST_FILE } from "./evidenceFormat.ts";
 
 /** Trace and metric aggregate of each Results method, merged into `RpcInstrumentation`. */
 export const EDITORIAL_RESULTS_RPC_AGGREGATES = {
   [EDITORIAL_RESULTS_WS_METHODS.summary]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.decisions]: "editorial",
+  [EDITORIAL_RESULTS_WS_METHODS.export]: "editorial",
 } as const;
 
 type ResultsRpcs = RpcGroup.Rpcs<typeof EditorialResultsRpcGroup>;
@@ -42,19 +50,71 @@ export class EditorialResultsRpcHandlers extends Context.Reference<EditorialResu
     defaultValue: () => ({
       [EDITORIAL_RESULTS_WS_METHODS.summary]: () => Effect.fail(unavailable),
       [EDITORIAL_RESULTS_WS_METHODS.decisions]: () => Effect.fail(unavailable),
+      [EDITORIAL_RESULTS_WS_METHODS.export]: () =>
+        Effect.fail(
+          new EditorialEvidenceExportError({ reason: "unavailable", message: unavailable.message }),
+        ),
     }),
   },
 ) {}
 
-const makeHandlers = Effect.gen(function* () {
+/**
+ * Where the export RPC may write: the real path of the destination stays under this folder.
+ * The user's home by default; a client cannot widen it.
+ */
+export class EvidenceExportRoot extends Context.Reference<string>(
+  "t3/editorial/EvidenceExportRoot",
+  { defaultValue: () => NodeOS.homedir() },
+) {}
+
+export const makeHandlers = Effect.gen(function* () {
   const results = yield* EditorialResultsService.EditorialResultsService;
+  const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+  const path = yield* Path.Path;
+  const root = yield* EvidenceExportRoot;
   return {
     [EDITORIAL_RESULTS_WS_METHODS.summary]: () => results.summary,
     [EDITORIAL_RESULTS_WS_METHODS.decisions]: results.decisions,
+    // With a folder, the server writes `<folder>/<package name>`; without one, the files come
+    // back and the client packs them.
+    [EDITORIAL_RESULTS_WS_METHODS.export]: Effect.fn("EditorialResultsRpc.export")(
+      function* (input) {
+        const pkg = yield* evidence.build(input);
+        const files = pkg.files.map(({ name, sha256, bytes }) => ({ name, sha256, bytes }));
+        if (input.directory !== undefined) {
+          const directory = yield* evidence.write(
+            pkg,
+            path.join(input.directory, pkg.packageName),
+            {
+              within: root,
+            },
+          );
+          return {
+            mode: pkg.mode,
+            packageHash: pkg.packageHash,
+            packageName: pkg.packageName,
+            files,
+            directory,
+            contents: [],
+          };
+        }
+        return {
+          mode: pkg.mode,
+          packageHash: pkg.packageHash,
+          packageName: pkg.packageName,
+          files,
+          directory: null,
+          contents: [
+            ...pkg.files.map(({ name, content }) => ({ name, content })),
+            { name: MANIFEST_FILE, content: pkg.manifest },
+          ],
+        };
+      },
+    ),
   } satisfies EditorialResultsHandlers;
 });
 
 /** Mounted once in `server.ts`, over the `EditorialSql` that `persistenceLayer.ts` publishes. */
 export const layer = Layer.effect(EditorialResultsRpcHandlers, makeHandlers).pipe(
-  Layer.provide(EditorialResultsService.layer),
+  Layer.provide(Layer.merge(EditorialResultsService.layer, EditorialEvidenceExportService.layer)),
 );

@@ -14,7 +14,7 @@ env -u T3CODE_HOME CSC_IDENTITY_AUTO_DISCOVERY=false T3CODE_DESKTOP_SIGNED=false
   --platform mac --target dmg --arch arm64 --skip-build --output-dir ~/earlyscript-data/macos/artifacts
 ```
 
-Salen `Earlyscript-<versión>-arm64.dmg` y `.zip`. No llevan firma Developer ID ni notarización, solo la firma ad hoc del enlazador.
+Salen `Earlyscript-<versión>-arm64.dmg` (unos 222 MB, con el motor) y `.zip`. El motor solo se incluye si se compila en la misma plataforma y arquitectura que el destino. No llevan firma Developer ID ni notarización, solo la firma ad hoc del enlazador.
 
 ## Instalar y abrir
 
@@ -49,25 +49,23 @@ Las terminales de T3 Code exportan `T3CODE_HOME=~/.t3` y `open` pasa ese entorno
 | Modelo de embeddings (Qwen3 0,6B ONNX q8, unos 600 MB)                              | `~/earlyscript-data/models/<revisión>/`                         |
 | Caché de embeddings                                                                 | `~/earlyscript-data/embeddings/embeddings.sqlite`               |
 
-El CLI `earlyscript` respeta un `T3CODE_HOME` heredado, como el `t3` de upstream. Desde una terminal de T3 Code, ejecútalo con `env -u T3CODE_HOME earlyscript …`.
+El CLI `earlyscript` usa siempre `~/.earlyscript`, también desde una terminal de T3 Code: el lanzador fija `T3CODE_HOME` al home de la instalación. Para otro directorio, pasa `--base-dir`.
 
 T3 Code real usa `~/.t3` y el puerto 3773 (en Gertrudis corre como servicio `t3`). Las dos apps pueden estar abiertas a la vez sin compartir estado.
 
 ## Motor
 
-El `.app` no incluye el motor (`packages/trend-engine`) ni `onnxruntime-node`. Se ejecuta desde un checkout de Earlyscript en `main` desde `d0f38f927a` o posterior, con dependencias instaladas, con Node 26.12.1 por mise o con el Node de Electron (`ELECTRON_RUN_AS_NODE=1`, Node 24.22.1 en Electron 44). Con los dos, `engine check` y `engine check --rerun` dan el mismo `logical_hash`.
+La app lleva el motor dentro (`Contents/Resources/trend-engine`, con `onnxruntime-node` para Apple Silicon) y lo ejecuta con su propio Node (el de Electron, Node 24.22.1). La corrida nocturna y «Ejecutar ahora» no necesitan ningún checkout. Para usar otro motor, se define `EARLYSCRIPT_ENGINE_CLI` con la ruta de su `cli.ts` o `cli.mjs`. La app ejecuta ese archivo con sus propios permisos y lo prefiere al motor instalado: apunta solo a código de confianza. Si la app no encuentra el motor, la corrida queda con el aviso «No se encontró el motor de tendencias».
 
-El checkout tiene que ser el de la versión instalada. En Gertrudis, `~/earlyscript` está en la rama `es/brand-native`, con un motor anterior al catálogo de fuentes, y `collect` falla allí con `Unknown option '--sources'`. El checkout bueno es `~/earlyscript-wt-es-desktop-daily`. Para comprobar otro checkout: `git -C <checkout> merge-base --is-ancestor d0f38f927a HEAD && echo ok`.
+Para lanzar el motor de la app a mano, por ejemplo para comprobar una corrida:
 
 ```sh
-cd ~/earlyscript-wt-es-desktop-daily/packages/trend-engine
-mise exec node@26.12.1 -- node src/cli.ts collect --corpus ~/earlyscript-data/live --sources hn,github --from 2026-10-03 --to 2026-10-31
-mise exec node@26.12.1 -- node src/cli.ts run --corpus ~/earlyscript-data/live --cutoff 2026-10-31T00:00:00Z \
-  --profile ~/earlyscript-data/profiles/singularidev.v1.json --out ~/earlyscript-data/runs --workers 4
-mise exec node@26.12.1 -- node src/cli.ts check --run ~/earlyscript-data/runs/<run_id>
+app=~/Applications/"Earlyscript (Beta).app"
+ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Earlyscript (Beta)" \
+  "$app/Contents/Resources/trend-engine/dist/cli.mjs" check --run ~/earlyscript-data/runs/<run_id>
 ```
 
-En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tardan unos 15 minutos con 4 procesos y como mucho 2,2 GB de RSS por proceso. Con la caché llena, la reejecución tarda unos 20 segundos. La primera corrida descarga el modelo desde Hugging Face. Cada proceso lo descarga por su cuenta, así que conviene una primera corrida con `--workers 1` o descargar el modelo antes.
+En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tardan unos 15 minutos con 4 procesos y como mucho 2,2 GB de RSS por proceso. Con la caché llena, una corrida diaria tarda unos 25 segundos en el motor. La primera corrida descarga el modelo (unos 600 MB) desde Hugging Face una sola vez, antes de lanzar los procesos; en Gertrudis tardó unos 20 segundos.
 
 ## Títulos con el asistente
 

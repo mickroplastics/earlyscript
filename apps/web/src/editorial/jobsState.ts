@@ -122,6 +122,8 @@ function noticeText(notice: EditorialJobNotice): string {
       return "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.";
     case "no_sources":
       return "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).";
+    case "engine_missing":
+      return "No se encontró el motor de tendencias en esta instalación. Reinstala Earlyscript o revisa EARLYSCRIPT_ENGINE_CLI.";
     case "engine_failed":
       return `Falló el motor en la fase de ${PHASE_LABEL[notice.phase ?? "run"]}.`;
     case "check_failed":

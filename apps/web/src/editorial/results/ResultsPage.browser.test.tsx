@@ -91,6 +91,7 @@ const SUMMARY: EditorialResultsSummary = {
     },
   ],
   inbox: { read: 6, observing: 1, dismissed: 2, production: 3 },
+  excludedByDomain: 0,
   decisionCount: 7,
   firstDecidedAt: "2026-10-20T13:38:00.000Z",
   lastDecidedAt: "2026-10-28T14:00:00.000Z",

@@ -31,6 +31,7 @@ import {
   updateReleasePackageVersions,
 } from "./update-release-package-versions.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
+import * as TrendEngine from "./earlyscript/stageTrendEngine.ts";
 import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
@@ -995,6 +996,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
+  ...TrendEngine.TREND_ENGINE_FILE_EXCLUSIONS,
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1091,6 +1093,7 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+  ...TrendEngine.TREND_ENGINE_EXTRA_RESOURCES,
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
@@ -3941,6 +3944,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     ),
     path.join(stageProdResourcesDir, "cursor-sdk"),
   );
+  yield* TrendEngine.stageTrendEngine({ ...options, repoRoot, stageProdResourcesDir });
   if (
     options.wslRuntime !== undefined &&
     bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime })
