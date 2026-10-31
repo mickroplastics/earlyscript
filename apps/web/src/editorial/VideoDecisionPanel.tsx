@@ -42,9 +42,9 @@ function StageTimes({
   readonly durations: Partial<Record<EditorialResultsStage, number | null>>;
 }) {
   return (
-    <dl className="grid grid-cols-3 gap-1 text-xs">
+    <dl className="flex flex-col gap-0.5 rounded-md bg-muted/40 px-2 py-1 text-xs">
       {stagesOf(mode).map((stage) => (
-        <div key={stage} className="flex flex-col rounded-md bg-muted/40 px-2 py-1">
+        <div key={stage} className="flex items-baseline justify-between gap-2">
           <dt className="text-muted-foreground">{STAGE_LABEL[stage]}</dt>
           <dd className="text-foreground tabular-nums">
             {formatStageDuration(durations[stage] ?? null)}

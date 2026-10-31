@@ -103,9 +103,10 @@ function UnresolvedInterval({
       <label className="text-muted-foreground text-xs" htmlFor={inputId}>
         Dejé de trabajar a las
       </label>
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Input
           id={inputId}
+          className="min-w-0 flex-1"
           size="compact"
           type="datetime-local"
           min={isoToLocalInput(interval.startedAt)}
@@ -179,20 +180,9 @@ function VideoThreadSectionsView({
         </div>
       </ThreadDetailsSection>
 
-      <ThreadDetailsSection
-        headingId="video-script-heading"
-        title="Guion"
-        actions={
-          <>
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              disabled={controls.busy || !script.exists || video.decision !== null}
-              onClick={controls.onSaveVersion}
-            >
-              <SaveIcon aria-hidden />
-              Guardar versión
-            </Button>
+      <ThreadDetailsSection headingId="video-script-heading" title="Guion">
+        <div className="flex flex-col gap-1 px-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-1">
             <Button
               size="xs"
               variant="outline"
@@ -202,10 +192,16 @@ function VideoThreadSectionsView({
               <FileTextIcon aria-hidden />
               Abrir guion
             </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-1 px-2.5 text-xs">
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={controls.busy || !script.exists || video.decision !== null}
+              onClick={controls.onSaveVersion}
+            >
+              <SaveIcon aria-hidden />
+              Guardar versión
+            </Button>
+          </div>
           <code className="truncate text-muted-foreground">
             {script.path ?? "Sin ruta de guion"}
           </code>
