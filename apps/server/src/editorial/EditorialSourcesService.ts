@@ -4,7 +4,8 @@ import * as NodeOS from "node:os";
 
 import { CoverageStatus, SourceId, UtcDay } from "@earlyscript/editorial-contracts/source";
 import { SOURCE_CATALOG, SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
-import { RSS_FEEDS, type RssFeed } from "@earlyscript/trend-engine/sources/rss-feeds";
+import type { RssFeed } from "@earlyscript/editorial-contracts/source";
+import { RSS_FEEDS } from "@earlyscript/trend-engine/sources";
 import {
   EditorialSourcesError,
   type EditorialAddFeedInput,
@@ -25,7 +26,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { checkFeed, EditorialFeedFetcher, layerFetch, normalizeFeedUrl } from "./feedCheck.ts";
+import { checkFeed, normalizeHttpUrl } from "./feedCheck.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { nowIso } from "./persistence/support.ts";
 import { summarizeSourceCoverage, type CoverageRow } from "./sourceCoverage.ts";
@@ -108,7 +109,10 @@ const rankBlockOf = (
   return entry.engineBaseline || backtestRunId !== null ? null : "no-backtest";
 };
 
-const collectBlocked = (source: SourceId) => SOURCE_CATALOG[source].status === "blocked";
+const collectBlockOf = (source: SourceId): EditorialSourceEntry["collectBlocked"] => {
+  const status = SOURCE_CATALOG[source].status;
+  return status === "ready" ? null : status;
+};
 
 const isSourceId = Schema.is(SourceId);
 
@@ -157,7 +161,6 @@ const storageError = (cause: unknown) =>
 
 const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (corpusDir: string) {
   const sql = yield* EditorialSql;
-  const fetcher = yield* EditorialFeedFetcher;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -231,9 +234,9 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
 
   const effective = (source: SourceId, setting: Stored) => {
     const rankBlocked = rankBlockOf(source, setting.backtestRunId);
-    const blocked = collectBlocked(source);
+    const blocked = collectBlockOf(source);
     return {
-      collect: setting.collect && !blocked,
+      collect: setting.collect && blocked === null,
       rank: setting.rank && rankBlocked === null,
       rankBlocked,
       collectBlocked: blocked,
@@ -351,10 +354,14 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
       });
     }
     const current = settingOf(yield* readStored, source);
-    if (input.collect === true && collectBlocked(source)) {
+    const collectBlocked = collectBlockOf(source);
+    if (input.collect === true && collectBlocked !== null) {
       return yield* new EditorialSourcesError({
         reason: "collect-blocked",
-        message: `${SOURCE_CATALOG[source].name} is blocked by its conditions of use.`,
+        message:
+          collectBlocked === "blocked"
+            ? `${SOURCE_CATALOG[source].name} is blocked by its conditions of use.`
+            : `The terms of ${SOURCE_CATALOG[source].name} have not been read yet.`,
       });
     }
     const rankBlocked = rankBlockOf(source, current.backtestRunId);
@@ -404,13 +411,20 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     });
   });
 
-  const validateFeed = (feedUrl: string) =>
-    checkFeed(feedUrl).pipe(Effect.provideService(EditorialFeedFetcher, fetcher));
+  const validateFeed = checkFeed;
 
   const addFeed = Effect.fn("EditorialSourcesService.addFeed")(function* (
     input: EditorialAddFeedInput,
   ) {
-    const normalized = normalizeFeedUrl(input.feedUrl);
+    const normalized = normalizeHttpUrl(input.feedUrl);
+    const givenSite = input.siteUrl?.trim() || null;
+    const siteUrl = givenSite === null ? null : normalizeHttpUrl(givenSite);
+    if (givenSite !== null && siteUrl === null) {
+      return yield* new EditorialSourcesError({
+        reason: "invalid-url",
+        message: `The site URL is not an http or https URL: ${givenSite}`,
+      });
+    }
     const feeds = yield* readFeeds;
     if (normalized !== null && feeds.some((feed) => feed.feedUrl === normalized)) {
       return yield* new EditorialSourcesError({
@@ -426,7 +440,8 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     yield* sql`
       INSERT INTO editorial_rss_feeds (feed_url, feed_id, name, site_url, note, added_at)
       VALUES (
-        ${check.feedUrl}, ${userFeedId(check.feedUrl)}, ${name}, ${check.siteUrl}, ${note},
+        ${check.feedUrl}, ${userFeedId(check.feedUrl)}, ${name}, ${siteUrl ?? check.siteUrl},
+        ${note},
         ${addedAt}
       )
     `.pipe(Effect.mapError(storageError));
@@ -435,7 +450,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
 
   const removeFeed = Effect.fn("EditorialSourcesService.removeFeed")(function* (feedUrl: string) {
     const removed = yield* sql<{ readonly feed_url: string }>`
-      DELETE FROM editorial_rss_feeds WHERE feed_url = ${normalizeFeedUrl(feedUrl) ?? feedUrl}
+      DELETE FROM editorial_rss_feeds WHERE feed_url = ${normalizeHttpUrl(feedUrl) ?? feedUrl}
       RETURNING feed_url
     `.pipe(Effect.mapError(storageError));
     if (removed.length === 0) {
@@ -496,7 +511,7 @@ const resolveCorpusDir = Effect.gen(function* () {
 export const layer = Layer.effect(
   EditorialSourcesService,
   resolveCorpusDir.pipe(Effect.orDie, Effect.flatMap(makeWithCorpusDir)),
-).pipe(Layer.provide(layerFetch));
+);
 
 export const layerWithCorpusDir = (corpusDir: string) =>
   Layer.effect(EditorialSourcesService, makeWithCorpusDir(corpusDir));

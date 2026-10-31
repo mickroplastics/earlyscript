@@ -67,8 +67,8 @@ export const EditorialSourceEntry = Schema.Struct({
   backtestRunId: Schema.NullOr(Schema.String),
   /** Null when `rank` may be turned on. */
   rankBlocked: Schema.NullOr(EditorialSourceRankBlock),
-  /** A blocked source cannot be collected either. */
-  collectBlocked: Schema.Boolean,
+  /** Null when captures may collect the source: only a source whose terms were read can. */
+  collectBlocked: Schema.NullOr(Schema.Literals(["pending-review", "blocked"])),
   /** Null while the source keeps its default. */
   updatedAt: Schema.NullOr(IsoDateTime),
   /** Null when the corpus holds no day of the source. */
@@ -132,6 +132,8 @@ export const EditorialAddFeedInput = Schema.Struct({
   feedUrl: FeedUrl,
   /** Empty or absent: the feed's own title. */
   name: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  /** Empty or absent: the site the feed declares. */
+  siteUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(FEED_URL_MAX_CHARS))),
   note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
 });
 export type EditorialAddFeedInput = typeof EditorialAddFeedInput.Type;
@@ -142,11 +144,10 @@ export const EditorialDefaultFeedInput = Schema.Struct({
 });
 export type EditorialDefaultFeedInput = typeof EditorialDefaultFeedInput.Type;
 
-/** One download of a feed, after its robots.txt allowed the path. */
+/** One download of a feed, after robots.txt allowed every hop to it. */
 export const EditorialFeedCheck = Schema.Struct({
   /** The URL as normalized and stored. */
   feedUrl: Schema.String,
-  format: Schema.Literals(["rss", "atom"]),
   title: Schema.NullOr(Schema.String),
   siteUrl: Schema.NullOr(Schema.String),
   entries: NonNegativeInt,
@@ -170,6 +171,7 @@ export class EditorialSourcesError extends Schema.TaggedError<EditorialSourcesEr
       "robots-disallowed",
       "robots-unavailable",
       "unreachable",
+      "too-large",
       "duplicate-feed",
       "unknown-feed",
     ]),

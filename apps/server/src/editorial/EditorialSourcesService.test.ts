@@ -1,5 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - the tests write a corpus/1 fixture to a temp directory.
+// @effect-diagnostics nodeBuiltinImport:off - the tests write a corpus/1 fixture and serve feeds over local HTTP.
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,11 +20,10 @@ import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 import type * as Scope from "effect/Scope";
 
-import { RSS_FEEDS } from "@earlyscript/trend-engine/sources/rss-feeds";
+import { RSS_FEEDS } from "@earlyscript/trend-engine/sources";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
-import { EditorialFeedFetcher, FEED_USER_AGENT, type FetchedPage } from "./feedCheck.ts";
 import { makeTempDir, withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.ts";
 import { summarizeSourceCoverage, type CoverageRow } from "./sourceCoverage.ts";
 import * as EditorialSourcesRpc from "./sourcesRpc.ts";
@@ -68,26 +69,12 @@ const CORPUS_ROWS = [
   row("youtube", "2026-10-30", "complete", 5),
 ];
 
-/** A web of canned answers; a URL it does not hold does not answer. Records every request. */
-const fetcherOf = (pages: Readonly<Record<string, FetchedPage>>, requests: Array<string> = []) =>
-  Layer.succeed(
-    EditorialFeedFetcher,
-    EditorialFeedFetcher.of({
-      get: (url) => {
-        requests.push(url);
-        const page = pages[url];
-        return page ? Effect.succeed(page) : Effect.fail("connection refused");
-      },
-    }),
-  );
-
 /** The body runs with the Sources handlers over a fresh database and `corpusDir`. */
 const withSources = <A, E>(
   corpusDir: string,
   body: Effect.Effect<A, E, EditorialSourcesService.EditorialSourcesService | Scope.Scope>,
-  web: Layer.Layer<EditorialFeedFetcher> = fetcherOf({}),
 ) => {
-  const service = EditorialSourcesService.layerWithCorpusDir(corpusDir).pipe(Layer.provide(web));
+  const service = EditorialSourcesService.layerWithCorpusDir(corpusDir);
   const handlers = Layer.effect(
     EditorialSourcesRpc.EditorialSourcesRpcHandlers,
     EditorialSourcesRpc.makeHandlers,
@@ -142,8 +129,11 @@ describe("editorial sources RPC", () => {
         );
         assert.strictEqual(entryOf(view, "hn").rankBlocked, null);
         assert.strictEqual(entryOf(view, "arxiv").rankBlocked, "no-backtest");
-        assert.strictEqual(entryOf(view, "wikipedia").rankBlocked, "not-ready");
-        assert.isTrue(entryOf(view, "bluesky").collectBlocked);
+        assert.strictEqual(entryOf(view, "wikipedia").rankBlocked, "no-backtest");
+        assert.strictEqual(entryOf(view, "stackexchange").rankBlocked, "not-ready");
+        assert.strictEqual(entryOf(view, "bluesky").collectBlocked, "blocked");
+        assert.strictEqual(entryOf(view, "stackexchange").collectBlocked, "pending-review");
+        assert.isNull(entryOf(view, "arxiv").collectBlocked);
         assert.strictEqual(entryOf(view, "hn").updatedAt, null);
       }),
     ).pipe(Effect.scoped),
@@ -162,8 +152,11 @@ describe("editorial sources RPC", () => {
 
         const refused = yield* Effect.flip(update({ source: "arxiv", rank: true }));
         assert.strictEqual(reasonOf(refused), "rank-blocked");
-        const notReady = yield* Effect.flip(update({ source: "wikipedia", rank: true }));
+        const notReady = yield* Effect.flip(update({ source: "stackexchange", rank: true }));
         assert.strictEqual(reasonOf(notReady), "rank-blocked");
+        // Captures need the terms read too, not only the engine.
+        const unread = yield* Effect.flip(update({ source: "stackexchange", collect: true }));
+        assert.strictEqual(reasonOf(unread), "collect-blocked");
         const blocked = yield* Effect.flip(update({ source: "bluesky", collect: true }));
         assert.strictEqual(reasonOf(blocked), "collect-blocked");
         const unknown = yield* Effect.flip(update({ source: "youtube", collect: true }));
@@ -304,135 +297,226 @@ const ATOM_DOC = `<feed xmlns="http://www.w3.org/2005/Atom"><title>Atom Notes</t
   <entry><title>A</title><updated>2026-10-31T09:00:00Z</updated></entry>
 </feed>`;
 
-const ok = (body: string): FetchedPage => ({ status: 200, body });
-const FEED = "https://blog.example.com/feed.xml";
-const WEB = {
-  "https://blog.example.com/robots.txt": ok("User-agent: *\nDisallow: /private/\n"),
-  [FEED]: ok(RSS_DOC),
-  "https://blog.example.com/page": ok("<!doctype html><html><body>Hi</body></html>"),
-  "https://blog.example.com/private/feed.xml": ok(RSS_DOC),
-  "https://notes.example.org/robots.txt": { status: 404, body: "" },
-  "https://notes.example.org/atom": ok(ATOM_DOC),
-  "https://down.example.net/robots.txt": { status: 404, body: "" },
-};
+const MIB = 1024 * 1024;
+const OVERSIZED_BYTES = 64 * MIB;
+
+interface LocalWeb {
+  readonly base: string;
+  /** Paths requested, in order. */
+  readonly requests: Array<string>;
+  /** Bytes of /oversized the server managed to write before the client went away. */
+  readonly oversizedSent: () => number;
+}
+
+/** Writes a feed-shaped body far over the 4 MiB limit in 64 KiB chunks, honoring backpressure. */
+function streamOversized(response: NodeHttp.ServerResponse, sent: { bytes: number }) {
+  response.writeHead(200, { "Content-Type": "application/rss+xml" });
+  const chunk = Buffer.alloc(64 * 1024, "a");
+  // Stops once the client cancels: the socket is destroyed and `drain` never comes.
+  const pump = () => {
+    while (sent.bytes < OVERSIZED_BYTES) {
+      if (response.destroyed) return;
+      sent.bytes += chunk.length;
+      if (!response.write(chunk)) return void response.once("drain", pump);
+    }
+    response.end();
+  };
+  pump();
+}
+
+/** A local site: robots.txt keeps /private out, /feed redirects into it, and the rest answer. */
+const localWeb = (robots: { readonly status: number; readonly body: string }) =>
+  Effect.acquireRelease(
+    Effect.callback<{ readonly web: LocalWeb; readonly server: NodeHttp.Server }>((resume) => {
+      const requests: Array<string> = [];
+      const sent = { bytes: 0 };
+      const server = NodeHttp.createServer((request, response) => {
+        const path = request.url ?? "/";
+        requests.push(path);
+        const send = (status: number, body: string, type = "application/xml") =>
+          response.writeHead(status, { "Content-Type": type }).end(body);
+        if (path === "/robots.txt") return send(robots.status, robots.body, "text/plain");
+        if (path === "/feed.xml" || path === "/private/feed.xml") return send(200, RSS_DOC);
+        if (path === "/atom") return send(200, ATOM_DOC);
+        if (path === "/page") return send(200, "<!doctype html><html><body>Hi</body></html>");
+        if (path === "/feed") {
+          return response.writeHead(302, { Location: "/private/feed.xml" }).end();
+        }
+        if (path === "/oversized") return streamOversized(response, sent);
+        return send(404, "not found", "text/plain");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address() as NodeNet.AddressInfo;
+        resume(
+          Effect.succeed({
+            server,
+            web: { base: `http://127.0.0.1:${port}`, requests, oversizedSent: () => sent.bytes },
+          }),
+        );
+      });
+    }),
+    ({ server }) =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+  ).pipe(Effect.map(({ web }) => web));
+
+const ROBOTS = { status: 200, body: "User-agent: *\nDisallow: /private\n" };
 
 describe("editorial RSS feeds", () => {
-  it("names the engine's collector in every request", () => {
-    assert.match(FEED_USER_AGENT, /^Earlyscript\//);
-  });
-
-  it.effect("validates RSS and Atom feeds and reports their entries and latest date", () =>
-    withSources(
-      makeTempDir(),
-      Effect.gen(function* () {
-        const validate = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.validateFeed];
-        const rss = yield* validate({ feedUrl: FEED });
-        assert.strictEqual(rss.format, "rss");
-        assert.strictEqual(rss.title, "Example Engineering");
-        assert.strictEqual(rss.siteUrl, "https://blog.example.com/");
-        assert.strictEqual(rss.entries, 2);
-        assert.strictEqual(rss.latestAt, "2026-10-30T08:30:00.000Z");
-        const atom = yield* validate({ feedUrl: "https://notes.example.org/atom" });
-        assert.strictEqual(atom.format, "atom");
-        assert.strictEqual(atom.entries, 1);
-        assert.strictEqual(atom.latestAt, "2026-10-31T09:00:00.000Z");
-      }),
-      fetcherOf(WEB),
-    ).pipe(Effect.scoped),
-  );
-
-  it.effect(
-    "refuses a page that is not a feed, a path robots.txt disallows and a dead host",
-    () => {
-      const requests: Array<string> = [];
-      return withSources(
+  it.live("validates RSS and Atom feeds and reports their entries, site and latest date", () =>
+    Effect.gen(function* () {
+      const web = yield* localWeb(ROBOTS);
+      yield* withSources(
         makeTempDir(),
         Effect.gen(function* () {
           const validate = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.validateFeed];
-          const html = yield* Effect.flip(validate({ feedUrl: "https://blog.example.com/page" }));
-          assert.strictEqual(reasonOf(html), "not-a-feed");
-          const robots = yield* Effect.flip(
-            validate({ feedUrl: "https://blog.example.com/private/feed.xml" }),
-          );
-          assert.strictEqual(reasonOf(robots), "robots-disallowed");
-          // robots.txt is read first: a disallowed feed is never downloaded.
-          assert.notInclude(requests, "https://blog.example.com/private/feed.xml");
-          const down = yield* Effect.flip(validate({ feedUrl: "https://down.example.net/rss" }));
-          assert.strictEqual(reasonOf(down), "unreachable");
-          const noRobots = yield* Effect.flip(validate({ feedUrl: "https://nobody.example/rss" }));
-          assert.strictEqual(reasonOf(noRobots), "robots-unavailable");
-          const bad = yield* Effect.flip(validate({ feedUrl: "ftp://blog.example.com/feed" }));
-          assert.strictEqual(reasonOf(bad), "invalid-url");
+          const rss = yield* validate({ feedUrl: `${web.base}/feed.xml` });
+          assert.strictEqual(rss.title, "Example Engineering");
+          assert.strictEqual(rss.siteUrl, "https://blog.example.com/");
+          assert.strictEqual(rss.entries, 2);
+          assert.strictEqual(rss.latestAt, "2026-10-30T08:30:00.000Z");
+          const atom = yield* validate({ feedUrl: `${web.base}/atom` });
+          assert.strictEqual(atom.siteUrl, "https://notes.example.org/");
+          assert.strictEqual(atom.entries, 1);
+          assert.strictEqual(atom.latestAt, "2026-10-31T09:00:00.000Z");
         }),
-        fetcherOf(WEB, requests),
-      ).pipe(Effect.scoped);
-    },
+      );
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("adds, lists, excludes and removes feeds, and hands the engine the result", () =>
-    withSources(
-      makeTempDir(),
-      Effect.gen(function* () {
-        const client = yield* operator;
-        const sources = yield* EditorialSourcesService.EditorialSourcesService;
-        const added = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED });
-        const mine = added.rssFeeds.filter((feed) => feed.origin === "user");
-        assert.strictEqual(mine.length, 1);
-        assert.strictEqual(mine[0]!.name, "Example Engineering");
-        assert.strictEqual(mine[0]!.siteUrl, "https://blog.example.com/");
-        assert.match(mine[0]!.id, /^user-[0-9a-f]{12}$/);
-        assert.strictEqual(
-          added.rssFeeds.filter((feed) => feed.origin === "default").length,
-          RSS_FEEDS.length,
-        );
+  it.live("refuses a page that is not a feed, a disallowed path and a redirect into one", () =>
+    Effect.gen(function* () {
+      const web = yield* localWeb(ROBOTS);
+      yield* withSources(
+        makeTempDir(),
+        Effect.gen(function* () {
+          const validate = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.validateFeed];
+          const html = yield* Effect.flip(validate({ feedUrl: `${web.base}/page` }));
+          assert.strictEqual(reasonOf(html), "not-a-feed");
+          const direct = yield* Effect.flip(validate({ feedUrl: `${web.base}/private/feed.xml` }));
+          assert.strictEqual(reasonOf(direct), "robots-disallowed");
+          // /feed answers 302 to /private/feed.xml: robots is checked again for the new hop.
+          const redirected = yield* Effect.flip(validate({ feedUrl: `${web.base}/feed` }));
+          assert.strictEqual(reasonOf(redirected), "robots-disallowed");
+          assert.notInclude(web.requests, "/private/feed.xml");
+          const bad = yield* Effect.flip(validate({ feedUrl: "ftp://example.com/feed" }));
+          assert.strictEqual(reasonOf(bad), "invalid-url");
+        }),
+      );
+    }).pipe(Effect.scoped),
+  );
 
-        const named = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
-          feedUrl: "https://notes.example.org/atom",
-          name: "Mis notas",
-          note: "Probando",
-        });
-        assert.strictEqual(named.rssFeeds.at(-1)!.name, "Mis notas");
-        assert.strictEqual(named.rssFeeds.at(-1)!.note, "Probando");
-        const duplicate = yield* Effect.flip(
-          client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED }),
-        );
-        assert.strictEqual(reasonOf(duplicate), "duplicate-feed");
-        const refused = yield* Effect.flip(
-          client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
-            feedUrl: "https://blog.example.com/page",
-          }),
-        );
-        assert.strictEqual(reasonOf(refused), "not-a-feed");
+  it.live("cuts an oversized feed while reading instead of downloading it whole", () =>
+    Effect.gen(function* () {
+      const web = yield* localWeb(ROBOTS);
+      yield* withSources(
+        makeTempDir(),
+        Effect.gen(function* () {
+          const validate = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.validateFeed];
+          const error = yield* Effect.flip(validate({ feedUrl: `${web.base}/oversized` }));
+          assert.strictEqual(reasonOf(error), "too-large");
+        }),
+      );
+      // Socket buffers let a few MiB more through; the whole 64 MiB never is.
+      assert.isBelow(web.oversizedSent(), 16 * MIB);
+    }).pipe(Effect.scoped),
+  );
 
-        const first = RSS_FEEDS[0]!;
-        yield* client[EDITORIAL_SOURCES_WS_METHODS.setDefaultFeedExcluded]({
-          id: first.id,
-          excluded: true,
-        });
-        const engine = (yield* sources.enabledSources).rssFeeds;
-        assert.notInclude(
-          engine.map((feed) => feed.id),
-          first.id,
-        );
-        assert.strictEqual(engine.length, RSS_FEEDS.length - 1 + 2);
-        assert.strictEqual(engine.at(-2)!.feedUrl, FEED);
-        assert.strictEqual(engine.at(-1)!.why, "Probando");
+  it.live("reports a robots.txt that does not answer and a host that is down", () =>
+    Effect.gen(function* () {
+      const broken = yield* localWeb({ status: 503, body: "" });
+      const down = yield* localWeb(ROBOTS);
+      const downBase = down.base;
+      yield* withSources(
+        makeTempDir(),
+        Effect.gen(function* () {
+          const validate = (yield* operator)[EDITORIAL_SOURCES_WS_METHODS.validateFeed];
+          const robots = yield* Effect.flip(validate({ feedUrl: `${broken.base}/feed.xml` }));
+          assert.strictEqual(reasonOf(robots), "robots-unavailable");
+          assert.notInclude(broken.requests, "/feed.xml");
+          const missing = yield* Effect.flip(validate({ feedUrl: `${downBase}/gone.xml` }));
+          assert.strictEqual(reasonOf(missing), "unreachable");
+        }),
+      );
+    }).pipe(Effect.scoped),
+  );
 
-        const removed = yield* client[EDITORIAL_SOURCES_WS_METHODS.removeFeed]({ feedUrl: FEED });
-        assert.isFalse(removed.rssFeeds.some((feed) => feed.feedUrl === FEED));
-        const again = yield* Effect.flip(
-          client[EDITORIAL_SOURCES_WS_METHODS.removeFeed]({ feedUrl: FEED }),
-        );
-        assert.strictEqual(reasonOf(again), "unknown-feed");
-        const restored = yield* client[EDITORIAL_SOURCES_WS_METHODS.setDefaultFeedExcluded]({
-          id: first.id,
-          excluded: false,
-        });
-        assert.isFalse(restored.rssFeeds[0]!.excluded);
-        assert.strictEqual((yield* sources.rssFeeds).length, RSS_FEEDS.length + 1);
-      }),
-      fetcherOf(WEB),
-    ).pipe(Effect.scoped),
+  it.live("adds, lists, excludes and removes feeds, and hands the engine the result", () =>
+    Effect.gen(function* () {
+      const web = yield* localWeb(ROBOTS);
+      const FEED = `${web.base}/feed.xml`;
+      yield* withSources(
+        makeTempDir(),
+        Effect.gen(function* () {
+          const client = yield* operator;
+          const sources = yield* EditorialSourcesService.EditorialSourcesService;
+          const added = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED });
+          const mine = added.rssFeeds.filter((feed) => feed.origin === "user");
+          assert.strictEqual(mine.length, 1);
+          assert.strictEqual(mine[0]!.name, "Example Engineering");
+          assert.strictEqual(mine[0]!.siteUrl, "https://blog.example.com/");
+          assert.match(mine[0]!.id, /^user-[0-9a-f]{12}$/);
+          assert.strictEqual(
+            added.rssFeeds.filter((feed) => feed.origin === "default").length,
+            RSS_FEEDS.length,
+          );
+
+          const named = yield* client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
+            feedUrl: `${web.base}/atom`,
+            name: "Mis notas",
+            siteUrl: "https://notas.example.net/",
+            note: "Probando",
+          });
+          assert.strictEqual(named.rssFeeds.at(-1)!.name, "Mis notas");
+          assert.strictEqual(named.rssFeeds.at(-1)!.siteUrl, "https://notas.example.net/");
+          assert.strictEqual(named.rssFeeds.at(-1)!.note, "Probando");
+          const badSite = yield* Effect.flip(
+            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({
+              feedUrl: `${web.base}/page`,
+              siteUrl: "notas",
+            }),
+          );
+          assert.strictEqual(reasonOf(badSite), "invalid-url");
+          const duplicate = yield* Effect.flip(
+            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: FEED }),
+          );
+          assert.strictEqual(reasonOf(duplicate), "duplicate-feed");
+          const refused = yield* Effect.flip(
+            client[EDITORIAL_SOURCES_WS_METHODS.addFeed]({ feedUrl: `${web.base}/feed` }),
+          );
+          assert.strictEqual(reasonOf(refused), "robots-disallowed");
+
+          const first = RSS_FEEDS[0]!;
+          yield* client[EDITORIAL_SOURCES_WS_METHODS.setDefaultFeedExcluded]({
+            id: first.id,
+            excluded: true,
+          });
+          const engine = (yield* sources.enabledSources).rssFeeds;
+          assert.notInclude(
+            engine.map((feed) => feed.id),
+            first.id,
+          );
+          assert.strictEqual(engine.length, RSS_FEEDS.length - 1 + 2);
+          assert.strictEqual(engine.at(-2)!.feedUrl, FEED);
+          assert.strictEqual(engine.at(-1)!.why, "Probando");
+
+          const removed = yield* client[EDITORIAL_SOURCES_WS_METHODS.removeFeed]({ feedUrl: FEED });
+          assert.isFalse(removed.rssFeeds.some((feed) => feed.feedUrl === FEED));
+          const again = yield* Effect.flip(
+            client[EDITORIAL_SOURCES_WS_METHODS.removeFeed]({ feedUrl: FEED }),
+          );
+          assert.strictEqual(reasonOf(again), "unknown-feed");
+          const restored = yield* client[EDITORIAL_SOURCES_WS_METHODS.setDefaultFeedExcluded]({
+            id: first.id,
+            excluded: false,
+          });
+          assert.isFalse(restored.rssFeeds[0]!.excluded);
+          assert.strictEqual((yield* sources.rssFeeds).length, RSS_FEEDS.length + 1);
+        }),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("refuses feed changes from a read-only session", () =>
@@ -441,11 +525,10 @@ describe("editorial RSS feeds", () => {
       Effect.gen(function* () {
         const client = yield* reader;
         const error = yield* Effect.flip(
-          client[EDITORIAL_SOURCES_WS_METHODS.validateFeed]({ feedUrl: FEED }),
+          client[EDITORIAL_SOURCES_WS_METHODS.validateFeed]({ feedUrl: "https://example.com/f" }),
         );
         assert.strictEqual(error._tag, "EnvironmentAuthorizationError");
       }),
-      fetcherOf(WEB),
     ).pipe(Effect.scoped),
   );
 });

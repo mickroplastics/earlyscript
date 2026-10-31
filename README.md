@@ -1,182 +1,143 @@
 # Earlyscript
 
-Earlyscript es un fork privado de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783`. Sirve de carcasa de estudio editorial: conserva hilos, proveedores de modelos, historial y visor de diffs de T3 Code, y sobre ella se construye el motor de tendencias de Earlywindow para preparar guiones de video con decisión humana final. Las reglas del fork están al inicio de [`AGENTS.md`](AGENTS.md) y cada archivo de upstream modificado figura en [`docs/upstream-divergence.md`](docs/upstream-divergence.md).
+Earlyscript es un estudio editorial para un operador que decide, cada mañana, de qué video hablar. Detecta qué temas crecen en comunidades técnicas públicas, los presenta como fichas de tendencia con evidencia enlazada y acompaña la escritura de un guion de video en un hilo de conversación con un agente de código, con la decisión final del operador registrada con utilidad, motivo y tiempos. Es un fork privado de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783` del 30 de octubre de 2026; el README original de T3 Code se conserva literalmente en [`docs/README-t3code.md`](docs/README-t3code.md); sus enlaces relativos se interpretaban desde la raíz del repositorio.
 
-Earlyscript puede convivir con un T3 Code instalado en la misma máquina porque usa otro directorio, otros puertos y otros identificadores:
+## Propósito académico y estado
 
-| Valor                                    | T3 Code     | Earlyscript                                               |
-| ---------------------------------------- | ----------- | --------------------------------------------------------- |
-| Directorio base                          | `~/.t3`     | `~/.earlyscript`                                          |
-| Servidor (`t3 start`, app de escritorio) | 3773        | 4773                                                      |
-| Servidor de desarrollo                   | 13773       | 14773                                                     |
-| Web de desarrollo                        | 5733        | 5743                                                      |
-| Esquema de URL                           | `t3code://` | `earlyscript://`                                          |
-| Binario del CLI                          | `t3`        | `t3` y `earlyscript`; el escritorio instala `earlyscript` |
+Earlyscript es el prototipo del proyecto de titulación "Arnés agéntico basado en modelos de lenguaje y análisis semántico de tendencias para priorizar ideas de contenido en YouTube orientadas a la adquisición de miembros para SingulariDev" (Miguel Ángel Brito Espejo, Maestría en Inteligencia Artificial Aplicada, Universidad de Las Américas, 2026; auspiciante Bistec LLC). Sustituye como producto final a [Earlywindow](https://git.r.biste.cc/miguel/earlywindow), cuya aplicación de escritorio queda como antecedente y cuyo motor de tendencias se porta aquí.
 
-Todos estos valores se definen en [`packages/shared/src/earlyscriptBrand.ts`](packages/shared/src/earlyscriptBrand.ts). Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre y siguen teniendo prioridad sobre los valores por defecto.
+Estado al 31 de octubre de 2026, sobre `main` `f75eebfae2`: están fusionados y verificados por un segundo modelo la capa de marca, las banderas que apagan telemetría y esconden funciones ajenas al estudio, la batería de pruebas en Linux, el motor de tendencias con fuentes en vivo, el validador del guion, la base editorial, el espacio Tendencias con títulos y resúmenes del asistente, la bandeja con sus tres acciones, el lector de corridas en el formato nativo del motor y en el de Earlywindow, el hilo de video (servidor y pantalla) y el espacio Resultados. La política que bloquea agentes en hilos manuales está implementada; la pantalla del modo manual y la corrida nocturna no están iniciadas. No se ha hecho todavía ningún ejercicio de evaluación humana; el espacio Resultados solo ha mostrado datos de prueba (resultado reportado, sin registro en el repositorio).
 
-Para arrancar en desarrollo, con Node 26.12.1 y pnpm 12.14.0:
+## Problema y solución
 
-```bash
-pnpm install
+El fundador de SingulariDev investiga y prioriza ideas de video a mano, estima esa carga en más de 20 horas semanales y no conserva un registro que una señales, evidencia y decisiones. Earlyscript separa cuatro responsabilidades:
+
+1. **Evidencia.** Adaptadores de solo lectura capturan historias de Hacker News y repositorios nuevos de GitHub, día a día, con fecha, URL, autor y texto acotado, en un corpus por archivos con manifiesto SHA-256.
+2. **Cálculo.** Un motor determinista, sin modelo de lenguaje, embebe los textos con Qwen3-Embedding-0.6B en CPU, los apila por cercanía de coseno en señales, calcula series diarias, etapa (creciendo, estable, decayendo), afinidad con el perfil del canal y dos rankings (por volumen de siete días y por fórmula ponderada), y emite la unión de las 20 primeras tendencias de cada ranking, ordenada por volumen de siete días, con hasta 40 fichas distintas, cada una con evidencia. Cada corrida lleva huellas de configuración, corpus y resultado.
+3. **Síntesis.** El asistente redacta, una vez por corrida, un título y un resumen de tres párrafos por tendencia, citando identificadores de evidencia; no cambia el orden ni el puntaje. En el hilo de video, el operador escribe el guion en un archivo Markdown con o sin agente; un validador cuenta afirmaciones y citas.
+4. **Decisión.** Solo el operador decide (crear hilo de video, seguir observando o descartar una tendencia; aceptar, editar, rechazar o diferir un guion) con utilidad de 1 a 5, motivo obligatorio y tiempos por etapa. El agente no puede invocar ese camino.
+
+El modelo de lenguaje no participa en recolectar, agrupar ni ordenar. Los modelos de embeddings y de lenguaje no se entrenan: se calibran umbrales, pesos y perfil.
+
+## Requisitos y dependencias
+
+- Linux x86_64 (Debian 13 probado) o macOS arm64. Node 26.12.1 y pnpm 12.14.0. Unos 2 GB de RAM por proceso de embeddings.
+- Al menos un agente de código instalado y con sesión iniciada en la máquina: Claude Code o Codex. Earlyscript no pide claves de API: usa los agentes instalados, como T3 Code.
+- Sin claves para las fuentes. `GITHUB_TOKEN` es opcional y solo amplía la cuota de GitHub.
+- El modelo `onnx-community/Qwen3-Embedding-0.6B-ONNX` (revisión `c25a394`, q8) se descarga de Hugging Face en la primera corrida a `~/earlyscript-data/models/`.
+- Dependencias de T3 Code para la batería completa en Linux: ver [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md).
+
+## Ejecución paso a paso
+
+Desde la raíz del checkout. Si la terminal se abrió desde T3 Code, anteponer `env -u T3CODE_HOME` para no usar sus datos.
+
+```sh
+# 1. Instalar y comprobar
+pnpm install --frozen-lockfile
+pnpm es:typecheck
+pnpm es:test            # pruebas de los paquetes propios y de los módulos que tocan
+
+# 2. Capturar fuentes (HN y GitHub, por día UTC; --to excluye el día)
+pnpm --filter @earlyscript/trend-engine engine collect \
+  --corpus ~/earlyscript-data/corpus --sources hn,github \
+  --from 2026-10-03 --to 2026-10-31
+
+# 3. Crear el perfil del canal (ejemplo mínimo, no el perfil usado en las mediciones)
+mkdir -p ~/earlyscript-data/profiles
+cat > ~/earlyscript-data/profiles/ejemplo.json <<'JSON'
+{
+  "schema_version": "profile/1",
+  "name": "SingulariDev",
+  "audience": "Developers",
+  "include": ["developer tools"],
+  "exclude": []
+}
+JSON
+
+# 4. Correr el motor con un corte y el perfil
+pnpm --filter @earlyscript/trend-engine engine run \
+  --corpus ~/earlyscript-data/corpus --cutoff 2026-10-31T00:00:00Z \
+  --profile ~/earlyscript-data/profiles/ejemplo.json \
+  --out ~/earlyscript-data/runs --workers 2
+
+# 5. Volver a ejecutar una corrida y comparar huellas (sin --rerun solo recalcula la huella de las fichas existentes)
+# Sustituir RUN_ID por la carpeta producida en el paso anterior.
+pnpm --filter @earlyscript/trend-engine engine check \
+  --run "$HOME/earlyscript-data/runs/RUN_ID" \
+  --rerun --out "$HOME/earlyscript-data/reruns"
+
+# 6. Validar un guion (rutas absolutas: pnpm ejecuta el script dentro del paquete)
+pnpm --filter @earlyscript/editorial-script check \
+  /ruta/absoluta/guion.md --dossier /ruta/absoluta/ficha.json
+
+# 7. Arrancar el estudio
 pnpm dev
 ```
 
-El servidor escucha en `http://127.0.0.1:14773`, la web en `http://localhost:5743` y el log imprime la URL de emparejamiento. Si `T3CODE_HOME` está definida en el entorno, por ejemplo porque la terminal se abrió desde T3 Code, hay que quitarla antes (`env -u T3CODE_HOME pnpm dev`) para no usar los datos de T3 Code.
+El perfil del canal (`packages/editorial-contracts/src/profile.ts`) exige `schema_version` `profile/1`, `name`, `audience`, `include` con al menos un tema y `exclude`; `version` es opcional. Se versiona por hash en cada corrida. El guion exige los encabezados `# Hook`, bloques `# Block 1` en adelante y `# Close`, con `# Sources` opcional, y citas como `[itm_hn_50061234]`; el formato completo está en [`packages/editorial-script/README.md#formato`](packages/editorial-script/README.md#formato). `--dossier` recibe una ficha generada por el motor. Los puertos base del estudio son 14773 y 5743; pueden cambiar según el worktree, la configuración y la disponibilidad, así que hay que leer los puertos efectivos y la URL de emparejamiento en el log. En la interfaz, el espacio Tendencias lee las corridas de `~/earlyscript-data/runs/` y las importa a `editorial.sqlite`; el botón "Redactar todas las de esta corrida" pide al asistente los títulos y resúmenes.
 
-El resto de este archivo es el README de T3 Code, conservado como referencia.
+Para empaquetar la aplicación de escritorio: `pnpm es:build` y después `pnpm dist:desktop:dmg:arm64` (macOS) o `pnpm dist:desktop:linux`. Las aplicaciones no están firmadas.
 
----
+## Pipeline
 
-# T3 Code
-
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
-
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
-
-## "Wait, what are you selling me?"
-
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
-
-## Installation
-
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
-> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
-
-### Command line
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
+```
+fuentes (HN, GitHub) ──collect──▶ corpus/1 por día y fuente, manifiesto SHA-256
+                                       │ corte
+                                       ▼
+   Qwen3 q8 en CPU ──▶ apilado por coseno 0,70 ──▶ series diarias ──▶ etapa y afinidad
+                                       │
+                                       ▼
+          dos rankings (items_7d y fórmula) ──▶ run.json + fichas (earlyscript.dossier/1)
+                                       │ importador
+                                       ▼
+   editorial.sqlite ◀── espacio Tendencias (título y resumen del asistente) ── decisión
+                                       │ crear hilo de video
+                                       ▼
+   hilo de T3 Code con agente ──▶ guion Markdown con versiones ──▶ script_check ──▶ decisión
+                                       │
+                                       ▼
+                              espacio Resultados (descriptivo)
 ```
 
-On Windows, in PowerShell:
+El método del motor es el de Earlywindow `engine.v0.02`: texto de título más 1.000 caracteres, filtro de idioma por proporción de letras ASCII, duplicados por URL, apilado en orden de publicación con ventana activa de 30 días, crecimiento `ln((ítems de 7 días + 1) / (ítems de los 7 previos + 1))`, fórmula `0,5 × crecimiento + 0,2 × ln(1 + autores) + 0,3 × afinidad`. Los parámetros, incluido el máximo de 20 por ranking, están en [`packages/trend-engine/config/engine.v1.json`](packages/trend-engine/config/engine.v1.json) y se declaran como hipótesis en cada `run.json`. Detalle en [`packages/trend-engine/README.md`](packages/trend-engine/README.md).
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
+## Organización del repositorio
 
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
+| Carpeta                                                          | Contenido                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/editorial-contracts/`                                  | Esquemas de ítem, fuente, corrida, ficha de tendencia, perfil y decisión, y lector del formato de Earlywindow                                                                                                                               |
+| `packages/trend-engine/`                                         | Motor: fuentes, corpus, embeddings, apilado, series, rankings, corrida y verificación; CLI `engine`                                                                                                                                         |
+| `packages/editorial-script/`                                     | Validador del guion; CLI `check`                                                                                                                                                                                                            |
+| `apps/server/src/editorial/`                                     | Base `editorial.sqlite` con migraciones 001 a 006, servicios de lectura, comando, importación, presentaciones, resultados, reloj de trabajo e hilo de video; política que bloquea agentes en hilos manuales; herramienta MCP `script_check` |
+| `apps/web/src/editorial/`                                        | Barra lateral con espacios, bandeja y ficha de tendencia, panel de decisión, reloj, resultados                                                                                                                                              |
+| `apps/server/src/earlyscript/`, `apps/desktop/src/earlyscript/`  | Banderas que apagan telemetría, analítica y funciones escondidas en la capa más alta del servidor                                                                                                                                           |
+| `packages/shared/src/earlyscriptBrand.ts`, `earlyscriptFlags.ts` | Marca, puertos, directorio base y banderas                                                                                                                                                                                                  |
+| `scripts/earlyscript/`                                           | Batería rápida `es:*` y comprobación de alcance                                                                                                                                                                                             |
+| `docs/upstream-divergence.md`                                    | Registro archivo por archivo de lo que difiere de T3 Code                                                                                                                                                                                   |
+| `docs/dev-environment-linux.md`                                  | Preparación del entorno y resultados de la batería en Linux                                                                                                                                                                                 |
+| Resto del árbol                                                  | T3 Code sin cambios o con enganches de una línea registrados                                                                                                                                                                                |
 
-To try it once without installing, run `npx t3@latest` instead.
+Los datos viven fuera del repositorio, en `~/earlyscript-data/`: `corpus/`, `runs/`, `models/`, `embeddings/` (caché SQLite por modelo, plataforma y texto) y `profiles/`. No se versionan corpus, corridas, bases ni credenciales.
 
-### Desktop app
+## Pruebas y evidencia
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+- `pnpm es:test` ejecuta las pruebas de los paquetes propios y de los módulos de T3 Code que tocan; la batería completa de upstream (`pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`) es la compuerta prevista de cada fusión (`docs/dev-environment-linux.md`). Las pruebas de equivalencia del apilado acelerado con la versión directa están en `packages/trend-engine/src/cluster.test.ts`.
+- Cada unidad de trabajo tiene rama propia, informe y veredicto de un segundo modelo en solo lectura ("apto", "apto con correcciones", "no apto") antes de fusionar; los informes y los registros de ejecución se conservan fuera del árbol versionado, en `~/earlyscript-data/` y en la base documental de la tesis.
+- Corrida real del 31 de octubre de 2026, con su `run.json` conservado como fixture en `apps/server/src/editorial/fixtures/native-runs/`: 28.593 registros leídos (28 días completos de HN y 28 parciales de GitHub), 26.037 textos embebidos, 8.776 señales, 99 en crecimiento, 15 fichas elegibles, 374 s. El desglose por fuente (28.311 de HN y 282 de GitHub) y las 15 fichas completas están solo en la corrida fuera del repositorio (`~/earlyscript-data/runs/run_20261031_20261031T003855_5e57bf/`) y en el informe de la tesis.
+- Comparación con Earlywindow sobre el mismo corpus, corte y perfil, documentada en [`docs/upstream-divergence.md`](docs/upstream-divergence.md) (sección del motor, paso 1): 19 fichas frente a 18; coinciden 3 de 5 en el top 5 por volumen; los vectores de Linux no reproducen los de macOS (coseno mediano 0,965 para el mismo texto).
+- Resultados reportados, no verificables desde el repositorio (la evidencia se conserva fuera del árbol versionado y en el informe de la tesis): typecheck de 39 paquetes y 122 pruebas editoriales en 15 archivos sobre `main` el 31 de octubre; batería completa en 630 s en un servidor Linux de 22 núcleos y 706 s en una Mac mini; huella lógica de la corrida de referencia reproducida tres veces; 401 casos de equivalencia del apilado; 3 fichas redactadas con `claude-haiku-5-5` en 12 a 22 s sin atribuciones inventadas en la revisión; retrospectiva y robustez medidas en Earlywindow en macOS (P@5 de 0,95 frente a 1,00 de la línea base por volumen; orden estable ante ±20 % en los pesos; selección sensible al umbral de apilado), no repetidas aquí.
 
-#### Windows (`winget`)
+## Fuentes y condiciones de uso
 
-```bash
-winget install T3Tools.T3Code
-```
+- Hacker News, por la API pública de Algolia, sin clave: historias sin comentarios. Los términos de Y Combinator restringen el uso comercial y la redistribución del contenido; el corpus se guarda en local para evaluación académica y no se redistribuye.
+- GitHub, por la API de búsqueda de repositorios, sin clave: repositorios creados cada día con 20 estrellas o más, primera página de 100 ordenada por estrellas actuales; cobertura siempre parcial.
+- Los textos contienen nombres públicos de autores y no son anónimos. No se recogen comentarios ni datos de cuentas. El corpus se puede borrar por fuente y antigüedad.
+- Lo que se envía al proveedor del agente: para los títulos, los términos, conteos y evidencia de cada ficha; en el hilo de video, lo que el operador escriba o adjunte. Telemetría, analítica de terceros y comprobación de actualizaciones de T3 Code están apagadas.
 
-#### Windows (`scoop`)
+## Sesgos y limitaciones conocidas
 
-```bash
-scoop install extras/t3code
-```
+Dos fuentes técnicas en inglés dominadas por anuncios de grandes proveedores; el filtro de idioma deja pasar textos en español; la mayoría de las historias de HN no tienen cuerpo, así que la evidencia suele ser un título; la selección depende del umbral de apilado y de la plataforma de los vectores; el ranking ponderado no supera al orden por volumen en la retrospectiva de Earlywindow; la hipótesis de avisar una o dos semanas antes no quedó respaldada. Las fichas son apoyo de lectura, no predicción, y las métricas de los videos se registran a mano y de forma descriptiva.
 
-#### macOS (Homebrew)
+## Desarrollo
 
-```bash
-brew install --cask t3-code
-```
-
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-#### Nix (nixpkgs)
-
-```bash
-nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
-```
-
-The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
-and includes the desktop app (`t3code-desktop`) and the `t3` command.
-See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
-
-## Documentation
-
-Full docs live in [docs/](./docs). There's no docs site yet.
-
-- [FAQ](./docs/user/faq.md)
-- [Install and first run](./docs/user/install.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
-- [Keeping app and server in sync](./docs/user/updating.md)
-- [Source control integrations](./docs/user/source-control.md)
-- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
-
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
-
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+Reglas del fork en [`AGENTS.md`](AGENTS.md): fusión regular de upstream, código aditivo, capa de marca fina, funciones escondidas por banderas, registro de divergencia. Entorno y baterías en [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md). Earlyscript convive con un T3 Code instalado porque usa `~/.earlyscript`, los puertos 4773, 14773 y 5743, el esquema `earlyscript://` y el binario `earlyscript`; todo está en `packages/shared/src/earlyscriptBrand.ts`. Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre.

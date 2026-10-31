@@ -109,7 +109,7 @@ function engineNote(entry: EditorialSourceEntry, governance: SourceGovernance): 
   if (entry.rankBlocked === "not-ready") {
     return governance.status === "blocked"
       ? "Bloqueada por sus condiciones de uso: no entra al motor."
-      : "Términos sin revisar: no entra al motor hasta revisarlos.";
+      : "Pendiente de leer sus términos: no se captura ni entra al motor.";
   }
   if (governance.engineBaseline) return "Línea base del motor.";
   return `Backtest registrado: ${entry.backtestRunId}.`;
@@ -255,7 +255,7 @@ function SourceRow({
           <span id={engineNoteId} className="block">
             {engineNote(entry, governance)}
           </span>
-          {entry.collectBlocked ? (
+          {entry.collectBlocked === "blocked" ? (
             <span className="block">Captura bloqueada mientras la fuente esté bloqueada.</span>
           ) : null}
         </span>
@@ -266,7 +266,8 @@ function SourceRow({
             <span aria-hidden>Capturar</span>
             <Switch
               checked={entry.collect}
-              disabled={pending || entry.collectBlocked}
+              disabled={pending || entry.collectBlocked !== null}
+              {...(entry.collectBlocked === null ? {} : { "aria-describedby": engineNoteId })}
               onCheckedChange={(checked) => onChange({ collect: Boolean(checked) })}
               aria-label={`Capturar ${governance.name}`}
             />
@@ -331,11 +332,12 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   "robots-disallowed": "El robots.txt del sitio prohíbe esa ruta a Earlyscript.",
   "robots-unavailable": "El robots.txt del sitio no responde; no se puede comprobar el permiso.",
   unreachable: "El feed no responde.",
+  "too-large": "El feed supera el límite de 4 MiB.",
   "invalid-url": "La URL debe empezar con http:// o https://.",
   "duplicate-feed": "Ese feed ya está en la lista.",
   "unknown-feed": "Ese feed ya no está en la lista.",
   "rank-blocked": "La fuente todavía no puede entrar al motor.",
-  "collect-blocked": "La fuente está bloqueada por sus condiciones de uso.",
+  "collect-blocked": "La fuente no se puede capturar: sus términos están sin leer o la bloquean.",
   "unknown-source": "Este servidor no conoce la fuente.",
   unavailable: "Los servicios editoriales no están montados en este servidor.",
   storage: "La base editorial no respondió.",

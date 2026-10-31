@@ -83,7 +83,8 @@ export function robotsGate(
     if (!rules) {
       const robotsUrl = `${origin}/robots.txt`;
       try {
-        const response = await getFor(url)(robotsUrl);
+        // RFC 9309 §2.3.1.2: follow at least five redirects for robots.txt itself, ungated.
+        const response = await followRedirects(getFor, null)(robotsUrl);
         if (response.status === 200 && typeof response.body === "string")
           rules = robotsRules(response.body);
         else if (response.status >= 400 && response.status < 500) rules = [];
@@ -97,5 +98,40 @@ export function robotsGate(
     return robotsAllows(rules, url)
       ? null
       : `robots_disallowed: ${origin}/robots.txt disallows ${new URL(url).pathname} for Earlyscript`;
+  };
+}
+
+/** Redirect hops followed per request, as RFC 9309 asks for robots.txt. */
+export const MAX_REDIRECTS = 5;
+const REDIRECT = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Follows redirects by hand: clients use `redirect: "manual"`, so every hop is a new request
+ * through `getFor(target)` (the target host's pause) and, with a gate, only after the target
+ * host's robots.txt allows the path. Callers gate the first URL themselves. A refused hop,
+ * a sixth redirect or a redirect without a usable Location is a SourceFailure.
+ */
+export function followRedirects(
+  getFor: (url: string) => GetResponse,
+  gate: RobotsGate | null,
+): GetResponse {
+  return async (url, headers) => {
+    let current = url;
+    for (let hop = 0; ; hop++) {
+      const response = await getFor(current)(current, headers);
+      if (!REDIRECT.has(response.status)) return response;
+      if (hop === MAX_REDIRECTS) throw new SourceFailure(`More than ${MAX_REDIRECTS} redirects`);
+      let next: URL;
+      try {
+        next = new URL(response.location ?? "", current);
+      } catch {
+        throw new SourceFailure(`HTTP ${response.status} with an invalid Location`);
+      }
+      if (!response.location || (next.protocol !== "https:" && next.protocol !== "http:"))
+        throw new SourceFailure(`HTTP ${response.status} with an unusable Location`);
+      const refusal = gate ? await gate(next.href) : null;
+      if (refusal) throw new SourceFailure(refusal);
+      current = next.href;
+    }
   };
 }

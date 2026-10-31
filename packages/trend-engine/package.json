@@ -18,18 +18,6 @@
     "./sources": {
       "types": "./src/sources/index.ts",
       "import": "./src/sources/index.ts"
-    },
-    "./sources/rss-feeds": {
-      "types": "./src/sources/rss-feeds.ts",
-      "import": "./src/sources/rss-feeds.ts"
-    },
-    "./sources/xml": {
-      "types": "./src/sources/xml.ts",
-      "import": "./src/sources/xml.ts"
-    },
-    "./sources/robots": {
-      "types": "./src/sources/robots.ts",
-      "import": "./src/sources/robots.ts"
     }
   },
   "scripts": {

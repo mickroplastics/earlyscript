@@ -1,6 +1,6 @@
 import type { EditorialFeedCheck, EditorialRssFeed } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState, type ChangeEvent, type FormEvent } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
@@ -17,6 +17,7 @@ export interface RssFeedControls {
   readonly onAdd: (input: {
     readonly feedUrl: string;
     readonly name?: string;
+    readonly siteUrl?: string;
     readonly note?: string;
   }) => Promise<FeedOutcome<void>>;
   readonly onRemove: (feedUrl: string) => void;
@@ -35,6 +36,15 @@ function feedCheckText(check: EditorialFeedCheck): string {
   return check.latestAt === null
     ? `${entries}, sin fecha legible.`
     : `${entries}, la más reciente del ${dateFormat.format(new Date(check.latestAt))}.`;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value.trim());
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function FeedLine({ feed }: { readonly feed: EditorialRssFeed }) {
@@ -148,36 +158,49 @@ function UserFeed({
 function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
   const [feedUrl, setFeedUrl] = useState("");
   const [name, setName] = useState("");
+  const [siteUrl, setSiteUrl] = useState("");
   const [note, setNote] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!feedUrl.trim()) return;
+    const invalid = [feedUrl, siteUrl].find((value) => value.trim() && !isHttpUrl(value));
+    if (invalid !== undefined) {
+      setError(`«${invalid.trim()}» no es una URL válida: debe empezar con http:// o https://.`);
+      return;
+    }
     setAdding(true);
     setError(null);
     const outcome = await onAdd({
       feedUrl: feedUrl.trim(),
       ...(name.trim() ? { name: name.trim() } : {}),
+      ...(siteUrl.trim() ? { siteUrl: siteUrl.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
     });
     setAdding(false);
     if (outcome.ok) {
       setFeedUrl("");
       setName("");
+      setSiteUrl("");
       setNote("");
     } else {
       setError(outcome.message);
     }
   };
+  // An error describes the URLs it was given; editing them retires it.
+  const edit = (set: (value: string) => void) => (event: ChangeEvent<HTMLInputElement>) => {
+    set(event.target.value);
+    setError(null);
+  };
   return (
-    <form className="space-y-1.5" onSubmit={(event) => void submit(event)}>
+    <form className="space-y-1.5" noValidate onSubmit={(event) => void submit(event)}>
       <div className="grid gap-1.5 @min-[32rem]/settings-row:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Input
           size="sm"
-          type="url"
+          inputMode="url"
           value={feedUrl}
-          onChange={(event) => setFeedUrl(event.target.value)}
+          onChange={edit(setFeedUrl)}
           placeholder="https://ejemplo.com/feed.xml"
           aria-label="URL del feed"
           aria-invalid={error !== null}
@@ -190,7 +213,15 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
           aria-label="Nombre del feed"
         />
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="grid gap-1.5 @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <Input
+          size="sm"
+          inputMode="url"
+          value={siteUrl}
+          onChange={edit(setSiteUrl)}
+          placeholder="URL del sitio (opcional, se toma del feed)"
+          aria-label="URL del sitio"
+        />
         <Input
           size="sm"
           value={note}

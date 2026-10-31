@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Trimmed from the shape of a Substack RSS 2.0 feed; text is synthetic. -->
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title><![CDATA[Latent Space]]></title>
+    <link>https://www.latent.space</link>
+    <atom:link href="https://www.latent.space/feed" rel="self" type="application/rss+xml"/>
+    <item>
+      <title><![CDATA[Agents that read your repo & ship]]></title>
+      <description><![CDATA[<p>How coding agents use <b>repository maps</b> &amp; tests.</p>]]></description>
+      <link>https://www.latent.space/p/agents-repo</link>
+      <guid isPermaLink="false">https://www.latent.space/p/agents-repo</guid>
+      <dc:creator><![CDATA[swyx]]></dc:creator>
+      <pubDate>Fri, 30 Oct 2026 15:04:00 GMT</pubDate>
+      <content:encoded><![CDATA[<p>Full article body that should not replace the description.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Local models &#8212; a field guide</title>
+      <description>Running &lt;em&gt;Qwen&lt;/em&gt; on a laptop, see https://github.com/ollama/ollama</description>
+      <link>https://www.latent.space/p/local-models</link>
+      <author>editor@example.com (Alessio Fanelli)</author>
+      <pubDate>Fri, 30 Oct 2026 23:59:59 +0000</pubDate>
+    </item>
+    <item>
+      <title>Yesterday's episode</title>
+      <description>Recorded before the day.</description>
+      <link>https://www.latent.space/p/yesterday</link>
+      <author>editor@example.com</author>
+      <pubDate>Thu, 29 Oct 2026 10:00:00 -0500</pubDate>
+    </item>
+  </channel>
+</rss>
