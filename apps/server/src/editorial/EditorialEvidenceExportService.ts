@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as EditorialResultsService from "./EditorialResultsService.ts";
+import { COUNT_MAX, decisionInDomain } from "./decisionDomain.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import {
   ALL_EVIDENCE_FILES,
@@ -373,6 +374,8 @@ interface SummaryInput {
   readonly until: string | null;
   readonly lastEventSeq: number | null;
   readonly decisionRows: ReadonlyArray<ProjectedRow>;
+  /** Current decisions left out because a stored value is out of its domain. */
+  readonly excludedByDomain: number;
   readonly runRows: ReadonlyArray<ProjectedRow>;
   readonly sources: ReadonlyArray<EditorialSourceEntry>;
   readonly fileRows: ReadonlyArray<{ readonly name: string; readonly rows: number }>;
@@ -420,9 +423,17 @@ const filterText = (
 
 /** `resumen.md`: aggregates only, no free text and no export timestamp. */
 const renderSummary = (input: SummaryInput): string => {
-  const { modes, comparisons } = EditorialResultsService.summarizeDecisions(
-    input.decisionRows.flatMap((row) => decisionFromRow(row) ?? []),
+  const rebuilt = input.decisionRows.map(decisionFromRow);
+  const summarized = EditorialResultsService.summarizeDecisions(
+    rebuilt.flatMap((decision) => decision ?? []),
   );
+  const { modes, comparisons } = summarized;
+  // Rows that passed the stored check but not their share rule are out of domain too.
+  const excludedByDomain =
+    input.excludedByDomain +
+    summarized.excludedByDomain +
+    input.decisionRows.filter((row, index) => rebuilt[index] === null && row.vigente === true)
+      .length;
   const filter = filterText(input.mode, input.since, input.until);
   const stageRows = modes.flatMap((mode) => [
     ...mode.stages.map((entry) => [
@@ -506,7 +517,7 @@ const renderSummary = (input: SummaryInput): string => {
   return [
     "# Evidencia de Earlyscript",
     "",
-    `Esquema \`${EVIDENCE_SCHEMA}\`, paquete ${input.mode === "full" ? "completo (uso local)" : "para compartir"}. Estado de la base hasta el evento ${input.lastEventSeq ?? "?"}. Filtro: ${filter}.`,
+    `Esquema \`${EVIDENCE_SCHEMA}\`, paquete ${input.mode === "full" ? "completo (uso local)" : "para compartir"}. Estado de la base hasta el evento ${input.lastEventSeq ?? "?"}. Filtro: ${filter}. Filas excluidas por dominio: ${excludedByDomain}.`,
     "",
     "Estas cifras son descriptivas: hilos y temas distintos en cada modo, valorados por el operador. La comparación de la tesis es por pares, sobre el mismo tema y con revisores externos. Ningún porcentaje de ahorro se calcula aquí.",
     "",
@@ -871,14 +882,27 @@ const make = Effect.gen(function* () {
     // In share the sequence passes its rule like any cell; `full` keeps the stored value.
     const lastEventSeq =
       mode === "share"
-        ? numberOrNull(shareValue({ kind: "int" }, data.lastEventSeq, data.names) as CsvValue)
+        ? numberOrNull(
+            shareValue(
+              { kind: "int", min: 0, max: COUNT_MAX },
+              data.lastEventSeq,
+              data.names,
+            ) as CsvValue,
+          )
         : data.lastEventSeq;
+    // R8: the domain is checked on the stored decision, the same way Results does; a row out of
+    // its domain leaves the aggregates and is only counted, never shown.
+    const inDomain = decisions.map(decisionInDomain);
+    const excludedByDomain = decisions.filter(
+      (decision, index) => decision.current && !inDomain[index],
+    ).length;
     const summary = renderSummary({
       mode,
       since: options.since ?? null,
       until: options.until ?? null,
       lastEventSeq,
-      decisionRows: project(DECISIONS_FILE),
+      decisionRows: project(DECISIONS_FILE).filter((_row, index) => inDomain[index]),
+      excludedByDomain,
       runRows: project(RUNS_FILE),
       sources: view.sources,
       fileRows: csvNames.map((name) => ({ name, rows: csv[name]?.length ?? 0 })),
@@ -933,6 +957,10 @@ const make = Effect.gen(function* () {
         },
       },
       state: { lastEventSeq },
+      domain: {
+        excludedDecisions: excludedByDomain,
+        rule: "Una decisión vigente con un valor fuera de su dominio (utilidad de 1 a 5, tiempos de 0 a 7 días por etapa, conteos no negativos) queda fuera de los agregados del resumen; solo se cuenta. Las fechas fuera de 2020 a 2099 quedan vacías en share y no excluyen la decisión.",
+      },
       packageHash,
       files: files.map((file) => ({
         name: file.name,

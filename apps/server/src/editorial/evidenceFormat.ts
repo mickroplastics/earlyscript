@@ -6,6 +6,17 @@ import * as Option from "effect/Option";
 
 import { SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
 
+import {
+  COUNT_MAX,
+  DATE_MAX,
+  DATE_MIN,
+  STAGE_MS_MAX,
+  TOTAL_MS_MAX,
+  UTILITY_MAX,
+  UTILITY_MIN,
+  dateInRange,
+  intInRange,
+} from "./decisionDomain.ts";
 import { EditorialEventType, WORK_STAGES } from "./persistence/EditorialModel.ts";
 import { parseIso } from "./persistence/support.ts";
 
@@ -24,7 +35,7 @@ export const SUMMARY_FILE = "resumen.md";
  */
 export type ShareRule =
   | { readonly kind: "enum"; readonly values: ReadonlyArray<string> }
-  | { readonly kind: "int" }
+  | { readonly kind: "int"; readonly min: number; readonly max: number }
   | { readonly kind: "number" }
   | { readonly kind: "bool" }
   | { readonly kind: "day" }
@@ -39,7 +50,13 @@ export type ShareRule =
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, ShareRule>> };
 
 const oneOf = (...values: ReadonlyArray<string>): ShareRule => ({ kind: "enum", values });
-const INT: ShareRule = { kind: "int" };
+/** Integers carry their domain, not only their shape (R8): a count is never negative. */
+const int = (min: number, max: number): ShareRule => ({ kind: "int", min, max });
+const INT = int(0, COUNT_MAX);
+const ORDINAL = int(1, COUNT_MAX);
+const UTILITY = int(UTILITY_MIN, UTILITY_MAX);
+const STAGE_MS = int(0, STAGE_MS_MAX);
+const TOTAL_MS = int(0, TOTAL_MS_MAX);
 const NUMBER: ShareRule = { kind: "number" };
 const BOOL: ShareRule = { kind: "bool" };
 const DAY: ShareRule = { kind: "day" };
@@ -90,7 +107,7 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("expediente", null, "Expediente de la corrida."),
     column("decision", null, "Identificador de la decisión."),
     column("accion", oneOf("accept", "edit", "reject"), "accept, edit o reject."),
-    column("utilidad", INT, "Utilidad 1 a 5 que registró el operador."),
+    column("utilidad", UTILITY, "Utilidad 1 a 5 que registró el operador."),
     column("motivo", null, "Motivo escrito con la decisión."),
     column("vigente", BOOL, "1 si es la última decisión del hilo dentro del filtro."),
     column("reloj_definitivo", BOOL, "0 si un tramo esperaba resolución: los tiempos son un piso."),
@@ -99,11 +116,11 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
       oneOf("complete", "partial"),
       "complete si el hilo registró todas las etapas de su modo.",
     ),
-    column("explorar_ms", INT, "Milisegundos activos en Explorar; vacío si no corrió."),
-    column("leer_ms", INT, "Milisegundos activos en Leer; vacío si no corrió."),
-    column("escribir_ms", INT, "Milisegundos activos en Escribir; vacío si no corrió."),
-    column("decidir_ms", INT, "Milisegundos activos en Decidir; vacío si no corrió."),
-    column("total_ms", INT, "Suma de las etapas registradas."),
+    column("explorar_ms", STAGE_MS, "Milisegundos activos en Explorar; vacío si no corrió."),
+    column("leer_ms", STAGE_MS, "Milisegundos activos en Leer; vacío si no corrió."),
+    column("escribir_ms", STAGE_MS, "Milisegundos activos en Escribir; vacío si no corrió."),
+    column("decidir_ms", STAGE_MS, "Milisegundos activos en Decidir; vacío si no corrió."),
+    column("total_ms", TOTAL_MS, "Suma de las etapas registradas."),
     column("guion_hash", HASH, "sha256 de la versión del guion decidida."),
     column("afirmaciones", INT, "Oraciones del guion decidido (conteo mecánico)."),
     column("con_cita", INT, "De ellas, con marcador de cita (no mide respaldo)."),
@@ -117,7 +134,7 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
   [INTERVALS_FILE]: [
     column("hilo", THREAD, "Hilo de video; en share, índice estable."),
     column("modo", MODES, "assisted o manual."),
-    column("tramo", INT, "Orden del tramo dentro del hilo, desde 1."),
+    column("tramo", ORDINAL, "Orden del tramo dentro del hilo, desde 1."),
     column("tramo_id", null, "Identificador del tramo."),
     column("etapa", STAGES, "explore, read, write o decide."),
     column(
@@ -127,7 +144,7 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     ),
     column("inicio", DAY, "Inicio del tramo."),
     column("fin", DAY, "Fin del tramo; vacío si sigue abierto o sin resolver."),
-    column("duracion_ms", INT, "fin − inicio; vacío si el tramo no está cerrado."),
+    column("duracion_ms", STAGE_MS, "fin − inicio; vacío si el tramo no está cerrado."),
     column(
       "motivo_fin",
       oneOf("paused", "stage_changed", "stopped", "decided", "resolved"),
@@ -138,7 +155,7 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("recuperado", DAY, "Momento en que el servidor marcó el tramo para resolver."),
   ],
   [EVENTS_FILE]: [
-    column("seq", INT, "Orden del evento en la bitácora."),
+    column("seq", ORDINAL, "Orden del evento en la bitácora."),
     column("tipo", oneOf(...EditorialEventType.literals), "Tipo de evento editorial."),
     column("fecha", DAY, "Momento del evento."),
     column("agregado", oneOf("trend", "video_thread", "run"), "trend, video_thread o run."),
@@ -269,7 +286,7 @@ export const SHARE_EVENT_DATA: Readonly<
   "work.resolved": { endedAt: DAY },
   "decision.recorded": {
     action: oneOf("accept", "edit", "reject"),
-    utility: INT,
+    utility: UTILITY,
     scriptVersionHash: HASH,
     clockDefinitive: BOOL,
   },
@@ -296,13 +313,15 @@ export const describeRule = (rule: ShareRule): string => {
     case "enum":
       return `uno de: ${rule.values.join(", ")}`;
     case "int":
-      return "entero";
+      return rule.max === COUNT_MAX
+        ? `entero desde ${rule.min}`
+        : `entero de ${rule.min} a ${rule.max}`;
     case "number":
       return "número finito";
     case "bool":
       return "1 o 0";
     case "day":
-      return "día UTC AAAA-MM-DD";
+      return `día UTC AAAA-MM-DD entre ${DATE_MIN.slice(0, 10)} y ${DATE_MAX.slice(0, 10)} (exclusivo)`;
     case "hash":
       return "sha256 de 64 hexadecimales, con o sin prefijo sha256:";
     case "version":
@@ -413,13 +432,13 @@ export const shareValue = (
     case "enum":
       return typeof value === "string" && rule.values.includes(value) ? value : null;
     case "int":
-      return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+      return intInRange(value, rule.min, rule.max) ? value : null;
     case "number":
       return typeof value === "number" && Number.isFinite(value) ? value : null;
     case "bool":
       return typeof value === "boolean" ? value : value === 1 ? true : value === 0 ? false : null;
     case "day":
-      return typeof value === "string" ? utcDay(value) : null;
+      return dateInRange(value) ? utcDay(value) : null;
     case "hash":
       return typeof value === "string" && HASH_FORMAT.test(value) ? value : null;
     case "version":

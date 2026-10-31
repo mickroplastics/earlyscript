@@ -1018,4 +1018,68 @@ describe("EditorialEvidenceExportService", () => {
       }),
     ),
   );
+
+  it.effect(
+    "leaves out-of-domain decisions out of every aggregate, like Results, and counts them",
+    () =>
+      withEvidence(
+        Effect.gen(function* () {
+          yield* seedResultsFixture;
+          const sql = yield* EditorialSql;
+          // Values of the right shape, out of their domain, past the CHECKs as an import could.
+          yield* sql`PRAGMA ignore_check_constraints = ON`;
+          yield* sql`UPDATE editorial_decisions SET utility = 999 WHERE thread_id = 'thread-assisted-1'`;
+          yield* sql`UPDATE editorial_decisions SET write_ms = -5 WHERE thread_id = 'thread-manual-1'`;
+          yield* sql`UPDATE editorial_video_results SET views = -1 WHERE thread_id = 'thread-manual-3'`;
+          yield* sql`PRAGMA ignore_check_constraints = OFF`;
+
+          const results = yield* (yield* EditorialResultsService.EditorialResultsService).summary;
+          assert.strictEqual(results.excludedByDomain, 3);
+          const utility = (mode: "assisted" | "manual") =>
+            results.modes.find((entry) => entry.mode === mode)!.utility;
+          // Assisted keeps 5 and 3; manual keeps 2. 999 never reaches the mean or the bins.
+          assert.deepStrictEqual(utility("assisted"), {
+            n: 2,
+            mean: 4,
+            distribution: [0, 0, 1, 0, 1],
+          });
+          assert.deepStrictEqual(utility("manual"), {
+            n: 1,
+            mean: 2,
+            distribution: [0, 1, 0, 0, 0],
+          });
+
+          for (const mode of ["share", "full"] as const) {
+            const pkg = yield* exportOf(mode);
+            const summary = fileOf(pkg, "resumen.md");
+            assert.include(summary, "Filas excluidas por dominio: 3.", mode);
+            assert.include(summary, "| Asistido | 2 | 2 | 4,00 | 0 | 0 | 1 | 0 | 1 |", mode);
+            assert.include(summary, "| Manual | 1 | 1 | 2,00 | 0 | 1 | 0 | 0 | 0 |", mode);
+            assert.notInclude(summary, "999", mode);
+            assert.strictEqual(JSON.parse(pkg.manifest).domain.excludedDecisions, 3, mode);
+          }
+          // Share never copies the out-of-domain value: the cell is empty.
+          const share = yield* exportOf("share");
+          const rows = parseCsv(fileOf(share, "decisiones.csv"));
+          assert.deepStrictEqual(
+            rows.map((row) => row.utilidad),
+            ["", "3", "5", "2", "3", "4"],
+          );
+          assert.strictEqual(rows[1]!.escribir_ms, "");
+          assert.strictEqual(rows[5]!.vistas, "");
+          for (const file of share.files) assert.notInclude(file.content, "999", file.name);
+        }),
+      ),
+  );
+
+  it("bounds every integer rule below by zero", () => {
+    const ints = [
+      ...Object.values(EVIDENCE_COLUMNS)
+        .flat()
+        .map((spec) => spec.share),
+      ...Object.values(SHARE_EVENT_DATA).flatMap((fields) => Object.values(fields)),
+    ].filter((rule): rule is Extract<ShareRule, { kind: "int" }> => rule?.kind === "int");
+    assert.isAbove(ints.length, 0);
+    for (const rule of ints) assert.isAtLeast(rule.min, 0);
+  });
 });

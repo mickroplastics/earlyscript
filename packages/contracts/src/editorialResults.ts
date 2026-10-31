@@ -137,6 +137,11 @@ export const EditorialResultsSummary = Schema.Struct({
   modes: Schema.Array(EditorialResultsModeSummary),
   comparisons: Schema.Array(EditorialResultsComparison),
   inbox: EditorialResultsInbox,
+  /**
+   * Current decisions left out of every statistic because a stored value is out of its domain
+   * (utility outside 1 to 5, a negative or absurd time, a negative count).
+   */
+  excludedByDomain: NonNegativeInt,
   /** Every decision recorded, superseded ones included. */
   decisionCount: NonNegativeInt,
   firstDecidedAt: Schema.NullOr(IsoDateTime),

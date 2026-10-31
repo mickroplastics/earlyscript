@@ -47,6 +47,7 @@ import {
   coverageNote,
   decisionsFailureText,
   decisionThreadFallback,
+  domainNote,
   formatCount,
   formatDuration,
   formatInteger,
@@ -559,6 +560,7 @@ export function ResultsView({
   const assisted = modeSummary(summary, "assisted");
   const manual = modeSummary(summary, "manual");
   const provisional = provisionalNote(summary);
+  const outOfDomain = domainNote(summary);
   const state = decisions.state;
   const recorded = summary.comparisons.find((comparison) => comparison.key === "recorded");
   return (
@@ -585,6 +587,12 @@ export function ResultsView({
           por pares, sobre el mismo tema y con revisores externos.
         </AlertDescription>
       </Alert>
+      {outOfDomain ? (
+        <Alert variant="warning">
+          <InfoIcon />
+          <AlertDescription>{outOfDomain}</AlertDescription>
+        </Alert>
+      ) : null}
 
       <ResultsSection
         id="tiempos"
