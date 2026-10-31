@@ -1,9 +1,11 @@
 import type { SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
-import type { SourceAdapter } from "./adapter.ts";
-import { createHttpClient, type HttpOptions } from "./http.ts";
+import type { DayResult, SourceAdapter } from "./adapter.ts";
+import { createHttpClient, type GetResponse, type HttpOptions } from "./http.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
+import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
+import { DEVTO_SELECTION, devtoCollector } from "./devto.ts";
 
 import { fixtureAdapter } from "./fixture.ts";
 
@@ -24,6 +26,29 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     // The first 100 repositories by stars per window: a declared sample, never a census.
     coverage_policy: "sample",
   },
+  huggingface: {
+    id: "huggingface",
+    label: "Hugging Face",
+    selection: { huggingface: HF_SELECTION },
+    // Models are chosen by present-day likes: a declared sample, as GitHub.
+    coverage_policy: "sample",
+  },
+  devto: {
+    id: "devto",
+    label: "DEV Community",
+    selection: { devto: DEVTO_SELECTION },
+    coverage_policy: "census",
+  },
+};
+
+/** A fresh collector per adapter: listings walked once are kept between that adapter's days. */
+const COLLECTORS: Readonly<
+  Record<SourceId, () => (day: string, get: GetResponse) => Promise<DayResult>>
+> = {
+  hn: () => collectHnDay,
+  github: () => collectGithubDay,
+  huggingface: huggingfaceCollector,
+  devto: devtoCollector,
 };
 
 export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
@@ -35,6 +60,8 @@ export type { DayResult, SourceAdapter } from "./adapter.ts";
 
 export { collectHnDay } from "./hn.ts";
 export { collectGithubDay } from "./github.ts";
+export { huggingfaceCollector } from "./huggingface.ts";
+export { devtoCollector } from "./devto.ts";
 
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
@@ -42,10 +69,10 @@ export function liveSources(
 ): Array<SourceAdapter> {
   return ids.map((id) => {
     const state = { nextStart: 0, blockedUntil: 0 };
+    const collect = COLLECTORS[id]();
     return {
       descriptor: SOURCES[id],
-      collectDay: (day) =>
-        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, state)),
+      collectDay: (day) => collect(day, createHttpClient(id, options, state)),
     };
   });
 }
