@@ -322,6 +322,11 @@ export const EditorialCreateVideoInput = Schema.Struct({
   projectId: ProjectId,
   modelSelection: ModelSelection,
   runtimeMode: Schema.optionalKey(RuntimeMode),
+  /**
+   * `manual` opens the trend's manual thread for the paired comparison: same topic, no chat,
+   * no dossier on screen, and the trend's production link stays with its assisted thread.
+   */
+  mode: Schema.optionalKey(Schema.Literals(["assisted", "manual"])),
 });
 export type EditorialCreateVideoInput = typeof EditorialCreateVideoInput.Type;
 

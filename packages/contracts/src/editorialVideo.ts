@@ -7,7 +7,9 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
-import { IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { EditorialTrendKey } from "./editorial.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import {
   EditorialResultsAction,
   EditorialResultsMode,
@@ -27,6 +29,10 @@ export const EDITORIAL_VIDEO_WS_METHODS = {
   decide: "editorial.video.decide",
   saveResult: "editorial.video.saveResult",
   openVersion: "editorial.video.openVersion",
+  createManual: "editorial.video.createManual",
+  capture: "editorial.video.capture",
+  removeCapture: "editorial.video.removeCapture",
+  purge: "editorial.video.purge",
 } as const;
 
 export const EditorialVideoClockState = Schema.Union([
@@ -134,8 +140,38 @@ export const EditorialVideoThread = Schema.Struct({
   dossierId: Schema.NullOr(Schema.String),
   /** Assistant title of the dossier, else the engine label; null when the run is not readable. */
   trendTitle: Schema.NullOr(Schema.String),
+  /**
+   * The T3 thread was deleted, or is gone after its launch. Its editorial record stays until
+   * `purge`; work commands answer `thread-deleted`.
+   */
+  deleted: Schema.Boolean,
 });
 export type EditorialVideoThread = typeof EditorialVideoThread.Type;
+
+/** A finding the operator kept while exploring by hand: the page, and a note in their words. */
+export const EditorialVideoCapture = Schema.Struct({
+  captureId: Schema.String,
+  url: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  note: Schema.NullOr(Schema.String),
+  capturedAt: IsoDateTime,
+});
+export type EditorialVideoCapture = typeof EditorialVideoCapture.Type;
+
+/**
+ * A page the integrated browser finished loading in a manual thread, recorded by the server
+ * from the preview state it receives, so a client reload loses none. `origin` is the browser
+ * runtime that reported it: `desktop`, `server`, or `automation` when a tool drove the tab.
+ */
+export const EditorialVideoBrowserVisit = Schema.Struct({
+  visitId: Schema.String,
+  tabId: Schema.String,
+  url: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  origin: Schema.Literals(["desktop", "server", "automation"]),
+  visitedAt: IsoDateTime,
+});
+export type EditorialVideoBrowserVisit = typeof EditorialVideoBrowserVisit.Type;
 
 export const EditorialVideoState = Schema.Struct({
   thread: EditorialVideoThread,
@@ -145,6 +181,10 @@ export const EditorialVideoState = Schema.Struct({
   decision: Schema.NullOr(EditorialVideoDecision),
   /** Most recent observation first, at most 20. */
   results: Schema.Array(EditorialVideoResult),
+  /** Kept captures, oldest first; a removed one leaves only its events. */
+  captures: Schema.Array(EditorialVideoCapture),
+  /** Browser history of a manual thread, most recent first, at most 200; empty when assisted. */
+  visits: Schema.Array(EditorialVideoBrowserVisit),
 });
 export type EditorialVideoState = typeof EditorialVideoState.Type;
 
@@ -216,6 +256,62 @@ export const EditorialVideoSaveResultInput = Schema.Struct({
 });
 export type EditorialVideoSaveResultInput = typeof EditorialVideoSaveResultInput.Type;
 
+/**
+ * "Nuevo hilo manual" from the Threads space: a video thread with no dossier, no chat and no
+ * agent, its clock in Explorar. `trendKey` records, for the paired comparison, that it works
+ * the same topic as that trend; it shows nothing of the trend in the thread.
+ */
+export const EditorialVideoCreateManualInput = Schema.Struct({
+  /** Generated once by the client per creation and reused on retries. */
+  operationId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  projectId: ProjectId,
+  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  /** Kept on the thread for its T3 shell; the policy refuses to run it. */
+  modelSelection: ModelSelection,
+  trendKey: Schema.optionalKey(EditorialTrendKey),
+});
+export type EditorialVideoCreateManualInput = typeof EditorialVideoCreateManualInput.Type;
+
+export const EditorialVideoCreateManualResult = Schema.Struct({
+  threadId: ThreadId,
+  /** False when a retry found the operation already done. */
+  created: Schema.Boolean,
+});
+export type EditorialVideoCreateManualResult = typeof EditorialVideoCreateManualResult.Type;
+
+export const EditorialVideoCaptureInput = Schema.Struct({
+  threadId: ThreadId,
+  url: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_000)),
+  title: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(1_000))),
+  note: Schema.optionalKey(Reason),
+});
+export type EditorialVideoCaptureInput = typeof EditorialVideoCaptureInput.Type;
+
+export const EditorialVideoRemoveCaptureInput = Schema.Struct({
+  threadId: ThreadId,
+  captureId: Schema.String,
+});
+export type EditorialVideoRemoveCaptureInput = typeof EditorialVideoRemoveCaptureInput.Type;
+
+export const EditorialVideoPurgeInput = Schema.Struct({ threadId: ThreadId });
+export type EditorialVideoPurgeInput = typeof EditorialVideoPurgeInput.Type;
+
+/** What a purge deleted, row by row and file by file. */
+export const EditorialVideoPurgeResult = Schema.Struct({
+  threadId: ThreadId,
+  deleted: Schema.Struct({
+    visits: NonNegativeInt,
+    captures: NonNegativeInt,
+    scriptVersions: NonNegativeInt,
+    versionFiles: NonNegativeInt,
+    decisions: NonNegativeInt,
+    results: NonNegativeInt,
+    workIntervals: NonNegativeInt,
+    events: NonNegativeInt,
+  }),
+});
+export type EditorialVideoPurgeResult = typeof EditorialVideoPurgeResult.Type;
+
 export const EditorialVideoErrorReason = Schema.Literals([
   "unavailable",
   /** The thread has no editorial association, or the interval does not exist. */
@@ -233,6 +329,10 @@ export const EditorialVideoErrorReason = Schema.Literals([
   "not-decided",
   /** The script file is missing, outside the workspace or not text. */
   "script-file",
+  /** The T3 thread was deleted: its record can be read or purged, not worked on. */
+  "thread-deleted",
+  /** A purge needs the T3 thread deleted first, so a live thread never loses its mode. */
+  "thread-live",
   "storage",
 ]);
 export type EditorialVideoErrorReason = typeof EditorialVideoErrorReason.Type;
@@ -298,6 +398,37 @@ const EditorialVideoOpenVersionRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.openVer
   error: videoError,
 });
 
+const EditorialVideoCreateManualRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.createManual, {
+  payload: EditorialVideoCreateManualInput,
+  success: EditorialVideoCreateManualResult,
+  error: videoError,
+});
+
+/** Keeps a page of the integrated browser with the operator's note; refused once decided. */
+const EditorialVideoCaptureRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.capture, {
+  payload: EditorialVideoCaptureInput,
+  success: EditorialVideoState,
+  error: videoError,
+});
+
+/** Takes a capture off the list; its saved and removed events stay. Refused once decided. */
+const EditorialVideoRemoveCaptureRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.removeCapture, {
+  payload: EditorialVideoRemoveCaptureInput,
+  success: EditorialVideoState,
+  error: videoError,
+});
+
+/**
+ * Deletes a video thread's editorial record and its version copies for good; one event with
+ * counts remains. Only once the T3 thread is deleted (`thread-live` otherwise): a live manual
+ * thread without its record would lose the policy that keeps agents out.
+ */
+const EditorialVideoPurgeRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.purge, {
+  payload: EditorialVideoPurgeInput,
+  success: EditorialVideoPurgeResult,
+  error: videoError,
+});
+
 /** Merged into `WsRpcGroup` next to the editorial and Results groups. */
 export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoGetRpc,
@@ -307,6 +438,10 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoDecideRpc,
   EditorialVideoSaveResultRpc,
   EditorialVideoOpenVersionRpc,
+  EditorialVideoCreateManualRpc,
+  EditorialVideoCaptureRpc,
+  EditorialVideoRemoveCaptureRpc,
+  EditorialVideoPurgeRpc,
 );
 
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
@@ -317,4 +452,8 @@ export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_VIDEO_WS_METHODS.decide]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.saveResult]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.openVersion]: AuthOrchestrationReadScope,
+  [EDITORIAL_VIDEO_WS_METHODS.createManual]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.capture]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.purge]: AuthOrchestrationOperateScope,
 } as const;

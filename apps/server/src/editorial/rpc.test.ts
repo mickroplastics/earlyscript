@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -33,6 +34,8 @@ import * as Stream from "effect/Stream";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
+import { purgeVideoRecord } from "./EditorialPurge.ts";
+import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialInboxCommands } from "./EditorialInboxCommands.ts";
 import { withEditorial } from "./editorialLayer.testkit.ts";
 import { subscribeInbox, SUBSCRIBE_MAX_REPLAY } from "./inboxStream.ts";
@@ -178,6 +181,98 @@ describe("editorial RPC authorization", () => {
         );
       }).pipe(Effect.scoped),
     ),
+  );
+
+  it.effect("opens the trend's manual thread apart from its assisted one", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const client = yield* clientWith([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+            ]);
+            const manual = yield* client[EDITORIAL_WS_METHODS.createVideo]({
+              ...VIDEO_INPUT,
+              mode: "manual",
+            });
+            assert.isTrue(manual.created);
+            // The production link waits for the assisted thread.
+            assert.strictEqual(manual.state.production, null);
+            const again = yield* client[EDITORIAL_WS_METHODS.createVideo]({
+              ...VIDEO_INPUT,
+              mode: "manual",
+            });
+            assert.deepStrictEqual([again.threadId, again.created], [manual.threadId, false]);
+
+            const assisted = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isTrue(assisted.created);
+            assert.notStrictEqual(assisted.threadId, manual.threadId);
+            assert.strictEqual(assisted.state.production?.threadId, assisted.threadId);
+            assert.strictEqual((yield* Ref.get(launch.calls)).length, 2);
+
+            const registered = (yield* events).filter(
+              (event) => event.type === "video-thread.registered",
+            );
+            assert.deepStrictEqual(registered[0]?.payload, {
+              environmentId: "environment:editorial-test",
+              mode: "manual",
+              trendKey: QUANTUM_KEY,
+              runId: RUN_ID,
+              dossierId: null,
+            });
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
+  );
+
+  it.effect("opens a new manual thread for the trend once its previous one was purged", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const client = yield* clientWith([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+            ]);
+            const manual = { ...VIDEO_INPUT, mode: "manual" as const };
+            const first = yield* client[EDITORIAL_WS_METHODS.createVideo](manual);
+            const registered = yield* EditorialThreadService.use((threads) =>
+              threads.getVideoThread(first.threadId),
+            );
+            // The purge's database half, as editorial.video.purge runs it after the disk.
+            yield* purgeVideoRecord(Option.getOrThrow(registered), 0);
+
+            const second = yield* client[EDITORIAL_WS_METHODS.createVideo](manual);
+            assert.isTrue(second.created);
+            assert.notStrictEqual(second.threadId, first.threadId);
+            // A new launch command: the first one's receipt names the deleted thread.
+            const calls = yield* Ref.get(launch.calls);
+            assert.deepStrictEqual(
+              calls.map((call) => [String(call.threadId), String(call.commandId)]),
+              [
+                [
+                  first.threadId,
+                  `editorial:create-video:editorial:trend-video-manual:${RUN_ID}:${QUANTUM}`,
+                ],
+                [
+                  second.threadId,
+                  `editorial:create-video:editorial:trend-video-manual:${RUN_ID}:${QUANTUM}:2`,
+                ],
+              ],
+            );
+            // A click on the new one opens it again.
+            const again = yield* client[EDITORIAL_WS_METHODS.createVideo](manual);
+            assert.deepStrictEqual([again.threadId, again.created], [second.threadId, false]);
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
   );
 
   it.effect("creates one video thread per trend and answers a second click with it", () =>

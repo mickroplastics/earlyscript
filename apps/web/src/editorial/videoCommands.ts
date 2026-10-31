@@ -6,6 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  EditorialVideoCaptureInput,
   EditorialVideoClockCommand,
   EditorialVideoDecideInput,
   EditorialVideoSaveResultInput,
@@ -53,6 +54,8 @@ export function useVideoCommands(threadRef: ScopedThreadRef) {
   const decide = useAtomCommand(editorialVideoEnvironment.decide, options);
   const saveResult = useAtomCommand(editorialVideoEnvironment.saveResult, options);
   const openVersion = useAtomCommand(editorialVideoEnvironment.openVersion, options);
+  const capture = useAtomCommand(editorialVideoEnvironment.capture, options);
+  const removeCapture = useAtomCommand(editorialVideoEnvironment.removeCapture, options);
   const { environmentId, threadId } = threadRef;
   return {
     clock: async (command: EditorialVideoClockCommand, failureTitle: string | null) =>
@@ -91,6 +94,16 @@ export function useVideoCommands(threadRef: ScopedThreadRef) {
         await saveResult({ environmentId, input: { ...input, threadId } }),
         "No se guardó el resultado",
       ),
+    capture: async (input: Omit<EditorialVideoCaptureInput, "threadId">) =>
+      outcomeOf(
+        await capture({ environmentId, input: { ...input, threadId } }),
+        "No se guardó la captura",
+      ),
+    removeCapture: async (captureId: string) =>
+      outcomeOf(
+        await removeCapture({ environmentId, input: { threadId, captureId } }),
+        "No se quitó la captura",
+      ),
   };
 }
 
@@ -124,15 +137,15 @@ export function flushScriptWrites(target: FileSaveTarget): Promise<boolean> {
 const SCRIPT_TEMPLATE = "# Hook\n\n# Block 1\n\n# Close\n\n# Sources\n";
 
 /**
- * Opens the script in the existing file surface. A script not written yet is created from the
- * template first, after asking the server again, so a file the agent just wrote is never
- * overwritten by a stale view.
+ * Creates the script from the template when it does not exist yet, after asking the server
+ * again, so a file the agent or another tab just wrote is never overwritten by a stale view.
+ * False when the file could not be created.
  */
-export async function openScript(
+export async function ensureScriptFile(
   threadRef: ScopedThreadRef,
   workspaceRoot: string,
   scriptPath: string,
-): Promise<void> {
+): Promise<boolean> {
   const target = { cwd: workspaceRoot, relativePath: scriptPath };
   const read = await executeAtomQuery(
     appAtomRegistry,
@@ -155,10 +168,21 @@ export async function openScript(
         title: "No se creó el guion",
         description: videoFailureText(squashAtomCommandFailure(written)),
       });
-      return;
+      return false;
     }
   }
-  useRightPanelStore.getState().openFile(threadRef, scriptPath);
+  return true;
+}
+
+/** Opens the script in the existing file surface, created from the template if missing. */
+export async function openScript(
+  threadRef: ScopedThreadRef,
+  workspaceRoot: string,
+  scriptPath: string,
+): Promise<void> {
+  if (await ensureScriptFile(threadRef, workspaceRoot, scriptPath)) {
+    useRightPanelStore.getState().openFile(threadRef, scriptPath);
+  }
 }
 
 /** Quiet time after the editor's last confirmed save before a version is taken. */

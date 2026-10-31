@@ -101,13 +101,21 @@ export function useTrendActions(environmentId: EnvironmentId) {
     reopen: async (trendKey: EditorialTrendKey) =>
       settle(await reopen({ environmentId, input: { trendKey } }), "No se pudo reabrir"),
 
-    /** Creates the trend's video thread, or finds the one it has, and opens it. */
-    createVideo: async (trend: ActionableTrend & { readonly trendKey: EditorialTrendKey }) => {
+    /**
+     * Creates the trend's video thread, or finds the one it has, and opens it. `manual` opens
+     * the trend's manual thread instead: same topic, no chat, for the paired comparison.
+     */
+    createVideo: async (
+      trend: ActionableTrend & { readonly trendKey: EditorialTrendKey },
+      mode: "assisted" | "manual" = "assisted",
+    ) => {
+      const failureTitle =
+        mode === "manual" ? "No se pudo crear el hilo manual" : "No se pudo crear el hilo de video";
       const target = resolveVideoThreadTarget(environmentId);
       if (target === null) {
         toastManager.add({
           type: "error",
-          title: "No se pudo crear el hilo de video",
+          title: failureTitle,
           description: "Hace falta un proyecto con un modelo disponible en el espacio Hilos.",
         });
         return false;
@@ -119,9 +127,10 @@ export function useTrendActions(environmentId: EnvironmentId) {
           runId: trend.runId,
           dossierId: trend.dossierId,
           ...target,
+          ...(mode === "manual" ? { mode } : {}),
         },
       });
-      if (!settle(result, "No se pudo crear el hilo de video") || !AsyncResult.isSuccess(result)) {
+      if (!settle(result, failureTitle) || !AsyncResult.isSuccess(result)) {
         return false;
       }
       await navigate({

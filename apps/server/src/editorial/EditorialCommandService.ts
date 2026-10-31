@@ -125,6 +125,14 @@ export interface SaveCaptureInput extends ActorOption {
   readonly url: string;
   readonly title?: string | undefined;
   readonly note?: string | undefined;
+  /** Fails with `decided` when the thread has a decision, checked in the same transaction. */
+  readonly refuseWhenDecided?: boolean | undefined;
+}
+
+export interface RemoveCaptureInput extends ActorOption {
+  readonly threadId: string;
+  readonly captureId: string;
+  readonly refuseWhenDecided?: boolean | undefined;
 }
 
 export interface SaveResultInput extends ActorOption {
@@ -177,7 +185,16 @@ export class EditorialCommandService extends Context.Service<
     readonly saveScriptVersion: (
       input: SaveScriptVersionInput,
     ) => Effect.Effect<ScriptVersion, ThreadCommandError>;
-    readonly saveCapture: (input: SaveCaptureInput) => Effect.Effect<Capture, ThreadCommandError>;
+    readonly saveCapture: (
+      input: SaveCaptureInput,
+    ) => Effect.Effect<Capture, ThreadCommandError | WorkClockStateError>;
+    /**
+     * Takes a capture off the thread's list. The row keeps when it left, and both events stay;
+     * removing it again records nothing.
+     */
+    readonly removeCapture: (
+      input: RemoveCaptureInput,
+    ) => Effect.Effect<void, ThreadCommandError | WorkClockStateError>;
     readonly saveResult: (input: SaveResultInput) => Effect.Effect<VideoResult, ThreadCommandError>;
   }
 >()("t3/editorial/EditorialCommandService") {}
@@ -491,6 +508,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /** Inside a thread command's transaction: a decided thread takes no more work. */
+  const refuseDecided = (threadId: string) =>
+    sql`SELECT 1 FROM editorial_decisions WHERE thread_id = ${threadId} LIMIT 1`.pipe(
+      Effect.flatMap((rows) =>
+        rows.length === 0
+          ? Effect.void
+          : Effect.fail(
+              new WorkClockStateError({
+                threadId,
+                reason: "decided",
+                detail: "the thread was decided",
+              }),
+            ),
+      ),
+    );
+
   const recordDecision: EditorialCommandService["Service"]["recordDecision"] = Effect.fn(
     "EditorialCommandService.recordDecision",
   )(function* (input) {
@@ -720,6 +753,7 @@ const make = Effect.gen(function* () {
     const actor = input.actor ?? "operator";
     return yield* threadCommand(operation, input.threadId, (at) =>
       Effect.gen(function* () {
+        if (input.refuseWhenDecided === true) yield* refuseDecided(input.threadId);
         const captureId = yield* newId;
         yield* sql`
             INSERT INTO editorial_captures (
@@ -744,6 +778,39 @@ const make = Effect.gen(function* () {
           capturedAt: at,
         };
         return { result: capture, events: [event] };
+      }),
+    );
+  });
+
+  const removeCapture: EditorialCommandService["Service"]["removeCapture"] = Effect.fn(
+    "EditorialCommandService.removeCapture",
+  )(function* (input) {
+    const operation = "editorial.removeCapture";
+    const actor = input.actor ?? "operator";
+    return yield* threadCommand(operation, input.threadId, (at) =>
+      Effect.gen(function* () {
+        if (input.refuseWhenDecided === true) yield* refuseDecided(input.threadId);
+        const rows = yield* sql<{ readonly removed_at: string | null }>`
+          SELECT removed_at FROM editorial_captures
+          WHERE capture_id = ${input.captureId} AND thread_id = ${input.threadId}
+        `;
+        const row = rows[0];
+        if (row === undefined) {
+          return yield* new EditorialNotFoundError({ entity: "capture", id: input.captureId });
+        }
+        if (row.removed_at !== null) return { result: undefined, events: [] };
+        yield* sql`
+          UPDATE editorial_captures SET removed_at = ${at} WHERE capture_id = ${input.captureId}
+        `;
+        const event = yield* appendEvent(sql, {
+          type: "capture.removed",
+          aggregateKind: "video_thread",
+          aggregateId: input.threadId,
+          actor,
+          payload: { captureId: input.captureId },
+          createdAt: at,
+        });
+        return { result: undefined, events: [event] };
       }),
     );
   });
@@ -811,6 +878,7 @@ const make = Effect.gen(function* () {
     recordDecision,
     saveScriptVersion,
     saveCapture,
+    removeCapture,
     saveResult,
   });
 });

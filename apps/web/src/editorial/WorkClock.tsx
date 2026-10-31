@@ -26,9 +26,17 @@ import {
   formatClock,
   interpolateClock,
   restartStage,
+  stageClockMs,
   stagesOf,
 } from "./videoThread.logic";
 import { useVideoThread } from "./videoState";
+
+/**
+ * `header` is the single clock of the thread header with its stage menu. `stages` shows one
+ * clock per working stage of the mode, the running one marked, for the manual workspace whose
+ * own selector changes the stage.
+ */
+export type WorkClockVariant = "header" | "stages";
 
 interface WorkClockControls {
   readonly busy: boolean;
@@ -48,17 +56,25 @@ function WorkClockView({
   receivedAtMs,
   nowMs,
   controls,
+  variant = "header",
 }: {
   readonly video: EditorialVideoState;
   readonly receivedAtMs: number;
   readonly nowMs: number;
   readonly controls: WorkClockControls;
+  readonly variant?: WorkClockVariant;
 }) {
   const { clock } = video;
   const { activeMs } = interpolateClock(clock, receivedAtMs, nowMs);
   const time = formatClock(activeMs);
   const decided = video.decision !== null;
   const state = clock.state;
+
+  if (variant === "stages") {
+    return (
+      <StageClocks video={video} receivedAtMs={receivedAtMs} nowMs={nowMs} controls={controls} />
+    );
+  }
 
   if (decided) {
     return (
@@ -176,6 +192,75 @@ function WorkClockView({
   );
 }
 
+/** One clock per working stage (Decidir is timed by the decision block), and pause or resume. */
+function StageClocks({
+  video,
+  receivedAtMs,
+  nowMs,
+  controls,
+}: {
+  readonly video: EditorialVideoState;
+  readonly receivedAtMs: number;
+  readonly nowMs: number;
+  readonly controls: WorkClockControls;
+}) {
+  const { clock } = video;
+  const state = clock.state;
+  const decided = video.decision !== null;
+  const stages = stagesOf(video.thread.mode).filter((stage) => stage !== "decide");
+  return (
+    <div
+      role="group"
+      aria-label="Relojes de trabajo"
+      className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs"
+    >
+      {stages.map((stage) => {
+        const ms = stageClockMs(clock, stage, receivedAtMs, nowMs);
+        const active = !decided && state._tag !== "idle" && state.stage === stage;
+        const label = `${STAGE_LABEL[stage]}${active && state._tag === "paused" ? " en pausa" : ""}`;
+        return (
+          <span
+            key={stage}
+            role="timer"
+            aria-label={`${label}: ${formatClock(ms)}`}
+            data-active={active || undefined}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+              active && "bg-accent text-accent-foreground",
+            )}
+          >
+            {active ? <TimerIcon aria-hidden className="size-3.5" /> : null}
+            <span>{STAGE_LABEL[stage]}</span>
+            <span className="text-foreground tabular-nums">{formatClock(ms)}</span>
+          </span>
+        );
+      })}
+      {decided ? (
+        <span className="inline-flex items-center gap-1">
+          <CircleCheckIcon aria-hidden className="size-3.5" />
+          Decidido
+        </span>
+      ) : state._tag === "running" ? (
+        <PauseControl busy={controls.busy} onPause={controls.onPause} />
+      ) : (
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          aria-label="Reanudar reloj"
+          disabled={controls.busy || clock.unresolved.length > 0}
+          onClick={() =>
+            state._tag === "paused"
+              ? controls.onResume()
+              : controls.onStart(restartStage(video.thread.mode, clock))
+          }
+        >
+          <PlayIcon aria-hidden />
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function PauseControl({
   busy,
   onPause,
@@ -232,7 +317,13 @@ function PauseControl({
  * also versions the script as the editor saves it, because the header stays mounted while the
  * details card and the file surface come and go.
  */
-export function WorkClock({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+export function WorkClock({
+  threadRef,
+  variant = "header",
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly variant?: WorkClockVariant;
+}) {
   const live = useVideoThread(threadRef);
   const nowMs = useNowSecond();
   const commands = useVideoCommands(threadRef);
@@ -258,6 +349,7 @@ export function WorkClock({ threadRef }: { readonly threadRef: ScopedThreadRef }
         video={video}
         receivedAtMs={live.receivedAtMs}
         nowMs={Math.max(nowMs, live.receivedAtMs)}
+        variant={variant}
         controls={{
           busy,
           onPause: (reason) =>
