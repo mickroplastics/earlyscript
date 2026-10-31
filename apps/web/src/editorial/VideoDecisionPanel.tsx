@@ -30,8 +30,10 @@ export interface VideoDecisionControls {
   readonly onSubmit: (versionHash: string | null) => void;
   /** Back to the form after a refusal, now on the version the server holds. */
   readonly onReviewNewVersion: () => void;
-  /** Moves the clock to Decidir; offered while another stage runs. */
-  readonly onStartDeciding: () => void;
+  /** The operator turned to the block: the clock moves to Decidir if another stage runs. */
+  readonly onEngage: () => void;
+  /** Takes the operator to the form that resolves a recovered segment. */
+  readonly onGoToResolution: (intervalId: string) => void;
 }
 
 function StageTimes({
@@ -79,11 +81,14 @@ export function VideoDecisionPanel({
   video,
   draft,
   refusedHash,
+  notice,
   controls,
 }: {
   readonly video: EditorialVideoState;
   readonly draft: DecisionDraft;
   readonly refusedHash: string | null | undefined;
+  /** Why the last submission stopped before reaching the server, such as a failed write. */
+  readonly notice: string | null;
   readonly controls: VideoDecisionControls;
 }) {
   const block = decisionBlockState(video, draft, refusedHash);
@@ -155,7 +160,28 @@ export function VideoDecisionPanel({
     );
   }
 
-  const state = video.clock.state;
+  if (block._tag === "unresolved") {
+    return (
+      <div className="flex flex-col gap-2 px-2.5" role="alert">
+        <p className="flex items-start gap-1.5 text-sm text-warning-foreground">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          <span>Resuelve el tramo abierto antes de decidir.</span>
+        </p>
+        <p className="text-muted-foreground text-xs">
+          La decisión guarda los tiempos por etapa tal como están; un tramo sin resolver no cuenta.
+        </p>
+        <Button
+          size="xs"
+          variant="outline"
+          className="self-start"
+          onClick={() => controls.onGoToResolution(block.intervalId)}
+        >
+          Ir a la resolución
+        </Button>
+      </div>
+    );
+  }
+
   const durations = Object.fromEntries(
     video.clock.stages.map((entry) => [entry.stage, entry.activeMs]),
   ) as Partial<Record<EditorialResultsStage, number>>;
@@ -163,24 +189,14 @@ export function VideoDecisionPanel({
     <form
       className="flex flex-col gap-2.5 px-2.5"
       aria-label="Decisión"
+      onFocusCapture={controls.onEngage}
+      onPointerDownCapture={controls.onEngage}
       onSubmit={(event) => {
         event.preventDefault();
         if (block.problem === null) controls.onSubmit(block.versionHash);
       }}
     >
       <StageTimes mode={video.thread.mode} durations={durations} />
-      {state._tag !== "idle" && state.stage !== "decide" ? (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          className="self-start"
-          disabled={controls.busy}
-          onClick={controls.onStartDeciding}
-        >
-          Pasar a Decidir
-        </Button>
-      ) : null}
       <VersionLine video={video} />
       <ToggleGroup
         aria-label="Acción"
@@ -232,6 +248,11 @@ export function VideoDecisionPanel({
         }
       />
       {block.problem ? <p className="text-muted-foreground text-xs">{block.problem}</p> : null}
+      {notice ? (
+        <p role="alert" className="text-warning-foreground text-xs">
+          {notice}
+        </p>
+      ) : null}
       <Button
         type="submit"
         size="xs"

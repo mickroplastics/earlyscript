@@ -50,6 +50,10 @@ export const editorialVideoEnvironment = {
     label: "environment-data:editorial:video-decide",
     tag: EDITORIAL_VIDEO_WS_METHODS.decide,
   }),
+  openVersion: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-open-version",
+    tag: EDITORIAL_VIDEO_WS_METHODS.openVersion,
+  }),
   saveResult: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-save-result",
     tag: EDITORIAL_VIDEO_WS_METHODS.saveResult,

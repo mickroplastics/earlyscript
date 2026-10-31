@@ -135,6 +135,25 @@ describe("decision block", () => {
     });
   });
 
+  it("waits for a recovered segment's resolution before offering the form", () => {
+    const recovered = {
+      ...WRITING,
+      clock: {
+        ...WRITING.clock,
+        unresolved: [
+          { intervalId: "interval-1", stage: "write" as const, startedAt: "x", recoveredAt: null },
+        ],
+      },
+    };
+    expect(decisionBlockState(recovered, EMPTY_DECISION_DRAFT, undefined)).toEqual({
+      _tag: "unresolved",
+      intervalId: "interval-1",
+    });
+    expect(
+      videoFailureText(new EditorialVideoError({ reason: "clock-unresolved", message: "x" })),
+    ).toBe("Resuelve el tramo abierto antes de decidir.");
+  });
+
   it("is read-only once decided, whatever the draft says", () => {
     expect(decisionBlockState(DECIDED, EMPTY_DECISION_DRAFT, "anything")).toEqual({
       _tag: "decided",

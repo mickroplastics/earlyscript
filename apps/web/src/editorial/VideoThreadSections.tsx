@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { FileTextIcon, SaveIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ThreadDetailsSection } from "../components/chat/ThreadDetailsSection";
 import { Badge } from "../components/ui/badge";
@@ -17,7 +17,12 @@ import { Input } from "../components/ui/input";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { VideoDecisionPanel, type VideoDecisionControls } from "./VideoDecisionPanel";
 import { VideoResultForm, type VideoResultControls } from "./VideoResultForm";
-import { openScript, useThreadWorkspaceRoot, useVideoCommands } from "./videoCommands";
+import {
+  flushScriptWrites,
+  openScript,
+  useThreadWorkspaceRoot,
+  useVideoCommands,
+} from "./videoCommands";
 import {
   EMPTY_DECISION_DRAFT,
   MODE_LABEL,
@@ -42,6 +47,8 @@ interface VideoThreadSectionsControls {
   readonly busy: boolean;
   /** Null when the client cannot tell where the thread's files are. */
   readonly onOpenScript: (() => void) | null;
+  /** Opens the read-only copy of the version the decision names. */
+  readonly onOpenDecidedVersion: (contentHash: string) => void;
   readonly onSaveVersion: () => void;
   readonly onResolve: (intervalId: string, endedAt: string) => void;
   readonly decision: VideoDecisionControls;
@@ -130,6 +137,7 @@ function VideoThreadSectionsView({
   nowMs,
   decisionDraft,
   refusedHash,
+  decisionNotice,
   resultDraft,
   controls,
 }: {
@@ -139,6 +147,7 @@ function VideoThreadSectionsView({
   readonly nowMs: number;
   readonly decisionDraft: DecisionDraft;
   readonly refusedHash: string | null | undefined;
+  readonly decisionNotice: string | null;
   readonly resultDraft: ResultDraft;
   readonly controls: VideoThreadSectionsControls;
 }) {
@@ -183,15 +192,30 @@ function VideoThreadSectionsView({
       <ThreadDetailsSection headingId="video-script-heading" title="Guion">
         <div className="flex flex-col gap-1 px-2.5 text-xs">
           <div className="flex flex-wrap items-center gap-1">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={controls.onOpenScript === null || script.path === null}
-              onClick={() => controls.onOpenScript?.()}
-            >
-              <FileTextIcon aria-hidden />
-              Abrir guion
-            </Button>
+            {video.decision === null ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={controls.onOpenScript === null || script.path === null}
+                onClick={() => controls.onOpenScript?.()}
+              >
+                <FileTextIcon aria-hidden />
+                Abrir guion
+              </Button>
+            ) : (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={video.decision.scriptVersionHash === null}
+                onClick={() => {
+                  const hash = video.decision?.scriptVersionHash;
+                  if (hash) controls.onOpenDecidedVersion(hash);
+                }}
+              >
+                <FileTextIcon aria-hidden />
+                Abrir versión decidida
+              </Button>
+            )}
             <Button
               size="xs"
               variant="ghost-muted"
@@ -225,6 +249,7 @@ function VideoThreadSectionsView({
           video={video}
           draft={decisionDraft}
           refusedHash={refusedHash}
+          notice={decisionNotice}
           controls={controls.decision}
         />
       </ThreadDetailsSection>
@@ -251,6 +276,9 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
   const [decisionDraft, setDecisionDraft] = useState<DecisionDraft>(EMPTY_DECISION_DRAFT);
   const [refusedHash, setRefusedHash] = useState<string | null | undefined>(undefined);
   const [resultDraft, setResultDraft] = useState<ResultDraft>(() => emptyResultDraft());
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  /** The clock state the block already asked to leave, so focus and pointer ask once. */
+  const engagedSince = useRef<string | null>(null);
   const video = live?.view.video ?? null;
   if (live === null || video === null) return null;
 
@@ -268,6 +296,7 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
       nowMs={Math.max(nowMs, live.receivedAtMs)}
       decisionDraft={decisionDraft}
       refusedHash={refusedHash}
+      decisionNotice={decisionNotice}
       resultDraft={resultDraft}
       controls={{
         busy,
@@ -275,6 +304,7 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
           workspaceRoot === null || scriptPath === null
             ? null
             : () => void openScript(threadRef, workspaceRoot, scriptPath),
+        onOpenDecidedVersion: (contentHash) => void commands.openVersion(contentHash),
         onSaveVersion: () =>
           void run(() => commands.saveScript("No se guardó la versión del guion")),
         onResolve: (intervalId, endedAt) =>
@@ -284,15 +314,52 @@ export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedT
         decision: {
           busy,
           onDraftChange: setDecisionDraft,
-          onStartDeciding: () =>
-            void run(() =>
-              commands.clock({ _tag: "stage", stage: "decide" }, "No se cambió la etapa"),
-            ),
+          // Deciding starts when the operator turns to the block, not when the form is sent;
+          // the server still opens Decidir on submission if this never ran.
+          onEngage: () => {
+            const state = video.clock.state;
+            if (state._tag === "idle" || state.stage === "decide") return;
+            if (engagedSince.current === state.since) return;
+            engagedSince.current = state.since;
+            void commands.clock({ _tag: "stage", stage: "decide" }, null).then((outcome) => {
+              if (!outcome.ok) engagedSince.current = null;
+            });
+          },
+          onGoToResolution: (intervalId) =>
+            document.getElementById(`video-resolve-${intervalId}`)?.focus(),
           onReviewNewVersion: () => setRefusedHash(undefined),
           onSubmit: (versionHash) =>
             void run(async () => {
               const { action, utility, reason } = decisionDraft;
               if (action === null || utility === null) return;
+              setDecisionNotice(null);
+              // The editor autosaves after a pause: what is on screen may not be on disk yet.
+              // Write it, wait for the server, and decide only if the version is still the one
+              // the operator read.
+              if (workspaceRoot !== null && scriptPath !== null) {
+                const written = await flushScriptWrites({
+                  environmentId: threadRef.environmentId,
+                  cwd: workspaceRoot,
+                  relativePath: scriptPath,
+                });
+                if (!written) {
+                  setDecisionNotice(
+                    "No se pudo guardar el guion con tus últimos cambios. No se registró la decisión; revisa el editor y vuelve a intentarlo.",
+                  );
+                  return;
+                }
+              }
+              if (video.script.exists || video.script.head !== null) {
+                const snapshot = await commands.saveScript(null);
+                if (!snapshot.ok) {
+                  if (snapshot.error !== null) setDecisionNotice(videoFailureText(snapshot.error));
+                  return;
+                }
+                if ((snapshot.state.script.head?.contentHash ?? null) !== versionHash) {
+                  setRefusedHash(versionHash);
+                  return;
+                }
+              }
               const outcome = await commands.decide({
                 action,
                 utility,

@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 
+import { flushFileSaveSession, type FileSaveTarget } from "../components/files/fileSaveSessions";
 import { toastManager } from "../components/ui/toast";
 import { randomUUID } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -51,9 +52,10 @@ export function useVideoCommands(threadRef: ScopedThreadRef) {
   const saveScript = useAtomCommand(editorialVideoEnvironment.saveScript, options);
   const decide = useAtomCommand(editorialVideoEnvironment.decide, options);
   const saveResult = useAtomCommand(editorialVideoEnvironment.saveResult, options);
+  const openVersion = useAtomCommand(editorialVideoEnvironment.openVersion, options);
   const { environmentId, threadId } = threadRef;
   return {
-    clock: async (command: EditorialVideoClockCommand, failureTitle: string) =>
+    clock: async (command: EditorialVideoClockCommand, failureTitle: string | null) =>
       outcomeOf(
         await clock({
           environmentId,
@@ -71,6 +73,19 @@ export function useVideoCommands(threadRef: ScopedThreadRef) {
         }),
         null,
       ),
+    /** Opens the read-only copy of a saved version in the file surface. */
+    openVersion: async (contentHash: string) => {
+      const result = await openVersion({ environmentId, input: { threadId, contentHash } });
+      if (result._tag === "Success") {
+        useRightPanelStore.getState().openFile(threadRef, result.value.path);
+      } else if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: "No se abrió la versión decidida",
+          description: videoFailureText(squashAtomCommandFailure(result)),
+        });
+      }
+    },
     saveResult: async (input: Omit<EditorialVideoSaveResultInput, "threadId">) =>
       outcomeOf(
         await saveResult({ environmentId, input: { ...input, threadId } }),
@@ -86,6 +101,23 @@ export function useThreadWorkspaceRoot(threadRef: ScopedThreadRef): string | nul
     thread ? { environmentId: thread.environmentId, projectId: thread.projectId } : null,
   );
   return thread?.worktreePath ?? project?.workspaceRoot ?? null;
+}
+
+/** Longest wait for the editor's pending write of the script before a decision gives up. */
+const SCRIPT_WRITE_TIMEOUT_MS = 15_000;
+
+/**
+ * Writes the editor's pending draft of the script now and waits for the server to confirm it,
+ * so a decision never snapshots a file behind the text on screen. False when the write failed,
+ * was not allowed or did not land in time; the decision must not be sent then.
+ */
+export function flushScriptWrites(target: FileSaveTarget): Promise<boolean> {
+  return Promise.race([
+    flushFileSaveSession(target),
+    new Promise<boolean>((resolve) =>
+      window.setTimeout(() => resolve(false), SCRIPT_WRITE_TIMEOUT_MS),
+    ),
+  ]);
 }
 
 /** Headings `@earlyscript/editorial-script` expects, in order. Scripts are written in English. */

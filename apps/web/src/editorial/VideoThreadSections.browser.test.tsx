@@ -19,6 +19,11 @@ const testState = vi.hoisted(() => ({
   calls: [] as Array<{ label: string; input: unknown }>,
   /** What the next command answers, by label; success with the current view otherwise. */
   failures: new Map<string, unknown>(),
+  /** What a command answers on success, by label; the current view otherwise. */
+  answers: new Map<string, unknown>(),
+  /** The thread's workspace; null keeps the editor's write flush out of the way. */
+  workspace: null as string | null,
+  flush: (async () => true) as (target: unknown) => Promise<boolean>,
   toast: vi.fn(),
 }));
 
@@ -28,9 +33,20 @@ vi.mock(import("./videoState"), async (original) => ({
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
-  // No workspace: the auto-versioning stays off and "Abrir guion" is disabled.
-  useQuietThreadShell: (() => null) as never,
+  // No workspace unless a test sets one: auto-versioning stays off and "Abrir guion" disabled.
+  useQuietThreadShell: (() =>
+    testState.workspace === null
+      ? null
+      : {
+          environmentId: "environment-video",
+          projectId: "project",
+          worktreePath: testState.workspace,
+        }) as never,
   useProject: (() => null) as never,
+}));
+vi.mock(import("../components/files/fileSaveSessions"), async (original) => ({
+  ...(await original()),
+  flushFileSaveSession: ((target: unknown) => testState.flush(target)) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -38,7 +54,11 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
     testState.calls.push({ label: command.label, input: value.input });
     const failure = testState.failures.get(command.label);
     if (failure !== undefined) return AsyncResult.failure(Cause.fail(failure));
-    return AsyncResult.success(testState.live?.view.video);
+    return AsyncResult.success(
+      testState.answers.has(command.label)
+        ? testState.answers.get(command.label)
+        : testState.live?.view.video,
+    );
   }) as never,
 }));
 vi.mock(import("../components/ui/toast"), async (original) => {
@@ -47,6 +67,7 @@ vi.mock(import("../components/ui/toast"), async (original) => {
 });
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { createFileSaveSessions, type FileSaveTarget } from "../components/files/fileSaveSessions";
 import { DECIDED, WRITING } from "./videoThread.fixture";
 import { VideoThreadSections } from "./VideoThreadSections";
 import { WorkClock } from "./WorkClock";
@@ -80,6 +101,9 @@ function setup(video: EditorialVideoState | null): Disposable {
   testState.live = null;
   testState.calls.length = 0;
   testState.failures.clear();
+  testState.answers.clear();
+  testState.workspace = null;
+  testState.flush = async () => true;
   testState.toast.mockReset();
   setVideo(video);
   return { [Symbol.dispose]: () => void (testState.live = null) };
@@ -189,6 +213,154 @@ describe("VideoThreadSections", () => {
     expect(callsOf("environment-data:editorial:video-save-result")).toEqual([
       expect.objectContaining({ threadId: "thread-video", views: 1200 }),
     ]);
+  });
+});
+
+/**
+ * The editor's save session for the script, with its write to the server held: the latest
+ * sentence is on screen and in flight, not yet on disk, as in the review's reproduction.
+ */
+function heldEditorWrite(contents: string) {
+  const target: FileSaveTarget = {
+    environmentId: THREAD_REF.environmentId,
+    cwd: "/workspace",
+    relativePath: "videos/computacion-cuantica-threadvi.md",
+  };
+  const writes: string[] = [];
+  let release: (succeeded: boolean) => void = () => {};
+  const sessions = createFileSaveSessions({
+    debounceMs: 500,
+    canPersist: () => true,
+    subscribeWritable: () => () => {},
+    persist: (_target, written) => {
+      writes.push(written);
+      return new Promise((resolve) => {
+        release = (succeeded) =>
+          resolve(
+            succeeded ? AsyncResult.success(undefined) : AsyncResult.failure(Cause.fail("offline")),
+          );
+      });
+    },
+    confirm: () => true,
+    readUnsaved: () => null,
+  });
+  sessions.acquire(target, () => {});
+  sessions.change(target, contents);
+  testState.workspace = "/workspace";
+  testState.flush = (flushed) => sessions.flush(flushed as FileSaveTarget);
+  return { writes, release: (succeeded: boolean) => release(succeeded) };
+}
+
+const DECIDE = "environment-data:editorial:video-decide";
+const SAVE_SCRIPT = "environment-data:editorial:video-save-script";
+const CLOCK = "environment-data:editorial:video-clock";
+
+async function chooseAccept4(screen: Awaited<ReturnType<typeof renderWithRegistry>>) {
+  await userEvent.click(screen.getByRole("button", { name: "Aceptar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Utilidad 4" }));
+  await userEvent.click(screen.getByRole("button", { name: "Registrar decisión" }));
+}
+
+describe("VideoThreadSections, review of 76967e71c6", () => {
+  // H1: the decision waits for the held write, snapshots after it, then decides.
+  it("waits for the editor's held write before snapshotting and deciding", async () => {
+    using _setup = setup(WRITING);
+    const editor = heldEditorWrite("Pending latest sentence before decision.");
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await chooseAccept4(screen);
+    await expect.poll(() => editor.writes).toEqual(["Pending latest sentence before decision."]);
+    expect(callsOf(SAVE_SCRIPT)).toEqual([]);
+    expect(callsOf(DECIDE)).toEqual([]);
+
+    editor.release(true);
+    await expect.poll(() => callsOf(DECIDE).length).toBe(1);
+    expect(callsOf(SAVE_SCRIPT)).toEqual([{ threadId: "thread-video" }]);
+    expect(callsOf(DECIDE)[0]).toMatchObject({ scriptVersionHash: "9f2c1ab07d3e4c55aa10" });
+  });
+
+  it("does not decide when the held write fails", async () => {
+    using _setup = setup(WRITING);
+    const editor = heldEditorWrite("Pending latest sentence before decision.");
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await chooseAccept4(screen);
+    await expect.poll(() => editor.writes.length).toBe(1);
+    editor.release(false);
+    await expect.element(screen.getByText(/No se pudo guardar el guion/)).toBeVisible();
+    expect(callsOf(SAVE_SCRIPT)).toEqual([]);
+    expect(callsOf(DECIDE)).toEqual([]);
+  });
+
+  it("asks for a review when the written script is another version", async () => {
+    using _setup = setup(WRITING);
+    const editor = heldEditorWrite("Pending latest sentence before decision.");
+    const written = {
+      ...WRITING,
+      script: {
+        ...WRITING.script,
+        head: { ...WRITING.script.head!, contentHash: "d1419323fdb7", versionId: "version-2" },
+      },
+    };
+    testState.answers.set(SAVE_SCRIPT, written);
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await chooseAccept4(screen);
+    await expect.poll(() => editor.writes.length).toBe(1);
+    editor.release(true);
+    await expect
+      .element(screen.getByText(/El guion cambió después de la versión que leíste \(9f2c1ab0\)/))
+      .toBeVisible();
+    expect(callsOf(DECIDE)).toEqual([]);
+  });
+
+  // H3: turning to the block opens Decidir, once.
+  it("opens Decidir when the operator turns to the decision block", async () => {
+    using _setup = setup(WRITING);
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    expect(screen.container.textContent).not.toContain("Pasar a Decidir");
+    await userEvent.click(screen.getByRole("button", { name: "Editar" }));
+    await expect
+      .poll(() => callsOf(CLOCK))
+      .toEqual([expect.objectContaining({ command: { _tag: "stage", stage: "decide" } })]);
+  });
+
+  // H4: once decided, the script opens as the decided snapshot, read-only.
+  it("opens the decided version instead of the editable script", async () => {
+    using _setup = setup(DECIDED);
+    testState.answers.set("environment-data:editorial:video-open-version", {
+      path: "/state/editorial/versions/9f2c1ab07d3e4c55aa10/computacion-cuantica-threadvi.md",
+    });
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    expect(screen.container.textContent).not.toContain("Abrir guion");
+    await userEvent.click(screen.getByRole("button", { name: "Abrir versión decidida" }));
+    expect(callsOf("environment-data:editorial:video-open-version")).toEqual([
+      { threadId: "thread-video", contentHash: "9f2c1ab07d3e4c55aa10" },
+    ]);
+  });
+
+  // H6: a recovered segment is resolved before the decision.
+  it("asks to resolve a recovered segment before deciding", async () => {
+    using _setup = setup({
+      ...WRITING,
+      clock: {
+        ...WRITING.clock,
+        state: { _tag: "idle" },
+        unresolved: [
+          {
+            intervalId: "interval-1",
+            stage: "write",
+            startedAt: "2026-10-31T13:05:00.000Z",
+            recoveredAt: "2026-10-31T13:40:00.000Z",
+          },
+        ],
+        definitive: false,
+      },
+    });
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await expect
+      .element(screen.getByText("Resuelve el tramo abierto antes de decidir."))
+      .toBeVisible();
+    expect(screen.container.querySelector("form[aria-label='Decisión']")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Ir a la resolución" }));
+    await expect.element(screen.getByLabelText("Dejé de trabajar a las")).toHaveFocus();
   });
 });
 

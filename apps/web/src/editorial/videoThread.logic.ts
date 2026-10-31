@@ -108,10 +108,9 @@ export interface DecisionDraft {
 export const EMPTY_DECISION_DRAFT: DecisionDraft = { action: null, utility: null, reason: "" };
 
 /**
- * What the decision block shows. `decided` is read-only. `version-changed` follows a refusal:
- * the script moved past the version the operator decided on, and `to` is the version the
- * server holds now (null until the new view arrives). `open` is the form, with the version a
- * submission would name and the reason it cannot be sent yet, if any.
+ * `decided` is read-only; `unresolved` waits for a recovered segment's resolution;
+ * `version-changed` follows a refusal, `to` being the server's version (null until it arrives);
+ * `open` is the form with the version it would name and why it cannot be sent yet.
  */
 export type DecisionBlockState =
   | { readonly _tag: "decided"; readonly decision: EditorialVideoDecision }
@@ -120,6 +119,7 @@ export type DecisionBlockState =
       readonly from: string | null;
       readonly to: string | null;
     }
+  | { readonly _tag: "unresolved"; readonly intervalId: string }
   | {
       readonly _tag: "open";
       readonly versionHash: string | null;
@@ -137,6 +137,9 @@ export function decisionBlockState(
   if (refusedHash !== undefined) {
     return { _tag: "version-changed", from: refusedHash, to: head === refusedHash ? null : head };
   }
+  // The decision freezes its durations: a segment recovered after a restart is resolved first.
+  const unresolved = video.clock.unresolved[0];
+  if (unresolved !== undefined) return { _tag: "unresolved", intervalId: unresolved.intervalId };
   return { _tag: "open", versionHash: head, problem: decisionProblem(video, draft) };
 }
 
@@ -210,6 +213,7 @@ const FAILURE_TEXT: Readonly<Record<EditorialVideoErrorReason, string>> = {
   "version-changed": "El guion cambió después de la versión que leíste.",
   "clock-state": "El reloj ya estaba en otro estado; la vista se actualizó.",
   decided: "El hilo ya está decidido; su reloj es definitivo.",
+  "clock-unresolved": "Resuelve el tramo abierto antes de decidir.",
   "not-decided": "Registra la decisión antes del resultado.",
   "script-file": "No se pudo leer el archivo del guion.",
   storage: "No se pudo escribir en la base editorial.",
