@@ -2,9 +2,8 @@
 import * as NodeFSP from "node:fs/promises";
 import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import { huggingfaceCollector, hfModelsUrl } from "./huggingface.ts";
-import { createHttpClient, MAX_RESPONSE_BYTES, type FrozenResponse } from "./http.ts";
+import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
 import { markdownText } from "./shared.ts";
-import { dayOf, DAY_MS } from "../days.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
 const NEXT = `${hfModelsUrl()}&cursor=page2`;
@@ -36,7 +35,7 @@ async function recordedHub() {
   const pages = await fixture<{ page1: unknown[]; page2: unknown[] }>("hf-models-pages.json");
   const papers = await fixture<unknown[]>("hf-daily-papers-2026-10-30.json");
   const calls: Array<string> = [];
-  const get = async (url: string): Promise<FrozenResponse> => {
+  const get: GetResponse = async (url) => {
     calls.push(url);
     const ok = (body: unknown, next: string | null = null) => ({
       observed_at: observed,
@@ -209,11 +208,14 @@ describe("Hugging Face source", () => {
 });
 
 const live = process.env.EARLYSCRIPT_LIVE_TESTS === "1";
+// Network gate: the day is that of the newest model, so the walk stays within one or two pages.
 describe.skipIf(!live)("Hugging Face source (live)", () => {
-  it("collects a recent day from the public Hub", { timeout: 600_000 }, async () => {
-    const day = dayOf(Date.now() - 2 * DAY_MS);
-    const result = await huggingfaceCollector()(day, createHttpClient("huggingface"));
+  it("collects the current day from the public Hub", async () => {
+    const get = createHttpClient("huggingface");
+    const newest = (await get(hfModelsUrl())).body as Array<{ createdAt: string }>;
+    const result = await huggingfaceCollector()(newest[0]!.createdAt.slice(0, 10), get);
     expect(result.coverage?.status).toBe("partial");
+    expect(result.coverage?.note).not.toContain("unavailable");
     expect(result.items.length).toBeGreaterThan(0);
   });
 });

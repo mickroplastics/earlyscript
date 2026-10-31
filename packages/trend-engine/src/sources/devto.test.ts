@@ -4,12 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { devtoCollector, devtoLatestUrl } from "./devto.ts";
-import { createHttpClient, MAX_RESPONSE_BYTES, type FrozenResponse } from "./http.ts";
+import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
 import { hfModelsUrl } from "./huggingface.ts";
 import { fixtureSources, liveSources, SOURCES } from "./index.ts";
 import { collectCorpus } from "../collect.ts";
 import { readCorpus } from "../corpus.ts";
-import { dayOf, DAY_MS } from "../days.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
 type Pages = { page1: unknown[]; page2: unknown[]; page3: unknown[] };
@@ -22,7 +21,7 @@ async function fixture<T>(name: string): Promise<T> {
 async function recordedListing(at = observed) {
   const pages = await fixture<Pages>("devto-latest-pages.json");
   const calls: Array<number> = [];
-  const get = async (url: string): Promise<FrozenResponse> => {
+  const get: GetResponse = async (url) => {
     const page = Number(new URL(url).searchParams.get("page"));
     calls.push(page);
     const body = [pages.page1, pages.page2, pages.page3][page - 1] ?? [];
@@ -184,11 +183,14 @@ describe("Hugging Face and dev.to in a corpus/1 collection", () => {
 });
 
 const live = process.env.EARLYSCRIPT_LIVE_TESTS === "1";
+// Network gate: the day is that of the newest article, so the walk stays within a few pages.
 describe.skipIf(!live)("dev.to source (live)", () => {
-  it("collects yesterday from the public API", { timeout: 900_000 }, async () => {
-    const day = dayOf(Date.now() - DAY_MS);
-    const result = await devtoCollector()(day, createHttpClient("devto"));
-    expect(result.coverage?.status).toBe("complete");
+  it("collects the current day from the public API", async () => {
+    const get = createHttpClient("devto");
+    const newest = (await get(devtoLatestUrl(1))).body as Array<{ published_at: string }>;
+    const result = await devtoCollector()(newest[0]!.published_at.slice(0, 10), get);
+    // `partial` while the day runs ("day not over"); `complete` only right after midnight UTC.
+    expect(["partial", "complete"]).toContain(result.coverage?.status);
     expect(result.items.length).toBeGreaterThan(0);
   });
 });
