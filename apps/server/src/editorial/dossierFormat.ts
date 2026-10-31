@@ -19,75 +19,150 @@ import {
 } from "@earlyscript/editorial-contracts/earlywindow";
 import { RUN_SCHEMA_VERSION, RunRecord } from "@earlyscript/editorial-contracts/run";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-// Reader for the runs directory. The trend engine writes `earlyscript.run/1` and
-// `earlyscript.dossier/1`; Earlywindow's run.json and `dossier/1` are read for compatibility
-// and converted to the native `Dossier`, the only shape the editorial space works with.
+import { trendKeyOf, type TrendKey } from "./trendKey.ts";
+
+// Reader for the runs directory, shared by the read side and the importer. The trend engine
+// writes `earlyscript.run/1` and `earlyscript.dossier/1`; Earlywindow's run.json and
+// `dossier/1` are read for compatibility and converted, so the editorial space only works
+// with `RunInfo` and the native `Dossier`.
+
+const OptionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
 
 /** Earlywindow's run.json: no `schema_version`, so a broken native run.json cannot pass as one. */
 const EarlywindowRunFile = Schema.Struct({
   schema_version: Schema.optionalKey(Schema.Never),
   run_id: Schema.String,
   cutoff_at: Schema.String,
-  finished_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  finished_at: OptionalText,
   status: Schema.optionalKey(Schema.String),
-  config_version: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  config_version: OptionalText,
   sources: Schema.optionalKey(Schema.Array(Schema.String)),
+  engine_version: OptionalText,
+  config_hash: OptionalText,
+  corpus_hash: OptionalText,
+  logical_hash: OptionalText,
 });
 
-export const RunFile = Schema.Union([RunRecord, EarlywindowRunFile]);
-export type RunFile = typeof RunFile.Type;
+const RunFile = Schema.Union([RunRecord, EarlywindowRunFile]);
+type RunFile = typeof RunFile.Type;
 
 /** One dossier file in either format; `toDossiers` converts a run's files to `Dossier`. */
-export const DossierFile = Schema.Union([Dossier, EarlywindowDossier]);
+const DossierFile = Schema.Union([Dossier, EarlywindowDossier]);
 export type DossierFile = typeof DossierFile.Type;
 
+/** What the editorial space keeps of a run.json, named after its keys. */
+export interface RunInfo {
+  readonly run_id: string;
+  readonly cutoff_at: string;
+  readonly finished_at: string | null;
+  readonly status: string;
+  /** null for Earlywindow, whose run.json has none. */
+  readonly schema_version: string | null;
+  readonly engine_version: string | null;
+  readonly config_version: string | null;
+  readonly config_hash: string | null;
+  /** Earlywindow: its whole corpus_hash. Native: the frozen corpus's manifest hash. */
+  readonly corpus_hash: string | null;
+  /** Native only: the hash of what the run read before the cutoff. */
+  readonly corpus_used_hash: string | null;
+  readonly logical_hash: string | null;
+  readonly sources: ReadonlyArray<string>;
+  /** Native only; Earlywindow keeps coverage in each dossier. */
+  readonly coverage: unknown;
+  /** `profile.include_min` the run applied. */
+  readonly include_min: number;
+}
+
 /** engine.v0.02 `profile.include_min`: an Earlywindow run.json does not carry its config. */
-const AFFINITY_THRESHOLD = 0.6;
+const EARLYWINDOW_INCLUDE_MIN = 0.6;
 const CURVE_WINDOW_DAYS = 28;
 const SPARKLINE_DAYS = 14;
 const DAY_MS = 86_400_000;
 
 export interface LoadedDossier {
   readonly file: Dossier;
+  readonly trendKey: TrendKey;
+  /** Last curve day with items, or null; the inbox compares it with the revision seen. */
+  readonly lastActivityDay: string | null;
   readonly summary: EditorialTrendSummary;
   readonly curve: ReadonlyArray<EditorialCurveDay>;
   readonly coverage: ReadonlyArray<EditorialSourceCoverage>;
   readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
 }
 
-export function runSummary(run: RunFile, dossierCount: number): EditorialRunSummary {
-  const config =
-    run.schema_version === RUN_SCHEMA_VERSION
-      ? { configVersion: run.config?.config_version ?? null, sources: run.config?.sources ?? [] }
-      : { configVersion: run.config_version ?? null, sources: run.sources ?? [] };
+function toRunInfo(run: RunFile): RunInfo {
+  if (run.schema_version === RUN_SCHEMA_VERSION) {
+    return {
+      run_id: run.run_id,
+      cutoff_at: run.cutoff_at,
+      finished_at: run.finished_at,
+      status: run.status,
+      schema_version: run.schema_version,
+      engine_version: run.engine_version,
+      config_version: run.config?.config_version ?? null,
+      config_hash: run.config_hash,
+      corpus_hash: run.corpus?.corpus_manifest_hash ?? null,
+      corpus_used_hash: run.corpus?.corpus_used_hash ?? null,
+      logical_hash: run.logical_hash,
+      sources: run.config?.sources ?? [],
+      coverage: run.coverage,
+      include_min: run.config?.profile.include_min ?? EARLYWINDOW_INCLUDE_MIN,
+    };
+  }
+  return {
+    run_id: run.run_id,
+    cutoff_at: run.cutoff_at,
+    finished_at: run.finished_at ?? null,
+    status: run.status ?? "unknown",
+    schema_version: null,
+    engine_version: run.engine_version ?? null,
+    config_version: run.config_version ?? null,
+    config_hash: run.config_hash ?? null,
+    corpus_hash: run.corpus_hash ?? null,
+    corpus_used_hash: null,
+    logical_hash: run.logical_hash ?? null,
+    sources: run.sources ?? [],
+    coverage: null,
+    include_min: EARLYWINDOW_INCLUDE_MIN,
+  };
+}
+
+const decodeRunFile = Schema.decodeUnknownEffect(Schema.fromJsonString(RunFile));
+
+/** Decodes the text of a run.json in either format. */
+export const decodeRunJson = (text: string) => decodeRunFile(text).pipe(Effect.map(toRunInfo));
+
+/** Decodes the text of one dossier file in either format; `toDossiers` finishes the run. */
+export const decodeDossierJson = Schema.decodeUnknownEffect(Schema.fromJsonString(DossierFile));
+
+export function runSummary(run: RunInfo, dossierCount: number): EditorialRunSummary {
   return {
     runId: EditorialRunId.make(run.run_id),
     cutoffAt: run.cutoff_at,
-    finishedAt: run.finished_at ?? null,
-    status: run.status ?? "unknown",
-    ...config,
+    finishedAt: run.finished_at,
+    status: run.status,
+    configVersion: run.config_version,
+    sources: run.sources,
     dossierCount,
   };
 }
 
-/** The `profile.include_min` the run applied. */
-export function affinityThreshold(run: RunFile): number {
-  return run.schema_version === RUN_SCHEMA_VERSION
-    ? (run.config?.profile.include_min ?? AFFINITY_THRESHOLD)
-    : AFFINITY_THRESHOLD;
-}
-
-/** Earlywindow dossiers take their ranking positions from the whole run, so they convert together. */
+/**
+ * The run's dossiers as `Dossier`, in the order given. Earlywindow dossiers take their ranking
+ * positions from the whole run, so they convert together.
+ */
 export function toDossiers(files: ReadonlyArray<DossierFile>): ReadonlyArray<Dossier> {
-  const native = files.filter(
-    (file): file is Dossier => file.schema_version === DOSSIER_SCHEMA_VERSION,
+  const converted = new Map(
+    fromEarlywindowRun(
+      files.filter((file): file is EarlywindowDossier => file.schema_version === "dossier/1"),
+    ).map((dossier) => [dossier.dossier_id, dossier]),
   );
-  const earlywindow = files.filter(
-    (file): file is EarlywindowDossier => file.schema_version === "dossier/1",
+  return files.map((file) =>
+    file.schema_version === DOSSIER_SCHEMA_VERSION ? file : converted.get(file.dossier_id)!,
   );
-  return [...native, ...fromEarlywindowRun(earlywindow)];
 }
 
 const dayKey = (ms: number) => DateTime.formatIsoDateUtc(DateTime.makeUnsafe(ms));
@@ -156,14 +231,13 @@ export function evidenceRange(
 }
 
 /**
- * Builds the inbox rows of one run. Counts and both ranking positions are the engine's (for
- * Earlywindow, what `fromEarlywindowRun` rebuilt). `isNew` marks every trend of the latest run
- * until the inbox has read state (U3); that is the extension point for unread counts.
+ * Builds the inbox rows of one run, in the order given. Counts and both ranking positions are
+ * the engine's (for Earlywindow, what `fromEarlywindowRun` rebuilt). `isNew` starts false; the
+ * read service sets it from the inbox state in editorial.sqlite.
  */
 export function loadRunDossiers(
   runId: string,
   files: ReadonlyArray<Dossier>,
-  options: { readonly isLatestRun: boolean },
 ): ReadonlyArray<LoadedDossier> {
   return files.map((file) => {
     const { trend, rankings } = file;
@@ -171,6 +245,14 @@ export function loadRunDossiers(
     const evidence = evidenceItems(file);
     const latestEvidence = evidence.reduce<EditorialEvidenceItem | null>(
       (latest, item) => (latest === null || item.publishedAt > latest.publishedAt ? item : latest),
+      null,
+    );
+    const trendKey = trendKeyOf({
+      dossier_id: file.dossier_id,
+      signal: { id: trend.id, top_terms: trend.top_terms },
+    });
+    const lastActivityDay = file.curve.reduce<string | null>(
+      (last, day) => (day.items > 0 && (last === null || day.day > last) ? day.day : last),
       null,
     );
     const summary: EditorialTrendSummary = {
@@ -192,10 +274,13 @@ export function loadRunDossiers(
       sourceCount: Math.max(trend.sources.length, ...curve.map((day) => day.sources)),
       sources: trend.sources,
       sparkline: curve.slice(-SPARKLINE_DAYS).map((day) => (day.known ? day.items : null)),
-      isNew: options.isLatestRun,
+      isNew: false,
+      trendKey: trendKey.key,
     };
     return {
       file,
+      trendKey,
+      lastActivityDay,
       summary,
       curve,
       coverage: file.coverage.by_source.map((entry) => ({

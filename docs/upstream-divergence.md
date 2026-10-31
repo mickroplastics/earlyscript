@@ -2,23 +2,21 @@
 
 Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos propios que añade. Es la lista de revisión de cada fusión desde `upstream-main`: si upstream cambió uno de estos archivos, comprobar que nuestro cambio sigue aplicado y que no apareció un literal nuevo de T3 Code al lado. Las líneas corresponden al último commit que tocó el enganche; tras una fusión, buscar el enganche por su texto (`EarlyscriptBrand`, `earlyscriptFlags`, `Earlyscript*`, `earlyscript/`, `visible*`).
 
-Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
-
-Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
+Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su propia base de comparación. El número de cada línea es el de su sección:
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`; ampliada por `es/brand-2` (icono propio y superficies de uso diario, base `815f5f2a04`), ver la subsección de recorte.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
 3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 4. Funciones escondidas (`es/flags-lote-a`), base `cf8174bd47`, con `main` fusionado en `c7c2cb720a`.
-5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; upstream tocado: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
+5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`. Incluye la subsección de rendimiento del apilado (`es/engine-perf`).
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
-8. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único enganche: `apps/server/src/server.ts`.
+8. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 9. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único archivo de upstream tocado: `apps/server/src/server.ts`.
-
-10. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
-
-11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
+10. Hilo de video, servidor (`es/video-thread-server`).
+11. Fuentes en vivo del motor (`es/live-sources`).
+12. Importador de corridas, bandeja con estado y escritura editorial (`es/editorial-write`), base `ed5c3a2903`; enganche en `apps/server/src/server.ts` junto a Resultados.
+13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -875,16 +873,145 @@ El apilado es 9,7 veces más rápido y la corrida 9,5 veces. La corrida de la ta
 
 No se intentó: una cota más ajustada con proyecciones (PCA), porque con un coseno medio de 0,43 entre ítems la cota del resto seguiría siendo holgada y cada centroide modificado tendría que proyectarse de nuevo (estimación, no medida); índices aproximados, porque cambian el resultado; ni hilos, WebAssembly o código nativo, fuera del alcance de la unidad.
 
-## 12. Lectura de corridas nativas (rama `es/dossier-native`, 31 de octubre de 2026)
+## 12. Importador y escritura editorial
 
-Base: `ed5c3a2903`. Archivo de upstream modificado: `packages/contracts/src/editorial.ts`, solo comentarios y `EditorialRankComponent.value`, que pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo. Archivos propios: `apps/server/src/editorial/{dossierFormat,EditorialReadService}.ts` con sus pruebas, el fixture nativo `fixtures/runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con la evidencia recortada a tres ítems) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
+Base: `638a6cf64e`, con `main` fusionada en `ed5c3a2903` (trae `es/video-thread-server` y la migración 003). Rama `es/editorial-write`. El servidor indexa las corridas del motor en `editorial.sqlite`, combina cada expediente con el estado de bandeja y expone las escrituras humanas de la bandeja por el WebSocket existente, con una suscripción de snapshot y deltas. La capa editorial se construye una vez por servidor, no por conexión. Mapa de integración: `planificacion/2026-10-30-earlyscript-motor/07-mapa-de-integracion.md` §2, §6 y §7.
 
-El lector trabaja con `Dossier` de `@earlyscript/editorial-contracts`. Cada expediente se decodifica con `Schema.Union([Dossier, EarlywindowDossier])`, que se discrimina por `schema_version`; los `dossier/1` de una corrida se convierten juntos con `fromEarlywindowRun`, porque sus posiciones dependen de la corrida entera. El run.json se decodifica con `Schema.Union([RunRecord, EarlywindowRunFile])`; el segundo exige que no haya `schema_version`, así que un run.json nativo roto se omite en vez de leerse como Earlywindow. Los fixtures de Earlywindow recuperan `retrieved_at`, que el esquema estricto exige.
+Archivos nuevos en `apps/server/src/editorial/`:
 
-Reemplaza la viñeta «Posición por volumen» de la sección 8:
+- `RunDirectory.ts`: `EditorialRunDirectory`, el lector de `run.json` y `dossier/1` con la caché por mtime, extraído de `EditorialReadService`. Calcula el sha256 de cada expediente y de la corrida.
+- `EditorialImportService.ts`: `sync` indexa las corridas cuyo directorio cambió, de la más antigua a la más reciente, y devuelve los snoozes vencidos o cumplidos. `layerWatch` lo ejecuta al arrancar y cada 30 segundos en una fibra del servidor; un fallo se registra y se reintenta en el siguiente paso.
+- `EditorialInboxCommands.ts`: comandos humanos de la bandeja. Reciben la sesión, resuelven el corte de la corrida y la línea base del snooze desde el índice y delegan en `EditorialCommandService`.
+- `inboxState.ts` (reglas de nueva y snooze vigente), `inboxStream.ts` (suscripción), `runIndex.ts` (consultas del índice) y `trendKey.ts` (identidad de tendencia).
+- `persistence/Migrations/004_EditorialRuns.ts`.
+- `apps/server/scripts/repair-editorial-migrations.ts` y su prueba: reparación manual de una base de desarrollo con un hueco de migraciones (ver «Continuidad de migraciones»).
+- Pruebas: `EditorialImportService.test.ts`, `rpc.test.ts`, `editorialLayer.testkit.ts`; `EditorialReadService.test.ts` reescrita sobre la base. En cliente, `apps/web/src/editorial/state.test.ts`.
+
+Archivos editoriales cambiados: `EditorialReadService.ts` (lee el índice y el estado; sin lectura directa del directorio), `rpc.ts` (handlers por sesión), `layer.ts`, `dossierFormat.ts` (`signal.id`, procedencia de `run.json`, `isNew` lo pone el lector), `EditorialCommandService.ts` (sesión en los eventos de bandeja, `observed` en `unsnooze`), `persistence/EditorialEventLog.ts` (`subscribe`, `actor_session_id`), `persistence/EditorialModel.ts` (agregado `run`, eventos `run.imported`, `run.updated` y `run.invalidated`), `persistence/Migrations.ts` (comprobación de continuidad y reparación), `persistence/Errors.ts` (`EditorialMigrationGapError`), `persistence/EditorialDatabase.testkit.ts` (`applyOnly`), `packages/contracts/src/editorial.ts` y `apps/web/src/editorial/state.ts`.
+
+Archivos de upstream tocados:
+
+| Archivo                                     | Líneas      | Alcance                                                                                                                                                                                                                                                                           |
+| ------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/server.ts`                 | 51, 633-634 | Importa `editorial/layer.ts` y lo monta justo encima de `EditorialRuntime.aroundOrchestration(…, EditorialPersistence.layer)` (§10), que le da `EditorialSql`, `EditorialEventLog` y `EditorialCommandService`. La persistencia se monta una sola vez, debajo de la orquestación. |
+| `apps/server/src/ws.ts`                     | 243, 1867   | Quita la capa editorial por conexión; lee `EditorialRpcHandlers` y los liga a `currentSession`. `layerWsRpc` no gana requisitos.                                                                                                                                                  |
+| `packages/client-runtime/src/rpc/client.ts` | 7, 75-76    | Añade `editorial.subscribe` a `EnvironmentSubscriptionRpcTag`, la lista de métodos de stream; sin eso el cliente lo trataría como unario.                                                                                                                                         |
+
+`RpcAuthorization.ts` y `RpcInstrumentation.ts` no cambian: siguen esparciendo `EDITORIAL_RPC_REQUIRED_SCOPES` y `EDITORIAL_RPC_AGGREGATES`, que ahora incluyen los métodos nuevos.
+
+Esquema de `004_EditorialRuns`:
+
+- `editorial_runs`: `run_id`, `cutoff_at` (nulo solo en una corrida `invalid` nunca indexada), `finished_at`, `engine_status`, `run_schema_version`, `engine_version`, `config_version`, `config_hash`, `corpus_hash` (de Earlywindow o `corpus.corpus_manifest_hash`), `corpus_used_hash`, `logical_hash`, `sources_json`, `coverage_json` (de `run.json` o del primer expediente), `artifact_path`, `artifact_version` (nombres y mtimes), `content_hash` (nulo en la misma situación), `dossier_count`, `import_state` (`imported`, `partial` o `invalid`), `skipped_files_json` (lista de `{file, reason}`), `imported_at`, `updated_at`.
+- `editorial_dossiers`: clave (`run_id`, `dossier_id`); `trend_key`, `trend_key_rule`, `file_path`, `content_hash`, `label`, `items_7d`, `items_28d`, `authors_7d`, `score`, `growth`, `affinity`, `volume_rank`, `score_rank`, `last_activity_day`. Índice por (`trend_key`, `run_id`).
+- `editorial_events` se reconstruye (SQLite no amplía un `CHECK`): `aggregate_kind` admite `run` y se añade `actor_session_id`. Se copian las filas con su `seq` y se recrean los índices.
+- 004 es idempotente: crea tablas e índices con `IF NOT EXISTS`, reconstruye `editorial_events` solo si le falta `actor_session_id` y, si `editorial_runs` tiene la forma de un borrador anterior sin `invalid`, borra `editorial_dossiers` y `editorial_runs` y las crea de nuevo. Son un índice derivado de los archivos; el importador los vuelve a llenar en el siguiente paso sin repetir anuncios, porque `run.imported` conserva su `operation_id`.
+
+API RPC (grupo `EditorialRpcGroup`, mismo socket y middleware de scopes):
+
+| Método                 | Scope                   | Entrada                                   |
+| ---------------------- | ----------------------- | ----------------------------------------- |
+| `editorial.listRuns`   | `orchestration:read`    | `{}`                                      |
+| `editorial.getInbox`   | `orchestration:read`    | `runId?`, `sort?`, `offset?`, `limit?`    |
+| `editorial.getDossier` | `orchestration:read`    | `runId`, `dossierId`, página de evidencia |
+| `editorial.subscribe`  | `orchestration:read`    | `since?`, `sort?` (stream)                |
+| `editorial.markRead`   | `orchestration:operate` | `trendKey`, `runId`, `dossierId`          |
+| `editorial.snooze`     | `orchestration:operate` | `trendKey`, `until?`, `returnWhen?`       |
+| `editorial.unsnooze`   | `orchestration:operate` | `trendKey`                                |
+| `editorial.dismiss`    | `orchestration:operate` | `trendKey`, `reason` (1 a 500 caracteres) |
+| `editorial.reopen`     | `orchestration:operate` | `trendKey`                                |
+
+Ninguna entrada lleva actor. El handler registra `actor = operator` y el `sessionId` de la sesión autenticada; un campo `actor` en el payload se descarta al decodificar. `linkProduction` queda interno: lo llamará la creación del hilo de video, no una ruta de la interfaz. `EDITORIAL_WRITE_METHODS` enumera las escrituras; `rpc.test.ts` comprueba que ni `mcp/`, ni `editorial/mcp/`, ni `orchestration-v2/`, ni `provider/`, ni el contrato de orquestación nombran esos métodos ni importan los servicios de comando.
+
+Desviaciones respecto al mapa:
+
+- Scope de escritura: `orchestration:operate`, no un scope editorial nuevo. Uno nuevo cambiaría `auth.ts`, las concesiones, los padres heredados y la pantalla de emparejamiento. `operate` ya separa actuar de observar en los hilos.
+- Sin modo degradado desde disco. `EditorialPersistence.layer` está montado en `server.ts` y el servidor no arranca sin `editorial.sqlite`, así que la lectura siempre tiene base. Las pruebas de upstream que arman `layerWsRpc` con dobles reciben handlers que responden `unavailable` (valor por defecto de la `Context.Reference`).
+- Las corridas del formato `earlyscript.dossier/1` del motor nuevo no se leen todavía: el lector solo acepta `dossier/1`, como en §8. El índice ya guarda `corpus_used_hash` y `logical_hash` de su `run.json`.
+- `EditorialTrendSummary.trendKey` y `inbox` son opcionales en el contrato para no romper las pruebas de componentes de §8, que construyen resúmenes sin ellos. El servidor los envía siempre.
+- `DossierEvidence` (§10, ya en `main`) espera que el lado de lectura le dé el expediente de un hilo. Esta rama no la provee todavía: su valor por defecto responde que no hay expediente. `EditorialRunDirectory.find` y `load` son la búsqueda que necesita.
+- `EditorialRunSummary.cutoffAt` pasa a `NullOr` en el contrato, por las corridas inválidas que nunca tuvieron corte; `importState` y `skippedFiles` son opcionales para no romper los resúmenes que arman las pruebas de §8. `runGroupLabel` en el cliente escribe «sin corte» en ese caso, que la bandeja nunca muestra.
+
+Decisiones reversibles:
+
+- `trend_key`: regla `signal-id` (el `signal.id` del motor, `sig_` más sha256 del primer ítem de la señal) y, sin id, regla `top-terms` (`terms_` más los primeros 12 hexadecimales del sha256 de los términos en minúsculas y ordenados; sin términos, del id del expediente). Cada fila guarda su regla. El punto de extensión para la regla del motor (paso 2) es `trendKeyOf`: se añade una regla y se migran las filas de bandeja de forma explícita; nunca se recalculan claves existentes. Los títulos generados no entran en la clave.
+- Nueva: nunca abierta, o abierta en una corrida anterior y con ítems en la curva desde el corte de esa corrida (`last_activity_day >= seen_run_cutoff_at`). Es la regla de actividad no vista de los hilos. Una tendencia en snooze o descartada no cuenta como nueva. La alternativa literal, «revisión vista distinta de la actual», marcaría como nuevas todas las tendencias que continúan de un día a otro.
+- Umbral de regreso: sin `until` ni `returnWhen`, el snooze espera `items7d >= max(base + 3, ceil(base × 1,5))`, con la base tomada por el servidor de la última corrida indexada (`SNOOZE_GROWTH_FACTOR`, `SNOOZE_GROWTH_MIN_DELTA`). El cliente puede elegir `items7d`, `authors7d`, `items28d` o `score` y el valor; la base la pone siempre el servidor y el objetivo debe superarla. El importador compara contra la última corrida en cada paso y escribe `trend.unsnoozed` con `cause: growth`, actor `system` y `observed`. Un `until` vencido da `cause: expired`.
+- Idempotencia: una corrida con el mismo `content_hash` y el mismo estado no reescribe expedientes ni emite evento, aunque cambien los mtimes. `content_hash` cubre `run.json`, el hash de cada expediente y cada archivo omitido con su motivo.
+- Eventos de corrida: `run.imported` anuncia una corrida nueva para el índice y lleva `operation_id = run.imported:<run_id>:<content_hash>`; es el único deduplicado, para que un índice reconstruido desde los mismos archivos no anuncie de nuevo. Cada transición del contenido vigente de una corrida ya indexada publica `run.updated`, sin `operation_id`, con `contentHash`, `previousContentHash`, `importState`, `previousImportState`, `skippedFiles` y la secuencia del evento; la vuelta a un hash anterior (A → B → A) también. `run.invalidated` se publica cuando una corrida pasa a `invalid`.
+- Inventario de omitidos: un expediente que no decodifica se guarda en `skipped_files_json` como `{file, reason}` (motivo en una línea, hasta 300 caracteres) y deja la corrida en `partial`. Añadir solo un archivo corrupto cambia el hash y el estado; arreglarlo devuelve la corrida a `imported`.
+- Corridas inválidas: un directorio con `run.json` que no lee o no decodifica ya no desaparece del diagnóstico. Si una corrida indexada vivía en ese directorio (`artifact_path`), queda `invalid` con sus metadatos, su `content_hash` y sus expedientes; si no, se crea una fila con el nombre de la carpeta como `run_id`, `engine_status = unknown`, sin corte ni hashes, y `skipped_files_json = [{file: "run.json", reason}]`. `getInbox`, `getTrendState` y los snoozes por crecimiento la ignoran (`selectLatestRun` filtra `invalid`); pedirla por `runId` responde `unreadable` y `markRead` sobre ella, `not-found`. `listRuns` la muestra con `importState` y `skippedFiles`. Al repararse, la corrida vuelve a `imported` con `run.updated`, y la fila provisional con el nombre de la carpeta se borra si el `run_id` real es otro. Un directorio sin `run.json` no es una corrida y se ignora, como antes.
+- Un directorio de corrida borrado conserva su fila en el índice; la lectura de esa corrida responde `unreadable`.
+- Suscripción: primer elemento `snapshot` con `seq`; después un `trend` por evento de tendencia, con el estado actual y `newCount`, y un `snapshot` nuevo tras cada evento de corrida (`run.imported`, `run.updated`, `run.invalidated`). Con `since`, se reproduce el hueco si tiene como máximo 500 eventos, no contiene un evento de corrida y no supera el último `seq`; en otro caso, snapshot. La suscripción a los eventos se toma antes de leer, y los elementos llevan estado actual, así que un duplicado no daña.
+- Los comandos del cliente refrescan las lecturas abiertas con una señal por entorno (`inboxRevision`); la vista en vivo (`liveInbox`) aplica los deltas sin reordenar filas.
+- Sondeo cada 30 segundos (`IMPORT_POLL_INTERVAL`), más una importación antes de `listRuns`, `getInbox` y `subscribe`. Los lectores MCP reciben `EditorialReadService`, que no importa ni escribe.
+
+Continuidad de migraciones:
+
+- Manifiesto tras la fusión: `[1 EditorialFoundation, 2 EditorialOrdering, 3 EditorialScriptHead, 4 EditorialRuns]`. El `Migrator` de Effect omite todo id menor o igual que el último aplicado, así que una base que aplicó `[1, 2, 4]` nunca recibiría la 003.
+- `runEditorialMigrations` llama antes a `checkEditorialMigrationContinuity`: el manifiesto debe registrar `1..n` en orden, sin huecos, y ningún id registrado menor que el máximo aplicado en la base puede faltar en ella. Si falla, `EditorialMigrationGapError` (`manifest-gap` o `unapplied-below-latest`, con los ids) hace fallar la capa de persistencia y el servidor no arranca. El mensaje indica el comando de reparación.
+- Reparación manual, nunca automática: `node apps/server/scripts/repair-editorial-migrations.ts --db <ruta>/editorial.sqlite`. Copia la base con `VACUUM INTO` a `<ruta>.before-repair-<ms>.sqlite`, borra los marcadores por encima del primer id ausente y vuelve a migrar en orden. Solo borra marcadores de migraciones declaradas repetibles (`REPLAYABLE_MIGRATION_IDS`, hoy la 004); en otro caso responde `not-replayable` y pide restaurar una copia. Sin hueco, no toca el archivo.
+- Pruebas: `EditorialDatabase.test.ts` (manifiesto `[1, 2, 4]` rechazado, base con `[1, 2, 4]` que no abre con `[1, 2, 3, 4]`, actualización desde `[1, 2, 3]` con el mismo esquema que una base nueva, 004 repetida sin cambios) y `scripts/repair-editorial-migrations.test.ts` (reparación de `[1, 2, 4]` con un `editorial_runs` del borrador anterior).
+
+Listo para U4b: `editorialEnvironment.liveInbox`, `markRead`, `snooze`, `unsnooze`, `dismiss` y `reopen` en `state.ts`; `trend.inbox` con `snoozed`, `dismissed` y `production`; contadores `newCount`, `snoozedCount` y `dismissedCount`. Las acciones de `PendingAction` pueden llamar a estos comandos. Para las herramientas MCP de lectura: `EditorialReadService` (`listRuns`, `getInbox`, `getDossier`, `getTrendState`) y `EditorialRunDirectory` montados una vez en `server.ts`.
+
+## 13. Espacio Resultados
+
+Base: `638a6cf64e`, fusionada con `main` en `ed5c3a2903`. Rama `es/results-space`. Tercer espacio del sidebar, solo lectura sobre `editorial.sqlite`: tiempo por ficha asistido frente a manual, utilidad media, afirmaciones con cita, bandeja de tendencias, métricas de video y registro de decisiones. Decisiones 7 y 9 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §12 y §14 (U8).
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialResults.ts` (esquemas, `EditorialResultsRpcGroup` con `editorial.results.summary` y `editorial.results.decisions`, `EDITORIAL_RESULTS_WS_METHODS`, `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES` con `orchestration:read`, `EditorialResultsError`).
+- Servidor, en `apps/server/src/editorial/`: `EditorialResultsService.ts` (lecturas con `EditorialSql`, cuantiles y agregados), `resultsRpc.ts` (handlers como `Context.Reference` con valor por defecto `unavailable`, agregados de trazas y capa), `resultsFixture.testkit.ts` (seis hilos, tres asistidos y tres manuales, escritos con `EditorialThreadService`, `WorkClockService` y `EditorialCommandService` bajo `TestClock`) y `EditorialResultsService.test.ts`.
+- Cliente: `apps/web/src/editorial/resultsState.ts` y, en `apps/web/src/editorial/results/`, `ResultsPage.tsx`, `ResultsNavigation.tsx`, `results.logic.ts` y sus pruebas (`results.logic.test.ts`, `ResultsPage.browser.test.tsx`).
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                              |
+| ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialResultsRpcGroup` y lo compone con `.merge` después del grupo editorial.                            |
+| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialResults.ts`.                                                                                     |
+| `apps/server/src/ws.ts`                               | 245, 1874 | Esparce los handlers de Resultados, leídos de su `Reference`, junto a `editorialHandlers`.                           |
+| `apps/server/src/server.ts`                           | 52, 634   | Monta `resultsRpc.layer` en `layerRuntimeCoreDependenciesBase`, sobre `EditorialRuntime.aroundOrchestration` (§10).  |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES`.                                                                     |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_RESULTS_RPC_AGGREGATES`.                                                                          |
+| `apps/server/package.json`                            | 77        | `@earlyscript/editorial-script` como dependencia de desarrollo del workspace, igual que en `es/video-thread-server`. |
+| `pnpm-lock.yaml`                                      | 943-945   | Importer de esa dependencia, idéntico al de `es/video-thread-server`.                                                |
+
+Archivo propio tocado: `apps/web/src/editorial/EditorialSidebar.tsx`, que monta `ResultsNavigation` en lugar del aviso fijo. La ruta `_chat.editorial.$environmentId.results.tsx` ya existía y ahora monta `ResultsPage`; `routeTree.gen.ts` no cambia.
+
+Decisiones reversibles:
+
+- Montaje: los handlers viven en una `Context.Reference` (`EditorialResultsRpcHandlers`) construida una vez en `server.ts`; `ws.ts` solo los esparce. `layerWsRpc` conserva su firma y las pruebas de upstream que lo montan con dobles reciben `unavailable`. Es el mismo patrón que `es/editorial-write` usa para `EditorialRpcHandlers`; si ambos se fusionan, los dos grupos pueden compartir una sola `Reference`.
+- Unidad de análisis: la decisión vigente de cada hilo de video, que es la más reciente por `decided_at`. Las anteriores siguen en el registro, marcadas «reemplazada», y no entran en los agregados.
+- Tiempos: las duraciones que `recordDecision` guarda con la decisión, ya sin pausas. Un hilo cuya decisión tiene `clock_definitive = 0` queda fuera de todas las estadísticas de tiempo y se cuenta aparte; su total aparece en la tabla con «≥». Una etapa que no corrió en un hilo no aporta un cero: ese hilo no entra en el n de la etapa.
+- Estadísticos: mediana y cuartiles por interpolación lineal entre estadísticos de orden (tipo 7 de R), con n, mínimo y máximo. Ningún porcentaje de reducción ni «ahorro»: la página muestra las dos medianas y su diferencia con los dos n, y una nota de que la comparación de la tesis es por pares, sobre el mismo tema y con revisores externos.
+- Comparaciones de la decisión 9: explorar (manual `explore` frente a asistido `explore` más `read`, porque leer el expediente reemplaza la exploración a mano; nulo si ninguna corrió), escribir (`write` frente a `write`) y proceso completo (total frente a total, solo hilos con cobertura completa). Escribir y proceso completo se muestran por separado y nunca se suman.
+- Cobertura: cada decisión lleva las etapas registradas (duración no nula; cero milisegundos cuenta como registrada) y `coverage`. Es `complete` si el hilo asistido registró `read`, `write` y `decide` (su `explore` es opcional: exploró el motor) o si el manual registró `explore`, `write` y `decide`; si falta alguna, `partial`. La regla está en `coverageOf` de `EditorialResultsService.ts`. Un hilo con un solo minuto de `write` queda fuera de «Proceso completo» y entra en la comparación `recorded`, «Total de etapas registradas», que toma todos los hilos con reloj definitivo y se muestra como línea bajo las tarjetas con el aviso «Cobertura parcial: incluye N hilos…». Cada comparación informa los hilos parciales que contiene; el resumen por modo, `partialCoverage`. La fila «Total registrado» de la tabla por etapa usa el total de todos los hilos con reloj, como `recorded`.
+- Afirmaciones con cita: `checkScript` de `@earlyscript/editorial-script` sobre el `snapshot` de `editorial_script_versions` cuyo hash nombra la decisión, sin expediente. Cuenta oraciones con un marcador de cita propio o heredado del párrafo; no mide respaldo semántico ni el 90 % de la tesis. La proporción por modo suma afirmaciones de todos los guiones (no promedia proporciones). Una decisión sin versión no aporta. El conteo se guarda en memoria por hash, hasta 500 entradas.
+- Utilidad: la que registra el operador con la decisión (1 a 5), con media, n y distribución. Las valoraciones de revisores externos y las versiones de rúbrica no están en esta base y no se mezclan aquí.
+- Bandeja: cuatro conteos independientes sobre `editorial_trend_inbox`: leídas (`seen_at`), en observación (`snoozed_at` sin descarte), descartadas (`dismissed_at`) y en producción (`production_thread_id`).
+- Métricas de video: la observación más reciente por `observed_at`, solo descriptiva, sin atribución al sistema ni al modo.
+- Página: tarjetas de las tres comparaciones; gráfico de barras SVG por etapa (barra = mediana, trazo = RIC, línea discontinua = etapa sin registro), con escala común y sin librería; la misma información en una tabla; tabla de decisiones paginada de 20 en 20 con filtro por modo. Los colores de serie son `primary` (asistido) y `muted-foreground` (manual): el repositorio no define tokens `--chart-*`. El nombre del hilo sale del shell de T3 si existe (con enlace al hilo); si no, de la tendencia o de los primeros ocho caracteres del id.
+- Estado vacío: «Aún no hay decisiones registradas. Resultados se llena con cada hilo de video que cierres.» La bandeja aparece antes de la primera decisión solo si algún conteo es mayor que cero.
+- `ResultsNavigation` lista las secciones de la página como anclas (`useLinkProps` con `hash` y `hashScrollIntoView`), no ítems. Todas apuntan a la misma ruta y el router marca activas a todas con `aria-current="page"`, que `Link` aplica después de cualquier prop y que `activeOptions` no puede apagar sin `includeHash` (que dejaría `page` en la seleccionada). `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active` de las props del enlace; solo la sección que nombra el hash recibe `aria-current="location"` (`sectionAriaCurrent`).
+- Decisiones tiene tres estados (`ResultsDecisionsState`): «Cargando decisiones…» mientras la página no llegó, un aviso de error con el motivo (`decisionsFailureText`: base no disponible, base ilegible, entorno sin autorización o entorno sin respuesta) y el botón «Reintentar», que refresca el átomo de esa página con `useAtomRefresh`, o la tabla. Tendencias trata el fallo con un aviso y la carga sin contenido; aquí el resumen ya está en pantalla, así que la sección explica lo que falta en lugar de desaparecer.
+- Texto del aviso descriptivo: «Estas diferencias son descriptivas», sin la palabra «ahorro».
+
+## 14. Lectura de corridas nativas (rama `es/dossier-native`, 31 de octubre de 2026)
+
+Base: `ed5c3a2903`, fusionada con `0d84824fea` (§12). Archivo de upstream modificado: `packages/contracts/src/editorial.ts`, solo comentarios y `EditorialRankComponent.value`, que pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo. Archivos propios: `apps/server/src/editorial/{dossierFormat,RunDirectory,EditorialReadService,EditorialImportService}.ts` con sus pruebas, el fixture `fixtures/native-runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con la evidencia recortada a tres ítems; fuera de `fixtures/runs` para no cambiar las pruebas que copian ese directorio) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
+
+Un solo decodificador para el lector y el importador, en `dossierFormat.ts`, que `RunDirectory` usa:
+
+- `decodeRunJson`: `Schema.Union([RunRecord, EarlywindowRunFile])` y conversión a `RunInfo`, la forma única que leen `RunDirectory`, el importador y el lector (claves de run.json; `config_version`, `sources` e `include_min` salen de `config` en las corridas nativas). `EarlywindowRunFile` exige que no haya `schema_version`, así que un run.json nativo roto queda `invalid` en vez de leerse como Earlywindow.
+- `decodeDossierJson`: `Schema.Union([Dossier, EarlywindowDossier])`, discriminada por `schema_version`. `toDossiers` convierte los `dossier/1` de una corrida juntos con `fromEarlywindowRun`, porque sus posiciones dependen de la corrida entera, y conserva el orden de los archivos (el importador empareja cada expediente con su ruta y su hash por posición). `loadRunDossiers` solo recibe `Dossier`.
+
+Reemplaza la viñeta «Posición por volumen» de §8 y la limitación de §12 sobre `earlyscript.dossier/1`:
 
 - `volumeRank` y `scoreRank` son las posiciones del motor (`rankings.baseline` y `rankings.weighted`) entre los temas elegibles de la corrida, no puestos de competencia entre los expedientes emitidos. Los empates se resuelven por id de señal, la regla del motor y del backtest de Earlywindow. Se elimina `competitionRanks`.
-- `items7d`, `authors7d`, `growth`, `affinity` y `sources` salen de `trend` y `profile_fit`. En corridas nativas `sources` cubre todos los ítems del tema; en las de Earlywindow, la evidencia.
-- El umbral de afinidad es `config.profile.include_min` del run.json nativo; las corridas de Earlywindow siguen con 0,60.
+- `items7d`, `authors7d`, `growth`, `affinity` y `sources` salen de `trend` y `profile_fit`. En corridas nativas `sources` cubre todos los ítems del tema; en las de Earlywindow, la evidencia. La clave de tendencia sigue la regla `signal-id` con `trend.id`, que en las corridas de Earlywindow es su `signal.id`: las claves ya indexadas no cambian.
+- El umbral de afinidad del expediente es `include_min` de la corrida: `config.profile.include_min` en las nativas, 0,60 en las de Earlywindow.
+- `editorial_runs` de una corrida nativa guarda ahora `config_version` y `sources_json` de su `config`; antes quedaban nulos porque el run.json se leía con el esquema de Earlywindow.
+- Los fixtures de Earlywindow recuperan `retrieved_at`, que el esquema estricto exige.
 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos.

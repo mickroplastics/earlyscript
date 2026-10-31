@@ -1,15 +1,11 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { EditorialEmptyPage } from "../editorial/EditorialPage";
+import { ResultsPage } from "../editorial/results/ResultsPage";
 
 function ResultsRouteView() {
-  return (
-    <EditorialEmptyPage
-      space="Resultados"
-      title="Todavía no hay resultados"
-      description="Aquí verás tiempos, utilidad y métricas cuando haya fichas decididas."
-    />
-  );
+  const { environmentId } = Route.useParams();
+  return <ResultsPage environmentId={EnvironmentId.make(environmentId)} />;
 }
 
 export const Route = createFileRoute("/_chat/editorial/$environmentId/results")({

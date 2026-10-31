@@ -1,0 +1,337 @@
+import type {
+  EditorialDurationStats,
+  EditorialResultsAction,
+  EditorialResultsComparison,
+  EditorialResultsComparisonKey,
+  EditorialResultsMode,
+  EditorialResultsModeSummary,
+  EditorialResultsStage,
+  EditorialResultsSummary,
+} from "@t3tools/contracts";
+
+/** Sections of the Results page, in order; the sidebar links to them by id. */
+const RESULTS_SECTIONS = [
+  { id: "tiempos", label: "Tiempo por ficha" },
+  { id: "etapas", label: "Etapas" },
+  { id: "utilidad", label: "Utilidad y citas" },
+  { id: "bandeja", label: "Bandeja" },
+  { id: "video", label: "Métricas de video" },
+  { id: "decisiones", label: "Decisiones" },
+] as const;
+export type ResultsSectionId = (typeof RESULTS_SECTIONS)[number]["id"];
+
+/** Only the section the hash selects is the current location; the others carry nothing. */
+export function sectionAriaCurrent(
+  hash: string,
+  sectionId: ResultsSectionId,
+): "location" | undefined {
+  return hash.replace(/^#/, "") === sectionId ? "location" : undefined;
+}
+
+/**
+ * Link props without the route-active marks (`aria-current="page"`, `data-status` and the
+ * `active` class, the only class the anchors get from the router): the section anchors share
+ * one route, so the router marks all of them.
+ */
+export function withoutRouteActive<P extends object>(
+  props: P,
+): Omit<P, "aria-current" | "data-status" | "className"> {
+  const {
+    "aria-current": _current,
+    "data-status": _status,
+    className: _className,
+    ...rest
+  } = props as P & {
+    readonly "aria-current"?: unknown;
+    readonly "data-status"?: unknown;
+    readonly className?: unknown;
+  };
+  return rest;
+}
+
+export const RESULTS_MODES: ReadonlyArray<EditorialResultsMode> = ["assisted", "manual"];
+
+export const RESULTS_STAGES: ReadonlyArray<EditorialResultsStage> = [
+  "explore",
+  "read",
+  "write",
+  "decide",
+];
+
+const MODE_LABELS: Readonly<Record<EditorialResultsMode, string>> = {
+  assisted: "Asistido",
+  manual: "Manual",
+};
+
+const STAGE_LABELS: Readonly<Record<EditorialResultsStage, string>> = {
+  explore: "Explorar",
+  read: "Leer",
+  write: "Escribir",
+  decide: "Decidir",
+};
+
+const ACTION_LABELS: Readonly<Record<EditorialResultsAction, string>> = {
+  accept: "Aceptada",
+  edit: "Editada",
+  reject: "Rechazada",
+};
+
+export function modeLabel(mode: EditorialResultsMode): string {
+  return MODE_LABELS[mode];
+}
+
+export function stageLabel(stage: EditorialResultsStage): string {
+  return STAGE_LABELS[stage];
+}
+
+export function actionLabel(action: EditorialResultsAction): string {
+  return ACTION_LABELS[action];
+}
+
+/**
+ * The comparisons of the manual mode design (doc 04, decision 9). Writing and the whole
+ * process stay apart: a writing time is never read as a process time. The whole process only
+ * takes threads with complete coverage; `recorded` takes every timed thread.
+ */
+export const COMPARISON_TEXT: Readonly<
+  Record<
+    EditorialResultsComparisonKey,
+    { readonly title: string; readonly assisted: string; readonly manual: string }
+  >
+> = {
+  explore: {
+    title: "Explorar",
+    assisted: "Tendencias: explorar y leer el expediente",
+    manual: "Explorar a mano",
+  },
+  write: {
+    title: "Escribir",
+    assisted: "Escribir con asistente",
+    manual: "Escribir a mano",
+  },
+  total: {
+    title: "Proceso completo",
+    assisted: "Todas las etapas, asistido",
+    manual: "Todas las etapas, manual",
+  },
+  recorded: {
+    title: "Total de etapas registradas",
+    assisted: "Etapas registradas, asistido",
+    manual: "Etapas registradas, manual",
+  },
+};
+
+/** The comparisons shown as cards; `recorded` is a line under them. */
+export function comparisonCards(
+  comparisons: ReadonlyArray<EditorialResultsComparison>,
+): ReadonlyArray<EditorialResultsComparison> {
+  return comparisons.filter((comparison) => comparison.key !== "recorded");
+}
+
+/**
+ * Who the whole process leaves out, or who a recorded total takes in: threads without every
+ * stage of their mode (assisted: leer, escribir y decidir; manual: explorar, escribir y decidir).
+ */
+export function coverageNote(comparison: EditorialResultsComparison): string | null {
+  const count = comparison.partial.assisted + comparison.partial.manual;
+  if (comparison.key === "total") {
+    return "Solo hilos con todas las etapas de su modo registradas.";
+  }
+  if (comparison.key !== "recorded" || count === 0) return null;
+  return `Cobertura parcial: incluye ${formatCount(count, "hilo", "hilos")} sin todas las etapas de su modo; no es el proceso completo.`;
+}
+
+/** "Total de etapas registradas: asistido 40 min (n = 4) · manual 1 h 40 min (n = 3)". */
+export function recordedTotalText(comparison: EditorialResultsComparison): string {
+  const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) =>
+    `${MODE_LABELS[mode].toLowerCase()} ${stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)} (n = ${stats.n})`;
+  return `${COMPARISON_TEXT.recorded.title}, mediana: ${side("assisted", comparison.assisted)} · ${side("manual", comparison.manual)}`;
+}
+
+const MINUTE_MS = 60_000;
+
+/** Why the decisions page failed, in the operator's words, from the RPC error. */
+export function decisionsFailureText(error: unknown): string {
+  const fields =
+    typeof error === "object" && error !== null
+      ? (error as { readonly _tag?: unknown; readonly reason?: unknown })
+      : {};
+  if (fields._tag === "EditorialResultsError") {
+    return fields.reason === "unavailable"
+      ? "La base editorial de este entorno no está disponible."
+      : "La base editorial de este entorno no se pudo leer.";
+  }
+  if (fields._tag === "EnvironmentAuthorizationError") {
+    return "Este entorno no autoriza la lectura de resultados.";
+  }
+  return "No hubo respuesta del entorno.";
+}
+
+/** "26 min", "1 h 40 min", "45 s"; rounded to the minute from one minute up. */
+export function formatDuration(ms: number): string {
+  if (ms < MINUTE_MS) return `${Math.round(ms / 1000)} s`;
+  const minutes = Math.round(ms / MINUTE_MS);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+export function formatCount(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/** "RIC 24–28 min" under an hour, "RIC 58 min–1 h 2 min" across units. */
+export function iqrText(stats: EditorialDurationStats): string | null {
+  if (stats.q1Ms === null || stats.q3Ms === null) return null;
+  const low = formatDuration(stats.q1Ms);
+  const high = formatDuration(stats.q3Ms);
+  if (low.endsWith(" min") && high.endsWith(" min") && !low.includes("h") && !high.includes("h")) {
+    return `RIC ${low.slice(0, -4)}–${high}`;
+  }
+  return `RIC ${low}–${high}`;
+}
+
+/** "1 aceptada, 1 editada, 1 rechazada". */
+export function actionsText(actions: EditorialResultsModeSummary["actions"]): string {
+  return [
+    formatCount(actions.accept, "aceptada", "aceptadas"),
+    formatCount(actions.edit, "editada", "editadas"),
+    formatCount(actions.reject, "rechazada", "rechazadas"),
+  ].join(", ");
+}
+
+/** "26 min · RIC 24–28 min · n = 3", or "sin datos · n = 0". */
+export function statsText(stats: EditorialDurationStats): string {
+  if (stats.medianMs === null) return `sin datos · n = ${stats.n}`;
+  const iqr = iqrText(stats);
+  return [formatDuration(stats.medianMs), iqr, `n = ${stats.n}`]
+    .filter((part) => part !== null)
+    .join(" · ");
+}
+
+/**
+ * The descriptive difference of the two medians, with both n. Never a percentage or a
+ * "saving": with unpaired threads on different topics it is a description, not an effect.
+ */
+export function medianDifferenceText(
+  assisted: EditorialDurationStats,
+  manual: EditorialDurationStats,
+): string | null {
+  if (assisted.medianMs === null || manual.medianMs === null) return null;
+  const difference = manual.medianMs - assisted.medianMs;
+  const sizes = `n = ${assisted.n} y ${manual.n}`;
+  if (Math.round(difference / MINUTE_MS) === 0 && Math.abs(difference) < MINUTE_MS) {
+    return `Medianas iguales al minuto (${sizes})`;
+  }
+  const magnitude = formatDuration(Math.abs(difference));
+  return difference > 0
+    ? `Mediana manual ${magnitude} mayor (${sizes})`
+    : `Mediana asistida ${magnitude} mayor (${sizes})`;
+}
+
+const percentFormat = new Intl.NumberFormat("es", {
+  style: "percent",
+  maximumFractionDigits: 0,
+});
+const meanFormat = new Intl.NumberFormat("es", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+export function formatPercent(ratio: number): string {
+  return percentFormat.format(ratio);
+}
+
+function formatMean(value: number): string {
+  return meanFormat.format(value);
+}
+
+/** "4,0 de 5" or "sin datos". */
+export function utilityText(summary: EditorialResultsModeSummary): string {
+  return summary.utility.mean === null ? "sin datos" : `${formatMean(summary.utility.mean)} de 5`;
+}
+
+/** "11 de 13 afirmaciones · 3 guiones". */
+export function citationDetail(summary: EditorialResultsModeSummary): string {
+  const { claims, cited, threads } = summary.citations;
+  if (threads === 0) return "sin versión decidida del guion";
+  return `${cited} de ${formatCount(claims, "afirmación", "afirmaciones")} · ${formatCount(threads, "guion", "guiones")}`;
+}
+
+export function hasDecisions(summary: EditorialResultsSummary): boolean {
+  return summary.decisionCount > 0;
+}
+
+/** Trends get read and dismissed before any decision; the counters show once one moved. */
+export function hasInboxActivity(summary: EditorialResultsSummary): boolean {
+  const { read, observing, dismissed, production } = summary.inbox;
+  return read + observing + dismissed + production > 0;
+}
+
+/** The page sections present: without decisions, at most the inbox counters. */
+export function visibleSections(summary: EditorialResultsSummary | null) {
+  if (summary === null || hasDecisions(summary)) return RESULTS_SECTIONS;
+  return hasInboxActivity(summary)
+    ? RESULTS_SECTIONS.filter((section) => section.id === "bandeja")
+    : [];
+}
+
+export function modeSummary(
+  summary: EditorialResultsSummary,
+  mode: EditorialResultsMode,
+): EditorialResultsModeSummary | undefined {
+  return summary.modes.find((entry) => entry.mode === mode);
+}
+
+export function stageStats(
+  summary: EditorialResultsModeSummary | undefined,
+  stage: EditorialResultsStage,
+): EditorialDurationStats | undefined {
+  return summary?.stages.find((entry) => entry.stage === stage)?.stats;
+}
+
+/** Threads whose clock awaited resolution, left out of every time statistic. */
+export function provisionalNote(summary: EditorialResultsSummary): string | null {
+  const count = summary.modes.reduce((sum, mode) => sum + mode.provisionalClock, 0);
+  if (count === 0) return null;
+  return `${formatCount(count, "hilo queda", "hilos quedan")} fuera de los tiempos: su reloj tiene un tramo sin resolver tras un cierre inesperado.`;
+}
+
+/** The common horizontal scale of the stage chart: the largest third quartile or median. */
+export function stageChartMaxMs(summary: EditorialResultsSummary): number {
+  const ends = summary.modes.flatMap((mode) =>
+    mode.stages.flatMap(({ stats }) => [stats.q3Ms ?? 0, stats.medianMs ?? 0, stats.maxMs ?? 0]),
+  );
+  return Math.max(MINUTE_MS, ...ends);
+}
+
+/** "1–20 de 46". */
+export function pageRangeText(offset: number, shown: number, total: number): string {
+  if (total === 0 || shown === 0) return `0 de ${total}`;
+  return `${offset + 1}–${offset + shown} de ${total}`;
+}
+
+const integerFormat = new Intl.NumberFormat("es");
+
+export function formatInteger(value: number): string {
+  return integerFormat.format(value);
+}
+
+/** "trend:local-models" reads "local-models"; a thread without trend shows its short id. */
+export function decisionThreadFallback(input: {
+  readonly threadId: string;
+  readonly trendKey: string | null;
+}): string {
+  if (input.trendKey !== null) return input.trendKey.replace(/^trend:/, "");
+  return `Hilo ${input.threadId.slice(0, 8)}`;
+}
+
+/** "1 h 40 min", "≥ 33 min" when a segment awaited resolution, "sin reloj" if none ran. */
+export function decisionTotalText(decision: {
+  readonly clockDefinitive: boolean;
+  readonly durations: { readonly totalMs: number | null };
+}): string {
+  if (decision.durations.totalMs === null) return "sin reloj";
+  return `${decision.clockDefinitive ? "" : "≥ "}${formatDuration(decision.durations.totalMs)}`;
+}

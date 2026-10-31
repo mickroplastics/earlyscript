@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
@@ -25,6 +26,7 @@ interface EventRow {
   readonly aggregate_id: string;
   readonly operation_id: string | null;
   readonly actor: EditorialActor;
+  readonly actor_session_id: string | null;
   readonly payload_json: string;
   readonly created_at: string;
 }
@@ -36,6 +38,7 @@ const toEvent = (row: EventRow): EditorialEvent => ({
   aggregateId: row.aggregate_id,
   operationId: row.operation_id,
   actor: row.actor,
+  actorSessionId: row.actor_session_id,
   payload: JSON.parse(row.payload_json),
   createdAt: row.created_at,
 });
@@ -46,6 +49,7 @@ export interface AppendEventInput {
   readonly aggregateId: string;
   readonly operationId?: string | undefined;
   readonly actor: EditorialActor;
+  readonly actorSessionId?: string | undefined;
   readonly payload: unknown;
   readonly createdAt: string;
 }
@@ -57,7 +61,8 @@ export const appendEvent = (
 ): Effect.Effect<EditorialEvent, SqlError> =>
   sql<EventRow>`
     INSERT INTO editorial_events (
-      type, aggregate_kind, aggregate_id, operation_id, actor, payload_json, created_at
+      type, aggregate_kind, aggregate_id, operation_id, actor, actor_session_id, payload_json,
+      created_at
     )
     VALUES (
       ${input.type},
@@ -65,11 +70,13 @@ export const appendEvent = (
       ${input.aggregateId},
       ${input.operationId ?? null},
       ${input.actor},
+      ${input.actorSessionId ?? null},
       ${JSON.stringify(input.payload ?? null)},
       ${input.createdAt}
     )
     RETURNING
-      seq, type, aggregate_kind, aggregate_id, operation_id, actor, payload_json, created_at
+      seq, type, aggregate_kind, aggregate_id, operation_id, actor, actor_session_id,
+      payload_json, created_at
   `.pipe(Effect.map((rows) => toEvent(rows[0]!)));
 
 /** The event that recorded `operationId`, if a previous attempt already committed it. */
@@ -80,7 +87,9 @@ export const findOperationEvent = (
   operationId === undefined
     ? Effect.succeedNone
     : sql<EventRow>`
-        SELECT seq, type, aggregate_kind, aggregate_id, operation_id, actor, payload_json, created_at
+        SELECT
+          seq, type, aggregate_kind, aggregate_id, operation_id, actor, actor_session_id,
+          payload_json, created_at
         FROM editorial_events
         WHERE operation_id = ${operationId}
       `.pipe(Effect.map((rows) => Option.map(Option.fromNullishOr(rows[0]), toEvent)));
@@ -102,6 +111,11 @@ export class EditorialEventLog extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<EditorialEvent>, EditorialPersistenceError>;
     /** Events as they commit. Pair with readSince to fill gaps after a reconnect. */
     readonly changes: Stream.Stream<EditorialEvent>;
+    /**
+     * A subscription that buffers from the moment it is taken. Take it before reading a
+     * snapshot so no event committed in between is lost.
+     */
+    readonly subscribe: Effect.Effect<PubSub.Subscription<EditorialEvent>, never, Scope.Scope>;
     /**
      * Runs `body` in one editorial transaction, then publishes its events.
      * Nothing is published when the transaction rolls back.
@@ -140,7 +154,9 @@ const make = Effect.gen(function* () {
     readSince: Effect.fn("EditorialEventLog.readSince")(function* (afterSeq, limit) {
       const bounded = Math.max(1, Math.min(limit ?? MAX_EVENTS_PER_READ, MAX_EVENTS_PER_READ));
       const rows = yield* sql<EventRow>`
-        SELECT seq, type, aggregate_kind, aggregate_id, operation_id, actor, payload_json, created_at
+        SELECT
+          seq, type, aggregate_kind, aggregate_id, operation_id, actor, actor_session_id,
+          payload_json, created_at
         FROM editorial_events
         WHERE seq > ${afterSeq}
         ORDER BY seq
@@ -149,6 +165,7 @@ const make = Effect.gen(function* () {
       return rows.map(toEvent);
     }),
     changes: Stream.fromPubSub(pubsub),
+    subscribe: PubSub.subscribe(pubsub),
     transact,
   });
 });

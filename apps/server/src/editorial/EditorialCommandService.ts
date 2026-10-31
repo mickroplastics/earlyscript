@@ -44,6 +44,8 @@ const MAX_SCRIPT_SNAPSHOT_BYTES = 1024 * 1024;
 
 export interface ActorOption {
   readonly actor?: EditorialActor | undefined;
+  /** Authenticated session behind a human command, recorded on its event. */
+  readonly actorSessionId?: string | undefined;
 }
 
 export interface MarkReadInput extends ActorOption {
@@ -64,6 +66,10 @@ export interface SnoozeInput extends ActorOption {
 export interface UnsnoozeInput extends ActorOption {
   readonly trendKey: string;
   readonly cause: UnsnoozeCause;
+  /** For `growth`: the run and value that met the condition, kept on the event. */
+  readonly observed?:
+    | { readonly runId: string; readonly metric: string; readonly value: number }
+    | undefined;
 }
 
 export interface DismissInput extends ActorOption {
@@ -267,7 +273,7 @@ const make = Effect.gen(function* () {
   const inboxCommand = Effect.fn("EditorialCommandService.inboxCommand")(function* <E>(
     operation: string,
     trendKey: string,
-    actor: EditorialActor,
+    who: ActorOption,
     apply: (
       current: TrendInboxState,
       at: string,
@@ -288,7 +294,8 @@ const make = Effect.gen(function* () {
           type: change.type,
           aggregateKind: "trend",
           aggregateId: trendKey,
-          actor,
+          actor: who.actor ?? "operator",
+          actorSessionId: who.actorSessionId,
           payload: change.payload,
           createdAt: at,
         });
@@ -298,7 +305,7 @@ const make = Effect.gen(function* () {
   });
 
   const markRead: EditorialCommandService["Service"]["markRead"] = (input) =>
-    inboxCommand("editorial.markRead", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.markRead", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         const runId = yield* requireText("editorial.markRead", "runId", input.runId);
         const runCutoffAt = yield* requireIso(
@@ -327,7 +334,7 @@ const make = Effect.gen(function* () {
     );
 
   const snooze: EditorialCommandService["Service"]["snooze"] = (input) =>
-    inboxCommand("editorial.snooze", input.trendKey, input.actor ?? "operator", (_current, at) =>
+    inboxCommand("editorial.snooze", input.trendKey, input, (_current, at) =>
       Effect.gen(function* () {
         if (input.until === undefined && input.returnWhen === undefined) {
           return yield* invalid("editorial.snooze", "until or returnWhen is required");
@@ -358,7 +365,7 @@ const make = Effect.gen(function* () {
     );
 
   const unsnooze: EditorialCommandService["Service"]["unsnooze"] = (input) =>
-    inboxCommand("editorial.unsnooze", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.unsnooze", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         if (current.snoozedAt === null) return undefined;
         yield* sql`
@@ -367,12 +374,18 @@ const make = Effect.gen(function* () {
             updated_at = ${at}
           WHERE trend_key = ${input.trendKey}
         `;
-        return { type: "trend.unsnoozed" as const, payload: { cause: input.cause } };
+        return {
+          type: "trend.unsnoozed" as const,
+          payload:
+            input.observed === undefined
+              ? { cause: input.cause }
+              : { cause: input.cause, observed: input.observed },
+        };
       }),
     );
 
   const dismiss: EditorialCommandService["Service"]["dismiss"] = (input) =>
-    inboxCommand("editorial.dismiss", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.dismiss", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         const reason = yield* requireText("editorial.dismiss", "reason", input.reason);
         if (current.dismissedAt !== null && current.dismissedReason === reason) return undefined;
@@ -387,7 +400,7 @@ const make = Effect.gen(function* () {
     );
 
   const reopen: EditorialCommandService["Service"]["reopen"] = (input) =>
-    inboxCommand("editorial.reopen", input.trendKey, input.actor ?? "operator", (current, at) =>
+    inboxCommand("editorial.reopen", input.trendKey, input, (current, at) =>
       Effect.gen(function* () {
         if (current.dismissedAt === null) return undefined;
         yield* sql`
@@ -403,26 +416,22 @@ const make = Effect.gen(function* () {
     );
 
   const linkProduction: EditorialCommandService["Service"]["linkProduction"] = (input) =>
-    inboxCommand(
-      "editorial.linkProduction",
-      input.trendKey,
-      input.actor ?? "operator",
-      (current, at) =>
-        Effect.gen(function* () {
-          yield* requireVideoThread(sql, input.threadId);
-          if (current.productionThreadId === input.threadId) return undefined;
-          yield* ensureInboxRow(sql, input.trendKey, at);
-          yield* sql`
+    inboxCommand("editorial.linkProduction", input.trendKey, input, (current, at) =>
+      Effect.gen(function* () {
+        yield* requireVideoThread(sql, input.threadId);
+        if (current.productionThreadId === input.threadId) return undefined;
+        yield* ensureInboxRow(sql, input.trendKey, at);
+        yield* sql`
             UPDATE editorial_trend_inbox
             SET production_thread_id = ${input.threadId}, production_linked_at = ${at},
               updated_at = ${at}
             WHERE trend_key = ${input.trendKey}
           `;
-          return {
-            type: "trend.production-linked" as const,
-            payload: { threadId: input.threadId, previousThreadId: current.productionThreadId },
-          };
-        }),
+        return {
+          type: "trend.production-linked" as const,
+          payload: { threadId: input.threadId, previousThreadId: current.productionThreadId },
+        };
+      }),
     );
 
   const getInboxState: EditorialCommandService["Service"]["getInboxState"] = Effect.fn(
