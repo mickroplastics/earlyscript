@@ -107,44 +107,44 @@ export async function collectNpmDay(
           throw new SourceFailure(`${query} invalid npm search response`);
         state.total = response.body.total;
         state.received += response.body.objects.length;
-          for (const object of response.body.objects) {
-            if (!isObject(object)) {
-              invalid++;
-              continue;
-            }
-            const { package: pkg, downloads } = object;
-            const published = Date.parse(pkg.date);
-            if (!Number.isFinite(published) || published < start || published >= start + DAY_MS)
-              continue;
-            const weekly = downloads?.weekly ?? 0;
-            if (weekly < NPM_MIN_WEEKLY_DOWNLOADS) {
-              below.add(pkg.name);
-              continue;
-            }
-            const description = plainText(pkg.description ?? "");
-            const repository = link(pkg.links?.repository);
-            candidates.set(pkg.name, {
-              weekly,
-              item: {
-                id: `itm_npm_${pkg.name}@${pkg.version}`,
-                source: "npm",
-                permalink: `https://www.npmjs.com/package/${pkg.name}`,
-                external_url: repository ?? link(pkg.links?.homepage),
-                published_at: new Date(published).toISOString(),
-                // CI releases publish as "GitHub Actions"; the first maintainer keeps authors countable.
-                author:
-                  (pkg.publisher?.trustedPublisher
-                    ? pkg.maintainers?.[0]?.username
-                    : pkg.publisher?.username) ?? null,
-                title: `${pkg.name} ${pkg.version}`,
-                ...bodyFields(
-                  [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
-                ),
-                retrieved_at: response.observed_at,
-                entities: githubEntity(repository),
-              },
-            });
+        for (const object of response.body.objects) {
+          if (!isObject(object)) {
+            invalid++;
+            continue;
           }
+          const { package: pkg, downloads } = object;
+          const published = Date.parse(pkg.date);
+          if (!Number.isFinite(published) || published < start || published >= start + DAY_MS)
+            continue;
+          const weekly = downloads?.weekly ?? 0;
+          if (weekly < NPM_MIN_WEEKLY_DOWNLOADS) {
+            below.add(pkg.name);
+            continue;
+          }
+          const description = plainText(pkg.description ?? "");
+          const repository = link(pkg.links?.repository);
+          candidates.set(pkg.name, {
+            weekly,
+            item: {
+              id: `itm_npm_${pkg.name}@${pkg.version}`,
+              source: "npm",
+              permalink: `https://www.npmjs.com/package/${pkg.name}`,
+              external_url: repository ?? link(pkg.links?.homepage),
+              published_at: new Date(published).toISOString(),
+              // CI releases publish as "GitHub Actions"; the first maintainer keeps authors countable.
+              author:
+                (pkg.publisher?.trustedPublisher
+                  ? pkg.maintainers?.[0]?.username
+                  : pkg.publisher?.username) ?? null,
+              title: `${pkg.name} ${pkg.version}`,
+              ...bodyFields(
+                [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
+              ),
+              retrieved_at: response.observed_at,
+              entities: githubEntity(repository),
+            },
+          });
+        }
         if (response.body.objects.length < PAGE || from + PAGE >= state.total) state.done = true;
       } catch (error) {
         if (!(error instanceof SourceFailure)) throw error;
