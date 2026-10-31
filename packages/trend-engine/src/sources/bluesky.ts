@@ -29,7 +29,8 @@ export const BLUESKY_MAX_REQUESTS_PER_TERM = 20;
 const TARGET_HITS = 80;
 const SELECTION_NOTE = `Keyword search, lang=en, sort=latest, terms=${BLUESKY_TERMS.join("|")}; one page of ${BLUESKY_PAGE} per time window, at most ${BLUESKY_MAX_REQUESTS_PER_TERM} requests per term; not a census of the day`;
 
-const AT_URI = /^at:\/\/(did:[a-z]+:[A-Za-z0-9._:%-]+)\/app\.bsky\.feed\.post\/([A-Za-z0-9._:~-]+)$/;
+const AT_URI =
+  /^at:\/\/(did:[a-z]+:[A-Za-z0-9._:%-]+)\/app\.bsky\.feed\.post\/([A-Za-z0-9._:~-]+)$/;
 const ExternalUri = Schema.optionalKey(Schema.Struct({ uri: Schema.String }));
 const External = Schema.Struct({ external: ExternalUri });
 const isSearch = Schema.is(
@@ -167,7 +168,11 @@ export async function collectBlueskyDay(
           continue;
         }
         const budget = BLUESKY_MAX_REQUESTS_PER_TERM - termRequests - queue.length;
-        const pieces = Math.min(Math.ceil(hits / TARGET_HITS), Math.ceil((until - from) / 1000), budget);
+        const pieces = Math.min(
+          Math.ceil(hits / TARGET_HITS),
+          Math.ceil((until - from) / 1000),
+          budget,
+        );
         if (pieces < 2) {
           sampled.push(`term "${term}": a window kept only its latest ${BLUESKY_PAGE} posts`);
           continue;
@@ -184,7 +189,9 @@ export async function collectBlueskyDay(
     }
     requests += termRequests;
     if (queue.length)
-      failures.push(`term "${term}": request budget reached with ${queue.length} windows unfetched`);
+      failures.push(
+        `term "${term}": request budget reached with ${queue.length} windows unfetched`,
+      );
     if (crowdedSeconds)
       sampled.push(`term "${term}": ${crowdedSeconds} one-second windows exceeded one page`);
   }

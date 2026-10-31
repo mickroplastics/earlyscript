@@ -120,7 +120,11 @@ function gatedAdapter(id: GatedSource, options: HttpOptions): SourceAdapter {
       const rules = new Map<string, ReadonlyArray<RobotsRule>>();
       // The arXiv API answers Atom XML, read as text like robots.txt.
       const data = id === "arxiv" ? text : createHttpClient(id, own, state);
-      return GATED[id](day, data, robotsGate(() => text, rules));
+      return GATED[id](
+        day,
+        data,
+        robotsGate(() => text, rules),
+      );
     },
   };
 }

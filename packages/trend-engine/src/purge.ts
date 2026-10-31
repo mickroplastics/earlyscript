@@ -64,7 +64,9 @@ function itemValues(item: Matchable): { author: Array<string>; uri: Array<string
   const permalink = typeof item.permalink === "string" ? item.permalink : "";
   const author = typeof item.author === "string" ? [item.author.toLowerCase()] : [];
   const did =
-    item.source === "bluesky" ? /^https:\/\/bsky\.app\/profile\/(did:[^/]+)\//.exec(permalink) : null;
+    item.source === "bluesky"
+      ? /^https:\/\/bsky\.app\/profile\/(did:[^/]+)\//.exec(permalink)
+      : null;
   return {
     author: [...author, ...(did?.[1] ? [did[1].toLowerCase()] : [])].map((value) => sha256(value)),
     uri: permalink ? [sha256(permalink)] : [],
@@ -72,13 +74,16 @@ function itemValues(item: Matchable): { author: Array<string>; uri: Array<string
 }
 
 /** A predicate over items that any recorded purge removes; unknown purge shapes are ignored. */
-export function purgeFilter(purges: ReadonlyArray<unknown> | undefined): (item: Matchable) => boolean {
+export function purgeFilter(
+  purges: ReadonlyArray<unknown> | undefined,
+): (item: Matchable) => boolean {
   const records = (purges ?? []).filter(isPurgeRecord);
   if (!records.length) return () => false;
   return (item) => {
     const values = itemValues(item);
     return records.some(
-      (record) => record.source === item.source && values[record.match].includes(record.value_sha256),
+      (record) =>
+        record.source === item.source && values[record.match].includes(record.value_sha256),
     );
   };
 }
@@ -119,7 +124,12 @@ export async function purgeCorpus(options: { readonly dir: string } & PurgeTarge
       const lines = bytes.toString("utf8").split("\n").filter(Boolean);
       const kept = lines.filter((line) => {
         const row: unknown = JSON.parse(line);
-        return !(typeof row === "object" && row !== null && "source" in row && matches(row as Matchable));
+        return !(
+          typeof row === "object" &&
+          row !== null &&
+          "source" in row &&
+          matches(row as Matchable)
+        );
       });
       if (kept.length === lines.length) continue;
       removed += isDay ? lines.length - kept.length : 0;

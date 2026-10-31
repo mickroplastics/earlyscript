@@ -1,7 +1,15 @@
 import * as Schema from "effect/Schema";
 
 // Sources with an adapter. A new source adds its id here and an adapter in trend-engine.
-export const SourceId = Schema.Literals(["hn", "github", "arxiv", "wikipedia", "npm", "stackexchange", "bluesky"]);
+export const SourceId = Schema.Literals([
+  "hn",
+  "github",
+  "arxiv",
+  "wikipedia",
+  "npm",
+  "stackexchange",
+  "bluesky",
+]);
 export type SourceId = typeof SourceId.Type;
 
 export const UtcDay = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));

@@ -49,7 +49,11 @@ export async function collectArxivDay(
   let total: number | null = null;
   let later = 0;
   try {
-    for (let offset = 0; offset < Math.min(total ?? PAGE_SIZE, ARXIV_DAY_CAP); offset += PAGE_SIZE) {
+    for (
+      let offset = 0;
+      offset < Math.min(total ?? PAGE_SIZE, ARXIV_DAY_CAP);
+      offset += PAGE_SIZE
+    ) {
       const response = await get(arxivUrl(day, offset));
       retrievedAt = response.observed_at;
       if (response.status !== 200) throw new SourceFailure(`HTTP ${response.status}`);
@@ -98,9 +102,7 @@ export async function collectArxivDay(
             title: plainText(title),
             ...bodyFields(text),
             retrieved_at: response.observed_at,
-            entities: githubEntities(
-              `${text} ${plainText(element(entry, "arxiv:comment") ?? "")}`,
-            ),
+            entities: githubEntities(`${text} ${plainText(element(entry, "arxiv:comment") ?? "")}`),
           });
       }
     }
@@ -117,7 +119,9 @@ export async function collectArxivDay(
   }
   // Rule: a day is complete only once the announcement lag has passed; earlier it stays partial.
   if (Date.parse(retrievedAt) < end + ARXIV_ANNOUNCEMENT_LAG_MS) {
-    notes.push("Observed before the 4-day announcement lag elapsed; later announcements may add items");
+    notes.push(
+      "Observed before the 4-day announcement lag elapsed; later announcements may add items",
+    );
     failed = true;
   }
   return {

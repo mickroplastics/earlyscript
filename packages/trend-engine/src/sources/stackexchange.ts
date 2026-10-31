@@ -41,7 +41,9 @@ export function stackExchangeThrottle(body: unknown): DeclaredThrottle {
     error_message?: unknown;
   } = typeof body === "object" && body !== null ? body : {};
   const available =
-    typeof se.error_message === "string" ? /available in (\d+) seconds/.exec(se.error_message) : null;
+    typeof se.error_message === "string"
+      ? /available in (\d+) seconds/.exec(se.error_message)
+      : null;
   return {
     blockMs: Math.max(
       0,
@@ -116,7 +118,8 @@ export async function collectStackExchangeDay(
           });
         }
         if (!response.body.has_more) break;
-        if (page === MAX_PAGES) capped.push(`${site} capped at ${MAX_PAGES * 100} questions by score`);
+        if (page === MAX_PAGES)
+          capped.push(`${site} capped at ${MAX_PAGES * 100} questions by score`);
       }
     } catch (error) {
       if (!(error instanceof SourceFailure)) throw error;

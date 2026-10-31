@@ -38,7 +38,14 @@ function served(source: SourceId, items: ReadonlyArray<Item>): SourceAdapter {
       const own = items.filter((item) => item.published_at.startsWith(`${day}T`));
       return {
         items: own,
-        coverage: { source, day, status: "partial", items: own.length, retrieved_at: observed, note: null },
+        coverage: {
+          source,
+          day,
+          status: "partial",
+          items: own.length,
+          retrieved_at: observed,
+          note: null,
+        },
       };
     },
   };
@@ -67,7 +74,11 @@ describe("engine purge", () => {
       const range = { dir: root, from: "2026-10-28", to: "2026-10-30" };
       await collectCorpus({ ...range, adapters: [served("bluesky", [a1, a2, b1])] });
       // A second capture of 2026-10-29 keeps the first version, with a2, under history/.
-      await collectCorpus({ ...range, adapters: [served("bluesky", [a1, a2, b1, b2])], force: true });
+      await collectCorpus({
+        ...range,
+        adapters: [served("bluesky", [a1, a2, b1, b2])],
+        force: true,
+      });
       expect(await NodeFSP.readdir(NodePath.join(root, "history"))).not.toHaveLength(0);
 
       const byDid = await purgeCorpus({ dir: root, source: "bluesky", author: ONE });
@@ -94,7 +105,11 @@ describe("engine purge", () => {
       expect(corpus.coverage[0]?.note).toBe("purged 1 item(s) on request");
 
       // The provider still serves the posts; a forced collection must not store them again.
-      await collectCorpus({ ...range, adapters: [served("bluesky", [a1, a2, b1, b2])], force: true });
+      await collectCorpus({
+        ...range,
+        adapters: [served("bluesky", [a1, a2, b1, b2])],
+        force: true,
+      });
       expect(await allText(root)).not.toContain("exampleauthorone");
 
       const byHandle = await purgeCorpus({
@@ -115,8 +130,13 @@ describe("engine purge", () => {
       );
       expect(last.purges).toHaveLength(3);
       expect(
-        (await readCorpus({ dir: root, untilDay: "2026-10-30", adapters: fixtureSources(root, ["bluesky"]) }))
-          .items,
+        (
+          await readCorpus({
+            dir: root,
+            untilDay: "2026-10-30",
+            adapters: fixtureSources(root, ["bluesky"]),
+          })
+        ).items,
       ).toEqual([]);
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });

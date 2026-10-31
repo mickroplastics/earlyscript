@@ -271,20 +271,16 @@ const decodeItem = Schema.decodeUnknownSync(Item);
 describe.skipIf(process.env.EARLYSCRIPT_LIVE_TESTS !== "1")("live providers", () => {
   const recent = dayOf(Date.now() - 2 * DAY_MS);
   for (const id of ["arxiv", "wikipedia", "npm", "stackexchange", "bluesky"] as const)
-    it(
-      `${id} collects one recent UTC day`,
-      async () => {
-        const [adapter] = liveSources([id]);
-        const { items, coverage } = await adapter!.collectDay(recent);
-        expect(coverage).toMatchObject({ source: id, day: recent, items: items.length });
-        // An unavailable day must say why (robots.txt, quota, network); any other has items.
-        if (coverage?.status === "unavailable") expect(coverage.note).toBeTruthy();
-        else expect(items.length).toBeGreaterThan(0);
-        for (const item of items) {
-          expect(decodeItem(item).source).toBe(id);
-          expect(item.published_at.startsWith(`${recent}T`)).toBe(true);
-        }
-      },
-      330_000,
-    );
+    it(`${id} collects one recent UTC day`, async () => {
+      const [adapter] = liveSources([id]);
+      const { items, coverage } = await adapter!.collectDay(recent);
+      expect(coverage).toMatchObject({ source: id, day: recent, items: items.length });
+      // An unavailable day must say why (robots.txt, quota, network); any other has items.
+      if (coverage?.status === "unavailable") expect(coverage.note).toBeTruthy();
+      else expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(decodeItem(item).source).toBe(id);
+        expect(item.published_at.startsWith(`${recent}T`)).toBe(true);
+      }
+    }, 330_000);
 });

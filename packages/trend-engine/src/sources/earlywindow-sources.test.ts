@@ -19,8 +19,7 @@ const allow: RobotsGate = async () => null;
 const fixture = (name: string) =>
   NodeFSP.readFile(new URL(`../testkit/sources/${name}`, import.meta.url), "utf8");
 const json = async (name: string): Promise<any> => JSON.parse(await fixture(name));
-const response = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status });
+const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 /** A robots.txt server: one text per host, 404 for the others. */
 const robotsFrom = (texts: Record<string, string>) =>
   robotsGate(
@@ -91,7 +90,9 @@ describe("Wikipedia", () => {
         urls.push(url);
         return ok(top);
       },
-      robotsFrom({ "en.wikipedia.org": "User-agent: *\nAllow: /api/rest_v1/?doc\nDisallow: /api/\n" }),
+      robotsFrom({
+        "en.wikipedia.org": "User-agent: *\nAllow: /api/rest_v1/?doc\nDisallow: /api/\n",
+      }),
     );
     expect(urls).toEqual([wikipediaTopUrl("2026-10-29")]);
     // 15 ranked rows less Main_Page, Special:Search and Wikipedia:Featured_pictures.
@@ -136,7 +137,9 @@ describe("Stack Exchange", () => {
       "2026-10-29",
       async (url) => {
         urls.push(url);
-        return ok(new URL(url).searchParams.get("site") === "ai" ? ai : { items: [], has_more: false });
+        return ok(
+          new URL(url).searchParams.get("site") === "ai" ? ai : { items: [], has_more: false },
+        );
       },
       allow,
     );
@@ -246,7 +249,9 @@ describe("Bluesky", () => {
       "2026-10-29",
       async (url) => {
         urls.push(url);
-        return ok(new URL(url).searchParams.get("q") === "llm" ? page : { posts: [], hitsTotal: 0 });
+        return ok(
+          new URL(url).searchParams.get("q") === "llm" ? page : { posts: [], hitsTotal: 0 },
+        );
       },
       allow,
     );

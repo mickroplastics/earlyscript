@@ -1,88 +1,88 @@
 {
- "items": [
-  {
-   "project": "en.wikipedia",
-   "access": "all-access",
-   "year": "2026",
-   "month": "10",
-   "day": "29",
-   "articles": [
+  "items": [
     {
-     "article": "Main_Page",
-     "views": 4279242,
-     "rank": 1
-    },
-    {
-     "article": "Patrick_Stewart",
-     "views": 2356552,
-     "rank": 2
-    },
-    {
-     "article": "Special:Search",
-     "views": 760008,
-     "rank": 3
-    },
-    {
-     "article": "Wikipedia:Featured_pictures",
-     "views": 566019,
-     "rank": 4
-    },
-    {
-     "article": ".xxx",
-     "views": 390246,
-     "rank": 5
-    },
-    {
-     "article": "2026_Israeli_legislative_election",
-     "views": 363543,
-     "rank": 6
-    },
-    {
-     "article": "Sunny_Ozell",
-     "views": 346682,
-     "rank": 7
-    },
-    {
-     "article": "William_Contreras",
-     "views": 228487,
-     "rank": 8
-    },
-    {
-     "article": "Jacob_Misiorowski",
-     "views": 212900,
-     "rank": 9
-    },
-    {
-     "article": "Patrick_Stewart_on_stage_and_screen",
-     "views": 212550,
-     "rank": 10
-    },
-    {
-     "article": "Bob_Uecker",
-     "views": 205548,
-     "rank": 11
-    },
-    {
-     "article": "ChatGPT",
-     "views": 197747,
-     "rank": 12
-    },
-    {
-     "article": "Pat_Murphy_(baseball_manager)",
-     "views": 196456,
-     "rank": 13
-    },
-    {
-     "article": "Milwaukee_Brewers",
-     "views": 185722,
-     "rank": 14
-    },
-    {
-     "article": "Barbara_Barrie",
-     "views": 183737,
-     "rank": 15
+      "project": "en.wikipedia",
+      "access": "all-access",
+      "year": "2026",
+      "month": "10",
+      "day": "29",
+      "articles": [
+        {
+          "article": "Main_Page",
+          "views": 4279242,
+          "rank": 1
+        },
+        {
+          "article": "Patrick_Stewart",
+          "views": 2356552,
+          "rank": 2
+        },
+        {
+          "article": "Special:Search",
+          "views": 760008,
+          "rank": 3
+        },
+        {
+          "article": "Wikipedia:Featured_pictures",
+          "views": 566019,
+          "rank": 4
+        },
+        {
+          "article": ".xxx",
+          "views": 390246,
+          "rank": 5
+        },
+        {
+          "article": "2026_Israeli_legislative_election",
+          "views": 363543,
+          "rank": 6
+        },
+        {
+          "article": "Sunny_Ozell",
+          "views": 346682,
+          "rank": 7
+        },
+        {
+          "article": "William_Contreras",
+          "views": 228487,
+          "rank": 8
+        },
+        {
+          "article": "Jacob_Misiorowski",
+          "views": 212900,
+          "rank": 9
+        },
+        {
+          "article": "Patrick_Stewart_on_stage_and_screen",
+          "views": 212550,
+          "rank": 10
+        },
+        {
+          "article": "Bob_Uecker",
+          "views": 205548,
+          "rank": 11
+        },
+        {
+          "article": "ChatGPT",
+          "views": 197747,
+          "rank": 12
+        },
+        {
+          "article": "Pat_Murphy_(baseball_manager)",
+          "views": 196456,
+          "rank": 13
+        },
+        {
+          "article": "Milwaukee_Brewers",
+          "views": 185722,
+          "rank": 14
+        },
+        {
+          "article": "Barbara_Barrie",
+          "views": 183737,
+          "rank": 15
+        }
+      ]
     }
-   ]
-  }
- ]
+  ]
 }
