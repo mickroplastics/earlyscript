@@ -16,6 +16,7 @@ import {
   type EditorialDefaultFeedInput,
   type EditorialFeedCheck,
   type EditorialRssFeed,
+  type EditorialSourceBacktest,
   type EditorialSourceEntry,
   type EditorialSourcesCorpus,
   type EditorialSourcesUpdateInput,
@@ -46,6 +47,9 @@ export interface EnabledSources {
   readonly rssFeeds: ReadonlyArray<RssFeed>;
 }
 
+/** What `record-source-backtest` stores; the service stamps `recordedAt`. */
+export type SourceBacktestInput = Omit<EditorialSourceBacktest, "recordedAt">;
+
 export interface EditorialSourcesServiceShape {
   readonly corpusDir: string;
   readonly list: Effect.Effect<EditorialSourcesView, EditorialSourcesError>;
@@ -71,10 +75,14 @@ export interface EditorialSourcesServiceShape {
   readonly setDefaultFeedExcluded: (
     input: EditorialDefaultFeedInput,
   ) => Effect.Effect<EditorialSourcesView, EditorialSourcesError>;
-  /** Names the backtest that lets `source` into the engine; null withdraws it and its `rank`. */
+  /**
+   * Records the backtest that lets `source` into the engine, with what the settings show of it;
+   * null withdraws it and its `rank`. Only a `not-worse` backtest unlocks `rank`, and a
+   * provisional one only when the operator recorded it on purpose.
+   */
   readonly recordBacktest: (
     source: SourceId,
-    runId: string | null,
+    backtest: SourceBacktestInput | null,
   ) => Effect.Effect<void, EditorialSourcesError>;
 }
 
@@ -97,47 +105,81 @@ interface Stored {
   readonly rank: boolean;
   readonly backtestRunId: string | null;
   readonly updatedAt: string | null;
+  readonly backtest: EditorialSourceBacktest | null;
 }
+
+interface BacktestRow {
+  readonly source: string;
+  readonly backtest_id: string;
+  readonly logical_hash: string;
+  readonly experiment_at: string;
+  readonly cutoff_from: string;
+  readonly cutoff_to: string;
+  readonly status: EditorialSourceBacktest["status"];
+  readonly verdict: EditorialSourceBacktest["verdict"];
+  readonly complete_cutoffs: number;
+  readonly partial_cutoffs: number;
+  readonly p5_baseline: number | null;
+  readonly p5_candidate: number | null;
+  readonly lead_baseline: number | null;
+  readonly lead_candidate: number | null;
+  readonly partial_p5_baseline: number | null;
+  readonly partial_p5_candidate: number | null;
+  readonly allow_provisional: number;
+  readonly recorded_at: string;
+}
+
+const backtestOfRow = (row: BacktestRow): EditorialSourceBacktest => ({
+  backtestId: row.backtest_id,
+  logicalHash: row.logical_hash,
+  experimentAt: row.experiment_at,
+  cutoffFrom: row.cutoff_from,
+  cutoffTo: row.cutoff_to,
+  status: row.status,
+  verdict: row.verdict,
+  completeCutoffs: row.complete_cutoffs,
+  partialCutoffs: row.partial_cutoffs,
+  p5Baseline: row.p5_baseline,
+  p5Candidate: row.p5_candidate,
+  leadBaseline: row.lead_baseline,
+  leadCandidate: row.lead_candidate,
+  partialP5Baseline: row.partial_p5_baseline,
+  partialP5Candidate: row.partial_p5_candidate,
+  allowProvisional: row.allow_provisional === 1,
+  recordedAt: row.recorded_at,
+});
 
 const defaultSetting = (source: SourceId): Stored => {
   const baseline = SOURCE_CATALOG[source].engineBaseline;
-  return { collect: baseline, rank: baseline, backtestRunId: null, updatedAt: null };
+  return {
+    collect: baseline,
+    rank: baseline,
+    backtestRunId: null,
+    updatedAt: null,
+    backtest: null,
+  };
 };
 
-const rankBlockOf = (
-  source: SourceId,
-  backtestRunId: string | null,
-): EditorialSourceEntry["rankBlocked"] => {
+/**
+ * A backtest admits a source only when it is recorded with its summary, its verdict is
+ * not-worse, and, when provisional, the operator recorded it with --allow-provisional. An id
+ * recorded before 011, without a summary, no longer admits it.
+ */
+const backtestAdmits = (backtest: EditorialSourceBacktest | null): boolean =>
+  backtest !== null &&
+  backtest.verdict === "not-worse" &&
+  (backtest.status === "final" || backtest.allowProvisional);
+
+const rankBlockOf = (source: SourceId, setting: Stored): EditorialSourceEntry["rankBlocked"] => {
   const entry = SOURCE_CATALOG[source];
   if (entry.status !== "ready") return "not-ready";
-  return entry.engineBaseline || backtestRunId !== null ? null : "no-backtest";
+  if (entry.engineBaseline) return null;
+  return setting.backtestRunId !== null && backtestAdmits(setting.backtest) ? null : "no-backtest";
 };
 
 const collectBlockOf = (source: SourceId): EditorialSourceEntry["collectBlocked"] => {
   const status = SOURCE_CATALOG[source].status;
   return status === "ready" ? null : status;
-};
-
-export interface StoredSourceSetting {
-  readonly collect: boolean;
-  readonly rank: boolean;
-  readonly backtestRunId: string | null;
-}
-
-/**
- * What a source does today: its stored switches (or the catalog default) under the catalog's
- * blocks. `list` shows this; the evidence export reports it.
- */
-export const effectiveSourceSetting = (source: SourceId, setting?: StoredSourceSetting) => {
-  const current = setting ?? defaultSetting(source);
-  const rankBlocked = rankBlockOf(source, current.backtestRunId);
-  const blocked = collectBlockOf(source);
-  return {
-    collect: current.collect && blocked === null,
-    rank: current.rank && rankBlocked === null,
-    rankBlocked,
-    collectBlocked: blocked,
-  };
 };
 
 const CorpusManifestHead = Schema.Struct({
@@ -237,19 +279,26 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     ),
   );
 
-  const readStored = sql<SettingRow>`
-    SELECT source, collect, rank, backtest_run_id, updated_at FROM editorial_source_settings
-  `.pipe(
-    Effect.map((rows) => {
+  const readStored = Effect.all([
+    sql<SettingRow>`
+      SELECT source, collect, rank, backtest_run_id, updated_at FROM editorial_source_settings
+    `,
+    sql<BacktestRow>`SELECT * FROM editorial_source_backtests`,
+  ]).pipe(
+    Effect.map(([rows, backtestRows]) => {
+      const backtests = new Map(backtestRows.map((row) => [row.source, backtestOfRow(row)]));
       const stored = new Map<SourceId, Stored>();
       for (const row of rows) {
         // A row from a build with more sources stays in the table untouched.
         if (!isCatalogSourceId(row.source)) continue;
+        const backtest = backtests.get(row.source) ?? null;
         stored.set(row.source, {
           collect: row.collect === 1,
           rank: row.rank === 1,
           backtestRunId: row.backtest_run_id,
           updatedAt: row.updated_at,
+          // The summary counts only while it names the recorded backtest.
+          backtest: backtest?.backtestId === row.backtest_run_id ? backtest : null,
         });
       }
       return stored;
@@ -260,7 +309,16 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   const settingOf = (stored: ReadonlyMap<SourceId, Stored>, source: SourceId) =>
     stored.get(source) ?? defaultSetting(source);
 
-  const effective = effectiveSourceSetting;
+  const effective = (source: SourceId, setting: Stored) => {
+    const rankBlocked = rankBlockOf(source, setting);
+    const blocked = collectBlockOf(source);
+    return {
+      collect: setting.collect && blocked === null,
+      rank: setting.rank && rankBlocked === null,
+      rankBlocked,
+      collectBlocked: blocked,
+    };
+  };
 
   const readUserFeeds = sql<UserFeedRow>`
     SELECT feed_url, feed_id, name, site_url, note, added_at, acknowledged_at
@@ -339,6 +397,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
         source,
         ...effective(source, setting),
         backtestRunId: setting.backtestRunId,
+        backtest: setting.backtest,
         updatedAt: setting.updatedAt,
         ...coverage,
       };
@@ -386,14 +445,14 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
             : `The terms of ${SOURCE_CATALOG[source].name} have not been read yet.`,
       });
     }
-    const rankBlocked = rankBlockOf(source, current.backtestRunId);
+    const rankBlocked = rankBlockOf(source, current);
     if (input.rank === true && rankBlocked !== null) {
       return yield* new EditorialSourcesError({
         reason: "rank-blocked",
         message:
           rankBlocked === "not-ready"
             ? `${SOURCE_CATALOG[source].name} has not passed its terms review.`
-            : `${SOURCE_CATALOG[source].name} has no backtest recorded.`,
+            : `${SOURCE_CATALOG[source].name} has no backtest recorded that shows it does not make the ranking worse.`,
       });
     }
     // The effective values are the base, so a stored flag the source no longer allows drops out.
@@ -423,14 +482,42 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
 
   const recordBacktest = Effect.fn("EditorialSourcesService.recordBacktest")(function* (
     source: SourceId,
-    runId: string | null,
+    input: SourceBacktestInput | null,
   ) {
     const current = settingOf(yield* readStored, source);
-    yield* write(source, {
-      ...current,
-      backtestRunId: runId,
-      rank: current.rank && rankBlockOf(source, runId) === null,
-    });
+    const recordedAt = yield* nowIso;
+    const backtest = input === null ? null : { ...input, recordedAt };
+    const next: Stored = { ...current, backtestRunId: input?.backtestId ?? null, backtest };
+    yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          yield* sql`DELETE FROM editorial_source_backtests WHERE source = ${source}`;
+          if (backtest !== null) {
+            yield* sql`
+            INSERT INTO editorial_source_backtests (
+              source, backtest_id, logical_hash, experiment_at, cutoff_from, cutoff_to, status,
+              verdict, complete_cutoffs, partial_cutoffs, p5_baseline, p5_candidate,
+              lead_baseline, lead_candidate, partial_p5_baseline, partial_p5_candidate,
+              allow_provisional, recorded_at
+            )
+            VALUES (
+              ${source}, ${backtest.backtestId}, ${backtest.logicalHash}, ${backtest.experimentAt},
+              ${backtest.cutoffFrom}, ${backtest.cutoffTo}, ${backtest.status},
+              ${backtest.verdict}, ${backtest.completeCutoffs}, ${backtest.partialCutoffs},
+              ${backtest.p5Baseline}, ${backtest.p5Candidate}, ${backtest.leadBaseline},
+              ${backtest.leadCandidate}, ${backtest.partialP5Baseline},
+              ${backtest.partialP5Candidate}, ${backtest.allowProvisional ? 1 : 0},
+              ${backtest.recordedAt}
+            )
+          `;
+          }
+          yield* write(source, {
+            ...next,
+            rank: current.rank && rankBlockOf(source, next) === null,
+          });
+        }),
+      )
+      .pipe(Effect.catchTags({ SqlError: (cause) => Effect.fail(storageError(cause)) }));
   });
 
   const validateFeed = checkFeed;

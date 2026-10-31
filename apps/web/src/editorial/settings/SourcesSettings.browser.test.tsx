@@ -1,5 +1,6 @@
 import type {
   EditorialRssFeed,
+  EditorialSourceBacktest,
   EditorialSourceEntry,
   EditorialSourcesView,
 } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ const entry = (overrides: Partial<EditorialSourceEntry> & { source: string }) =>
     collect: false,
     rank: false,
     backtestRunId: null,
+    backtest: null,
     rankBlocked: "no-backtest",
     collectBlocked: null,
     updatedAt: null,
@@ -23,6 +25,26 @@ const entry = (overrides: Partial<EditorialSourceEntry> & { source: string }) =>
     recentGaps: [],
     ...overrides,
   }) satisfies EditorialSourceEntry;
+
+const BACKTEST: EditorialSourceBacktest = {
+  backtestId: "bt_270a6a39c532f096",
+  logicalHash: "sha256:270a",
+  experimentAt: "2026-11-01T09:30:00.000Z",
+  cutoffFrom: "2026-10-17",
+  cutoffTo: "2026-10-30",
+  status: "provisional",
+  verdict: "not-worse",
+  completeCutoffs: 1,
+  partialCutoffs: 13,
+  p5Baseline: 0.8,
+  p5Candidate: 0.8,
+  leadBaseline: 1,
+  leadCandidate: 1,
+  partialP5Baseline: 0.784615,
+  partialP5Candidate: 0.784615,
+  allowProvisional: true,
+  recordedAt: "2026-10-31T10:00:00.000Z",
+};
 
 const VIEW: EditorialSourcesView = {
   corpus: {
@@ -48,6 +70,23 @@ const VIEW: EditorialSourcesView = {
       recentGaps: [{ day: "2026-10-27", reason: "not_collected" }],
     }),
     entry({ source: "arxiv" }),
+    entry({
+      source: "npm",
+      rankBlocked: null,
+      backtestRunId: BACKTEST.backtestId,
+      backtest: BACKTEST,
+    }),
+    entry({
+      source: "huggingface",
+      backtestRunId: "bt_efd37ff19c83baec",
+      backtest: {
+        ...BACKTEST,
+        experimentAt: "2026-10-29T09:30:00.000Z",
+        verdict: "worse",
+        allowProvisional: false,
+        p5Candidate: 0.6,
+      },
+    }),
     entry({ source: "stackexchange", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
     entry({ source: "bluesky", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
     entry({ source: "lobsters", rankBlocked: "not-ready", collectBlocked: "blocked" }),
@@ -112,6 +151,53 @@ describe("SourcesSettingsView", () => {
     await expect.element(page.getByText("27 oct (sin capturar)", { exact: false })).toBeVisible();
     await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
     expect(onChange).toHaveBeenCalledWith("arxiv", { collect: true });
+  });
+
+  it("shows the recorded backtest: date, cutoffs, P@5, lead, verdict and provisional state", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(
+      <SourcesSettingsView
+        view={VIEW}
+        pending={new Set()}
+        onChange={onChange}
+        feeds={controls()}
+      />,
+    );
+    const npm = page.getByRole("switch", { name: "Usar npm (registro) en el motor" });
+    await expect.element(npm).toBeEnabled();
+    await expect.element(npm).toHaveAccessibleDescription(/^Puede entrar al motor/);
+    await expect
+      .element(page.getByText("Backtest del 1 nov 2026, cortes del 17 oct al 30 oct: no empeora."))
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          "P@5 0,8 sin la fuente y 0,8 con ella; anticipación mediana 1 d y 1 d. Sobre 1 corte completo; aparte, 13 cortes parciales con P@5 0,78 y 0,78.",
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          "Resultado provisional: seguimiento incompleto. Registrado a sabiendas por el operador.",
+        ),
+      )
+      .toBeVisible();
+
+    // A worse backtest is shown, and keeps the source out of the engine.
+    const hf = page.getByRole("switch", { name: "Usar Hugging Face Hub en el motor" });
+    await expect.element(hf).toBeDisabled();
+    await expect.element(hf).toHaveAccessibleDescription(/^No entra al motor: su backtest empeora/);
+    await expect
+      .element(page.getByText("Backtest del 29 oct 2026, cortes del 17 oct al 30 oct: empeora."))
+      .toBeVisible();
+    await expect
+      .element(
+        page.getByText("Resultado provisional: seguimiento incompleto. No habilita el motor."),
+      )
+      .toBeVisible();
+    await userEvent.click(npm);
+    expect(onChange).toHaveBeenCalledWith("npm", { rank: true });
   });
 
   it("keeps the engine switch off and says why until a backtest is recorded", async () => {

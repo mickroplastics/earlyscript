@@ -105,6 +105,19 @@ export const EarlywindowCorpusManifest = Schema.Struct({
   selection_bias: Schema.Literal("present_stars"),
   selection: Schema.Record(Schema.String, Schema.String),
   purges: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  /** Earlyscript: every day collected under a robots.txt exception, with its reason and terms. */
+  robots_overrides: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        source: SourceId,
+        day: UtcDay,
+        reason: Schema.String,
+        terms_url: Schema.String,
+      }),
+    ),
+  ),
+  /** Earlyscript: later edits of the corpus that no capture made, such as a repaired note. */
+  repairs: Schema.optionalKey(Schema.Array(Schema.Unknown)),
   corpus_hash: Sha256,
   written_at: Schema.String,
 });

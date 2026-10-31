@@ -36,6 +36,54 @@ export interface HttpOptions {
   readonly throttle?: (body: unknown) => DeclaredThrottle;
   /** Never attach the source's credentials (robots.txt clients). */
   readonly anonymous?: boolean;
+  /** Receives one entry per request attempt (`engine collect` writes them to http-log/). */
+  readonly trace?: (entry: HttpTraceEntry) => void;
+  /** The robots.txt decision taken for a URL before it was requested, for the trace. */
+  readonly robotsDecision?: (url: string) => string;
+}
+
+/** Attempts per request: the first and three retries. */
+export const MAX_ATTEMPTS = 4;
+
+/**
+ * One request attempt as sent and answered. Carries no header but the User-Agent, and query
+ * parameters whose name suggests a secret are redacted; credentials travel only in headers.
+ */
+export interface HttpTraceEntry {
+  readonly at: string;
+  readonly source: string;
+  readonly method: "GET";
+  readonly host: string;
+  readonly path: string;
+  readonly query: string | null;
+  /** 1 to MAX_ATTEMPTS. */
+  readonly attempt: number;
+  readonly max_attempts: number;
+  /** Null when no response arrived (network error or timeout). */
+  readonly status: number | null;
+  readonly error: string | null;
+  /** The Retry-After header as received. */
+  readonly retry_after: string | null;
+  /** Wait applied before this attempt: pacing, a quota block or the retry backoff. */
+  readonly wait_ms: number;
+  readonly user_agent: string;
+  /** allowed, override, disallowed or unavailable; robots.txt for the file itself. */
+  readonly robots: string;
+}
+
+const SECRET_PARAM = /key|token|secret|sig|auth|pass|session|cookie/i;
+
+/** Host, path and query of a URL, with secret-looking query values replaced. */
+export function traceTarget(url: string): { host: string; path: string; query: string | null } {
+  const target = new URL(url);
+  for (const name of new Set(target.searchParams.keys())) {
+    if (SECRET_PARAM.test(name)) target.searchParams.set(name, "[redacted]");
+  }
+  return {
+    host: target.host,
+    path: target.pathname,
+    query: target.search ? target.search.slice(1) : null,
+  };
 }
 /** Stack Exchange declares backoff and quota in the body instead of in headers. */
 export interface DeclaredThrottle {
@@ -248,9 +296,40 @@ export function createHttpClient(
     return declared;
   }
   return async (url, extraHeaders = {}) => {
-    for (let attempt = 0; attempt <= 3; attempt++) {
+    const headers: Record<string, string> = {
+      "User-Agent": USER_AGENT,
+      ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
+      ...extraHeaders,
+      // Last: on its own origin the credential wins over any caller header.
+      ...credentialHeaders(credential, url),
+    };
+    let backoffMs = 0;
+    const trace = (
+      attempt: number,
+      waitMs: number,
+      outcome: { status: number | null; error: string | null; retryAfter: string | null },
+    ) =>
+      options.trace?.({
+        at: new Date(wall()).toISOString(),
+        source,
+        method: "GET",
+        ...traceTarget(url),
+        attempt: attempt + 1,
+        max_attempts: MAX_ATTEMPTS,
+        status: outcome.status,
+        error: outcome.error,
+        retry_after: outcome.retryAfter,
+        wait_ms: Math.round(waitMs),
+        user_agent: headers["User-Agent"] ?? "",
+        robots: options.robotsDecision?.(url) ?? "not-gated",
+      });
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const blocked = state.blockedUntil - now();
-      await delay(Math.max(0, state.nextStart - now(), blocked), blocked > 0);
+      const waitMs = Math.max(0, state.nextStart - now(), blocked);
+      await delay(waitMs, blocked > 0);
+      // The trace counts the backoff after the previous attempt and the wait just applied.
+      const waited = backoffMs + waitMs;
+      backoffMs = 0;
       const remaining = deadline - now();
       if (remaining <= 0) throw new SourceFailure("Day time budget exhausted");
       state.nextStart = now() + pause;
@@ -258,13 +337,7 @@ export function createHttpClient(
       let response: Response;
       try {
         response = await fetcher(url, {
-          headers: {
-            "User-Agent": USER_AGENT,
-            ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
-            ...extraHeaders,
-            // Last: on its own origin the credential wins over any caller header.
-            ...credentialHeaders(credential, url),
-          },
+          headers,
           // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
           redirect: "manual",
           signal: AbortSignal.any([
@@ -275,13 +348,17 @@ export function createHttpClient(
           ]),
         });
       } catch {
-        if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");
-        await delay(1000 * 2 ** attempt, false);
+        trace(attempt, waited, { status: null, error: "network_or_timeout", retryAfter: null });
+        if (attempt === MAX_ATTEMPTS - 1)
+          throw new SourceFailure("Network, timeout or invalid JSON response");
+        backoffMs = 1000 * 2 ** attempt;
+        await delay(backoffMs, false);
         continue;
       }
       // Status and headers first: a quota refusal rarely carries a JSON body.
       const quotaLeft = response.headers.get("x-ratelimit-remaining");
       const retry = response.headers.get("retry-after");
+      trace(attempt, waited, { status: response.status, error: null, retryAfter: retry });
       const resetHeader = response.headers.get("x-ratelimit-reset");
       const limited =
         response.status === 429 ||
@@ -316,19 +393,17 @@ export function createHttpClient(
         state.blockedUntil = Math.max(state.blockedUntil, now() + quotaWindow.resetMs + 1500);
       if (limited || response.status >= 500) {
         await response.body?.cancel().catch(() => undefined);
-        if (attempt === 3)
+        if (attempt === MAX_ATTEMPTS - 1)
           throw new SourceFailure(
             `${limited ? "rate_limited: " : ""}HTTP ${response.status}; retry limit reached`,
           );
-        await delay(
-          Math.max(
-            1000 * 2 ** attempt,
-            limited ? 60_000 : 0,
-            state.blockedUntil - now(),
-            state.nextStart - now(),
-          ),
-          limited,
+        backoffMs = Math.max(
+          1000 * 2 ** attempt,
+          limited ? 60_000 : 0,
+          state.blockedUntil - now(),
+          state.nextStart - now(),
         );
+        await delay(backoffMs, limited);
         continue;
       }
       if (!response.ok) {
@@ -344,9 +419,10 @@ export function createHttpClient(
           declared = declare(text);
         } else await response.body?.cancel().catch(() => undefined);
         if (declared.limited) {
-          if (attempt === 3)
+          if (attempt === MAX_ATTEMPTS - 1)
             throw new SourceFailure(`rate_limited: HTTP ${response.status}; retry limit reached`);
-          await delay(Math.max(1000 * 2 ** attempt, state.blockedUntil - now()), true);
+          backoffMs = Math.max(1000 * 2 ** attempt, state.blockedUntil - now());
+          await delay(backoffMs, true);
           continue;
         }
         return {
@@ -365,8 +441,10 @@ export function createHttpClient(
         if (throttle) declare(text);
       } catch (error) {
         if (error instanceof SourceFailure) throw error;
-        if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");
-        await delay(1000 * 2 ** attempt, false);
+        if (attempt === MAX_ATTEMPTS - 1)
+          throw new SourceFailure("Network, timeout or invalid JSON response");
+        backoffMs = 1000 * 2 ** attempt;
+        await delay(backoffMs, false);
         continue;
       }
       const age = Number(response.headers.get("age"));

@@ -27,6 +27,10 @@ export const CoverageStatus = Schema.Literals([
 ]);
 export type CoverageStatus = typeof CoverageStatus.Type;
 
+/** A documented exception to a host's robots.txt, with the terms that authorise it. */
+export const RobotsOverride = Schema.Struct({ reason: Schema.String, terms_url: Schema.String });
+export type RobotsOverride = typeof RobotsOverride.Type;
+
 /** One line of coverage.jsonl (corpus/1): a zero count only means something on a full day. */
 export const CoverageRecord = Schema.Struct({
   source: SourceId,
@@ -35,6 +39,8 @@ export const CoverageRecord = Schema.Struct({
   items: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   retrieved_at: Schema.String,
   note: Schema.NullOr(Schema.String),
+  /** Set on a day collected past a robots.txt Disallow under the source's documented exception. */
+  robots_override: Schema.optionalKey(RobotsOverride),
 });
 export type CoverageRecord = typeof CoverageRecord.Type;
 
@@ -50,9 +56,7 @@ export const SourceDescriptor = Schema.Struct({
    * A documented exception to the host's robots.txt, for an API whose own terms authorise the
    * adapter's calls. Every day collected under it says so in its coverage note.
    */
-  robots_override: Schema.optionalKey(
-    Schema.Struct({ reason: Schema.String, terms_url: Schema.String }),
-  ),
+  robots_override: Schema.optionalKey(RobotsOverride),
 });
 export type SourceDescriptor = typeof SourceDescriptor.Type;
 

@@ -7,9 +7,10 @@ import {
   createHttpClient,
   stackExchangeThrottle,
   type FrozenResponse,
+  type HttpTraceEntry,
   type GetResponse,
 } from "./http.ts";
-import { liveSources } from "./index.ts";
+import { liveSources, SOURCES } from "./index.ts";
 import { collectNpmDay, NPM_QUERIES } from "./npm.ts";
 import { robotsGate, type RobotsGate } from "./robots.ts";
 import { collectStackExchangeDay } from "./stackexchange.ts";
@@ -97,16 +98,27 @@ describe("robots.txt exception (arXiv)", () => {
           ? new Response("User-agent: *\nDisallow: /\n")
           : new Response(feed),
       );
+    const trace: Array<HttpTraceEntry> = [];
     const [adapter] = liveSources(["arxiv"], {
       fetch: fetcher,
       now: () => clock,
       sleep: async (ms) => {
         clock += ms;
       },
+      trace: (entry) => trace.push(entry),
     });
     const result = await adapter!.collectDay("2026-10-26");
     expect(result.coverage).toMatchObject({ status: "complete", items: 2 });
-    expect(result.coverage?.note).toMatch(/^robots_override: arXiv API Terms of Use/);
+    expect(result.coverage?.note).toMatch(
+      /^robots_override: arXiv API Terms of Use .* \(terms: https:\/\/info\.arxiv\.org\/help\/api\/tou\.html\)/,
+    );
+    expect(result.coverage?.robots_override).toEqual(SOURCES.arxiv?.robots_override);
+    // robots.txt first, then the API under the documented exception, three seconds apart.
+    expect(trace.map((entry) => [entry.path, entry.robots, entry.status])).toEqual([
+      ["/robots.txt", "robots.txt", 200],
+      ["/api/query", "override", 200],
+    ]);
+    expect(trace[1]!.wait_ms).toBe(3000);
   });
   it("still blocks the same rules without the exception", async () => {
     const getFor = () => async () => ok("User-agent: *\nDisallow: /\n");

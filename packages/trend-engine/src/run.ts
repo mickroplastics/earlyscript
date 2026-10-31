@@ -64,6 +64,13 @@ export interface RunOptions {
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
   readonly log?: (line: string) => void;
+  /** Receives each emitted trend's centroid; `engine backtest` freezes them to label the follow-up. */
+  readonly onEmitted?: (trends: ReadonlyArray<EmittedTrend>) => void;
+}
+
+export interface EmittedTrend {
+  readonly id: string;
+  readonly centroid: Float32Array;
 }
 
 export function loadConfig(path: string): { config: EngineConfig; hash: string } {
@@ -243,6 +250,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       .filter((s) => baselinePos.get(s.id)! <= max || weightedPos.get(s.id)! <= max)
       .toSorted((a, b) => baselinePos.get(a.id)! - baselinePos.get(b.id)!);
     const cov = coverageSummary(coverage, sources, curveDays);
+    options.onEmitted?.(emitted.map((s) => ({ id: s.id, centroid: s.signal.centroid })));
     lap("series_stage_profile_rank");
 
     const createdAt = new Date().toISOString();

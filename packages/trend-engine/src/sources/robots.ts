@@ -75,6 +75,9 @@ export interface RobotsOverride {
   readonly terms_url: string;
 }
 
+/** What the gate decided for a URL, as the HTTP trace records it. */
+export type RobotsDecision = "allowed" | "override" | "disallowed" | "unavailable";
+
 /**
  * One robots.txt per origin, cached for the life of `cache` (one collect run). A 4xx means
  * no rules (RFC 9309 §2.3.1.3); an unreachable or 5xx robots.txt disallows the origin.
@@ -83,7 +86,22 @@ export function robotsGate(
   getFor: (url: string) => GetResponse,
   cache: Map<string, ReadonlyArray<RobotsRule>>,
   exception?: { readonly override: RobotsOverride; readonly onOverride: (url: string) => void },
+  onDecision?: (url: string, decision: RobotsDecision) => void,
 ): RobotsGate {
+  const gate = robotsDecide(getFor, cache, exception);
+  return async (url) => {
+    const { refusal, decision } = await gate(url);
+    onDecision?.(url, decision);
+    return refusal;
+  };
+}
+
+function robotsDecide(
+  getFor: (url: string) => GetResponse,
+  cache: Map<string, ReadonlyArray<RobotsRule>>,
+  exception?: { readonly override: RobotsOverride; readonly onOverride: (url: string) => void },
+): (url: string) => Promise<{ refusal: string | null; decision: RobotsDecision }> {
+  const unavailable = (refusal: string) => ({ refusal, decision: "unavailable" as const });
   return async (url) => {
     const origin = new URL(url).origin;
     let rules = cache.get(origin);
@@ -95,20 +113,23 @@ export function robotsGate(
         if (response.status === 200 && typeof response.body === "string")
           rules = robotsRules(response.body);
         else if (response.status >= 400 && response.status < 500) rules = [];
-        else return `robots_unavailable: ${robotsUrl} HTTP ${response.status}`;
+        else return unavailable(`robots_unavailable: ${robotsUrl} HTTP ${response.status}`);
       } catch (error) {
         if (!(error instanceof SourceFailure)) throw error;
-        return `robots_unavailable: ${robotsUrl} ${error.message}`;
+        return unavailable(`robots_unavailable: ${robotsUrl} ${error.message}`);
       }
       cache.set(origin, rules);
     }
-    if (robotsAllows(rules, url)) return null;
+    if (robotsAllows(rules, url)) return { refusal: null, decision: "allowed" };
     // Only a Disallow is overridden; an unreachable robots.txt still stops the day.
     if (exception) {
       exception.onOverride(url);
-      return null;
+      return { refusal: null, decision: "override" };
     }
-    return `robots_disallowed: ${origin}/robots.txt disallows ${new URL(url).pathname} for Earlyscript`;
+    return {
+      refusal: `robots_disallowed: ${origin}/robots.txt disallows ${new URL(url).pathname} for Earlyscript`,
+      decision: "disallowed",
+    };
   };
 }
 

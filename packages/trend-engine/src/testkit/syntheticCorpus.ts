@@ -20,7 +20,7 @@ export const FUTURE_WORD = "futuretoken";
 
 const RETRIEVED = "2026-10-12T01:00:00.000Z";
 
-function item(
+export function item(
   source: SourceId,
   day: string,
   n: number,
@@ -85,6 +85,11 @@ export function syntheticItems(): Array<Item> {
 export interface CorpusOptions {
   readonly items?: ReadonlyArray<Item>;
   readonly coverage?: (row: CoverageRecord) => CoverageRecord | null;
+  /** Sources written besides github and hn; their days are `complete`. */
+  readonly extraSources?: ReadonlyArray<SourceId>;
+  /** The corpus span, FROM_DAY to TO_DAY (exclusive) by default. */
+  readonly fromDay?: string;
+  readonly toDay?: string;
 }
 
 export async function writeSyntheticCorpus(
@@ -92,10 +97,12 @@ export async function writeSyntheticCorpus(
   options: CorpusOptions = {},
 ): Promise<void> {
   const items = options.items ?? syntheticItems();
+  const fromDay = options.fromDay ?? FROM_DAY;
+  const toDay = options.toDay ?? TO_DAY;
   const rows: Array<CoverageRecord> = [];
-  for (const source of ["github", "hn"] as const) {
+  for (const source of ["github", "hn", ...(options.extraSources ?? [])] as const) {
     NodeFS.mkdirSync(NodePath.join(root, source), { recursive: true });
-    for (const day of daysBetween(FROM_DAY, TO_DAY)) {
+    for (const day of daysBetween(fromDay, toDay)) {
       const dayItems = items.filter((i) => i.source === source && i.published_at.startsWith(day));
       const defaults: CoverageRecord = {
         source,
@@ -122,8 +129,8 @@ export async function writeSyntheticCorpus(
   );
   const fields = {
     schema_version: "corpus/1" as const,
-    from_day: FROM_DAY,
-    to_day: TO_DAY,
+    from_day: fromDay,
+    to_day: toDay,
     selection_bias: "present_stars" as const,
     selection: { hn: "all stories", github: "first 100 by stars", to_day: "exclusive" },
   };

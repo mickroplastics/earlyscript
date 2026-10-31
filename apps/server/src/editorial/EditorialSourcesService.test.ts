@@ -30,6 +30,25 @@ import * as EditorialSourcesRpc from "./sourcesRpc.ts";
 
 const group = EditorialSourcesRpcGroup.middleware(RpcScopeAuthorization);
 
+const BACKTEST: EditorialSourcesService.SourceBacktestInput = {
+  backtestId: "bt_20261031arxiv00",
+  logicalHash: "sha256:0",
+  experimentAt: "2026-10-31T09:30:00.000Z",
+  cutoffFrom: "2026-10-17",
+  cutoffTo: "2026-10-30",
+  status: "final",
+  verdict: "not-worse",
+  completeCutoffs: 7,
+  partialCutoffs: 7,
+  p5Baseline: 0.8,
+  p5Candidate: 0.8,
+  leadBaseline: 1,
+  leadCandidate: 1,
+  partialP5Baseline: 0.78,
+  partialP5Candidate: 0.78,
+  allowProvisional: false,
+};
+
 const row = (
   source: string,
   day: string,
@@ -184,10 +203,26 @@ describe("editorial sources RPC", () => {
         const sources = yield* EditorialSourcesService.EditorialSourcesService;
         const client = yield* operator;
         const update = client[EDITORIAL_SOURCES_WS_METHODS.update];
-        yield* sources.recordBacktest("arxiv", "backtest_20261031_arxiv");
+        // A provisional backtest the operator did not accept, or a worse one, keeps rank locked.
+        yield* sources.recordBacktest("arxiv", {
+          ...BACKTEST,
+          status: "provisional",
+          allowProvisional: false,
+        });
+        assert.strictEqual(
+          entryOf(yield* client[EDITORIAL_SOURCES_WS_METHODS.list]({}), "arxiv").rankBlocked,
+          "no-backtest",
+        );
+        yield* sources.recordBacktest("arxiv", { ...BACKTEST, verdict: "worse" });
+        assert.strictEqual(
+          entryOf(yield* client[EDITORIAL_SOURCES_WS_METHODS.list]({}), "arxiv").rankBlocked,
+          "no-backtest",
+        );
+        yield* sources.recordBacktest("arxiv", BACKTEST);
         const view = yield* update({ source: "arxiv", collect: true, rank: true });
         assert.isTrue(entryOf(view, "arxiv").rank);
-        assert.strictEqual(entryOf(view, "arxiv").backtestRunId, "backtest_20261031_arxiv");
+        assert.strictEqual(entryOf(view, "arxiv").backtestRunId, "bt_20261031arxiv00");
+        assert.strictEqual(entryOf(view, "arxiv").backtest?.experimentAt, BACKTEST.experimentAt);
         assert.strictEqual(entryOf(view, "arxiv").rankBlocked, null);
 
         yield* sources.recordBacktest("arxiv", null);

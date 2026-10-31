@@ -1,4 +1,10 @@
-import type { RssFeed, SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
+import type {
+  CoverageRecord,
+  RobotsOverride,
+  RssFeed,
+  SourceDescriptor,
+  SourceId,
+} from "@earlyscript/editorial-contracts/source";
 
 import type { DayResult, SourceAdapter } from "./adapter.ts";
 import {
@@ -9,7 +15,13 @@ import {
   type HttpOptions,
   type HttpSource,
 } from "./http.ts";
-import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
+import {
+  followRedirects,
+  robotsGate,
+  type RobotsDecision,
+  type RobotsGate,
+  type RobotsRule,
+} from "./robots.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
 import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
@@ -179,7 +191,8 @@ export interface LiveSourceConfig {
 }
 
 /** Lobsters, with its robots.txt read through the same paced client. */
-function lobstersAdapter(options: HttpOptions): SourceAdapter {
+function lobstersAdapter(given: HttpOptions): SourceAdapter {
+  const { options, onDecision } = tracedRobots(given);
   const state = { nextStart: 0, blockedUntil: 0 };
   const rules = new Map<string, ReadonlyArray<RobotsRule>>();
   return {
@@ -187,7 +200,7 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
     collectDay: (day) => {
       const text = createHttpClient("lobsters", { ...options, text: true, anonymous: true }, state);
       const json = createHttpClient("lobsters", options, state);
-      const robots = robotsGate(() => text, rules);
+      const robots = robotsGate(() => text, rules, undefined, onDecision);
       return collectLobstersDay(
         day,
         followRedirects(() => json, robots),
@@ -198,7 +211,8 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
 }
 
 /** RSS, paced per host; validators and robots rules last for the whole collect run. */
-function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): SourceAdapter {
+function rssAdapter(given: HttpOptions, feeds: ReadonlyArray<RssFeed>): SourceAdapter {
+  const { options, onDecision } = tracedRobots(given);
   const states = new Map<string, { nextStart: number; blockedUntil: number }>();
   const rules = new Map<string, ReadonlyArray<RobotsRule>>();
   const cache = new Map<string, CachedFeed>();
@@ -216,7 +230,7 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
         }
         return client;
       };
-      const robots = robotsGate(getFor, rules);
+      const robots = robotsGate(getFor, rules, undefined, onDecision);
       return collectRssDay(day, { feeds, get: followRedirects(getFor, robots), robots, cache });
     },
   };
@@ -235,14 +249,56 @@ function memoized(get: GetResponse, memo: Map<string, FrozenResponse>): GetRespo
 
 const isHttpSource = (id: SourceId): id is HttpSource => id in MAX_RESPONSE_BYTES;
 
+/**
+ * Traces each request with the robots.txt decision its gate took. The decision is looked up
+ * by URL when the request is sent; robots.txt itself is labelled as such.
+ */
+function tracedRobots(options: HttpOptions): {
+  readonly options: HttpOptions;
+  readonly onDecision: (url: string, decision: RobotsDecision) => void;
+} {
+  const decisions = new Map<string, RobotsDecision>();
+  return {
+    options: options.trace
+      ? {
+          ...options,
+          robotsDecision: (url) =>
+            new URL(url).pathname === "/robots.txt"
+              ? "robots.txt"
+              : (decisions.get(url) ?? "not-gated"),
+        }
+      : options,
+    onDecision: (url, decision) => {
+      if (!options.trace) return;
+      // A collect run asks for a few thousand URLs at most; keep the map bounded anyway.
+      if (decisions.size >= 10_000) decisions.clear();
+      decisions.set(url, decision);
+    },
+  };
+}
+
+/** The coverage note's prefix for a day collected under a robots.txt exception. */
+export const robotsOverrideNote = (override: RobotsOverride): string =>
+  `robots_override: ${override.reason} (terms: ${override.terms_url})`;
+
+/** Records the exception on a day's coverage: in the note and as a structured field. */
+export function withRobotsOverride(
+  coverage: CoverageRecord,
+  override: RobotsOverride,
+): CoverageRecord {
+  const note = [robotsOverrideNote(override), coverage.note].filter(Boolean).join("; ");
+  return { ...coverage, note, robots_override: override };
+}
+
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
-  options: HttpOptions = {},
+  given: HttpOptions = {},
   config: LiveSourceConfig = {},
 ): Array<SourceAdapter> {
   return ids.map((id) => {
-    if (id === "lobsters") return lobstersAdapter(options);
-    if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
+    if (id === "lobsters") return lobstersAdapter(given);
+    if (id === "rss") return rssAdapter(given, config.rssFeeds ?? RSS_FEEDS);
+    const { options, onDecision } = tracedRobots(given);
     const descriptor = sourceDescriptor(id);
     const makeCollector = COLLECTORS[id];
     if (!makeCollector || !isHttpSource(id)) throw new Error(`No live adapter for source: ${id}`);
@@ -270,6 +326,7 @@ export function liveSources(
                 },
               }
             : undefined,
+          onDecision,
         );
         const result = await collect(
           day,
@@ -279,10 +336,7 @@ export function liveSources(
         );
         // A day collected past a robots.txt Disallow records the documented exception.
         if (!overridden || !override || !result.coverage) return result;
-        const note = [`robots_override: ${override.reason}`, result.coverage.note]
-          .filter(Boolean)
-          .join("; ");
-        return { ...result, coverage: { ...result.coverage, note } };
+        return { ...result, coverage: withRobotsOverride(result.coverage, override) };
       },
     };
   });
