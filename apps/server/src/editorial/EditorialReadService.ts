@@ -29,6 +29,7 @@ import {
   isReadableRun,
   type ReadableRunRow,
 } from "./runIndex.ts";
+import { withPresentations } from "./presentationRead.ts";
 
 const DEFAULT_INBOX_LIMIT = 100;
 const DEFAULT_EVIDENCE_LIMIT = 6;
@@ -258,7 +259,9 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return EditorialReadService.of({ listRuns, getInbox, getDossier, getTrendState });
+  return EditorialReadService.of(
+    withPresentations(sql, directory, { listRuns, getInbox, getDossier, getTrendState }),
+  );
 });
 
 export const layer = Layer.effect(EditorialReadService, make);

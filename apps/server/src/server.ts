@@ -52,6 +52,7 @@ import * as EditorialLayer from "./editorial/layer.ts";
 import * as EditorialPersistence from "./editorial/persistenceLayer.ts";
 import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
 import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
+import * as EditorialPresentation from "./editorial/EditorialPresentationService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -630,6 +631,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  EditorialPresentation.layer,
 ).pipe(
   // Read side, importer, inbox commands and Results, all over the storage aroundOrchestration mounts.
   Layer.provideMerge(EditorialResultsRpc.layer),

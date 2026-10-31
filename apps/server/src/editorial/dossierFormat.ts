@@ -106,6 +106,7 @@ export const DossierFile = Schema.Struct({
         published_at: Schema.String,
         author: Schema.optionalKey(Schema.NullOr(Schema.String)),
         title: Schema.String,
+        excerpt: Schema.optionalKey(Schema.NullOr(Schema.String)),
       }),
     ),
   ),
