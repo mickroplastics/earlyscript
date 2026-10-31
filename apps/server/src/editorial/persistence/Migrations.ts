@@ -12,6 +12,7 @@ import Migration0005 from "./Migrations/005_EditorialPresentations.ts";
 import Migration0006 from "./Migrations/006_EditorialImportInterpretation.ts";
 import Migration0007 from "./Migrations/007_EditorialSourceSettings.ts";
 import Migration0008 from "./Migrations/008_EditorialRssFeedAcknowledgement.ts";
+import Migration0009 from "./Migrations/009_EditorialManualWork.ts";
 
 // Own numbering in editorial.sqlite, never colliding with T3's. Never renumber an
 // applied migration. Ids are 1..n: the Migrator skips ids at or below the latest
@@ -25,6 +26,7 @@ const migrationEntries = [
   [6, "EditorialImportInterpretation", Migration0006],
   [7, "EditorialSourceSettings", Migration0007],
   [8, "EditorialRssFeedAcknowledgement", Migration0008],
+  [9, "EditorialManualWork", Migration0009],
 ] as const;
 
 export const editorialMigrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -33,7 +35,7 @@ export const editorialMigrationManifest = migrationEntries.map(([id, name]) => [
  * Migrations that check the shape they create and may run again over their own result.
  * Only these may lose their marker in repairEditorialMigrationGap.
  */
-const REPLAYABLE_MIGRATION_IDS: ReadonlySet<number> = new Set([4, 8]);
+const REPLAYABLE_MIGRATION_IDS: ReadonlySet<number> = new Set([4, 8, 9]);
 
 /** A table name of its own, so a misrouted client never reads T3's history as ours. */
 export const EDITORIAL_MIGRATIONS_TABLE = "editorial_sql_migrations";

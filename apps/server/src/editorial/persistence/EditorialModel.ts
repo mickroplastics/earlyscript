@@ -90,6 +90,8 @@ export const EditorialEventType = Schema.Literals([
   "script.version-saved",
   "script.head-restored",
   "capture.saved",
+  "capture.removed",
+  "browser.visited",
   "result.saved",
   "run.imported",
   "run.updated",

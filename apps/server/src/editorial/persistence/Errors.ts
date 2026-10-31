@@ -33,7 +33,7 @@ export class EditorialMigrationGapError extends Schema.TaggedError<EditorialMigr
 export class EditorialNotFoundError extends Schema.TaggedError<EditorialNotFoundError>()(
   "EditorialNotFoundError",
   {
-    entity: Schema.Literals(["video_thread", "script_version", "work_interval"]),
+    entity: Schema.Literals(["video_thread", "script_version", "work_interval", "capture"]),
     id: Schema.String,
   },
 ) {

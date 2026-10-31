@@ -8,6 +8,7 @@ import {
   EditorialDossierId,
   EditorialRunId,
   EditorialVideoError,
+  type EditorialVideoCapture,
   type EditorialVideoClockInput,
   type EditorialVideoDecision,
   type EditorialVideoErrorReason,
@@ -16,6 +17,8 @@ import {
   type EditorialVideoScriptVersion,
   type EditorialVideoState,
   type EditorialVideoView,
+  ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,6 +30,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import * as BrowserVisits from "./BrowserVisitService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
@@ -45,6 +49,9 @@ export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
   [EDITORIAL_VIDEO_WS_METHODS.decide]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.saveResult]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.openVersion]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.createManual]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.capture]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: "editorial",
 } as const;
 
 type VideoRpcs = RpcGroup.Rpcs<typeof EditorialVideoRpcGroup>;
@@ -82,6 +89,9 @@ export class EditorialVideoRpcHandlers extends Context.Reference<EditorialVideoH
       [EDITORIAL_VIDEO_WS_METHODS.decide]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.saveResult]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.openVersion]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.createManual]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.capture]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: () => Effect.fail(unavailable),
     }),
   },
 ) {}
@@ -142,6 +152,22 @@ interface DecisionRow {
   readonly decided_at: string;
 }
 
+interface CaptureRow {
+  readonly capture_id: string;
+  readonly url: string;
+  readonly title: string | null;
+  readonly note: string | null;
+  readonly captured_at: string;
+}
+
+const toCapture = (row: CaptureRow): EditorialVideoCapture => ({
+  captureId: row.capture_id,
+  url: row.url,
+  title: row.title,
+  note: row.note,
+  capturedAt: row.captured_at,
+});
+
 interface ResultRow {
   readonly result_id: string;
   readonly views: number | null;
@@ -198,6 +224,7 @@ const makeHandlers = Effect.gen(function* () {
   const clocks = yield* WorkClockService;
   const scripts = yield* ScriptVersionService;
   const commands = yield* EditorialCommandService;
+  const visits = yield* BrowserVisits.BrowserVisitService;
   // The trend title comes from the run directory, mounted by `layer.ts`; without it the
   // thread still works and shows its dossier id.
   const reader = yield* Effect.serviceOption(EditorialReadService);
@@ -284,6 +311,13 @@ const makeHandlers = Effect.gen(function* () {
       ORDER BY observed_at DESC, rowid DESC
       LIMIT ${RESULTS_LIMIT}
     `.pipe(Effect.map((rows) => rows.map(toResult)));
+    const captures = yield* sql<CaptureRow>`
+      SELECT capture_id, url, title, note, captured_at
+      FROM editorial_captures
+      WHERE thread_id = ${threadId} AND removed_at IS NULL
+      ORDER BY captured_at ASC, rowid ASC
+    `.pipe(Effect.map((rows) => rows.map(toCapture)));
+    const history = thread.mode === "manual" ? yield* visits.list(threadId) : [];
     const exists = yield* scripts.readScript({ threadId }).pipe(
       Effect.as(true),
       Effect.orElseSucceed(() => false),
@@ -314,6 +348,8 @@ const makeHandlers = Effect.gen(function* () {
       script: { path: thread.scriptPath, exists, head, versionCount },
       decision,
       results,
+      captures,
+      visits: history,
     };
     return state;
   });
@@ -470,6 +506,26 @@ const makeHandlers = Effect.gen(function* () {
     return { path: target };
   }, Effect.mapError(toVideoError));
 
+  /** A manual thread with no dossier; the operation id is the client's, scoped to this use. */
+  const createManual = Effect.fn("EditorialVideoRpc.createManual")(function* (input: {
+    readonly operationId: string;
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly modelSelection: Parameters<typeof threads.createVideo>[0]["modelSelection"];
+    readonly trendKey?: string;
+  }) {
+    const created = yield* threads.createVideo({
+      operationId: `editorial:manual-video:${input.operationId}`,
+      projectId: input.projectId,
+      mode: "manual",
+      title: input.title,
+      modelSelection: input.modelSelection,
+      creationSource: "web",
+      trendKey: input.trendKey,
+    });
+    return { threadId: ThreadId.make(created.thread.threadId), created: created.created };
+  }, Effect.mapError(toVideoError));
+
   const handlers: EditorialVideoHandlers = {
     [EDITORIAL_VIDEO_WS_METHODS.get]: ({ threadId }) => view(threadId),
     [EDITORIAL_VIDEO_WS_METHODS.subscribe]: ({ threadId }) =>
@@ -517,6 +573,27 @@ const makeHandlers = Effect.gen(function* () {
       ),
     [EDITORIAL_VIDEO_WS_METHODS.openVersion]: ({ threadId, contentHash }) =>
       openVersion(threadId, contentHash),
+    [EDITORIAL_VIDEO_WS_METHODS.createManual]: (input) => createManual(input),
+    [EDITORIAL_VIDEO_WS_METHODS.capture]: ({ threadId, url, title, note }) =>
+      onThread(threadId, (thread) =>
+        commands.saveCapture({
+          threadId: thread.threadId,
+          url,
+          title,
+          note,
+          actor: "operator",
+          refuseWhenDecided: true,
+        }),
+      ),
+    [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: ({ threadId, captureId }) =>
+      onThread(threadId, (thread) =>
+        commands.removeCapture({
+          threadId: thread.threadId,
+          captureId,
+          actor: "operator",
+          refuseWhenDecided: true,
+        }),
+      ),
     [EDITORIAL_VIDEO_WS_METHODS.saveResult]: ({ threadId, ...metrics }) =>
       onThread(threadId, (thread) =>
         Effect.gen(function* () {
@@ -541,4 +618,7 @@ const makeHandlers = Effect.gen(function* () {
  * Mounted once in `server.ts`, over the video thread services and the storage that
  * `runtimeLayer.ts` and `persistenceLayer.ts` provide.
  */
-export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers);
+export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers).pipe(
+  // The browser history of manual threads, read here and recorded from the preview manager.
+  Layer.provideMerge(BrowserVisits.layer),
+);

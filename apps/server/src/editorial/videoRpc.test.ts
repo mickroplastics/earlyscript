@@ -47,12 +47,15 @@ const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
 
 const operator = clientWith([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
 
+/** The handlers, with the Crypto their browser history ids need. */
+const videoRpcLayer = EditorialVideoRpc.layer.pipe(Layer.provide(NodeServices.layer));
+
 /** The body runs with the video handlers over the testkit's registered video thread. */
 const withVideoRpc = <A, E, R>(
   body: Parameters<typeof withVideoWorkspace<A, E, R>>[0],
 ): ReturnType<typeof withVideoWorkspace<A, E, R>> =>
   withVideoWorkspace((workspace) =>
-    body(workspace).pipe(Effect.provide(EditorialVideoRpc.layer), Effect.scoped),
+    body(workspace).pipe(Effect.provide(videoRpcLayer), Effect.scoped),
   ) as ReturnType<typeof withVideoWorkspace<A, E, R>>;
 
 const reasonOf = (error: EditorialVideoError | { readonly _tag: string }) =>
@@ -349,9 +352,7 @@ describe("editorial video RPC", () => {
 
 describe("editorial video RPC, review of 76967e71c6", () => {
   const handlersWith = (clockLayer?: Layer.Layer<WorkClockService>) =>
-    clockLayer === undefined
-      ? EditorialVideoRpc.layer
-      : EditorialVideoRpc.layer.pipe(Layer.provide(clockLayer));
+    clockLayer === undefined ? videoRpcLayer : videoRpcLayer.pipe(Layer.provide(clockLayer));
 
   // H2: Sol's reproduction. A start admitted by the RPC before the decision commits must not
   // reopen the clock after it: the guard runs inside the clock's own transaction.
@@ -495,7 +496,7 @@ describe("editorial video RPC, review of 76967e71c6", () => {
         assert.strictEqual(reasonOf(unknown), "not-found");
       }).pipe(
         Effect.provide(
-          EditorialVideoRpc.layer.pipe(
+          videoRpcLayer.pipe(
             Layer.provide(
               ServerConfig.ServerConfig.layerTest(process.cwd(), {
                 prefix: "editorial-video-version-",

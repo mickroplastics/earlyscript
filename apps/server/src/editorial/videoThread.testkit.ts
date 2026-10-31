@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import type * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -51,6 +52,7 @@ export const layerWorkspaceFiles = WorkspaceFileSystem.layer.pipe(
  */
 export const withVideoWorkspace = <A, E, R>(
   body: (workspace: VideoWorkspace) => Effect.Effect<A, E, R>,
+  options: { readonly launch?: Layer.Layer<ThreadLaunch.ThreadLaunchService> } = {},
 ) => {
   const root = makeTempDir();
   const workspace = NodePath.join(root, "workspace");
@@ -68,7 +70,9 @@ export const withVideoWorkspace = <A, E, R>(
         layerWorkspaceFiles,
       ),
     ),
-    Layer.provideMerge(layerAt(NodePath.join(root, EditorialDatabase.EDITORIAL_DATABASE_FILENAME))),
+    Layer.provideMerge(
+      layerAt(NodePath.join(root, EditorialDatabase.EDITORIAL_DATABASE_FILENAME), options.launch),
+    ),
   );
   const write: VideoWorkspace["write"] = (relativePath, contents) =>
     Effect.sync(() => {

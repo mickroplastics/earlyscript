@@ -180,6 +180,52 @@ describe("editorial RPC authorization", () => {
     ),
   );
 
+  it.effect("opens the trend's manual thread apart from its assisted one", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorial(
+        () =>
+          Effect.gen(function* () {
+            yield* (yield* EditorialImportService).sync;
+            const client = yield* clientWith([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+            ]);
+            const manual = yield* client[EDITORIAL_WS_METHODS.createVideo]({
+              ...VIDEO_INPUT,
+              mode: "manual",
+            });
+            assert.isTrue(manual.created);
+            // The production link waits for the assisted thread.
+            assert.strictEqual(manual.state.production, null);
+            const again = yield* client[EDITORIAL_WS_METHODS.createVideo]({
+              ...VIDEO_INPUT,
+              mode: "manual",
+            });
+            assert.deepStrictEqual([again.threadId, again.created], [manual.threadId, false]);
+
+            const assisted = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isTrue(assisted.created);
+            assert.notStrictEqual(assisted.threadId, manual.threadId);
+            assert.strictEqual(assisted.state.production?.threadId, assisted.threadId);
+            assert.strictEqual((yield* Ref.get(launch.calls)).length, 2);
+
+            const registered = (yield* events).filter(
+              (event) => event.type === "video-thread.registered",
+            );
+            assert.deepStrictEqual(registered[0]?.payload, {
+              environmentId: "environment:editorial-test",
+              mode: "manual",
+              trendKey: QUANTUM_KEY,
+              runId: RUN_ID,
+              dossierId: null,
+            });
+          }).pipe(Effect.scoped),
+        { launch: launch.layer },
+      );
+    }),
+  );
+
   it.effect("creates one video thread per trend and answers a second click with it", () =>
     Effect.gen(function* () {
       const launch = yield* makeLaunchDouble;
