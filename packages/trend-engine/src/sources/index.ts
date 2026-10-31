@@ -5,7 +5,7 @@ import { createHttpClient, type HttpOptions } from "./http.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
 import { collectLobstersDay } from "./lobsters.ts";
-import { robotsGate, type RobotsRule } from "./robots.ts";
+import { followRedirects, robotsGate, type RobotsRule } from "./robots.ts";
 import { collectRssDay, type CachedFeed } from "./rss.ts";
 import { RSS_FEEDS } from "./rss-feeds.ts";
 
@@ -81,10 +81,12 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
     descriptor: SOURCES.lobsters,
     collectDay: (day) => {
       const text = createHttpClient("lobsters", { ...options, text: true }, state);
+      const json = createHttpClient("lobsters", options, state);
+      const robots = robotsGate(() => text, rules);
       return collectLobstersDay(
         day,
-        createHttpClient("lobsters", options, state),
-        robotsGate(() => text, rules),
+        followRedirects(() => json, robots),
+        robots,
       );
     },
   };
@@ -109,12 +111,8 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
         }
         return client;
       };
-      return collectRssDay(day, {
-        feeds,
-        getFor,
-        robots: robotsGate(getFor, rules),
-        cache,
-      });
+      const robots = robotsGate(getFor, rules);
+      return collectRssDay(day, { feeds, get: followRedirects(getFor, robots), robots, cache });
     },
   };
 }
@@ -128,10 +126,19 @@ export function liveSources(
     if (id === "lobsters") return lobstersAdapter(options);
     if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
     const state = { nextStart: 0, blockedUntil: 0 };
+    const rules = new Map<string, ReadonlyArray<RobotsRule>>();
     return {
       descriptor: SOURCES[id],
-      collectDay: (day) =>
-        (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, state)),
+      collectDay: (day) => {
+        // API URLs are not robots-gated, but a redirect away from them is.
+        const text = createHttpClient(id, { ...options, text: true }, state);
+        const json = createHttpClient(id, options, state);
+        const get = followRedirects(
+          () => json,
+          robotsGate(() => text, rules),
+        );
+        return (id === "hn" ? collectHnDay : collectGithubDay)(day, get);
+      },
     };
   });
 }

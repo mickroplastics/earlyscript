@@ -4,8 +4,12 @@
 // hash. Checked on 31 October 2026: each feed answered 200 with RSS or Atom and its site's
 // robots.txt allows the feed path for `*`.
 // Licenses were not verified feed by feed: unless `license` says otherwise, assume the
-// publisher's copyright. The corpus keeps title, link and the feed's own excerpt (at most
-// 4000 characters) for private analysis; nothing is republished.
+// publisher's copyright. The corpus keeps title, link and an excerpt of at most 500
+// characters (EXCERPT_CHARS in rss.ts) for private analysis; nothing is republished.
+// Retention: as the frozen corpus, kept while the thesis needs it to reproduce results and
+// reviewed when the final grade is recorded (27 November 2026). Deletion on a publisher's
+// request: `engine purge --source rss --url <permalink>` or `--feed <feed-url>`, which also
+// keeps later collections from storing the items again. Owner: Miguel, as operator.
 
 import * as NodeFSP from "node:fs/promises";
 

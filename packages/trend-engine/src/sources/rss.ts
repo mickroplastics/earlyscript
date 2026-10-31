@@ -5,17 +5,28 @@ import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { sha256 } from "../hash.ts";
 import { createHttpClient, SourceFailure, type GetResponse, type HttpOptions } from "./http.ts";
-import { robotsGate, type RobotsGate } from "./robots.ts";
+import { followRedirects, robotsGate, type RobotsGate } from "./robots.ts";
 import type { RssFeed } from "./rss-feeds.ts";
 import { githubEntity, plainText, sortItems } from "./shared.ts";
-import { element, elements, parseXml, textOf, XmlError, type XmlElement } from "./xml.ts";
+import {
+  decodeEntities,
+  element,
+  elements,
+  parseXml,
+  textOf,
+  XmlError,
+  type XmlElement,
+} from "./xml.ts";
 import type { DayResult } from "./adapter.ts";
 
 export interface FeedEntry {
   readonly key: string;
   readonly link: string | null;
   readonly title: string;
+  /** `description` (RSS) or `summary` (Atom): what the publisher offers as a teaser. */
   readonly summary: string;
+  /** `content:encoded` (RSS) or `content` (Atom): often the whole article; never stored whole. */
+  readonly content: string;
   /** Epoch milliseconds; null when the entry has no parseable date. */
   readonly published: number | null;
   readonly author: string | null;
@@ -66,7 +77,7 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
   if (root.name === "rss" || root.name === "rdf:RDF") {
     const channel = element(root, "channel");
     if (!channel) throw new XmlError("RSS without channel");
-    const title = plainText(textOf(element(channel, "title")));
+    const title = feedText(textOf(element(channel, "title")));
     // RSS 1.0 keeps items beside the channel; RSS 2.0 inside it.
     const items = [...elements(channel, "item"), ...elements(root, "item")];
     return {
@@ -80,7 +91,8 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
           key: guid || link || textOf(element(item, "title")),
           link,
           title: textOf(element(item, "title")),
-          summary: textOf(element(item, "description", "content:encoded")),
+          summary: textOf(element(item, "description")),
+          content: textOf(element(item, "content:encoded")),
           published: date(textOf(element(item, "pubDate")), textOf(element(item, "dc:date"))),
           author:
             textOf(element(item, "dc:creator")).trim() ||
@@ -90,7 +102,7 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
     };
   }
   if (root.name === "feed" || root.name === "atom:feed") {
-    const title = plainText(textOf(element(root, "title", "atom:title")));
+    const title = feedText(textOf(element(root, "title", "atom:title")));
     return {
       title,
       entries: elements(root, "entry", "atom:entry").map((entry) => {
@@ -99,7 +111,8 @@ export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
           key: textOf(element(entry, "id", "atom:id")).trim() || link || "",
           link,
           title: textOf(element(entry, "title", "atom:title")),
-          summary: textOf(element(entry, "summary", "content", "atom:summary", "atom:content")),
+          summary: textOf(element(entry, "summary", "atom:summary")),
+          content: textOf(element(entry, "content", "atom:content")),
           published: date(
             textOf(element(entry, "published", "atom:published")),
             textOf(element(entry, "updated", "atom:updated")),
@@ -122,10 +135,32 @@ export interface CachedFeed {
   readonly text: string;
 }
 
+/**
+ * Longest body kept from a feed. Summaries can be whole posts (simonwillison.net puts the
+ * full text in Atom `summary`), so every body is an excerpt of at most this many characters.
+ */
+export const EXCERPT_CHARS = 500;
+
+/** Plain text of feed HTML, with the HTML entities plainText leaves behind decoded. */
+const feedText = (html: string) => decodeEntities(plainText(html)).trim();
+
+/** The stored body: the summary, else the content; cut to EXCERPT_CHARS either way. */
+export function feedBody(entry: Pick<FeedEntry, "summary" | "content">) {
+  const summary = feedText(entry.summary);
+  const text = summary || feedText(entry.content);
+  const cut = text.length > EXCERPT_CHARS;
+  return {
+    body: cut ? text.slice(0, EXCERPT_CHARS) : text,
+    body_length: text.length,
+    truncated: cut,
+    body_kind: summary && !cut ? ("summary" as const) : ("excerpt" as const),
+  };
+}
+
 export interface RssDeps {
   readonly feeds: ReadonlyArray<RssFeed>;
-  /** One client per host, so each host gets its own pause. */
-  readonly getFor: (url: string) => GetResponse;
+  /** Routes each URL to its host's client and gates every redirect hop (followRedirects). */
+  readonly get: GetResponse;
   readonly robots: RobotsGate;
   readonly cache: Map<string, CachedFeed>;
 }
@@ -149,7 +184,7 @@ export async function collectRssDay(
       const refusal = await deps.robots(feed.feedUrl);
       if (refusal) throw new SourceFailure(refusal);
       const cached = deps.cache.get(feed.feedUrl);
-      const response = await deps.getFor(feed.feedUrl)(feed.feedUrl, {
+      const response = await deps.get(feed.feedUrl, {
         ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
         ...(cached?.lastModified ? { "If-Modified-Since": cached.lastModified } : {}),
       });
@@ -183,7 +218,7 @@ export async function collectRssDay(
       short.push(feed.id);
     for (const entry of entries) {
       if (entry.published === null || entry.published < start || entry.published >= end) continue;
-      const summary = plainText(entry.summary);
+      const body = feedBody(entry);
       const link = entry.link ?? feed.siteUrl;
       const id = `itm_rss_${feed.id}_${sha256(entry.key || link).slice(7, 23)}`;
       if (!items.has(id))
@@ -194,10 +229,9 @@ export async function collectRssDay(
           external_url: entry.link,
           published_at: new Date(entry.published).toISOString(),
           author: entry.author ?? feed.name,
-          title: plainText(entry.title) || summary.slice(0, 120),
-          body: summary.slice(0, 4000),
-          body_length: summary.length,
-          truncated: summary.length > 4000,
+          title: feedText(entry.title) || body.body.slice(0, 120),
+          ...body,
+          feed_url: feed.feedUrl,
           retrieved_at: observed,
           entities: githubEntity(entry.link),
         });
@@ -273,15 +307,17 @@ export async function validateFeed(
     ...options,
     text: true,
   });
+  const robots = robotsGate(() => get, new Map());
+  const refused = (message: string) =>
+    fail(message.startsWith("robots_disallowed") ? "robots-disallowed" : "unreachable", message);
   let response;
   try {
-    const refusal = await robotsGate(() => get, new Map())(url);
-    if (refusal?.startsWith("robots_disallowed")) return fail("robots-disallowed", refusal);
-    if (refusal) return fail("unreachable", refusal);
-    response = await get(url);
+    const refusal = await robots(url);
+    if (refusal) return refused(refusal);
+    response = await followRedirects(() => get, robots)(url);
   } catch (error) {
     if (!(error instanceof SourceFailure)) throw error;
-    return fail("unreachable", error.message);
+    return refused(error.message);
   }
   if (response.status !== 200 || typeof response.body !== "string")
     return fail("unreachable", `HTTP ${response.status}`);

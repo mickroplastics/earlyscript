@@ -189,7 +189,7 @@ async function feedsGet(overrides: Record<string, FrozenResponse> = {}) {
     [latent.feedUrl]: await testkit("rss-sample.xml"),
     [simon.feedUrl]: await testkit("atom-sample.xml"),
   };
-  return (url: string) => async () => overrides[url] ?? ok(bodies[url]);
+  return async (url: string) => overrides[url] ?? ok(bodies[url]);
 }
 
 describe("rss", () => {
@@ -221,7 +221,7 @@ describe("rss", () => {
   it("keeps the day's entries of every feed and completes when all feeds reach back", async () => {
     const result = await collectRssDay(
       day,
-      { feeds: [latent, simon], getFor: await feedsGet(), robots: allow, cache: new Map() },
+      { feeds: [latent, simon], get: await feedsGet(), robots: allow, cache: new Map() },
       now,
     );
     expect(result.items.map((item) => [item.title, item.author])).toEqual([
@@ -255,7 +255,7 @@ describe("rss", () => {
       day,
       {
         feeds: [latent, simon],
-        getFor: await feedsGet({ [simon.feedUrl]: down }),
+        get: await feedsGet({ [simon.feedUrl]: down }),
         robots: allow,
         cache: new Map(),
       },
@@ -266,7 +266,7 @@ describe("rss", () => {
     // On the 28th the Atom sample holds nothing older: entries may have rotated out.
     const short = await collectRssDay(
       "2026-10-28",
-      { feeds: [simon], getFor: await feedsGet(), robots: allow, cache: new Map() },
+      { feeds: [simon], get: await feedsGet(), robots: allow, cache: new Map() },
       now,
     );
     expect(short.coverage).toMatchObject({ status: "partial", items: 1 });
@@ -275,7 +275,7 @@ describe("rss", () => {
       day,
       {
         feeds: [latent, simon],
-        getFor: await feedsGet({
+        get: await feedsGet({
           [latent.feedUrl]: ok("<html>moved</html>"),
           [simon.feedUrl]: down,
         }),

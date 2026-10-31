@@ -10,6 +10,8 @@ export interface FrozenResponse {
   /** Validators of a 2xx response, replayed as If-None-Match / If-Modified-Since. */
   readonly etag?: string | null;
   readonly last_modified?: string | null;
+  /** `Location` of a 3xx: the client never follows redirects itself (see robots.ts). */
+  readonly location?: string | null;
 }
 export type GetResponse = (
   url: string,
@@ -120,6 +122,8 @@ export function createHttpClient(
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...extraHeaders,
           },
+          // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
+          redirect: "manual",
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(
@@ -169,7 +173,12 @@ export function createHttpClient(
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
-        return { observed_at: new Date(wall()).toISOString(), status: response.status, body: null };
+        return {
+          observed_at: new Date(wall()).toISOString(),
+          status: response.status,
+          body: null,
+          location: response.headers.get("location"),
+        };
       }
       let body: unknown;
       try {
