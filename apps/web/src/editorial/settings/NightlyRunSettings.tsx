@@ -228,7 +228,11 @@ export function NightlyRunSettingsView({
         }
         control={
           <Button size="xs" variant="outline" disabled={busy} onClick={onRunNow}>
-            {busy ? <Spinner size="sm" /> : null}
+            {busy ? (
+              <span aria-hidden>
+                <Spinner size="sm" />
+              </span>
+            ) : null}
             Ejecutar ahora
           </Button>
         }

@@ -47,7 +47,9 @@ export function TrendJobIndicator({ environmentId }: { readonly environmentId: E
       role="status"
       className="flex min-w-0 max-w-[60%] shrink items-center gap-1 text-2xs text-sidebar-muted-foreground tabular-nums"
     >
-      <Spinner size="sm" />
+      <span aria-hidden>
+        <Spinner size="sm" />
+      </span>
       <span className="truncate">{text}</span>
     </span>
   );

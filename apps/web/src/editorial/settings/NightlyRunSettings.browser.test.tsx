@@ -28,8 +28,8 @@ const phases = (
   PHASES.map((phase, index) => ({
     phase,
     status: status(index),
-    startedAt: "2026-10-31T08:00:00.000Z",
-    finishedAt: status(index) === "running" ? null : "2026-10-31T08:02:00.000Z",
+    startedAt: status(index) === "pending" ? null : "2026-10-31T08:00:00.000Z",
+    finishedAt: ["running", "pending"].includes(status(index)) ? null : "2026-10-31T08:02:00.000Z",
     note: null,
     log: null,
   }));
