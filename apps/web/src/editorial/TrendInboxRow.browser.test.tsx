@@ -1,5 +1,6 @@
 import { EditorialDossierId, EditorialRunId, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { SidebarMenu, SidebarProvider } from "../components/ui/sidebar";
@@ -59,5 +60,73 @@ describe("TrendInboxRow", () => {
       .element(link)
       .toHaveAttribute("href", `/editorial/env-1/trends/dos_bbb80d57481e?run=${RUN_ID}`);
     expect(link.element().textContent).toContain("11 publ. · 11 autores · puntaje #13");
+  });
+
+  it("shows the assistant's title in place of the engine label and keeps the terms reachable", async () => {
+    await using screen = await render(
+      <SidebarProvider defaultOpen>
+        <SidebarMenu>
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{
+              ...QUANTUM,
+              presentation: {
+                title: "IBM abre su pila de computación cuántica",
+                summary: { whatHappened: "a", whyItMatters: "b", videoAngle: "c" },
+                citedItemIds: [],
+                provider: "claudeAgent",
+                model: "claude-haiku-5-5",
+                promptVersion: "trend-presentation.v3",
+                generatedAt: "2026-10-31T12:00:00.000Z",
+              },
+            }}
+            isActive={false}
+          />
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    const title = screen.container.querySelector("[data-presentation-title]");
+    expect(title?.textContent).toBe("IBM abre su pila de computación cuántica");
+    const link = screen.getByRole("link", { name: /IBM abre su pila/ });
+    // Screen readers get the engine's words too; sighted users get them on hover.
+    expect(link.element().textContent).toContain("Términos del motor: quantum computing ibm open.");
+    await userEvent.hover(title as HTMLElement);
+    await expect
+      .element(
+        screen.getByText(
+          "Redactado por el asistente · términos del motor: quantum computing ibm open",
+        ),
+      )
+      .toBeVisible();
+  });
+
+  it("dims an outdated title and says so", async () => {
+    await using screen = await render(
+      <SidebarProvider defaultOpen>
+        <SidebarMenu>
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{
+              ...QUANTUM,
+              presentation: {
+                title: "IBM abre su pila de computación cuántica",
+                summary: { whatHappened: "a", whyItMatters: "b", videoAngle: "c" },
+                citedItemIds: [],
+                provider: "claudeAgent",
+                model: "claude-haiku-5-5",
+                promptVersion: "trend-presentation.v2",
+                generatedAt: "2026-10-31T12:00:00.000Z",
+                status: "stale",
+              },
+            }}
+            isActive={false}
+          />
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    const title = screen.container.querySelector("[data-presentation-title]");
+    expect(title?.hasAttribute("data-stale")).toBe(true);
+    const link = screen.getByRole("link", { name: /IBM abre su pila/ });
+    expect(link.element().textContent).toContain("Redacción desactualizada.");
   });
 });

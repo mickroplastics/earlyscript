@@ -286,3 +286,63 @@ export function whyHereReasons(input: {
   }
   return reasons;
 }
+
+export type CitationSegment =
+  | { readonly kind: "text"; readonly text: string }
+  | {
+      readonly kind: "citation";
+      readonly itemId: string;
+      /** 1-based position in the dossier's evidence, as the evidence list numbers it. */
+      readonly number: number;
+      readonly item: EditorialEvidenceItem;
+    };
+
+/** Same marker the server validates: `[itemId]`, without spaces or nested brackets. */
+const INLINE_CITATION = /\[([^[\]\s]+)\]/g;
+
+/**
+ * Splits an assistant summary into text and `[itemId]` citations of known evidence. A marker
+ * for an id the dossier does not list stays as written; the server already warned about it.
+ * The space before a citation is dropped so the number sits against its claim.
+ */
+export function citationSegments(
+  text: string,
+  evidence: ReadonlyArray<EditorialEvidenceItem>,
+): ReadonlyArray<CitationSegment> {
+  const known = new Map(evidence.map((item, index) => [item.itemId, { item, number: index + 1 }]));
+  const segments: CitationSegment[] = [];
+  let cursor = 0;
+  const pushText = (value: string) => {
+    if (value.length === 0) return;
+    const last = segments.at(-1);
+    if (last?.kind === "text")
+      segments[segments.length - 1] = { kind: "text", text: last.text + value };
+    else segments.push({ kind: "text", text: value });
+  };
+  for (const match of text.matchAll(INLINE_CITATION)) {
+    const itemId = match[1] ?? "";
+    const entry = known.get(itemId);
+    const start = match.index;
+    if (entry === undefined) {
+      pushText(text.slice(cursor, start + match[0].length));
+    } else {
+      pushText(text.slice(cursor, start).replace(/\s+$/, ""));
+      segments.push({ kind: "citation", itemId, number: entry.number, item: entry.item });
+    }
+    cursor = start + match[0].length;
+  }
+  pushText(text.slice(cursor));
+  return segments;
+}
+
+/** "3/18 redactadas" while drafting a run; counts ready ones, failures are listed apart. */
+export function runPresentationProgressText(progress: {
+  readonly total: number;
+  readonly ready: number;
+  readonly failed: number;
+}): string {
+  const base = `${progress.ready}/${progress.total} ${progress.total === 1 ? "redactada" : "redactadas"}`;
+  return progress.failed > 0
+    ? `${base} · ${progress.failed} ${progress.failed === 1 ? "falló" : "fallaron"}`
+    : base;
+}
