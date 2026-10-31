@@ -11,18 +11,38 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
+import { trendKeyOf, type TrendKey } from "./trendKey.ts";
+
 // Reader for Earlywindow's `run.json` and `dossier/1` files. The engine keeps writing this
 // format, so these schemas only name the fields the editorial space shows; the rest is ignored.
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
+const OptionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
+
 export const RunFile = Schema.Struct({
   run_id: Schema.String,
   cutoff_at: Schema.String,
-  finished_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  finished_at: OptionalText,
   status: Schema.optionalKey(Schema.String),
-  config_version: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  config_version: OptionalText,
   sources: Schema.optionalKey(Schema.Array(Schema.String)),
+  // Provenance the importer indexes. Earlywindow writes `corpus_hash` at the top; the
+  // Earlyscript engine writes `schema_version` and `corpus.corpus_used_hash`.
+  schema_version: OptionalText,
+  engine_version: OptionalText,
+  config_hash: OptionalText,
+  corpus_hash: OptionalText,
+  logical_hash: OptionalText,
+  corpus: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        corpus_used_hash: OptionalText,
+        corpus_manifest_hash: OptionalText,
+      }),
+    ),
+  ),
+  coverage: Schema.optionalKey(Schema.Unknown),
 });
 export type RunFile = typeof RunFile.Type;
 
@@ -34,6 +54,7 @@ export const DossierFile = Schema.Struct({
     Schema.Struct({ include_score: Schema.optionalKey(Schema.NullOr(Schema.Finite)) }),
   ),
   signal: Schema.Struct({
+    id: Schema.optionalKey(Schema.String),
     label: Schema.String,
     stage: Schema.optionalKey(Schema.String),
     corroboration: Schema.optionalKey(Schema.String),
@@ -99,6 +120,9 @@ const DAY_MS = 86_400_000;
 
 export interface LoadedDossier {
   readonly file: DossierFile;
+  readonly trendKey: TrendKey;
+  /** Last curve day with items, or null; the inbox compares it with the revision seen. */
+  readonly lastActivityDay: string | null;
   readonly summary: EditorialTrendSummary;
   readonly curve: ReadonlyArray<EditorialCurveDay>;
   readonly coverage: ReadonlyArray<EditorialSourceCoverage>;
@@ -199,13 +223,12 @@ export function competitionRanks(values: ReadonlyArray<number>): ReadonlyArray<n
 }
 
 /**
- * Builds the inbox rows of one run. `isNew` marks every trend of the latest run until the
- * inbox has read state (U3); that is the extension point for unread counts.
+ * Builds the inbox rows of one run. `isNew` starts false; the read service sets it from the
+ * inbox state in editorial.sqlite.
  */
 export function loadRunDossiers(
   runId: string,
   files: ReadonlyArray<DossierFile>,
-  options: { readonly isLatestRun: boolean },
 ): ReadonlyArray<LoadedDossier> {
   const bases: ReadonlyArray<TrendBase> = files.map((file) => {
     const curve = windowCurve(file, file.coverage?.window_days || CURVE_WINDOW_DAYS);
@@ -230,6 +253,11 @@ export function loadRunDossiers(
       null,
     );
     const sources = new Set(evidence.map((item) => item.source));
+    const trendKey = trendKeyOf(file);
+    const lastActivityDay = file.curve.reduce<string | null>(
+      (last, day) => (day.items > 0 && (last === null || day.day > last) ? day.day : last),
+      null,
+    );
     const summary: EditorialTrendSummary = {
       dossierId: EditorialDossierId.make(file.dossier_id),
       runId: EditorialRunId.make(runId),
@@ -249,10 +277,13 @@ export function loadRunDossiers(
       sourceCount: Math.max(sources.size, ...curve.map((day) => day.sources)),
       sources: [...sources].toSorted(),
       sparkline: curve.slice(-SPARKLINE_DAYS).map((day) => (day.known ? day.items : null)),
-      isNew: options.isLatestRun,
+      isNew: false,
+      trendKey: trendKey.key,
     };
     return {
       file,
+      trendKey,
+      lastActivityDay,
       summary,
       curve,
       coverage: (file.coverage?.by_source ?? []).map((entry) => ({

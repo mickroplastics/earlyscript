@@ -48,6 +48,7 @@ import * as EarlyscriptAnalytics from "./earlyscript/analytics.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
 import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
+import * as EditorialLayer from "./editorial/layer.ts";
 import * as EditorialPersistence from "./editorial/persistenceLayer.ts";
 import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
 import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
@@ -630,8 +631,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
-  // Results reads the `EditorialSql` that the editorial storage below publishes.
+  // Read side, importer, inbox commands and Results, all over the storage aroundOrchestration mounts.
   Layer.provideMerge(EditorialResultsRpc.layer),
+  Layer.provideMerge(EditorialLayer.layer),
   Layer.provideMerge(
     EditorialRuntime.aroundOrchestration(layerOrchestrationApplication, EditorialPersistence.layer),
   ),
