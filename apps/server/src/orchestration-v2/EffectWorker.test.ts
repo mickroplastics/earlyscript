@@ -34,6 +34,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -356,7 +357,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
       }),
     );
     const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
-      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+      Layer.provide(Layer.mergeAll(layerOutbox, layerExecutor, ManualThreadPolicy.allowAll)),
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
@@ -426,7 +427,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
       }),
     );
     const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
-      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+      Layer.provide(Layer.mergeAll(layerOutbox, layerExecutor, ManualThreadPolicy.allowAll)),
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
@@ -492,7 +493,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
       }),
     );
     const layerWorker = EffectWorker.layerWithOptions({ workerId }).pipe(
-      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+      Layer.provide(Layer.mergeAll(layerOutbox, layerExecutor, ManualThreadPolicy.allowAll)),
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(

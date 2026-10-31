@@ -50,6 +50,7 @@ import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
 import * as EditorialPersistence from "./editorial/persistenceLayer.ts";
 import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
+import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -629,8 +630,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
+  // Results reads the `EditorialSql` that the editorial storage below publishes.
   Layer.provideMerge(EditorialResultsRpc.layer),
-  Layer.provideMerge(layerOrchestrationApplication),
+  Layer.provideMerge(
+    EditorialRuntime.aroundOrchestration(layerOrchestrationApplication, EditorialPersistence.layer),
+  ),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
@@ -638,7 +642,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
-  Layer.provideMerge(EditorialPersistence.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),

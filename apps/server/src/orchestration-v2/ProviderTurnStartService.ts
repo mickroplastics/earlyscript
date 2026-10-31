@@ -55,6 +55,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -143,6 +144,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ManualThreadPolicy.ManualThreadPolicy
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -158,6 +160,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const manualThreadPolicy = yield* ManualThreadPolicy.ManualThreadPolicy;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
@@ -490,6 +493,21 @@ export const layer: Layer.Layer<
           });
         },
       );
+      // Earlyscript: a manual video thread never opens a provider session. Covers work
+      // that skipped admission, such as queued runs and effects replayed after a
+      // restart; the run fails visibly instead of waiting (docs/upstream-divergence.md §10).
+      const manualThreadCheck = yield* Effect.result(
+        manualThreadPolicy.assertAgentAllowed(input.threadId),
+      );
+      if (manualThreadCheck._tag === "Failure") {
+        yield* settleStartFailure({
+          signal: "manual-thread-agent-blocked",
+          title: "No agent runs in a manual video thread",
+          error: manualThreadCheck.failure,
+          message: manualThreadCheck.failure.message,
+        });
+        return;
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
