@@ -13,12 +13,14 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import { EditorialCommandService, type RecordDecisionInput } from "./EditorialCommandService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { Decision, ScriptVersion, VideoThread } from "./persistence/EditorialModel.ts";
 import {
   type EditorialConflictError,
   type EditorialInvalidInputError,
   EditorialNotFoundError,
   type EditorialPersistenceError,
+  toPersistenceError,
 } from "./persistence/Errors.ts";
 
 export const ScriptFileFailure = Schema.Literals([
@@ -92,7 +94,9 @@ export class ScriptVersionService extends Context.Service<
     readonly snapshot: (threadId: string) => Effect.Effect<ScriptVersion, ReadError>;
     /**
      * Snapshots the script, then records the decision. Fails with a conflict
-     * when `scriptVersionHash` is not the content the server just read.
+     * when `scriptVersionHash` is not the content the server just read, and
+     * with `not-found` when the script file is gone but the thread had saved a
+     * version or the decision names one.
      */
     readonly decide: (
       input: RecordDecisionInput,
@@ -109,6 +113,7 @@ const isWorkspaceRelative = (path: string) =>
   !NodePath.win32.isAbsolute(path);
 
 const make = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
   const threads = yield* EditorialThreadService;
   const commands = yield* EditorialCommandService;
   const threadManagement = yield* ThreadManagement.ThreadManagementService;
@@ -186,14 +191,31 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Only a thread that never saved a script may be decided without its file,
+   * and only by a decision that names no version. A script that disappeared
+   * after a snapshot is refused until the operator restores or replaces it.
+   */
+  const neverHadScript = Effect.fn("ScriptVersionService.neverHadScript")(function* (
+    input: RecordDecisionInput,
+  ) {
+    if ((input.scriptVersionHash ?? "").trim() !== "") return false;
+    const rows = yield* sql<{ readonly script_head_hash: string | null }>`
+      SELECT script_head_hash FROM editorial_video_threads WHERE thread_id = ${input.threadId}
+    `.pipe(Effect.mapError(toPersistenceError("editorial.scriptHead")));
+    return (rows[0]?.script_head_hash ?? null) === null;
+  });
+
   const decide: ScriptVersionService["Service"]["decide"] = Effect.fn(
     "ScriptVersionService.decide",
   )(function* (input) {
-    // A thread decided without ever writing a script has nothing to snapshot.
     yield* snapshot(input.threadId).pipe(
       Effect.catchIf(
         (error) => error._tag === "ScriptFileError" && error.reason === "not-found",
-        () => Effect.void,
+        (missing) =>
+          neverHadScript(input).pipe(
+            Effect.flatMap((never) => (never ? Effect.void : Effect.fail(missing))),
+          ),
       ),
     );
     return yield* commands.recordDecision(input);

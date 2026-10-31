@@ -150,6 +150,53 @@ describe("ScriptVersionService", () => {
     ),
   );
 
+  it.effect("refuses to decide on a script that disappeared after a snapshot", () =>
+    withVideoWorkspace(({ workspace, write }) =>
+      Effect.gen(function* () {
+        const scripts = yield* ScriptVersionService;
+        yield* write(SCRIPT_PATH, SCRIPT);
+        const saved = yield* scripts.snapshot(VIDEO_THREAD_ID);
+        NodeFS.rmSync(NodePath.join(workspace, SCRIPT_PATH));
+
+        for (const scriptVersionHash of [saved.contentHash, undefined]) {
+          const error = yield* Effect.flip(
+            scripts.decide({
+              threadId: VIDEO_THREAD_ID,
+              action: "accept",
+              utility: 4,
+              scriptVersionHash,
+            }),
+          );
+          assert.strictEqual(error._tag, "ScriptFileError");
+          assert.strictEqual(error._tag === "ScriptFileError" ? error.reason : "", "not-found");
+        }
+        const decisions = yield* EditorialEventLog.use((log) => log.readSince(0));
+        assert.isFalse(decisions.some((event) => event.type.startsWith("decision.")));
+      }),
+    ),
+  );
+
+  it.effect("refuses a hash for a script the thread never wrote", () =>
+    withVideoWorkspace(() =>
+      Effect.gen(function* () {
+        const error = yield* ScriptVersionService.use((scripts) =>
+          Effect.flip(
+            scripts.decide({
+              threadId: VIDEO_THREAD_ID,
+              action: "accept",
+              utility: 4,
+              scriptVersionHash: sha256(SCRIPT),
+            }),
+          ),
+        );
+        assert.strictEqual(
+          error._tag === "ScriptFileError" ? error.reason : error._tag,
+          "not-found",
+        );
+      }),
+    ),
+  );
+
   it.effect("decides without a version when the thread never wrote its script", () =>
     withVideoWorkspace(() =>
       Effect.gen(function* () {
