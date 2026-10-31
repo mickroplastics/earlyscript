@@ -1,7 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ThreadId, type EditorialVideoState } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -49,7 +49,11 @@ vi.mock(import("../components/ui/toast"), async (original) => {
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { applyPreviewServerSnapshot, clearThreadPreviewState } from "../previewStateStore";
 import { EditorialThreadRouteView } from "./EditorialThreadRouteView";
-import { useManualBrowserLocale } from "./manualBrowserLocale";
+import {
+  MANUAL_BROWSER_TEXT,
+  translateBrowserText,
+  useManualBrowserLocale,
+} from "./manualBrowserLocale";
 import { ManualVideoWorkspace } from "./ManualVideoWorkspace";
 import { MANUAL_EXPLORING, MANUAL_WRITING } from "./videoThread.fixture";
 
@@ -117,6 +121,29 @@ describe("EditorialThreadRouteView", () => {
 describe("a deleted manual thread", () => {
   const target = { kind: "server" as const, threadRef: THREAD_REF };
 
+  it("leaves the open workspace when another client deletes the thread", async () => {
+    using _setup = setup(MANUAL_EXPLORING);
+    await using screen = await renderWithRegistry(
+      <EditorialThreadRouteView target={target} background={false} />,
+    );
+    await expect.element(screen.getByTestId("manual-video-workspace")).toBeVisible();
+    // The subscription brings the view the deletion event refreshed: deleted, clock stopped.
+    setup({
+      ...MANUAL_EXPLORING,
+      thread: { ...MANUAL_EXPLORING.thread, deleted: true },
+      clock: { ...MANUAL_EXPLORING.clock, state: { _tag: "idle" } },
+    });
+    testState.mode = "manual-deleted";
+    await screen.rerender(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <EditorialThreadRouteView target={target} background={false} />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByText("Este hilo manual se borró")).toBeVisible();
+    expect(screen.container.querySelector("[data-testid='manual-video-workspace']")).toBeNull();
+    expect(screen.container.querySelector("[role='timer']")).toBeNull();
+  });
+
   it("shows what remains instead of the workspace, and purges after confirmation", async () => {
     using _setup = setup({
       ...MANUAL_EXPLORING,
@@ -154,33 +181,113 @@ describe("a deleted manual thread", () => {
 });
 
 function LocalizedBrowserDouble() {
-  useManualBrowserLocale();
+  const ref = useRef<HTMLDivElement>(null);
+  useManualBrowserLocale(ref);
   return (
-    <div>
-      <button type="button" aria-label="Float preview over chat">
-        Release control
-      </button>
-      <input aria-label="Search or enter URL" placeholder="Search or enter URL" />
-      <span>Hacker News</span>
-      <button type="button" aria-label="Remove github.com/trending from history" />
-    </div>
+    <>
+      <div ref={ref} data-testid="localized">
+        <button type="button" aria-label="Float preview over chat">
+          Release control
+        </button>
+        <input aria-label="Search or enter URL" placeholder="Search or enter URL" />
+        <span>Hacker News</span>
+        <button type="button" aria-label="Remove github.com/trending from history" />
+      </div>
+      <p data-testid="outside">Release control</p>
+    </>
   );
 }
 
+/** Counts every MutationObserver callback the page runs while `body` executes. */
+async function countObserverCallbacks(body: () => Promise<void>): Promise<number> {
+  const Native = window.MutationObserver;
+  let callbacks = 0;
+  window.MutationObserver = class extends Native {
+    constructor(callback: MutationCallback) {
+      super((records, observer) => {
+        callbacks += 1;
+        if (callbacks > 200) {
+          observer.disconnect();
+          return;
+        }
+        callback(records, observer);
+      });
+    }
+  };
+  try {
+    await body();
+  } finally {
+    window.MutationObserver = Native;
+  }
+  return callbacks;
+}
+
 describe("useManualBrowserLocale", () => {
-  it("puts the embedded browser's controls in Spanish and leaves page text alone", async () => {
-    await using screen = await renderWithRegistry(<LocalizedBrowserDouble />);
+  it("never maps a string to itself or to another key", () => {
+    for (const [key, value] of Object.entries(MANUAL_BROWSER_TEXT)) {
+      expect(value).not.toBe(key);
+      expect(Object.hasOwn(MANUAL_BROWSER_TEXT, value)).toBe(false);
+    }
+    expect(translateBrowserText("Zoom")).toBeUndefined();
+    expect(translateBrowserText("Profile: ")).toBe("Perfil: ");
+    expect(translateBrowserText("Recargar")).toBeUndefined();
+  });
+
+  it("translates the workspace only, stays quiet on a dynamic menu, and restores on unmount", async () => {
+    let screen: Awaited<ReturnType<typeof renderWithRegistry>> | undefined;
+    const callbacks = await countObserverCallbacks(async () => {
+      screen = await renderWithRegistry(<LocalizedBrowserDouble />);
+      const root = screen.getByTestId("localized").element();
+      await expect
+        .element(screen.getByRole("button", { name: "Ventana flotante del navegador" }))
+        .toHaveTextContent("Soltar el control");
+      // Sol's reproduction: the browser menu's "Zoom" appears after the observer started.
+      const added = ["Zoom", "Hard reload", "Zoom"].map((label) => {
+        const button = root.appendChild(document.createElement("button"));
+        button.textContent = label;
+        return button;
+      });
+      await vi.waitFor(() => expect(added[1]!.textContent).toBe("Recargar sin caché"));
+      // A menu portal opened from the workspace, and one opened elsewhere. Each portal goes
+      // in with a string inside the workspace, so the same batch shows it was looked at.
+      root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      const menu = document.body.appendChild(document.createElement("div"));
+      menu.textContent = "Clear cookies";
+      await vi.waitFor(() => expect(menu.textContent).toBe("Borrar las cookies"));
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      const other = document.body.appendChild(document.createElement("div"));
+      other.textContent = "Clear cache";
+      const marker = root.appendChild(document.createElement("span"));
+      marker.textContent = "Watching";
+      await vi.waitFor(() => expect(marker.textContent).toBe("Observando"));
+      expect(other.textContent).toBe("Clear cache");
+      marker.remove();
+      menu.remove();
+      other.remove();
+    });
+    // A handful of batches, not a loop.
+    expect(callbacks).toBeLessThanOrEqual(10);
+    const view = screen!;
+    const texts = [...view.getByTestId("localized").element().querySelectorAll("button")].map(
+      (button) => button.textContent,
+    );
+    expect(texts).toEqual(["Soltar el control", "", "Zoom", "Recargar sin caché", "Zoom"]);
     await expect
-      .element(screen.getByRole("button", { name: "Ventana flotante del navegador" }))
-      .toHaveTextContent("Soltar el control");
-    await expect
-      .element(screen.getByRole("textbox", { name: "Busca o escribe una dirección" }))
+      .element(view.getByRole("textbox", { name: "Busca o escribe una dirección" }))
       .toHaveAttribute("placeholder", "Busca o escribe una dirección");
-    await expect.element(screen.getByText("Hacker News")).toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "Quitar github.com/trending del historial" }))
+      .element(view.getByRole("button", { name: "Quitar github.com/trending del historial" }))
       .toBeInTheDocument();
-    expect(screen.container.textContent).not.toContain("chat");
+    // Outside the workspace, the app keeps its own strings.
+    expect(view.getByTestId("outside").element().textContent).toBe("Release control");
+
+    const button = view.getByTestId("localized").element().querySelector("button")!;
+    const input = view.getByTestId("localized").element().querySelector("input")!;
+    await view.unmount();
+    // React removed the tree; what this hook rewrote went back first.
+    expect(button.getAttribute("aria-label")).toBe("Float preview over chat");
+    expect(button.textContent).toBe("Release control");
+    expect(input.getAttribute("placeholder")).toBe("Search or enter URL");
   });
 });
 

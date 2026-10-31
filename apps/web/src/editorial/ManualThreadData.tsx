@@ -17,6 +17,8 @@ import {
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
 import { Button } from "../components/ui/button";
+import { Collapsible, CollapsiblePanel } from "../components/ui/collapsible";
+import { CollapsibleSectionHeader } from "../components/ui/collapsible-section-header";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { toastManager } from "../components/ui/toast";
@@ -25,31 +27,49 @@ import { videoFailureText } from "./videoThread.logic";
 import { editorialVideoEnvironment } from "./videoState";
 
 /**
- * What a manual thread keeps and how it goes away: the text of the header popover and of the
- * deleted-thread page. Keep it in step with §24 of docs/upstream-divergence.md.
+ * What a manual thread keeps and how it goes away, in the operator's terms first and the
+ * storage behind a fold. Shown in the header popover and on the deleted-thread page; keep it
+ * in step with §24 of docs/upstream-divergence.md.
  */
 function ManualRetentionText() {
+  const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col gap-2 text-xs">
       <p className="font-medium text-foreground text-sm">Qué guarda este hilo</p>
+      <ul className="list-disc ps-4 text-muted-foreground">
+        <li>Las páginas que abriste en el navegador, con su dirección completa y la hora.</li>
+        <li>Tus capturas y sus notas.</li>
+        <li>Cada versión guardada del guion.</li>
+        <li>La decisión, con su motivo y los tiempos de cada etapa, y los resultados del video.</li>
+      </ul>
       <p className="text-muted-foreground">
-        En <code>editorial.sqlite</code>, junto al estado del servidor: cada página que cargó el
-        navegador (dirección completa, título, pestaña y hora; <code>editorial_browser_visits</code>
-        ), tus capturas con su nota (<code>editorial_captures</code>), cada versión del guion (
-        <code>editorial_script_versions</code>
-        ), la decisión con sus tiempos (<code>editorial_decisions</code>), los tramos del reloj (
-        <code>editorial_work_intervals</code>), los resultados (<code>editorial_video_results</code>
-        ) y el registro de eventos (<code>editorial_events</code>). Las copias de versiones
-        decididas que abriste quedan en <code>editorial/versions/</code> del directorio de estado.
+        Se guardan en este equipo sin fecha de borrado. Borrar el hilo en la barra lateral no los
+        borra.
       </p>
       <p className="text-muted-foreground">
-        No hay plazo de borrado automático. Borrar el hilo en la barra lateral no borra estos datos.
+        «Quitar» oculta una captura de la lista; sigue guardada. «Borrar datos del hilo» elimina
+        todo lo anterior: primero borra el hilo y luego usa ese botón en la página que aparece. El
+        archivo del guion en el proyecto no se toca.
       </p>
-      <p className="text-muted-foreground">
-        «Quitar» oculta una captura de la lista; sus datos siguen guardados. «Borrar datos del hilo»
-        los elimina de verdad: primero borra el hilo y después usa ese botón en la página que
-        aparece. El archivo del guion en el proyecto no se toca.
-      </p>
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleSectionHeader expanded={open} onClick={() => setOpen(!open)}>
+          Detalle técnico
+        </CollapsibleSectionHeader>
+        <CollapsiblePanel>
+          <p className="pt-1 text-muted-foreground">
+            Base <code>editorial.sqlite</code>, junto a <code>statev2.sqlite</code> en el directorio
+            de estado del servidor. Tablas: <code>editorial_browser_visits</code> (URL, título,
+            pestaña, origen, hora), <code>editorial_captures</code> (URL, título, nota,{" "}
+            <code>removed_at</code>), <code>editorial_script_versions</code>,{" "}
+            <code>editorial_decisions</code>, <code>editorial_work_intervals</code>,{" "}
+            <code>editorial_video_results</code>, <code>editorial_video_threads</code> y{" "}
+            <code>editorial_events</code> (los eventos de capturas y visitas llevan URL y título).
+            Copias de solo lectura de versiones abiertas en{" "}
+            <code>&lt;estado&gt;/editorial/versions/&lt;hash&gt;/</code>. El límite de 200 páginas
+            es de pantalla, no de conservación.
+          </p>
+        </CollapsiblePanel>
+      </Collapsible>
     </div>
   );
 }

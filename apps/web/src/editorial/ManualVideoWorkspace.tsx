@@ -1,6 +1,6 @@
 import type { EditorialVideoState, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { SaveIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -199,6 +199,8 @@ function ManualVideoWorkspaceView({
   const stage = manualStageOf(video);
   const decided = video.decision !== null;
   const [sideTab, setSideTab] = useState<"captures" | "browser">("captures");
+  const rootRef = useRef<HTMLDivElement>(null);
+  useManualBrowserLocale(rootRef);
   const captures = (
     <ManualCaptureList
       captures={video.captures}
@@ -211,6 +213,7 @@ function ManualVideoWorkspaceView({
 
   return (
     <div
+      ref={rootRef}
       className="flex min-h-0 flex-1 flex-col"
       data-testid="manual-video-workspace"
       data-environment-id={environmentId}
@@ -334,7 +337,6 @@ function LiveManualWorkspace({
   readonly receivedAtMs: number;
 }) {
   const nowMs = useNowSecond();
-  useManualBrowserLocale();
   const shell = useQuietThreadShell(threadRef);
   const workspaceRoot = useThreadWorkspaceRoot(threadRef);
   const page = useCapturablePage(threadRef);
