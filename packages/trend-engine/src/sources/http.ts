@@ -28,6 +28,43 @@ export interface HttpOptions {
   readonly requestTimeoutMs?: number;
   /** Return 2xx bodies as text instead of JSON (feeds, robots.txt); default only for `rss`. */
   readonly text?: boolean;
+  /** Never attach the source's credentials (robots.txt clients). */
+  readonly anonymous?: boolean;
+}
+
+/** Secret headers of a source, bound to the one origin (scheme, host and port) that issued them. */
+export interface Credential {
+  readonly origin: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Credentials per source, read when a client is created. A new keyed source (HF_TOKEN for
+ * huggingface) adds its entry here; credentialHeaders keeps it on its origin.
+ */
+export const CREDENTIALS: Partial<Record<HttpSource, () => Credential | null>> = {
+  github: () =>
+    process.env.GITHUB_TOKEN
+      ? {
+          origin: "https://api.github.com",
+          headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+        }
+      : null,
+};
+
+/**
+ * Headers a request to `url` may carry: the credential's own only on its exact origin and
+ * never for robots.txt, so a redirect to another host, or that host's robots.txt, gets none.
+ */
+export function credentialHeaders(
+  credential: Credential | null,
+  url: string,
+): Readonly<Record<string, string>> {
+  if (!credential) return {};
+  const target = new URL(url);
+  return target.origin === credential.origin && target.pathname !== "/robots.txt"
+    ? credential.headers
+    : {};
 }
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
@@ -95,7 +132,7 @@ export function createHttpClient(
   const fetcher = options.fetch ?? fetch;
   const deadline = now() + (options.dayTimeoutMs ?? 300_000);
   const pause = PAUSE_MS[source];
-  const token = source === "github" ? process.env.GITHUB_TOKEN : undefined;
+  const credential = options.anonymous ? null : (CREDENTIALS[source]?.() ?? null);
   async function delay(ms: number, limited: boolean) {
     if (now() + ms >= deadline)
       throw new SourceFailure(
@@ -119,8 +156,9 @@ export function createHttpClient(
           headers: {
             "User-Agent": USER_AGENT,
             ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...extraHeaders,
+            // Last: on its own origin the credential wins over any caller header.
+            ...credentialHeaders(credential, url),
           },
           // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
           redirect: "manual",

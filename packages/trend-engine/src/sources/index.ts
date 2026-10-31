@@ -80,7 +80,7 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
   return {
     descriptor: SOURCES.lobsters,
     collectDay: (day) => {
-      const text = createHttpClient("lobsters", { ...options, text: true }, state);
+      const text = createHttpClient("lobsters", { ...options, text: true, anonymous: true }, state);
       const json = createHttpClient("lobsters", options, state);
       const robots = robotsGate(() => text, rules);
       return collectLobstersDay(
@@ -131,7 +131,7 @@ export function liveSources(
       descriptor: SOURCES[id],
       collectDay: (day) => {
         // API URLs are not robots-gated, but a redirect away from them is.
-        const text = createHttpClient(id, { ...options, text: true }, state);
+        const text = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
         const json = createHttpClient(id, options, state);
         const get = followRedirects(
           () => json,

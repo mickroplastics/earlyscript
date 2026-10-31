@@ -82,6 +82,8 @@ describe("engine purge", () => {
         items_removed: 1,
         files_rewritten: 1,
         purged_at: "2026-11-01T00:00:00.000Z",
+        unchanged: false,
+        message: null,
       });
       const byFeed = await purgeCorpus({ dir: root, source: "rss", feed: feeds[1]!.feedUrl });
       expect(byFeed).toMatchObject({ match: "feed", items_removed: 2 });
@@ -123,6 +125,52 @@ describe("engine purge", () => {
         expect(await NodeFSP.readFile(NodePath.join(root, "history", file), "utf8")).not.toContain(
           "two.example",
         );
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("leaves the corpus byte for byte unchanged on a repeated or unmatched purge", async () => {
+    const { root } = await corpus();
+    try {
+      const snapshot = async () => {
+        const out: Record<string, string> = {};
+        const walk = async (dir: string): Promise<void> => {
+          for (const entry of await NodeFSP.readdir(dir, { withFileTypes: true })) {
+            const path = NodePath.join(dir, entry.name);
+            if (entry.isDirectory()) await walk(path);
+            else out[NodePath.relative(root, path)] = await NodeFSP.readFile(path, "utf8");
+          }
+        };
+        await walk(root);
+        return out;
+      };
+      const first = await purgeCorpus({ dir: root, source: "rss", uri: "https://one.example/a" });
+      expect(first).toMatchObject({ unchanged: false, items_removed: 1 });
+      const after = await snapshot();
+      const again = await purgeCorpus({ dir: root, source: "rss", uri: "https://one.example/a" });
+      expect(again).toEqual({
+        ...first,
+        unchanged: true,
+        message: "Already purged; corpus unchanged",
+      });
+      expect(await snapshot()).toEqual(after);
+      const missing = await purgeCorpus({
+        dir: root,
+        source: "rss",
+        uri: "https://missing.example/absent",
+      });
+      expect(missing).toMatchObject({
+        match: "uri",
+        items_removed: 0,
+        files_rewritten: 0,
+        unchanged: true,
+        message: "No matches; corpus unchanged",
+      });
+      expect(await snapshot()).toEqual(after);
+      // The same value under another match kind is a different purge.
+      expect(
+        await purgeCorpus({ dir: root, source: "rss", feed: "https://one.example/a" }),
+      ).toMatchObject({ unchanged: true, message: "No matches; corpus unchanged" });
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
