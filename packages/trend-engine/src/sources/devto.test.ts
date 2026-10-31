@@ -101,6 +101,31 @@ describe("dev.to source", () => {
     expect(result.coverage?.note).toContain("dev.to listing is not newest first");
   });
 
+  it("keeps the day partial when the CDN serves a next page older than the previous one", async () => {
+    const { get } = await recordedListing();
+    // Page 2 comes from a cache entry taken 10 minutes before page 1 and shares no article.
+    const cached: GetResponse = async (url) => {
+      const response = await get(url);
+      if (!url.endsWith("page=2")) return response;
+      return { ...response, age: 600, body: (response.body as Array<unknown>).slice(1) };
+    };
+    const collect = devtoCollector();
+    const day = await collect("2026-10-30", cached, allow);
+    expect(day.coverage?.status).toBe("partial");
+    expect(day.coverage?.note).toMatch(
+      /^possible gap 2026-10-30T20:13:55\.000Z\.\.2026-10-30T20:15:17\.000Z: cached page older/,
+    );
+    // The day before does not reach that boundary.
+    expect((await collect("2026-10-29", cached, allow)).coverage?.note).not.toContain("gap");
+    // An old cached page that repeats an article of the previous one leaves no gap.
+    const overlapping: GetResponse = async (url) => {
+      const response = await get(url);
+      return url.endsWith("page=2") ? { ...response, age: 600 } : response;
+    };
+    const whole = await devtoCollector()("2026-10-30", overlapping, allow);
+    expect(whole.coverage?.status).toBe("complete");
+  });
+
   it("identifies itself, paces at 3 s and honors Retry-After", async () => {
     const waits: Array<number> = [];
     let clock = 0;

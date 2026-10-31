@@ -58,7 +58,10 @@ interface Tagged {
 /**
  * The listing is walked once for a range of days and kept between days; only tagged articles
  * stay in memory. Page numbers shift while new articles arrive: repeats are merged by id, and
- * an article deleted during the walk can push one unseen article back a page.
+ * an article deleted during the walk can push one unseen article back a page. The CDN can
+ * serve a cached page (`Age`) taken before the previous one; the articles published between
+ * the two pages then fall in no page, so the days across that boundary stay `partial` and the
+ * next collect, which retries partial days, fills them by id.
  */
 export function devtoCollector(): (
   day: string,
@@ -73,6 +76,9 @@ export function devtoCollector(): (
   let ended = false;
   let firstObserved: number | null = null;
   let previousPage = new Set<number>();
+  let previousSnapshot = -Infinity;
+  /** Published-time ranges that may have fallen between a page and an older cached next page. */
+  const gaps: Array<{ from: number; to: number }> = [];
   async function reachBefore(start: number, get: GetResponse) {
     while (oldest >= start && !ended) {
       if (page >= MAX_PAGES) throw new SourceFailure("Listing page limit reached before the day");
@@ -84,6 +90,13 @@ export function devtoCollector(): (
       if (!response.body.length) ended = true;
       const seen = previousPage;
       previousPage = new Set(response.body.map((article) => article.id));
+      const snapshot = Date.parse(response.observed_at) - (response.age ?? 0) * 1000;
+      const first = Date.parse(response.body[0]?.published_at ?? "");
+      // A repeat of the previous page proves the two overlap: nothing fell between them.
+      const overlaps = response.body.some((article) => seen.has(article.id));
+      if (snapshot < previousSnapshot && !overlaps && Number.isFinite(first) && oldest !== Infinity)
+        gaps.push({ from: Math.min(first, oldest), to: Math.max(first, oldest) });
+      previousSnapshot = Math.max(previousSnapshot, snapshot);
       for (const article of response.body) {
         const published = Date.parse(article.published_at);
         if (!Number.isFinite(published)) continue;
@@ -148,6 +161,11 @@ export function devtoCollector(): (
     // Complete only when the walk passed the day start and the day had ended before it began.
     const notes: Array<string> = [];
     if (failure) notes.push(failure);
+    for (const gap of gaps)
+      if (gap.from < start + DAY_MS && gap.to >= start)
+        notes.push(
+          `possible gap ${new Date(gap.from).toISOString()}..${new Date(gap.to).toISOString()}: cached page older than the previous one`,
+        );
     if (ended && oldest >= start) notes.push("listing ended before the day start");
     if (firstObserved !== null && firstObserved < start + DAY_MS) notes.push("day not over");
     if (newestSeen === null && !failure) notes.push("empty listing");

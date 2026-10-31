@@ -9,6 +9,8 @@ export interface FrozenResponse {
   readonly body: unknown;
   /** Target of a `Link: <...>; rel="next"` header, for cursor pagination. */
   readonly next?: string | null;
+  /** Seconds a shared cache held the response (`Age`); 0 when absent. */
+  readonly age?: number;
 }
 export type GetResponse = (
   url: string,
@@ -218,7 +220,14 @@ export function createHttpClient(
         await delay(1000 * 2 ** attempt, false);
         continue;
       }
-      return { observed_at: new Date(wall()).toISOString(), status: response.status, body, next };
+      const age = Number(response.headers.get("age"));
+      return {
+        observed_at: new Date(wall()).toISOString(),
+        status: response.status,
+        body,
+        next,
+        age: Number.isFinite(age) && age > 0 ? age : 0,
+      };
     }
     throw new SourceFailure("Retry limit reached");
   };
