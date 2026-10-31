@@ -7,12 +7,21 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
-import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 // Earlyscript editorial space. Reads are views over the trend engine's runs, indexed in
 // editorial.sqlite by the server's importer. Writes change the human inbox state of a trend
-// (read, snoozed, dismissed); the server takes the actor from the authenticated session.
-// None of these methods is an MCP tool or an orchestration command.
+// (read, snoozed, dismissed) or create its video thread; the server takes the actor from the
+// authenticated session. None of these methods is an MCP tool or an orchestration command.
 
 export const EDITORIAL_WS_METHODS = {
   listRuns: "editorial.listRuns",
@@ -24,6 +33,7 @@ export const EDITORIAL_WS_METHODS = {
   unsnooze: "editorial.unsnooze",
   dismiss: "editorial.dismiss",
   reopen: "editorial.reopen",
+  createVideo: "editorial.createVideo",
 } as const;
 
 export const EditorialRunId = TrimmedNonEmptyString.pipe(Schema.brand("EditorialRunId"));
@@ -295,10 +305,40 @@ export const EditorialTrendStateResult = Schema.Struct({
 });
 export type EditorialTrendStateResult = typeof EditorialTrendStateResult.Type;
 
+/**
+ * "Crear hilo de video" from a dossier. The server reads the title and the dossier hash from
+ * its index; the client sends the project and composer defaults a new thread there would get.
+ */
+export const EditorialCreateVideoInput = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  runId: EditorialRunId,
+  dossierId: EditorialDossierId,
+  projectId: ProjectId,
+  modelSelection: ModelSelection,
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+});
+export type EditorialCreateVideoInput = typeof EditorialCreateVideoInput.Type;
+
+/** `created: false` when the trend already had its video thread; `threadId` is that thread. */
+export const EditorialCreateVideoResult = Schema.Struct({
+  trendKey: EditorialTrendKey,
+  threadId: ThreadId,
+  created: Schema.Boolean,
+  state: EditorialTrendInboxState,
+});
+export type EditorialCreateVideoResult = typeof EditorialCreateVideoResult.Type;
+
 export class EditorialCommandError extends Schema.TaggedError<EditorialCommandError>()(
   "EditorialCommandError",
   {
-    reason: Schema.Literals(["invalid-input", "not-found", "storage", "unavailable"]),
+    /** `launch-failed`: the video thread is registered but T3 could not create it; retry. */
+    reason: Schema.Literals([
+      "invalid-input",
+      "not-found",
+      "storage",
+      "unavailable",
+      "launch-failed",
+    ]),
     message: Schema.String,
   },
 ) {}
@@ -382,6 +422,12 @@ const EditorialReopenRpc = Rpc.make(EDITORIAL_WS_METHODS.reopen, {
   error: commandError,
 });
 
+const EditorialCreateVideoRpc = Rpc.make(EDITORIAL_WS_METHODS.createVideo, {
+  payload: EditorialCreateVideoInput,
+  success: EditorialCreateVideoResult,
+  error: commandError,
+});
+
 /** Merged into `WsRpcGroup`, so it shares the socket, the scope middleware and the typed client. */
 export const EditorialRpcGroup = RpcGroup.make(
   EditorialListRunsRpc,
@@ -393,12 +439,13 @@ export const EditorialRpcGroup = RpcGroup.make(
   EditorialUnsnoozeRpc,
   EditorialDismissRpc,
   EditorialReopenRpc,
+  EditorialCreateVideoRpc,
 );
 
 /**
  * Reads need `orchestration:read`. Inbox writes need `orchestration:operate`, the scope that
  * already separates acting from observing for threads; a session without it cannot change
- * editorial state.
+ * editorial state. `createVideo` launches a T3 thread, which needs the same scope.
  */
 export const EDITORIAL_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_WS_METHODS.listRuns]: AuthOrchestrationReadScope,
@@ -410,6 +457,7 @@ export const EDITORIAL_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_WS_METHODS.unsnooze]: AuthOrchestrationOperateScope,
   [EDITORIAL_WS_METHODS.dismiss]: AuthOrchestrationOperateScope,
   [EDITORIAL_WS_METHODS.reopen]: AuthOrchestrationOperateScope,
+  [EDITORIAL_WS_METHODS.createVideo]: AuthOrchestrationOperateScope,
 } as const;
 
 /** Methods that change editorial state. Never registered as MCP tools or orchestration commands. */
@@ -419,4 +467,5 @@ export const EDITORIAL_WRITE_METHODS = [
   EDITORIAL_WS_METHODS.unsnooze,
   EDITORIAL_WS_METHODS.dismiss,
   EDITORIAL_WS_METHODS.reopen,
+  EDITORIAL_WS_METHODS.createVideo,
 ] as const;

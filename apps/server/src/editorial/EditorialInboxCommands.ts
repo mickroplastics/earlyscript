@@ -1,11 +1,14 @@
 import {
   EditorialCommandError,
+  type EditorialCreateVideoInput,
+  type EditorialCreateVideoResult,
   type EditorialDismissInput,
   type EditorialMarkReadInput,
   type EditorialSnoozeInput,
   type EditorialTrendKey,
   type EditorialTrendKeyInput,
   type EditorialTrendStateResult,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -14,6 +17,7 @@ import * as Option from "effect/Option";
 
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
+import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { SnoozeReturnCondition } from "./persistence/EditorialModel.ts";
 import {
@@ -49,12 +53,20 @@ export interface EditorialInboxCommandsShape {
   readonly unsnooze: (session: EditorialSession, input: EditorialTrendKeyInput) => Result;
   readonly dismiss: (session: EditorialSession, input: EditorialDismissInput) => Result;
   readonly reopen: (session: EditorialSession, input: EditorialTrendKeyInput) => Result;
+  /**
+   * One assisted video thread per trend: a trend already in production answers with its
+   * thread, and a retry of the same dossier replays the registered operation.
+   */
+  readonly createVideo: (
+    session: EditorialSession,
+    input: EditorialCreateVideoInput,
+  ) => Effect.Effect<EditorialCreateVideoResult, EditorialCommandError>;
 }
 
 /**
- * The inbox commands a person issues from the editorial space. Each resolves run cutoffs and
- * snooze baselines from the run index, so the client cannot reorder runs or move a baseline,
- * and records the session as the operator. Reached only through the WebSocket RPC, behind
+ * The inbox commands a person issues from the editorial space. Each resolves run cutoffs,
+ * snooze baselines and dossier hashes from the run index, so the client cannot reorder runs,
+ * move a baseline or attach another dossier, and records the session as the operator. Reached only through the WebSocket RPC, behind
  * `orchestration:operate`; no MCP tool or orchestration command calls it.
  */
 export class EditorialInboxCommands extends Context.Service<
@@ -73,18 +85,20 @@ const commandError =
           : message,
     });
 
-/** Storage and validation errors of the command service, in the contract's terms. */
+/** Storage, validation and launch errors of the editorial services, in the contract's terms. */
 const fromCommandFailure = (cause: {
   readonly _tag: string;
   readonly message: string;
 }): EditorialCommandError =>
   new EditorialCommandError({
     reason:
-      cause._tag === "EditorialInvalidInputError"
+      cause._tag === "EditorialInvalidInputError" || cause._tag === "EditorialConflictError"
         ? "invalid-input"
         : cause._tag === "EditorialNotFoundError"
           ? "not-found"
-          : "storage",
+          : cause._tag === "EditorialVideoLaunchError"
+            ? "launch-failed"
+            : "storage",
     message: cause.message,
   });
 
@@ -92,6 +106,7 @@ const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const commands = yield* EditorialCommandService;
   const read = yield* EditorialReadService;
+  const threads = yield* EditorialThreadService;
 
   const operator = (session: EditorialSession) =>
     ({ actor: "operator", actorSessionId: session.sessionId }) as const;
@@ -102,9 +117,10 @@ const make = Effect.gen(function* () {
       Effect.mapError(commandError("storage", "Cannot read the trend state")),
     );
 
-  const markRead: EditorialInboxCommandsShape["markRead"] = Effect.fn(
-    "EditorialInboxCommands.markRead",
-  )(function* (session, input) {
+  /** The indexed run and dossier the operator acted on, which must belong to the trend. */
+  const requireTrendDossier = Effect.fn("EditorialInboxCommands.requireTrendDossier")(function* (
+    input: EditorialMarkReadInput,
+  ) {
     const run = yield* selectRun(sql, input.runId).pipe(
       Effect.mapError(commandError("storage", "Cannot read the run index")),
     );
@@ -123,12 +139,19 @@ const make = Effect.gen(function* () {
         `Dossier ${input.dossierId} of run ${input.runId} is not trend ${input.trendKey}`,
       )();
     }
+    return { run: run.value, dossier: dossier.value };
+  });
+
+  const markRead: EditorialInboxCommandsShape["markRead"] = Effect.fn(
+    "EditorialInboxCommands.markRead",
+  )(function* (session, input) {
+    const { run } = yield* requireTrendDossier(input);
     yield* commands
       .markRead({
         ...operator(session),
         trendKey: input.trendKey,
         runId: input.runId,
-        runCutoffAt: run.value.cutoff_at,
+        runCutoffAt: run.cutoff_at,
         dossierId: input.dossierId,
       })
       .pipe(Effect.mapError(fromCommandFailure));
@@ -201,7 +224,47 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return EditorialInboxCommands.of({ markRead, snooze, unsnooze, dismiss, reopen });
+  const createVideo: EditorialInboxCommandsShape["createVideo"] = Effect.fn(
+    "EditorialInboxCommands.createVideo",
+  )(function* (_session, input) {
+    const { dossier } = yield* requireTrendDossier(input);
+    const existing = yield* respond(input.trendKey);
+    if (existing.state.production !== null) {
+      return {
+        ...existing,
+        threadId: ThreadId.make(existing.state.production.threadId),
+        created: false,
+      };
+    }
+    const shown = yield* read
+      .getDossier({ runId: input.runId, dossierId: input.dossierId, evidenceLimit: 1 })
+      .pipe(Effect.mapError(commandError("not-found", "Cannot read the dossier")));
+    const created = yield* threads
+      .createVideo({
+        // Derived from the dossier, so a double click or a retry replays the same operation.
+        operationId: `editorial:trend-video:${input.runId}:${input.dossierId}`,
+        projectId: input.projectId,
+        mode: "assisted",
+        title: shown.trend.presentation?.title ?? shown.trend.label,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        creationSource: "web",
+        trendKey: input.trendKey,
+        runId: input.runId,
+        dossierId: input.dossierId,
+        dossierHash: dossier.content_hash,
+      })
+      .pipe(Effect.mapError(fromCommandFailure));
+    const { state } = yield* respond(input.trendKey);
+    return {
+      trendKey: input.trendKey,
+      threadId: ThreadId.make(created.thread.threadId),
+      created: created.created,
+      state,
+    };
+  });
+
+  return EditorialInboxCommands.of({ markRead, snooze, unsnooze, dismiss, reopen, createVideo });
 });
 
 export const layer = Layer.effect(EditorialInboxCommands, make);
