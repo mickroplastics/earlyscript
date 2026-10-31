@@ -21,7 +21,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`, `01f65c0c49`, `21a7582128` y `e10a0ddf3e`; ningún archivo de upstream tocado.
 16. Hilo de video, interfaz (`es/video-thread`), base `0d84824fea`, con `main` fusionado en `01f65c0c49`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `client-runtime`, `ThreadDetailsPanel.tsx` y `ChatHeader.tsx`, y `flushFileSaveSession` en `fileSaveSessions.ts`.
 17. Lectura de corridas nativas del motor (`es/dossier-native`), base `ed5c3a2903`, con `main` fusionado en `0d84824fea` y `3e4c6c0741`; único archivo de upstream tocado: `packages/contracts/src/editorial.ts`.
-20. Fuentes Hugging Face y dev.to del motor (`es/sources-hf-devto`, unidad S3), base `f75eebfae2`; ningún archivo de upstream tocado.
+18. Fuentes Hugging Face y dev.to del motor (`es/sources-hf-devto`, unidad S3), base `f75eebfae2`; ningún archivo de upstream tocado.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1206,16 +1206,16 @@ dev.to (`devto.ts`), política `census`:
 
 Licencias y condiciones:
 
-- Hugging Face Hub: límites leídos en `huggingface.co/docs/hub/rate-limits` (500 peticiones de API y 3000 de resolvers por IP cada 5 minutos en anónimo; 1000 y 5000 con cuenta gratuita). Las Condiciones de servicio del Hub son *por confirmar*, porque no se leyeron. El contenido de cada repositorio (tarjetas de modelo) sigue su propia licencia, declarada en la cabecera YAML que la limpieza descarta. Los resúmenes de papers son de sus autores, con la licencia que cada uno eligió en arXiv. El listado `/api/models` no está en el OpenAPI; sus parámetros salen del cliente `huggingface_hub` (*por confirmar* en la documentación oficial).
-- dev.to: API pública de lectura sin clave. La documentación v1 (`developers.forem.com/api/v1`) no publica límites ni condiciones. La exigencia de `user-agent` y el límite de 10 peticiones cada 30 s vienen de la revisión previa de la referencia beta (v0) y quedan *por confirmar*. El contenido pertenece a sus autores; las condiciones de reutilización de DEV son *por confirmar*. El corpus guarda título, descripción, autor y enlace, no el texto completo.
+- Hugging Face Hub: límites leídos en `huggingface.co/docs/hub/rate-limits` (500 peticiones de API y 3000 de resolvers por IP cada 5 minutos en anónimo; 1000 y 5000 con cuenta gratuita). Las Condiciones de servicio del Hub son _por confirmar_, porque no se leyeron. El contenido de cada repositorio (tarjetas de modelo) sigue su propia licencia, declarada en la cabecera YAML que la limpieza descarta. Los resúmenes de papers son de sus autores, con la licencia que cada uno eligió en arXiv. El listado `/api/models` no está en el OpenAPI; sus parámetros salen del cliente `huggingface_hub` (_por confirmar_ en la documentación oficial).
+- dev.to: API pública de lectura sin clave. La documentación v1 (`developers.forem.com/api/v1`) no publica límites ni condiciones. La exigencia de `user-agent` y el límite de 10 peticiones cada 30 s vienen de la revisión previa de la referencia beta (v0) y quedan _por confirmar_. El contenido pertenece a sus autores; las condiciones de reutilización de DEV son _por confirmar_. El corpus guarda título, descripción, autor y enlace, no el texto completo.
 
 Captura real en Beatriz (31 de octubre de 2026, 03:47 a 03:49 UTC, sin `HF_TOKEN`): `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31` en `~/earlyscript-data/live/corpus-s3-prueba/`, 112 s, código de salida 0, ningún error ni 429.
 
-| Fuente | Día | Estado | Ítems | Detalle |
-|---|---|---|---:|---|
-| huggingface | 2026-10-29 | partial | 67 | 50 modelos (0 sin tarjeta) y 17 papers |
-| huggingface | 2026-10-30 | partial | 89 | 50 modelos (0 sin tarjeta) y 39 papers |
-| devto | 2026-10-29 | complete | 2169 | 12 páginas; `ai` 1616, `opensource` 327, `python` 322, `programming` 300 |
-| devto | 2026-10-30 | complete | 1832 | 12 páginas; `ai` 1354, `opensource` 356, `programming` 288, `python` 250 |
+| Fuente      | Día        | Estado   | Ítems | Detalle                                                                  |
+| ----------- | ---------- | -------- | ----: | ------------------------------------------------------------------------ |
+| huggingface | 2026-10-29 | partial  |    67 | 50 modelos (0 sin tarjeta) y 17 papers                                   |
+| huggingface | 2026-10-30 | partial  |    89 | 50 modelos (0 sin tarjeta) y 39 papers                                   |
+| devto       | 2026-10-29 | complete |  2169 | 12 páginas; `ai` 1616, `opensource` 327, `python` 322, `programming` 300 |
+| devto       | 2026-10-30 | complete |  1832 | 12 páginas; `ai` 1354, `opensource` 356, `programming` 288, `python` 250 |
 
 dev.to aporta entre 1800 y 2200 ítems por día, más que HN, y tres cuartas partes llevan `ai`. Antes de que entre al motor hace falta decidir si se acota (menos etiquetas, un mínimo de reacciones o una muestra) y comprobar en un backtest que no empeora P@5.

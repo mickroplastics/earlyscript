@@ -70,7 +70,7 @@ describe("dev.to source", () => {
   it("maps article fields and keeps a canonical URL outside dev.to as the external link", async () => {
     const { get, pages } = await recordedListing();
     const first = pages.page1[2] as { id: number; title: string; user: { username: string } };
-    const result = await devtoCollector()("2026-10-30", async (url) => {
+    const edited: GetResponse = async (url) => {
       const response = await get(url);
       if (!url.endsWith("page=1")) return response;
       const body = (response.body as Array<Record<string, unknown>>).map((article) =>
@@ -79,7 +79,8 @@ describe("dev.to source", () => {
           : article,
       );
       return { ...response, body };
-    });
+    };
+    const result = await devtoCollector()("2026-10-30", edited, allow);
     const item = result.items.find((entry) => entry.id === `itm_devto_${first.id}`)!;
     expect(item).toMatchObject({
       title: first.title,
@@ -91,10 +92,11 @@ describe("dev.to source", () => {
 
   it("stops when the listing is not newest first", async () => {
     const { get, pages } = await recordedListing();
-    const result = await devtoCollector()("2026-10-30", async (url) => {
+    const reversed: GetResponse = async (url) => {
       const response = await get(url);
       return url.endsWith("page=3") ? { ...response, body: [...pages.page3].reverse() } : response;
-    });
+    };
+    const result = await devtoCollector()("2026-10-30", reversed, allow);
     expect(result.coverage?.status).toBe("partial");
     expect(result.coverage?.note).toContain("dev.to listing is not newest first");
   });
