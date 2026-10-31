@@ -25,6 +25,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 19. Fuentes de Earlywindow: arXiv, Wikipedia, npm, Stack Exchange, Bluesky (`es/sources-earlywindow`), pendiente de fusión.
 20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), base `f75eebfae2`; cero archivos de upstream tocados. dev.to se retiró el 1 de noviembre de 2026 (`es/retire-devto`); queda Hugging Face.
 21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
+23. Backtest por fuente (`es/source-backtest`), base `4384513ef9`, con `main` fusionado en `53afe315c4`; cero archivos de upstream tocados; añade `engine backtest`, `engine check --backtest` y el script de registro del servidor.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1454,3 +1455,39 @@ Corrección tras la reverificación de Sol (31 de octubre de 2026, NO APTO sobre
 - R2, purgas idempotentes. Una purga ya registrada (misma fuente, tipo y hash) no se vuelve a escribir. Un objetivo sin coincidencias no deja registro ni reescribe archivos. En ambos casos el resultado lleva `unchanged: true` y `message` («Already purged; corpus unchanged» o «No matches; corpus unchanged») y el corpus queda igual byte a byte, `corpus_hash` incluido. Las ediciones se planifican antes de escribir nada. Bloquear de antemano un objetivo que todavía no está en el corpus sería otra decisión; no se hace.
 - R3, profundidad. El límite de 64 niveles se comprueba antes de añadir cualquier elemento, también las hojas autocerradas: `<b/>` dentro de 64 `<a>` se rechaza.
 - R4, `body_kind`. Describe el origen del texto: `summary` si vino de `description`/`summary`, `content` si vino de `content:encoded`/`content`. `truncated` indica si se cortó a 500 caracteres.
+
+## 23. Backtest por fuente (rama `es/source-backtest`, 31 de octubre de 2026)
+
+Base: `4384513ef9`, con `main` fusionado en `53afe315c4` (incluye `es/sources-earlywindow` y el `robots_override` de arXiv). Cero archivos de upstream modificados. Sin dependencias nuevas. Decisión de Miguel del 31 de octubre: una fuente nueva solo pesa en el motor (`rank`) tras un backtest que no empeore P@5 frente a la línea base; `recordBacktest` (§18) registra el backtest y desbloquea el interruptor.
+
+Archivos nuevos:
+
+- `packages/trend-engine/src/backtest-label.ts`: la etiqueta retrospectiva y las métricas, portadas de Earlywindow `scripts/backtest.ts` (`backtest.v0.02`): `assignStories`, `crossingLabel`, `labelCandidates`, `precisionAt`, `median` y `rankingMetrics`. Solo la etiqueta original; las tres variantes de C04 (`exclude_cutoff_day`, `growth_2x`, `high_threshold`) no forman parte de la compuerta.
+- `packages/trend-engine/src/backtest-report.ts`: forma de `backtest.json`, `LABEL_RULE`, tolerancia, `decideVerdict`, hash lógico, `backtestId` y `checkBacktestReport`. Sin motor ni embedder, para que el servidor lo importe (subruta `./backtest-report` en `package.json`).
+- `packages/trend-engine/src/backtest.ts`: `runBacktest` y `checkBacktest`.
+- `packages/trend-engine/src/backtest.test.ts`: corpus sintético con una tercera fuente (`npm`) y el embedder de huellas del paquete.
+- `apps/server/scripts/record-source-backtest.ts` y su prueba.
+
+Archivos propios modificados: `run.ts` (opción `onEmitted`, que entrega el centroide de cada tendencia emitida; no cambia la corrida), `cli.ts` (`backtest` y `check --backtest`) y `testkit/syntheticCorpus.ts` (`item` exportado y `extraSources`).
+
+Definiciones, copiadas de Earlywindow (`early-window/scripts/backtest.ts`, `RULE`, `labelOutcomes`, `rankingMetrics` y `aggregateRanking`; resultado de referencia en `~/earlywindow-data/runs/backtest-eval-2/backtest.json` e informe 27 de la ola 8):
+
+- Candidatas de un corte: los expedientes que la corrida emite en ese corte (aquí, la unión de los 20 primeros de cada ranking).
+- Etiqueta: los centroides de las candidatas se congelan en el corte. Cada historia de las fuentes de verdad publicada en los 14 días siguientes (`[corte, corte + 14 días)`) se asigna a la candidata con el coseno más alto por encima del umbral del agrupamiento (`cluster.threshold`, 0,70), con empates a favor del id menor; una historia se asigna a una sola candidata. Una candidata es positiva el primer día al final del cual su cola acumula al menos 5 historias de al menos 2 autores distintos.
+- `lead_days` (anticipación): días entre el corte y ese día del evento. 0 significa que el evento ocurre el mismo día del corte.
+- P@k: positivas entre las k primeras del orden, dividido entre `min(k, candidatas)`; nulo sin candidatas. El orden evaluado es el ranking `weighted` (`rankings.weighted.position`). También se informa, como en Earlywindow, el orden por `items_7d` descendente e id ascendente sobre las mismas candidatas.
+- P@5 media: promedio de la P@5 por corte sobre los cortes emparejados, aquellos en que las dos ramas tienen candidatas. Earlywindow promediaba sobre los cortes evaluables de una sola corrida; aquí cada rama tiene sus propias candidatas y se emparejan los cortes para comparar lo mismo.
+- Anticipación mediana: mediana de `lead_days` de todas las candidatas positivas de los cortes emparejados (la «mediana conjunta» de Earlywindow, `total.median_lead_days`, 1 día en `backtest-eval-2`). Se informa además la de las positivas dentro de cada top 5.
+
+Lo que no se copió tal cual: el encargo describía la verdad como «tendencias que acaban en el top por `items_7d` en cortes posteriores»; Earlywindow no la define así, sino con la etiqueta de seguimiento de arriba, que es la que se usa. Las fuentes de verdad son, por defecto, las de la línea base (`hn,github`, opción `--truth`): con las de la candidata, una fuente se confirmaría a sí misma (sus propias historias del seguimiento harían positivas sus tendencias), y el veredicto mediría cuánto publica la fuente, no si mejora el orden.
+
+Veredicto (`decideVerdict`): `not-worse` si la P@5 media de la candidata es al menos la de la línea base menos 0,02 y su anticipación mediana no es menor; si no, `worse`, con los motivos. Una rama sin valor no demuestra que no empeora: P@5 o anticipación nula en la candidata frente a un valor en la línea base es `worse`; nula en las dos, el criterio no aplica.
+
+`engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,<fuente> [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>]`:
+
+- Lee y prepara una vez las historias de verdad hasta el último seguimiento (mismo `prepare` que una corrida: inglés, URL duplicadas en todo el tramo) y las embebe con el embedder compartido; después corre el motor en cada corte para cada rama, con la configuración del motor y `sources` reemplazado por el de la rama. Un solo embedder local (caché SQLite compartida) sirve a todas las corridas y se cierra al final.
+- Comprueba cada centroide congelado: la similitud de cada evidencia de las fuentes de verdad con el centroide debe reproducir la que guardó la corrida (tolerancia 1e-5). Un fallo detiene el backtest.
+- Escribe `backtest.json` (por `.partial` y renombrado) y deja las corridas en `runs/baseline/` y `runs/candidate/`. El bloque `logical` reúne entradas (hash del manifiesto del corpus, `corpus_used_hash` de la verdad, hash del perfil, configuración y hashes por rama, embedding, fuentes y cortes), la regla, cada corte (días de seguimiento dentro del corpus y cubiertos, `logical_hash` y `corpus_used_hash` de cada corrida, métricas, filas por candidata y comprobaciones de centroide), los totales y el veredicto. `logical_hash` es el SHA-256 de ese bloque canónico; `backtest_id` es `bt_` y sus 16 primeros hexadecimales. Fuera del bloque quedan rutas, fechas, ids y duraciones de corrida.
+- `engine check --backtest <backtest.json>` recalcula el hash, comprueba que el id lo nombra y que el veredicto es el que dan los totales; con `--rerun --out <dir>` vuelve a correr el backtest con las entradas registradas y compara el hash lógico, como `engine check --run`.
+
+Registro (`apps/server/scripts/record-source-backtest.ts --db <editorial.sqlite> --source <id> --backtest <backtest.json>`): rechaza una fuente fuera del catálogo o de la línea base, un informe cuyo hash no se recalcula, un backtest que no compare exactamente la línea base del catálogo (`engineBaseline`: `hn`, `github`) con la línea base más esa fuente, un veredicto `worse` y una base de datos inexistente (no crea una vacía). Si todo pasa, llama a `recordBacktest(fuente, backtest_id)`; Ajustes muestra «Backtest registrado: bt_…». No enciende `rank`: lo decide el operador. Una fuente con ficha que no está en `ready` sigue bloqueada por la ficha.
