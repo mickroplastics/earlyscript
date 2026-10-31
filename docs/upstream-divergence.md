@@ -1099,3 +1099,5 @@ Versión de interpretación del índice:
 Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en publicaciones de enlace), la entrada del asistente (`presentationDossierSource.ts`) lo toma de ahí en lugar de recorrer otra vez el archivo y la ficha lo muestra bajo el título, en tres líneas como máximo.
 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
+
+Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).

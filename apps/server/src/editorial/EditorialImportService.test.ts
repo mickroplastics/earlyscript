@@ -562,6 +562,32 @@ describe("EditorialImportService", () => {
     ),
   );
 
+  it.effect("never rewrites a run that a newer importer indexed", () =>
+    withEditorial(({ dir }) =>
+      Effect.gen(function* () {
+        const sql = yield* EditorialSql;
+        const importer = yield* EditorialImportService.EditorialImportService;
+        yield* addNativeFixtureRun(dir);
+        yield* importer.sync;
+        // What a later build would leave: a reading this build does not know how to redo.
+        yield* sql`
+          UPDATE editorial_runs SET interpretation_version = 99, dossier_count = 0
+          WHERE run_id = ${NATIVE_FIXTURE_RUN_ID}
+        `;
+        const again = yield* importer.sync;
+        assert.deepStrictEqual(again.runs, []);
+        const rows = yield* sql<{
+          readonly interpretation_version: number;
+          readonly dossier_count: number;
+        }>`
+          SELECT interpretation_version, dossier_count FROM editorial_runs
+          WHERE run_id = ${NATIVE_FIXTURE_RUN_ID}
+        `;
+        assert.deepStrictEqual([...rows], [{ interpretation_version: 99, dossier_count: 0 }]);
+      }),
+    ),
+  );
+
   it.effect("indexes a native run with its provenance, config and engine positions", () =>
     withEditorial(({ dir }) =>
       Effect.gen(function* () {

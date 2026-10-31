@@ -88,6 +88,13 @@ const INDEXED_COLUMNS =
 const isCurrent = (row: IndexedVersion) =>
   row.interpretation_version === IMPORT_INTERPRETATION_VERSION;
 
+/**
+ * Indexed by a newer importer, which this build cannot interpret: an older build must never
+ * rewrite that index with its own, lesser reading. The row is left alone until a build of at
+ * least that version runs.
+ */
+const isNewer = (row: IndexedVersion) => row.interpretation_version > IMPORT_INTERPRETATION_VERSION;
+
 const coverageOf = (loaded: LoadedRun): unknown =>
   loaded.entry.run.coverage ?? loaded.dossiers[0]?.file.coverage ?? null;
 
@@ -367,6 +374,13 @@ const make = Effect.gen(function* () {
     return returned;
   });
 
+  const keptNewer = (row: IndexedVersion) =>
+    Effect.logWarning("editorial: run indexed by a newer importer is left as is", {
+      runId: row.run_id,
+      indexedBy: row.interpretation_version,
+      thisBuild: IMPORT_INTERPRETATION_VERSION,
+    });
+
   const sync = Effect.gen(function* () {
     const rows = yield* sql<IndexedVersion>`
       SELECT ${sql.literal(INDEXED_COLUMNS)} FROM editorial_runs
@@ -377,6 +391,10 @@ const make = Effect.gen(function* () {
     const runs: Array<RunImport> = [];
     for (const item of invalid) {
       const known = byPath.get(item.directory);
+      if (known !== undefined && isNewer(known)) {
+        yield* keptNewer(known);
+        continue;
+      }
       if (
         known?.import_state === "invalid" &&
         known.artifact_version === item.version &&
@@ -389,6 +407,10 @@ const make = Effect.gen(function* () {
     // Oldest first, so run.imported events follow cutoff order.
     for (const entry of entries.toReversed()) {
       const known = indexed.get(entry.run.run_id);
+      if (known !== undefined && isNewer(known)) {
+        yield* keptNewer(known);
+        continue;
+      }
       if (
         known !== undefined &&
         known.artifact_version === entry.version &&
