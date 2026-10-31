@@ -63,6 +63,8 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       candidate: { type: "string" },
       truth: { type: "string" },
       backtest: { type: "string" },
+      // Ignored: the server tags the children it launches so it can tell them from a recycled pid.
+      "lock-token": { type: "string" },
     },
   });
   if (command === "collect" && values.corpus && values.from && values.to && values.sources) {

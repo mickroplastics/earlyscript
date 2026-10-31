@@ -73,3 +73,4 @@ export * from "./editorialResults.ts";
 export * from "./editorialPresentation.ts";
 export * from "./editorialVideo.ts";
 export * from "./editorialSources.ts";
+export * from "./editorialJobs.ts";

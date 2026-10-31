@@ -12,6 +12,7 @@ export const EDITORIAL_SETTINGS_NAV_GROUP = {
 } as const;
 
 export const EDITORIAL_SOURCES_SECTION_ID = "editorial-sources";
+export const EDITORIAL_NIGHTLY_SECTION_ID = "editorial-nightly";
 
 export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
   {
@@ -22,6 +23,15 @@ export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
       "sources fuentes captura motor engine corpus cobertura coverage backtest",
       "gobernanza governance licencia license términos terms retención borrado",
       "hacker news github arxiv wikipedia npm stack exchange bluesky hugging face dev lobsters rss",
+    ],
+  },
+  {
+    id: EDITORIAL_NIGHTLY_SECTION_ID,
+    title: "Corrida nocturna",
+    to: EDITORIAL_SETTINGS_PATH,
+    searchTerms: [
+      "nightly corrida nocturna diaria daily schedule horario hora ejecutar ahora run now",
+      "motor engine workers procesos captura importar redactar jobs",
     ],
   },
 ] as const;

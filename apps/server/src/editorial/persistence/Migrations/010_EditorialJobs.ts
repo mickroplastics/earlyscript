@@ -1,0 +1,79 @@
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+
+// The nightly run's jobs and the operator's time of day. Every executor write requires the
+// claim's lease_owner and lease_generation. engine_* names the claim's engine child before it
+// starts; a claim copies the former one into prev_engine_* so the new owner waits for it.
+export default Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS editorial_jobs (
+      job_id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('daily')),
+      profile_hash TEXT NOT NULL,
+      cutoff_at TEXT NOT NULL,
+      config_hash TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      scheduled_for TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      lease_until TEXT,
+      lease_owner TEXT,
+      lease_generation INTEGER NOT NULL DEFAULT 0,
+      engine_token TEXT,
+      engine_pid INTEGER,
+      engine_started_at TEXT,
+      prev_engine_token TEXT,
+      prev_engine_pid INTEGER,
+      accepted_run_id TEXT,
+      status TEXT NOT NULL
+        CHECK (status IN ('pending', 'running', 'done', 'failed', 'skipped')),
+      error TEXT,
+      artifacts_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (kind, profile_hash, cutoff_at, config_hash)
+    )
+  `;
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS editorial_jobs_due ON editorial_jobs (status, scheduled_for)
+  `;
+
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS editorial_nightly_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+      time_of_day TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      workers INTEGER NOT NULL CHECK (workers >= 1),
+      enabled_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `;
+
+  // The run the job's current owner chose, the only one of the job's key the importer takes.
+  // Runs it does not take stay on disk and are recorded here, never indexed.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS editorial_run_exclusions (
+      run_id TEXT PRIMARY KEY,
+      artifact_path TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('superseded', 'duplicate')),
+      kept_run_id TEXT NOT NULL,
+      job_id TEXT,
+      decided_at TEXT NOT NULL
+    )
+  `;
+
+  // Content deduplication compares the profile too; rows indexed before this stay null.
+  yield* sql`ALTER TABLE editorial_runs ADD COLUMN profile_hash TEXT`;
+
+  // One indexed run per inputs and content, across importers and servers. Rows indexed before
+  // this have no profile_hash, so the index cannot reject the data already in the table.
+  yield* sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS editorial_runs_content_key
+    ON editorial_runs (cutoff_at, config_hash, profile_hash, logical_hash)
+    WHERE profile_hash IS NOT NULL
+  `;
+});

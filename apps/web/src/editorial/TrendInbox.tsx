@@ -40,6 +40,7 @@ import {
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
+import { TrendJobIndicator } from "./TrendJobIndicator";
 import { TrendPresentationRunButton } from "./TrendPresentationRunButton";
 
 const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly label: string }> =
@@ -217,6 +218,7 @@ export function TrendInbox({
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
               {inbox?.run ? runGroupLabel(inbox.run, nowMinute) : "Tendencias"}
             </span>
+            <TrendJobIndicator environmentId={environmentId} />
             {inbox?.run ? (
               <TrendPresentationRunButton environmentId={environmentId} runId={inbox.run.runId} />
             ) : null}

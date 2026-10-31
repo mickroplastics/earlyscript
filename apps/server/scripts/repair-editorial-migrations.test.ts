@@ -126,6 +126,8 @@ const jobsAt9 = Effect.gen(function* () {
   yield* sql`CREATE TABLE editorial_nightly_settings (key TEXT PRIMARY KEY, value TEXT)`;
 });
 
+const upToManualWork = makeEditorialMigrations(editorialMigrationEntries.filter(([id]) => id <= 9));
+
 const mergedManifest = makeEditorialMigrations([
   ...editorialMigrationEntries.filter(([id]) => id <= 8),
   [9, "EditorialJobs", jobsAt9],
@@ -160,9 +162,9 @@ it.effect("refuses, then repairs, a database that applied EditorialManualWork as
   const dir = makeTempDir();
   const dbPath = NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME);
   return Effect.gen(function* () {
-    // Today's manifest: 009 is ManualWork. A manual thread leaves a visit, two captures (one
-    // removed) and a decision.
-    yield* openEditorial(dbPath);
+    // The manifest up to 009 = ManualWork, as `main` had it before Jobs became 010. A manual
+    // thread leaves a visit, two captures (one removed) and a decision.
+    yield* onFile(dbPath, upToManualWork.run());
     yield* onFile(
       dbPath,
       Effect.gen(function* () {

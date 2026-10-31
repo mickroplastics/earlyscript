@@ -69,6 +69,8 @@ export interface RunInfo {
   /** Native only: the hash of what the run read before the cutoff. */
   readonly corpus_used_hash: string | null;
   readonly logical_hash: string | null;
+  /** Native only: the hash of the channel profile file the run scored with. */
+  readonly profile_hash: string | null;
   readonly sources: ReadonlyArray<string>;
   /** Native only; Earlywindow keeps coverage in each dossier. */
   readonly coverage: unknown;
@@ -107,6 +109,7 @@ function toRunInfo(run: RunFile): RunInfo {
       corpus_hash: run.corpus?.corpus_manifest_hash ?? null,
       corpus_used_hash: run.corpus?.corpus_used_hash ?? null,
       logical_hash: run.logical_hash,
+      profile_hash: run.profile?.hash ?? null,
       sources: run.config?.sources ?? [],
       coverage: run.coverage,
       include_min: run.config?.profile.include_min ?? EARLYWINDOW_INCLUDE_MIN,
@@ -124,6 +127,7 @@ function toRunInfo(run: RunFile): RunInfo {
     corpus_hash: run.corpus_hash ?? null,
     corpus_used_hash: null,
     logical_hash: run.logical_hash ?? null,
+    profile_hash: null,
     sources: run.sources ?? [],
     coverage: null,
     include_min: EARLYWINDOW_INCLUDE_MIN,
