@@ -77,7 +77,11 @@ it.effect("repairs a development database that applied [1, 2, 4] before 003", ()
 
     const result = yield* runRepairEditorialMigrations(dbPath);
     assert.deepStrictEqual(result.removedMarkers, [4]);
-    assert.deepStrictEqual(result.executedMigrations, ["3_EditorialScriptHead", "4_EditorialRuns"]);
+    // 003 and every migration after it: the repair applies what the marker of 004 had hidden.
+    assert.deepStrictEqual(
+      result.executedMigrations,
+      editorialMigrationManifest.filter(([id]) => id >= 3).map(([id, name]) => `${id}_${name}`),
+    );
     assert.ok(result.backupPath !== null && NodeFS.existsSync(result.backupPath));
 
     // The server opens it now, with the same schema as a new database and the events kept.
