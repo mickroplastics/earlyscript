@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - the purge test checks the version copy on disk.
+// @effect-diagnostics nodeBuiltinImport:off - the purge tests check the version copy on disk.
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -11,10 +12,13 @@ import {
   ThreadId,
   type EditorialVideoError,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -39,23 +43,46 @@ const MINUTE = 60_000;
 /** Threads a test deleted in T3; the double of ThreadManagementService reports them so. */
 const deletedThreads = new Set<string>();
 
+/** T3's domain events as the double publishes them; a test announces a deletion here. */
+class T3DomainEvents extends Context.Service<
+  T3DomainEvents,
+  PubSub.PubSub<{ readonly type: string; readonly threadId: string }>
+>()("test/T3DomainEvents") {}
+
+/** Deletes a thread in T3 as the orchestrator does: the shell, then the domain event. */
+const deleteInT3 = (threadId: string) =>
+  Effect.gen(function* () {
+    deletedThreads.add(threadId);
+    yield* PubSub.publish(yield* T3DomainEvents, { type: "thread.deleted", threadId });
+  });
+
+/** T3 threads that exist unless a test deleted them, and their domain events. */
+const layerT3 = Layer.unwrap(
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<{ readonly type: string; readonly threadId: string }>();
+    return Layer.merge(
+      Layer.succeed(T3DomainEvents, events),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.succeed({
+            ...liveThreadShell(threadId),
+            deletedAt: deletedThreads.has(threadId)
+              ? DateTime.makeUnsafe("2026-10-31T06:00:00.000Z")
+              : null,
+          }),
+        streamDomainEvents: Stream.fromPubSub(events) as never,
+      }),
+    );
+  }),
+);
+
 /**
  * The video handlers with the preview manager the browser history listens to, a state
  * directory for version copies, and T3 threads that exist unless a test deleted them.
  */
 const layer = EditorialVideoRpc.layer.pipe(
   Layer.provideMerge(PreviewManager.layer),
-  Layer.provideMerge(
-    Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadShell: (threadId) =>
-        Effect.succeed({
-          ...liveThreadShell(threadId),
-          deletedAt: deletedThreads.has(threadId)
-            ? DateTime.makeUnsafe("2026-10-31T06:00:00.000Z")
-            : null,
-        }),
-    }),
-  ),
+  Layer.provideMerge(layerT3),
   Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "editorial-manual-" }).pipe(
       Layer.provide(NodeServices.layer),
@@ -601,7 +628,7 @@ describe("manual video thread: purge", () => {
         `;
         assert.isTrue(NodeFS.existsSync(copy.path));
 
-        deletedThreads.add(MANUAL);
+        yield* deleteInT3(MANUAL);
         const purged = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.purge]({ threadId: MANUAL });
         assert.deepStrictEqual(purged.deleted, {
           visits: 1,
@@ -657,6 +684,100 @@ describe("manual video thread: purge", () => {
           threadId: ThreadId.make(VIDEO_THREAD_ID),
         });
         assert.strictEqual(other.video?.thread.mode, "assisted");
+      }),
+    ),
+  );
+});
+
+describe("manual video thread: deleted from another client", () => {
+  it.effect("tells every open view and stops the clock when T3 deletes the thread", () =>
+    withManual((handlers) =>
+      Effect.gen(function* () {
+        // Two clients with the thread open, as two WebSocket subscriptions.
+        const first = yield* Stream.toQueue(
+          handlers[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: MANUAL }),
+          { capacity: 16 },
+        );
+        const second = yield* Stream.toQueue(
+          handlers[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: MANUAL }),
+          { capacity: 16 },
+        );
+        for (const queue of [first, second]) {
+          const opened = yield* Queue.take(queue);
+          assert.strictEqual(opened.video?.thread.deleted, false);
+          assert.strictEqual(opened.video?.clock.state._tag, "running");
+        }
+        yield* TestClock.adjust(3 * MINUTE);
+        // A third client deletes it in T3.
+        yield* deleteInT3(MANUAL);
+        for (const queue of [first, second]) {
+          let view = yield* Queue.take(queue);
+          while (view.video?.thread.deleted !== true) view = yield* Queue.take(queue);
+          // The deletion reaches every view with the clock already stopped.
+          let last = view;
+          while (last.video?.clock.state._tag !== "idle") last = yield* Queue.take(queue);
+          assert.strictEqual(last.video?.thread.deleted, true);
+          assert.deepStrictEqual(
+            last.video?.clock.stages.map(({ stage, activeMs }) => [stage, activeMs]),
+            [["explore", 3 * MINUTE]],
+          );
+        }
+        // Time after the deletion does not count.
+        yield* TestClock.adjust(10 * MINUTE);
+        const after = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: MANUAL });
+        assert.strictEqual(after.video?.clock.activeMs, 3 * MINUTE);
+        const types = (yield* (yield* EditorialEventLog).readSince(0))
+          .filter((event) => event.aggregateId === MANUAL)
+          .map((event) => event.type);
+        assert.includeMembers(types, ["work.stopped", "video-thread.t3-deleted"]);
+      }),
+    ),
+  );
+});
+
+describe("manual video thread: purge that fails on disk", () => {
+  it.effect("keeps the whole record when a copy cannot be deleted, and purges on retry", () =>
+    withManual((handlers, { write }) =>
+      Effect.gen(function* () {
+        const sql = yield* EditorialSql;
+        yield* handlers[EDITORIAL_VIDEO_WS_METHODS.capture]({
+          threadId: MANUAL,
+          url: "https://news.ycombinator.com/",
+          note: "nota",
+        });
+        yield* write(MANUAL_SCRIPT, SCRIPT);
+        const saved = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: MANUAL });
+        const copy = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.openVersion]({
+          threadId: MANUAL,
+          contentHash: saved.script.head!.contentHash,
+        });
+        yield* deleteInT3(MANUAL);
+
+        const dir = NodePath.dirname(copy.path);
+        NodeFS.chmodSync(dir, 0o500);
+        const failed = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.purge]({ threadId: MANUAL }).pipe(
+          Effect.flip,
+          Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(dir, 0o700))),
+        );
+        assert.strictEqual(reasonOf(failed), "storage");
+        // Nothing went: the copy, the record and its events are all there to purge again.
+        assert.isTrue(NodeFS.existsSync(copy.path));
+        const kept = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: MANUAL });
+        assert.strictEqual(kept.video?.captures.length, 1);
+        assert.strictEqual(kept.video?.script.versionCount, 1);
+        const purgedEvents = yield* sql`
+          SELECT 1 FROM editorial_events WHERE type = 'video-thread.purged'
+        `;
+        assert.strictEqual(purgedEvents.length, 0);
+
+        const retried = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.purge]({ threadId: MANUAL });
+        assert.strictEqual(retried.deleted.versionFiles, 1);
+        assert.strictEqual(retried.deleted.captures, 1);
+        assert.isFalse(NodeFS.existsSync(copy.path));
+        const left = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM editorial_video_threads WHERE thread_id = ${MANUAL}
+        `;
+        assert.strictEqual(left[0]?.n, 0);
       }),
     ),
   );

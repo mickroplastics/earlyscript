@@ -32,13 +32,14 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as BrowserVisits from "./BrowserVisitService.ts";
+import { purgeVideoRecord } from "./EditorialPurge.ts";
+import * as VideoThreadDeletion from "./VideoThreadDeletion.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
+import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type { DecisionAction, VideoThread } from "./persistence/EditorialModel.ts";
-import { nowIso } from "./persistence/support.ts";
 import { ScriptVersionService } from "./ScriptVersionService.ts";
 import { WorkClockService } from "./WorkClockService.ts";
 
@@ -496,15 +497,50 @@ const makeHandlers = Effect.gen(function* () {
       contentHash.replace(/[^A-Za-z0-9]/g, "").slice(0, 64),
     );
 
-  /** Rows of a table for one thread, deleted, and how many. */
-  const deleteRows = (table: string, threadId: string) =>
-    sql<{ readonly n: number }>`
-      SELECT COUNT(*) AS n FROM ${sql(table)} WHERE thread_id = ${threadId}
-    `.pipe(
-      Effect.map((rows) => rows[0]?.n ?? 0),
-      Effect.tap(() => sql`DELETE FROM ${sql(table)} WHERE thread_id = ${threadId}`),
-    );
+  /** Version hashes of a thread whose read-only copy no other thread shares. */
+  const ownHashesOf = (threadId: string) =>
+    sql<{ readonly content_hash: string }>`
+      SELECT DISTINCT v.content_hash FROM editorial_script_versions v
+      WHERE v.thread_id = ${threadId}
+        AND NOT EXISTS (
+          SELECT 1 FROM editorial_script_versions o
+          WHERE o.content_hash = v.content_hash AND o.thread_id <> ${threadId}
+        )
+    `.pipe(Effect.map((rows) => rows.map((row) => row.content_hash)));
 
+  /** Deletes the read-only copies of these versions; the number of files that were there. */
+  const removeVersionCopies = Effect.fn("EditorialVideoRpc.removeVersionCopies")(function* (
+    hashes: ReadonlyArray<string>,
+  ) {
+    if (Option.isNone(config)) return 0;
+    const stateDir = config.value.stateDir;
+    let files = 0;
+    for (const hash of hashes) {
+      const dir = versionDirOf(stateDir, hash);
+      files += yield* Effect.tryPromise({
+        try: async () => {
+          const names = await NodeFSP.readdir(dir).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return [] as string[];
+            throw error;
+          });
+          await NodeFSP.rm(dir, { recursive: true, force: true });
+          return names.length;
+        },
+        catch: () =>
+          videoError(
+            "storage",
+            "Cannot delete a version's read-only copy; nothing was purged. Fix the folder's permissions and purge again.",
+          ),
+      });
+    }
+    return files;
+  });
+
+  /**
+   * Disk first, database after: the copies go before any row, so a copy that cannot be deleted
+   * leaves the whole record in place and the purge can run again. The rows and the purge event
+   * commit only once the disk is clean.
+   */
   const purge = Effect.fn("EditorialVideoRpc.purge")(function* (threadId: string) {
     const thread = yield* requireThread(threadId);
     if (!(yield* isDeleted(thread))) {
@@ -513,76 +549,12 @@ const makeHandlers = Effect.gen(function* () {
         "Borra primero el hilo; sus datos editoriales se borran después.",
       );
     }
-    const purged = yield* log.transact(
-      "editorial.purgeVideoThread",
-      Effect.gen(function* () {
-        const hashes = yield* sql<{ readonly content_hash: string }>`
-          SELECT content_hash FROM editorial_script_versions WHERE thread_id = ${threadId}
-        `;
-        // Decisions name a version, so they go before the versions they reference.
-        const deleted = {
-          visits: yield* deleteRows("editorial_browser_visits", threadId),
-          captures: yield* deleteRows("editorial_captures", threadId),
-          decisions: yield* deleteRows("editorial_decisions", threadId),
-          results: yield* deleteRows("editorial_video_results", threadId),
-          workIntervals: yield* deleteRows("editorial_work_intervals", threadId),
-          scriptVersions: yield* deleteRows("editorial_script_versions", threadId),
-        };
-        const events = yield* sql<{ readonly n: number }>`
-          SELECT COUNT(*) AS n FROM editorial_events
-          WHERE aggregate_kind = 'video_thread' AND aggregate_id = ${threadId}
-        `.pipe(Effect.map((rows) => rows[0]?.n ?? 0));
-        yield* sql`
-          DELETE FROM editorial_events
-          WHERE aggregate_kind = 'video_thread' AND aggregate_id = ${threadId}
-        `;
-        const at = yield* nowIso;
-        yield* sql`
-          UPDATE editorial_trend_inbox
-          SET production_thread_id = NULL, production_linked_at = NULL, updated_at = ${at}
-          WHERE production_thread_id = ${threadId}
-        `;
-        yield* sql`DELETE FROM editorial_video_threads WHERE thread_id = ${threadId}`;
-        // Counts only: the record of the purge keeps no URL, note or script.
-        const event = yield* appendEvent(sql, {
-          type: "video-thread.purged",
-          aggregateKind: "video_thread",
-          aggregateId: threadId,
-          actor: "operator",
-          payload: { operationId: thread.operationId, mode: thread.mode, ...deleted, events },
-          createdAt: at,
-        });
-        // A copy on disk is shared by content: kept while another thread holds the same hash.
-        const shared = yield* sql<{ readonly content_hash: string }>`
-          SELECT DISTINCT content_hash FROM editorial_script_versions
-          WHERE content_hash IN ${sql.in(hashes.map((row) => row.content_hash).concat(""))}
-        `;
-        const sharedHashes = new Set(shared.map((row) => row.content_hash));
-        const orphanHashes = hashes
-          .map((row) => row.content_hash)
-          .filter((hash) => !sharedHashes.has(hash));
-        return { result: { deleted: { ...deleted, events }, orphanHashes }, events: [event] };
-      }),
+    const versionFiles = yield* removeVersionCopies(yield* ownHashesOf(threadId));
+    const deleted = yield* purgeVideoRecord(thread, versionFiles).pipe(
+      Effect.provideService(EditorialSql, sql),
+      Effect.provideService(EditorialEventLog, log),
     );
-    let versionFiles = 0;
-    if (Option.isSome(config)) {
-      const stateDir = config.value.stateDir;
-      for (const hash of purged.orphanHashes) {
-        const dir = versionDirOf(stateDir, hash);
-        versionFiles += yield* Effect.tryPromise({
-          try: async () => {
-            const names = await NodeFSP.readdir(dir).catch(() => [] as string[]);
-            await NodeFSP.rm(dir, { recursive: true, force: true });
-            return names.length;
-          },
-          catch: () => videoError("storage", "Cannot delete a version's read-only copy."),
-        });
-      }
-    }
-    return {
-      threadId: ThreadId.make(threadId),
-      deleted: { ...purged.deleted, versionFiles },
-    };
+    return { threadId: ThreadId.make(threadId), deleted };
   }, Effect.mapError(toVideoError));
 
   /**
@@ -743,4 +715,6 @@ const makeHandlers = Effect.gen(function* () {
 export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers).pipe(
   // The browser history of manual threads, read here and recorded from the preview manager.
   Layer.provideMerge(BrowserVisits.layer),
+  // T3 deletions of video threads stop their clock and refresh their open views.
+  Layer.provideMerge(VideoThreadDeletion.layer),
 );
