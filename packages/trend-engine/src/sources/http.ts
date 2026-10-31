@@ -5,10 +5,18 @@ import * as NodeTimersPromises from "node:timers/promises";
 export interface FrozenResponse {
   readonly observed_at: string;
   readonly status: number;
-  /** Parsed JSON for 2xx responses; null otherwise. */
+  /** Parsed JSON (or raw text for text sources) for 2xx responses; null otherwise. */
   readonly body: unknown;
+  /** Validators of a 2xx response, replayed as If-None-Match / If-Modified-Since. */
+  readonly etag?: string | null;
+  readonly last_modified?: string | null;
+  /** `Location` of a 3xx: the client never follows redirects itself (see robots.ts). */
+  readonly location?: string | null;
 }
-export type GetResponse = (url: string) => Promise<FrozenResponse>;
+export type GetResponse = (
+  url: string,
+  headers?: Readonly<Record<string, string>>,
+) => Promise<FrozenResponse>;
 /** Messages that start with `rate_limited:` or `response_too_large:` carry that reason into the coverage note. */
 export class SourceFailure extends Error {}
 export interface HttpOptions {
@@ -18,6 +26,45 @@ export interface HttpOptions {
   readonly sleep?: (ms: number) => Promise<unknown>;
   readonly dayTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** Return 2xx bodies as text instead of JSON (feeds, robots.txt); default only for `rss`. */
+  readonly text?: boolean;
+  /** Never attach the source's credentials (robots.txt clients). */
+  readonly anonymous?: boolean;
+}
+
+/** Secret headers of a source, bound to the one origin (scheme, host and port) that issued them. */
+export interface Credential {
+  readonly origin: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Credentials per source, read when a client is created. A new keyed source (HF_TOKEN for
+ * huggingface) adds its entry here; credentialHeaders keeps it on its origin.
+ */
+export const CREDENTIALS: Partial<Record<HttpSource, () => Credential | null>> = {
+  github: () =>
+    process.env.GITHUB_TOKEN
+      ? {
+          origin: "https://api.github.com",
+          headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+        }
+      : null,
+};
+
+/**
+ * Headers a request to `url` may carry: the credential's own only on its exact origin and
+ * never for robots.txt, so a redirect to another host, or that host's robots.txt, gets none.
+ */
+export function credentialHeaders(
+  credential: Credential | null,
+  url: string,
+): Readonly<Record<string, string>> {
+  if (!credential) return {};
+  const target = new URL(url);
+  return target.origin === credential.origin && target.pathname !== "/robots.txt"
+    ? credential.headers
+    : {};
 }
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
@@ -27,9 +74,27 @@ export interface SourceState {
 
 /**
  * Largest accepted body. An HN page holds at most 1000 hits with unbounded story text;
- * a GitHub search page holds 100 repositories. Larger bodies are aborted, not parsed.
+ * a GitHub search page holds 100 repositories; a Lobsters page 25 stories; the largest
+ * curated feed measured on 31 October 2026 was 2.6 MB. Larger bodies are aborted, not parsed.
  */
-export const MAX_RESPONSE_BYTES = { hn: 4 * 1024 * 1024, github: 2 * 1024 * 1024 } as const;
+export const MAX_RESPONSE_BYTES = {
+  hn: 4 * 1024 * 1024,
+  github: 2 * 1024 * 1024,
+  lobsters: 1024 * 1024,
+  rss: 4 * 1024 * 1024,
+} as const;
+export type HttpSource = keyof typeof MAX_RESPONSE_BYTES;
+
+/** Minimum gap between two request starts of one client (one host for RSS). */
+export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
+  hn: 250,
+  github: 6500,
+  lobsters: 2000,
+  rss: 1000,
+};
+
+/** Collector name, protocol version and contact, as polite crawlers identify themselves. */
+export const USER_AGENT = "Earlyscript/0.1 (+https://github.com/miwgel)";
 
 const monotonic = () => performance.timeOrigin + performance.now();
 
@@ -57,7 +122,7 @@ async function readBounded(response: Response, controller: AbortController, max:
 }
 
 export function createHttpClient(
-  source: "hn" | "github",
+  source: HttpSource,
   options: HttpOptions = {},
   state: SourceState = { nextStart: 0, blockedUntil: 0 },
 ): GetResponse {
@@ -66,8 +131,8 @@ export function createHttpClient(
   const wait = options.sleep ?? NodeTimersPromises.setTimeout;
   const fetcher = options.fetch ?? fetch;
   const deadline = now() + (options.dayTimeoutMs ?? 300_000);
-  const pause = source === "github" ? 6500 : 250;
-  const token = source === "github" ? process.env.GITHUB_TOKEN : undefined;
+  const pause = PAUSE_MS[source];
+  const credential = options.anonymous ? null : (CREDENTIALS[source]?.() ?? null);
   async function delay(ms: number, limited: boolean) {
     if (now() + ms >= deadline)
       throw new SourceFailure(
@@ -77,7 +142,7 @@ export function createHttpClient(
       );
     if (ms > 0) await wait(ms);
   }
-  return async (url) => {
+  return async (url, extraHeaders = {}) => {
     for (let attempt = 0; attempt <= 3; attempt++) {
       const blocked = state.blockedUntil - now();
       await delay(Math.max(0, state.nextStart - now(), blocked), blocked > 0);
@@ -89,10 +154,14 @@ export function createHttpClient(
       try {
         response = await fetcher(url, {
           headers: {
-            "User-Agent": "Earlyscript-academic-collector",
+            "User-Agent": USER_AGENT,
             ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...extraHeaders,
+            // Last: on its own origin the credential wins over any caller header.
+            ...credentialHeaders(credential, url),
           },
+          // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
+          redirect: "manual",
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(
@@ -142,18 +211,31 @@ export function createHttpClient(
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
-        return { observed_at: new Date(wall()).toISOString(), status: response.status, body: null };
+        return {
+          observed_at: new Date(wall()).toISOString(),
+          status: response.status,
+          body: null,
+          location: response.headers.get("location"),
+        };
       }
       let body: unknown;
       try {
-        body = JSON.parse(await readBounded(response, controller, MAX_RESPONSE_BYTES[source]));
+        const text = await readBounded(response, controller, MAX_RESPONSE_BYTES[source]);
+        // Feeds and robots.txt are text; the JSON APIs are parsed here.
+        body = (options.text ?? source === "rss") ? text : JSON.parse(text);
       } catch (error) {
         if (error instanceof SourceFailure) throw error;
         if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");
         await delay(1000 * 2 ** attempt, false);
         continue;
       }
-      return { observed_at: new Date(wall()).toISOString(), status: response.status, body };
+      return {
+        observed_at: new Date(wall()).toISOString(),
+        status: response.status,
+        body,
+        etag: response.headers.get("etag"),
+        last_modified: response.headers.get("last-modified"),
+      };
     }
     throw new SourceFailure("Retry limit reached");
   };
