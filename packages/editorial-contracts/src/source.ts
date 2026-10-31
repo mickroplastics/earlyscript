@@ -6,6 +6,8 @@ export const SourceId = Schema.Literals([
   "github",
   "lobsters",
   "rss",
+  "huggingface",
+  "devto",
   "arxiv",
   "wikipedia",
   "npm",

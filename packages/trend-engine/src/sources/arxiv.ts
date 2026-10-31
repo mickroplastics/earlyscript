@@ -3,7 +3,7 @@
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
-import { bodyFields, gatedGet, githubEntities, joinNotes, plainText, sortItems } from "./shared.ts";
+import { gatedGet, githubEntities, itemBody, joinNotes, plainText, sortItems } from "./shared.ts";
 import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
@@ -100,7 +100,7 @@ export async function collectArxivDay(
             published_at: new Date(published).toISOString(),
             author: plainText(element(element(entry, "author") ?? "", "name") ?? "") || null,
             title: plainText(title),
-            ...bodyFields(text),
+            ...itemBody(text),
             retrieved_at: response.observed_at,
             entities: githubEntities(`${text} ${plainText(element(entry, "arxiv:comment") ?? "")}`),
           });

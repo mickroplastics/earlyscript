@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
-import { bodyFields, gatedGet, joinNotes, plainText, sortItems } from "./shared.ts";
+import { gatedGet, itemBody, joinNotes, plainText, sortItems } from "./shared.ts";
 import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
@@ -103,7 +103,7 @@ export async function collectWikipediaDay(
         published_at: published,
         author: null,
         title: article.replaceAll("_", " "),
-        ...bodyFields(text),
+        ...itemBody(text),
         retrieved_at: itemRetrievedAt,
         entities: [`wikipedia:${article}`],
       });

@@ -7,16 +7,18 @@ import {
   type GetResponse,
   type HttpOptions,
 } from "./http.ts";
+import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
+import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
+import { DEVTO_SELECTION, devtoCollector } from "./devto.ts";
 import { collectLobstersDay } from "./lobsters.ts";
-import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
 import { collectRssDay, type CachedFeed } from "./rss.ts";
 import { RSS_FEEDS } from "./rss-feeds.ts";
 import { collectArxivDay } from "./arxiv.ts";
 import { collectWikipediaDay } from "./wikipedia.ts";
 import { collectNpmDay, NPM_MIN_WEEKLY_DOWNLOADS } from "./npm.ts";
-import { collectStackExchangeDay, stackExchangeThrottle } from "./stackexchange.ts";
+import { collectStackExchangeDay } from "./stackexchange.ts";
 import { collectBlueskyDay } from "./bluesky.ts";
 
 import { fixtureAdapter } from "./fixture.ts";
@@ -47,6 +49,20 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     coverage_policy: "census",
   },
   rss: rssDescriptor(RSS_FEEDS),
+  huggingface: {
+    id: "huggingface",
+    label: "Hugging Face",
+    selection: { huggingface: HF_SELECTION },
+    // Models are chosen by present-day likes: a declared sample, as GitHub.
+    coverage_policy: "sample",
+  },
+  devto: {
+    id: "devto",
+    label: "DEV Community",
+    selection: { devto: DEVTO_SELECTION },
+    // Up to 500 articles a day by present-day reactions: a declared sample.
+    coverage_policy: "sample",
+  },
   arxiv: {
     id: "arxiv",
     label: "arXiv",
@@ -103,6 +119,31 @@ export function rssDescriptor(feeds: ReadonlyArray<RssFeed>): SourceDescriptor {
   };
 }
 
+type Collector = (
+  day: string,
+  get: GetResponse,
+  robots: RobotsGate,
+  getText: GetResponse,
+) => Promise<DayResult>;
+/** A fresh collector per adapter: listings walked once are kept between that adapter's days. */
+const COLLECTORS: Readonly<Record<Exclude<SourceId, "lobsters" | "rss">, () => Collector>> = {
+  hn: () => (day, get) => collectHnDay(day, get),
+  github: () => (day, get) => collectGithubDay(day, get),
+  huggingface: huggingfaceCollector,
+  devto: devtoCollector,
+  // Ported from Earlywindow (es/sources-earlywindow): each gates its own URLs with robots.
+  // The arXiv API answers Atom XML, read through the text client.
+  arxiv: () => (day, _get, robots, getText) => collectArxivDay(day, getText, robots),
+  wikipedia: () => (day, get, robots) => collectWikipediaDay(day, get, robots),
+  // npm search pages do not depend on the day: one collect run reads each once.
+  npm: () => {
+    const pages = new Map<string, FrozenResponse>();
+    return (day, get, robots) => collectNpmDay(day, memoized(get, pages), robots);
+  },
+  stackexchange: () => (day, get, robots) => collectStackExchangeDay(day, get, robots),
+  bluesky: () => (day, get, robots) => collectBlueskyDay(day, get, robots),
+};
+
 export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
 
 export const fixtureSources = (corpusDir: string, ids: ReadonlyArray<SourceId>) =>
@@ -112,6 +153,8 @@ export type { DayResult, SourceAdapter } from "./adapter.ts";
 
 export { collectHnDay } from "./hn.ts";
 export { collectGithubDay } from "./github.ts";
+export { huggingfaceCollector } from "./huggingface.ts";
+export { devtoCollector } from "./devto.ts";
 
 export { collectLobstersDay } from "./lobsters.ts";
 export {
@@ -171,19 +214,6 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
   };
 }
 
-type GatedSource = "arxiv" | "wikipedia" | "npm" | "stackexchange" | "bluesky";
-/** Sources ported from Earlywindow: each asks robots.txt before its requests. */
-const GATED: Readonly<
-  Record<GatedSource, (day: string, get: GetResponse, robots: RobotsGate) => Promise<DayResult>>
-> = {
-  arxiv: collectArxivDay,
-  wikipedia: collectWikipediaDay,
-  npm: collectNpmDay,
-  stackexchange: collectStackExchangeDay,
-  bluesky: collectBlueskyDay,
-};
-const isGated = (id: SourceId): id is GatedSource => Object.hasOwn(GATED, id);
-
 /** Caches 200 responses for the life of one adapter (one collect run). */
 function memoized(get: GetResponse, memo: Map<string, FrozenResponse>): GetResponse {
   return async (url, headers) => {
@@ -195,35 +225,6 @@ function memoized(get: GetResponse, memo: Map<string, FrozenResponse>): GetRespo
   };
 }
 
-/**
- * One paced client per source shared by its data and its robots.txt requests. robots.txt is
- * read again each day: the rules map lives for one collectDay call. npm search pages do not
- * depend on the day, so one collect run reads them once for all its days.
- */
-function gatedAdapter(id: GatedSource, options: HttpOptions): SourceAdapter {
-  const state = { nextStart: 0, blockedUntil: 0 };
-  const pages = new Map<string, FrozenResponse>();
-  const own = {
-    ...options,
-    ...(id === "stackexchange" ? { throttle: stackExchangeThrottle } : {}),
-  };
-  return {
-    descriptor: SOURCES[id],
-    collectDay: (day) => {
-      const text = createHttpClient(id, { ...own, text: true, anonymous: true }, state);
-      const robots = robotsGate(() => text, new Map<string, ReadonlyArray<RobotsRule>>());
-      // The arXiv API answers Atom XML, read as text like robots.txt.
-      const client = createHttpClient(id, id === "arxiv" ? { ...own, text: true } : own, state);
-      const data = id === "npm" ? memoized(client, pages) : client;
-      return GATED[id](
-        day,
-        followRedirects(() => data, robots),
-        robots,
-      );
-    },
-  };
-}
-
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
   options: HttpOptions = {},
@@ -232,20 +233,24 @@ export function liveSources(
   return ids.map((id) => {
     if (id === "lobsters") return lobstersAdapter(options);
     if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
-    if (isGated(id)) return gatedAdapter(id, options);
     const state = { nextStart: 0, blockedUntil: 0 };
     const rules = new Map<string, ReadonlyArray<RobotsRule>>();
+    const collect = COLLECTORS[id]();
     return {
       descriptor: SOURCES[id],
       collectDay: (day) => {
-        // API URLs are not robots-gated, but a redirect away from them is.
-        const text = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
+        // Collectors gate their own URLs; a redirect away from them is gated per hop.
+        // robots.txt goes without credentials; model cards carry them on their own origin only.
+        const anonymous = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
+        const text = createHttpClient(id, { ...options, text: true }, state);
         const json = createHttpClient(id, options, state);
-        const get = followRedirects(
-          () => json,
-          robotsGate(() => text, rules),
+        const robots = robotsGate(() => anonymous, rules);
+        return collect(
+          day,
+          followRedirects(() => json, robots),
+          robots,
+          followRedirects(() => text, robots),
         );
-        return (id === "hn" ? collectHnDay : collectGithubDay)(day, get);
       },
     };
   });

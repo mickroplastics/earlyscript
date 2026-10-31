@@ -3,8 +3,8 @@
 import * as Schema from "effect/Schema";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
-import { SourceFailure, type DeclaredThrottle, type GetResponse } from "./http.ts";
-import { bodyFields, gatedGet, joinNotes, plainText, sortItems } from "./shared.ts";
+import { SourceFailure, type GetResponse } from "./http.ts";
+import { gatedGet, itemBody, joinNotes, plainText, sortItems } from "./shared.ts";
 import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
@@ -31,29 +31,6 @@ const isPage = Schema.is(
     has_more: Schema.Boolean,
   }),
 );
-
-/** Stack Exchange throttles in the body: `backoff` seconds, a daily `quota_remaining` and error 502 `throttle_violation`. */
-export function stackExchangeThrottle(body: unknown): DeclaredThrottle {
-  const se: {
-    backoff?: unknown;
-    quota_remaining?: unknown;
-    error_name?: unknown;
-    error_message?: unknown;
-  } = typeof body === "object" && body !== null ? body : {};
-  const available =
-    typeof se.error_message === "string"
-      ? /available in (\d+) seconds/.exec(se.error_message)
-      : null;
-  return {
-    blockMs: Math.max(
-      0,
-      typeof se.backoff === "number" ? se.backoff * 1000 + 500 : 0,
-      se.quota_remaining === 0 ? DAY_MS : 0,
-      available ? Number(available[1]) * 1000 + 1500 : 0,
-    ),
-    limited: se.error_name === "throttle_violation",
-  };
-}
 
 export function stackExchangeUrl(site: Site, from: number, until: number, page: number): string {
   // todate is inclusive; items outside [from, until) are rejected below either way.
@@ -112,7 +89,7 @@ export async function collectStackExchangeDay(
             published_at: new Date(published).toISOString(),
             author: name ? plainText(name) : null,
             title: plainText(question.title),
-            ...bodyFields(tags + plainText(question.body ?? "")),
+            ...itemBody(tags + plainText(question.body ?? "")),
             retrieved_at: response.observed_at,
             entities: [],
           });

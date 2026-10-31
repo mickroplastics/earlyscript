@@ -3,11 +3,16 @@ import * as NodeFSP from "node:fs/promises";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { collectArxivDay } from "./arxiv.ts";
 import { BLUESKY_MAX_REQUESTS_PER_TERM, BLUESKY_TERMS, collectBlueskyDay } from "./bluesky.ts";
-import { createHttpClient, type FrozenResponse, type GetResponse } from "./http.ts";
+import {
+  createHttpClient,
+  stackExchangeThrottle,
+  type FrozenResponse,
+  type GetResponse,
+} from "./http.ts";
 import { liveSources } from "./index.ts";
 import { collectNpmDay, NPM_QUERIES } from "./npm.ts";
 import { robotsGate, type RobotsGate } from "./robots.ts";
-import { collectStackExchangeDay, stackExchangeThrottle } from "./stackexchange.ts";
+import { collectStackExchangeDay } from "./stackexchange.ts";
 import { collectWikipediaDay, wikipediaTopUrl } from "./wikipedia.ts";
 
 const observed = "2026-10-31T03:00:00.000Z";
@@ -244,7 +249,7 @@ describe("npm", () => {
 });
 
 describe("npm search pages", () => {
-  it("reads each page once per collect run and robots.txt once per day", async () => {
+  it("reads each search page and robots.txt once per collect run", async () => {
     let clock = Date.parse("2026-10-31T00:00:00Z");
     const urls: Array<string> = [];
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) => {
@@ -262,7 +267,7 @@ describe("npm search pages", () => {
     });
     await adapter!.collectDay("2026-10-28");
     const second = await adapter!.collectDay("2026-10-29");
-    expect(urls.filter((url) => url.endsWith("/robots.txt"))).toHaveLength(2);
+    expect(urls.filter((url) => url.endsWith("/robots.txt"))).toHaveLength(1);
     expect(urls.filter((url) => url.includes("/-/v1/search"))).toHaveLength(NPM_QUERIES.length);
     expect(second.coverage).toMatchObject({ status: "partial", items: 0 });
   });

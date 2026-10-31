@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
-import { bodyFields, gatedGet, githubEntity, joinNotes, plainText, sortItems } from "./shared.ts";
+import { gatedGet, githubEntity, itemBody, joinNotes, plainText, sortItems } from "./shared.ts";
 import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
@@ -137,7 +137,7 @@ export async function collectNpmDay(
                   ? pkg.maintainers?.[0]?.username
                   : pkg.publisher?.username) ?? null,
               title: `${pkg.name} ${pkg.version}`,
-              ...bodyFields(
+              ...itemBody(
                 [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
               ),
               retrieved_at: response.observed_at,

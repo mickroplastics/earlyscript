@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
-import { bodyFields, gatedGet, githubEntity, joinNotes, sortItems } from "./shared.ts";
+import { gatedGet, githubEntity, itemBody, joinNotes, sortItems } from "./shared.ts";
 import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
@@ -156,7 +156,7 @@ export async function collectBlueskyDay(
             published_at: new Date(published).toISOString(),
             author: post.author.handle,
             title: "",
-            ...bodyFields(post.record.text.replace(/\s+/g, " ").trim()),
+            ...itemBody(post.record.text.replace(/\s+/g, " ").trim()),
             retrieved_at: response.observed_at,
             entities: [...new Set(links.flatMap(githubEntity))].toSorted(),
           });
