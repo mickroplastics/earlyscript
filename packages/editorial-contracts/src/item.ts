@@ -16,8 +16,8 @@ export const Item = Schema.Struct({
   body: Schema.String.check(Schema.isMaxLength(MAX_ITEM_BODY_CHARS)),
   body_length: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   truncated: Schema.Boolean,
-  /** `excerpt` when the body is a cut of a longer text; set by sources that store excerpts (rss). */
-  body_kind: Schema.optionalKey(Schema.Literals(["summary", "excerpt"])),
+  /** Origin of the body (rss): the feed's `summary`, or a cut of its full `content`. `truncated` says whether it was cut. */
+  body_kind: Schema.optionalKey(Schema.Literals(["summary", "content"])),
   /** Feed the item came from (rss): the key of `engine purge --feed`. */
   feed_url: Schema.optionalKey(Schema.String),
   retrieved_at: Schema.String,

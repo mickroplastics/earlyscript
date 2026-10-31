@@ -30,8 +30,52 @@ export interface HttpOptions {
   readonly sleep?: (ms: number) => Promise<unknown>;
   readonly dayTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
-  /** Return 2xx bodies as text instead of JSON (feeds, model cards, robots.txt); default only for `rss`. */
+  /** Return 2xx bodies as text (feeds, model cards, robots.txt); default only for `rss`. */
   readonly text?: boolean;
+  /** Never attach the source's credentials (robots.txt clients). */
+  readonly anonymous?: boolean;
+}
+
+/** Secret headers of a source, bound to the one origin (scheme, host and port) that issued them. */
+export interface Credential {
+  readonly origin: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Credentials per source, read when a client is created. Each keyed source (GITHUB_TOKEN,
+ * HF_TOKEN) has its entry here; credentialHeaders keeps it on its origin.
+ */
+export const CREDENTIALS: Partial<Record<HttpSource, () => Credential | null>> = {
+  github: () =>
+    process.env.GITHUB_TOKEN
+      ? {
+          origin: "https://api.github.com",
+          headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` },
+        }
+      : null,
+  huggingface: () =>
+    process.env.HF_TOKEN
+      ? {
+          origin: "https://huggingface.co",
+          headers: { Authorization: `Bearer ${process.env.HF_TOKEN}` },
+        }
+      : null,
+};
+
+/**
+ * Headers a request to `url` may carry: the credential's own only on its exact origin and
+ * never for robots.txt, so a redirect to another host, or that host's robots.txt, gets none.
+ */
+export function credentialHeaders(
+  credential: Credential | null,
+  url: string,
+): Readonly<Record<string, string>> {
+  if (!credential) return {};
+  const target = new URL(url);
+  return target.origin === credential.origin && target.pathname !== "/robots.txt"
+    ? credential.headers
+    : {};
 }
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
@@ -40,11 +84,9 @@ export interface SourceState {
 }
 
 /**
- * Largest accepted body. An HN page holds at most 1000 hits with unbounded story text;
- * a GitHub search page holds 100 repositories; a Lobsters page 25 stories; the largest
- * curated feed measured on 31 October 2026 was 2.6 MB; a Hub page holds 1000 models (about
- * 350 KiB) or 100 daily papers; a dev.to page holds 1000 article summaries (about 2.2 MiB).
- * Larger bodies are aborted, not parsed.
+ * Largest accepted body; larger ones are aborted, not parsed. Pages: HN 1000 hits, GitHub 100
+ * repositories, Lobsters 25 stories, Hub 1000 models (~350 KiB), dev.to 1000 articles
+ * (~2.2 MiB); the largest curated feed measured on 31 October 2026 was 2.6 MB.
  */
 export const MAX_RESPONSE_BYTES = {
   hn: 4 * 1024 * 1024,
@@ -130,13 +172,9 @@ export function createHttpClient(
   const wait = options.sleep ?? NodeTimersPromises.setTimeout;
   const fetcher = options.fetch ?? fetch;
   const deadline = now() + (options.dayTimeoutMs ?? DAY_TIMEOUT_MS[source] ?? 300_000);
-  const token =
-    source === "github"
-      ? process.env.GITHUB_TOKEN
-      : source === "huggingface"
-        ? process.env.HF_TOKEN
-        : undefined;
-  const pause = source === "huggingface" && token ? PAUSE_MS[source] / 2 : PAUSE_MS[source];
+  const credential = options.anonymous ? null : (CREDENTIALS[source]?.() ?? null);
+  // A Hub token doubles the anonymous API quota.
+  const pause = source === "huggingface" && credential ? PAUSE_MS[source] / 2 : PAUSE_MS[source];
   async function delay(ms: number, limited: boolean) {
     if (now() + ms >= deadline)
       throw new SourceFailure(
@@ -161,8 +199,9 @@ export function createHttpClient(
             "User-Agent": USER_AGENT,
             ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
             ...(source === "devto" ? { Accept: "application/vnd.forem.api-v1+json" } : {}),
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...extraHeaders,
+            // Last: on its own origin the credential wins over any caller header.
+            ...credentialHeaders(credential, url),
           },
           // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
           redirect: "manual",

@@ -112,7 +112,7 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
   return {
     descriptor: SOURCES.lobsters,
     collectDay: (day) => {
-      const text = createHttpClient("lobsters", { ...options, text: true }, state);
+      const text = createHttpClient("lobsters", { ...options, text: true, anonymous: true }, state);
       const json = createHttpClient("lobsters", options, state);
       const robots = robotsGate(() => text, rules);
       return collectLobstersDay(
@@ -164,9 +164,11 @@ export function liveSources(
       descriptor: SOURCES[id],
       collectDay: (day) => {
         // Collectors gate their own URLs; a redirect away from them is gated per hop.
+        // robots.txt goes without credentials; model cards carry them on their own origin only.
+        const anonymous = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
         const text = createHttpClient(id, { ...options, text: true }, state);
         const json = createHttpClient(id, options, state);
-        const robots = robotsGate(() => text, rules);
+        const robots = robotsGate(() => anonymous, rules);
         return collect(
           day,
           followRedirects(() => json, robots),
