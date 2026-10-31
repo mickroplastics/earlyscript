@@ -213,7 +213,9 @@ function SourceGovernanceCard({ governance }: { readonly governance: SourceGover
           {governance.robotsOverride ? (
             <GovernanceField label="Excepción a robots.txt">
               {governance.robotsOverride.reason} «{governance.robotsOverride.quote}»{" "}
-              <ExternalLink href={governance.robotsOverride.termsUrl}>Términos de la API</ExternalLink>
+              <ExternalLink href={governance.robotsOverride.termsUrl}>
+                Términos de la API
+              </ExternalLink>
             </GovernanceField>
           ) : null}
           <GovernanceField label="Notas">{governance.notes}</GovernanceField>

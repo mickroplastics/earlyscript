@@ -162,7 +162,9 @@ describe("SourcesSettingsView", () => {
       .element(page.getByRole("link", { name: "Términos de la API" }))
       .toHaveAttribute("href", "https://info.arxiv.org/help/api/tou.html");
     await expect
-      .element(page.getByText("make no more than one request every three seconds", { exact: false }))
+      .element(
+        page.getByText("make no more than one request every three seconds", { exact: false }),
+      )
       .toBeVisible();
   });
 
