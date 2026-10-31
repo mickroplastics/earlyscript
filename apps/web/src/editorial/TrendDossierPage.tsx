@@ -286,7 +286,7 @@ function CitationLink({
   const url = evidenceLinks(item).title;
   const label = `Evidencia ${number}: ${item.title}`;
   const className =
-    "mx-px inline-flex min-w-4 items-center justify-center rounded-sm bg-muted px-1 align-super text-2xs leading-4 font-medium text-muted-foreground tabular-nums";
+    "ms-0.5 inline-block rounded-xs px-0.5 align-super text-2xs leading-none font-medium tabular-nums";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -304,11 +304,15 @@ function CitationLink({
               }}
               className={cn(
                 className,
-                "outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                "text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               )}
             />
           ) : (
-            <span aria-label={label} data-citation={item.itemId} className={className} />
+            <span
+              aria-label={label}
+              data-citation={item.itemId}
+              className={cn(className, "text-muted-foreground")}
+            />
           )
         }
       >
