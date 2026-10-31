@@ -1,19 +1,32 @@
-// Curated RSS/Atom feeds for the `rss` source. Editing this list changes the source's
-// selection, which is part of the corpus hash. Checked on 31 October 2026: each feed answered
-// 200 with RSS or Atom and its site's robots.txt allows the feed path for `*`.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - reads the --rss-feeds file.
+// Built-in RSS/Atom feeds for the `rss` source, the default when `engine collect` gets no
+// `--rss-feeds` file. Editing this list changes the source's selection, part of the corpus
+// hash. Checked on 31 October 2026: each feed answered 200 with RSS or Atom and its site's
+// robots.txt allows the feed path for `*`.
 // Licenses were not verified feed by feed: unless `license` says otherwise, assume the
 // publisher's copyright. The corpus keeps title, link and the feed's own excerpt (at most
 // 4000 characters) for private analysis; nothing is republished.
 
-export interface RssFeed {
-  /** Stable slug, part of every item id: `itm_rss_<id>_<hash>`. */
-  readonly id: string;
-  readonly name: string;
-  readonly feedUrl: string;
-  readonly siteUrl: string;
-  readonly license: string;
-  /** Why the feed belongs in the niche (coding agents, local LLMs, developer tools). */
-  readonly why: string;
+import * as NodeFSP from "node:fs/promises";
+
+import * as Schema from "effect/Schema";
+
+import { RssFeedList, type RssFeed } from "@earlyscript/editorial-contracts/source";
+
+export type { RssFeed };
+
+const decodeFeedList = Schema.decodeUnknownSync(RssFeedList);
+
+/** Reads a user feed list (`--rss-feeds`); throws with the schema issue when it is invalid. */
+export async function readRssFeedList(file: string): Promise<RssFeedList> {
+  const text = await NodeFSP.readFile(file, "utf8");
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Feed list ${file} is not JSON`);
+  }
+  return decodeFeedList(json);
 }
 
 const COPYRIGHT = "Not stated in the feed; publisher copyright assumed";

@@ -4,8 +4,8 @@
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { sha256 } from "../hash.ts";
-import { SourceFailure, type GetResponse } from "./http.ts";
-import type { RobotsGate } from "./robots.ts";
+import { createHttpClient, SourceFailure, type GetResponse, type HttpOptions } from "./http.ts";
+import { robotsGate, type RobotsGate } from "./robots.ts";
 import type { RssFeed } from "./rss-feeds.ts";
 import { githubEntity, plainText, sortItems } from "./shared.ts";
 import { element, elements, parseXml, textOf, XmlError, type XmlElement } from "./xml.ts";
@@ -52,47 +52,65 @@ function atomLink(entry: XmlElement, base: string): string | null {
   return alternate?.attrs.href ? absolute(alternate.attrs.href, base) : null;
 }
 
+export interface FeedDocument {
+  readonly title: string;
+  readonly entries: Array<FeedEntry>;
+}
+
 /** Entries of an RSS 2.0 or Atom document; throws XmlError when it is neither. */
-export function parseFeed(text: string, feedUrl: string): Array<FeedEntry> {
+export const parseFeed = (text: string, feedUrl: string): Array<FeedEntry> =>
+  parseFeedDocument(text, feedUrl).entries;
+
+export function parseFeedDocument(text: string, feedUrl: string): FeedDocument {
   const root = parseXml(text);
   if (root.name === "rss" || root.name === "rdf:RDF") {
     const channel = element(root, "channel");
     if (!channel) throw new XmlError("RSS without channel");
+    const title = plainText(textOf(element(channel, "title")));
     // RSS 1.0 keeps items beside the channel; RSS 2.0 inside it.
-    return [...elements(channel, "item"), ...elements(root, "item")].map((item) => {
-      const guid = textOf(element(item, "guid")).trim();
-      const link =
-        absolute(textOf(element(item, "link")), feedUrl) ??
-        (/^https?:\/\//.test(guid) ? guid : null);
-      return {
-        key: guid || link || textOf(element(item, "title")),
-        link,
-        title: textOf(element(item, "title")),
-        summary: textOf(element(item, "description", "content:encoded")),
-        published: date(textOf(element(item, "pubDate")), textOf(element(item, "dc:date"))),
-        author:
-          textOf(element(item, "dc:creator")).trim() || rssAuthor(textOf(element(item, "author"))),
-      };
-    });
+    const items = [...elements(channel, "item"), ...elements(root, "item")];
+    return {
+      title,
+      entries: items.map((item) => {
+        const guid = textOf(element(item, "guid")).trim();
+        const link =
+          absolute(textOf(element(item, "link")), feedUrl) ??
+          (/^https?:\/\//.test(guid) ? guid : null);
+        return {
+          key: guid || link || textOf(element(item, "title")),
+          link,
+          title: textOf(element(item, "title")),
+          summary: textOf(element(item, "description", "content:encoded")),
+          published: date(textOf(element(item, "pubDate")), textOf(element(item, "dc:date"))),
+          author:
+            textOf(element(item, "dc:creator")).trim() ||
+            rssAuthor(textOf(element(item, "author"))),
+        };
+      }),
+    };
   }
   if (root.name === "feed" || root.name === "atom:feed") {
-    return elements(root, "entry", "atom:entry").map((entry) => {
-      const link = atomLink(entry, feedUrl);
-      return {
-        key: textOf(element(entry, "id", "atom:id")).trim() || link || "",
-        link,
-        title: textOf(element(entry, "title", "atom:title")),
-        summary: textOf(element(entry, "summary", "content", "atom:summary", "atom:content")),
-        published: date(
-          textOf(element(entry, "published", "atom:published")),
-          textOf(element(entry, "updated", "atom:updated")),
-        ),
-        author:
-          textOf(
-            element(element(entry, "author", "atom:author") ?? entry, "name", "atom:name"),
-          ).trim() || null,
-      };
-    });
+    const title = plainText(textOf(element(root, "title", "atom:title")));
+    return {
+      title,
+      entries: elements(root, "entry", "atom:entry").map((entry) => {
+        const link = atomLink(entry, feedUrl);
+        return {
+          key: textOf(element(entry, "id", "atom:id")).trim() || link || "",
+          link,
+          title: textOf(element(entry, "title", "atom:title")),
+          summary: textOf(element(entry, "summary", "content", "atom:summary", "atom:content")),
+          published: date(
+            textOf(element(entry, "published", "atom:published")),
+            textOf(element(entry, "updated", "atom:updated")),
+          ),
+          author:
+            textOf(
+              element(element(entry, "author", "atom:author") ?? entry, "name", "atom:name"),
+            ).trim() || null,
+        };
+      }),
+    };
   }
   throw new XmlError(`Not an RSS or Atom document: <${root.name}>`);
 }
@@ -206,5 +224,82 @@ export async function collectRssDay(
       retrieved_at: retrievedAt,
       note: notes.join("; "),
     },
+  };
+}
+
+export type FeedValidationError = "not-a-feed" | "robots-disallowed" | "unreachable";
+
+export type FeedValidation =
+  | {
+      readonly ok: true;
+      readonly url: string;
+      readonly title: string;
+      readonly entries: number;
+      /** ISO instant of the newest dated entry; null when no entry has a date. */
+      readonly latest: string | null;
+    }
+  | {
+      readonly ok: false;
+      readonly url: string;
+      readonly error: FeedValidationError;
+      readonly message: string;
+    };
+
+/**
+ * Checks a feed URL before it joins a user's list: robots.txt, one download with the
+ * collector's User-Agent, and a parse. Never throws for network or content problems.
+ */
+export async function validateFeed(
+  url: string,
+  options: HttpOptions = {},
+): Promise<FeedValidation> {
+  const fail = (error: FeedValidationError, message: string): FeedValidation => ({
+    ok: false,
+    url,
+    error,
+    message,
+  });
+  try {
+    const { protocol } = new URL(url);
+    if (protocol !== "https:" && protocol !== "http:")
+      return fail("unreachable", "Only http and https URLs are supported");
+  } catch {
+    return fail("unreachable", "Invalid URL");
+  }
+  // One request per call; a settings form should answer in seconds, not minutes.
+  const get = createHttpClient("rss", {
+    dayTimeoutMs: 60_000,
+    requestTimeoutMs: 15_000,
+    ...options,
+    text: true,
+  });
+  let response;
+  try {
+    const refusal = await robotsGate(() => get, new Map())(url);
+    if (refusal?.startsWith("robots_disallowed")) return fail("robots-disallowed", refusal);
+    if (refusal) return fail("unreachable", refusal);
+    response = await get(url);
+  } catch (error) {
+    if (!(error instanceof SourceFailure)) throw error;
+    return fail("unreachable", error.message);
+  }
+  if (response.status !== 200 || typeof response.body !== "string")
+    return fail("unreachable", `HTTP ${response.status}`);
+  let document: FeedDocument;
+  try {
+    document = parseFeedDocument(response.body, url);
+  } catch (error) {
+    if (!(error instanceof XmlError)) throw error;
+    return fail("not-a-feed", error.message);
+  }
+  const dates = document.entries.flatMap((entry) =>
+    entry.published === null ? [] : [entry.published],
+  );
+  return {
+    ok: true,
+    url,
+    title: document.title,
+    entries: document.entries.length,
+    latest: dates.length ? new Date(Math.max(...dates)).toISOString() : null,
   };
 }

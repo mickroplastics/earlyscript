@@ -5,8 +5,8 @@ import * as NodePath from "node:path";
 import { describe, it, expect, vi } from "vite-plus/test";
 import type { CoverageStatus, SourceId } from "@earlyscript/editorial-contracts/source";
 import { collectLobstersDay, lobstersPageUrl, LOBSTERS_MAX_PAGES } from "./lobsters.ts";
-import { collectRssDay, parseFeed } from "./rss.ts";
-import { RSS_FEEDS, type RssFeed } from "./rss-feeds.ts";
+import { collectRssDay, parseFeed, validateFeed } from "./rss.ts";
+import { readRssFeedList, RSS_FEEDS, type RssFeed } from "./rss-feeds.ts";
 import { robotsAllows, robotsGate, robotsRules } from "./robots.ts";
 import { parseXml, XmlError } from "./xml.ts";
 import { USER_AGENT, type FrozenResponse, type GetResponse } from "./http.ts";
@@ -387,6 +387,160 @@ describe("coverage and gaps", () => {
   });
 });
 
+describe("user feeds", () => {
+  const custom: RssFeed = {
+    id: "my-blog",
+    name: "My Blog",
+    feedUrl: "https://blog.example.org/atom.xml",
+    siteUrl: "https://blog.example.org/",
+    license: "",
+  };
+  const quietClock = () => {
+    let clock = Date.parse(now);
+    return {
+      now: () => clock,
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+    };
+  };
+  it("collects a user list instead of the built-in one, under the same `rss` source", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "rss-user-"));
+    try {
+      const atom = await testkit("atom-sample.xml");
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockImplementation(async (url) =>
+          String(url).endsWith("/robots.txt")
+            ? new Response("", { status: 404 })
+            : new Response(atom),
+        );
+      const adapters = liveSources(
+        ["rss"],
+        { fetch: fetcher, ...quietClock() },
+        {
+          rssFeeds: [custom],
+        },
+      );
+      expect(adapters[0]!.descriptor).toMatchObject({
+        id: "rss",
+        selection: { rss: custom.feedUrl },
+      });
+      const rows = await collectCorpus({ dir: root, from: day, to: "2026-10-31", adapters });
+      expect(rows).toMatchObject([{ source: "rss", status: "complete", items: 2 }]);
+      expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+        "https://blog.example.org/robots.txt",
+        custom.feedUrl,
+      ]);
+      const lines = (await NodeFSP.readFile(NodePath.join(root, "rss", `${day}.jsonl`), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(lines.map((item) => item.id)).toEqual([
+        expect.stringMatching(/^itm_rss_my-blog_[0-9a-f]{16}$/),
+        expect.stringMatching(/^itm_rss_my-blog_[0-9a-f]{16}$/),
+      ]);
+      expect(lines[0].author).toBe("My Blog");
+      const manifest = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(root, "corpus-manifest.json"), "utf8"),
+      );
+      expect(manifest.selection.rss).toBe(custom.feedUrl);
+      // Without a list the built-in feeds stay the default.
+      expect(liveSources(["rss"])[0]!.descriptor).toEqual(SOURCES.rss);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("reads --rss-feeds files and rejects invalid lists", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "rss-list-"));
+    const write = async (name: string, text: string) => {
+      const file = NodePath.join(root, name);
+      await NodeFSP.writeFile(file, text);
+      return file;
+    };
+    try {
+      const good = [custom, { ...custom, id: "other", feedUrl: "https://b.example/rss", why: "x" }];
+      expect(await readRssFeedList(await write("good.json", JSON.stringify(good)))).toEqual(good);
+      // The built-in list satisfies the same schema.
+      expect(await readRssFeedList(await write("builtin.json", JSON.stringify(RSS_FEEDS)))).toEqual(
+        RSS_FEEDS,
+      );
+      const bad = {
+        "notjson.json": "{",
+        "empty.json": "[]",
+        "dup-id.json": JSON.stringify([custom, { ...custom, feedUrl: "https://c.example/rss" }]),
+        "dup-url.json": JSON.stringify([custom, { ...custom, id: "again" }]),
+        "bad-url.json": JSON.stringify([{ ...custom, feedUrl: "file:///etc/passwd" }]),
+        "bad-id.json": JSON.stringify([{ ...custom, id: "My Blog" }]),
+        "missing.json": JSON.stringify([{ id: "x", name: "X", feedUrl: custom.feedUrl }]),
+      };
+      for (const [name, text] of Object.entries(bad))
+        await expect(readRssFeedList(await write(name, text)), name).rejects.toThrow();
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("validates a feed URL: title, entries and newest date, or a typed error", async () => {
+    const atom = await testkit("atom-sample.xml");
+    const agents = new Set<string | null>();
+    const serve = (routes: Record<string, () => Response>) =>
+      vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+        agents.add(new Headers(init?.headers).get("user-agent"));
+        const route = routes[String(url)];
+        if (route) return route();
+        if (String(url).endsWith("/robots.txt")) return new Response("", { status: 404 });
+        throw new TypeError("fetch failed");
+      });
+    const options = (routes: Record<string, () => Response>) => ({
+      fetch: serve(routes),
+      ...quietClock(),
+    });
+    const url = "https://feeds.example/atom.xml";
+    expect(await validateFeed(url, options({ [url]: () => new Response(atom) }))).toEqual({
+      ok: true,
+      url,
+      title: "Simon Willison's Weblog",
+      entries: 3,
+      latest: "2026-10-30T22:00:00.000Z",
+    });
+    const rss = await validateFeed(
+      url,
+      options({ [url]: () => new Response(`<rss><channel><title>Empty</title></channel></rss>`) }),
+    );
+    expect(rss).toEqual({ ok: true, url, title: "Empty", entries: 0, latest: null });
+    expect(
+      await validateFeed(url, options({ [url]: () => new Response("<html><p>hi</p></html>") })),
+    ).toMatchObject({ ok: false, error: "not-a-feed" });
+    expect(
+      await validateFeed(url, options({ [url]: () => new Response("not xml at all <") })),
+    ).toMatchObject({ ok: false, error: "not-a-feed" });
+    const disallowed = await validateFeed(
+      url,
+      options({
+        "https://feeds.example/robots.txt": () => new Response("User-agent: *\nDisallow: /\n"),
+        [url]: () => new Response(atom),
+      }),
+    );
+    expect(disallowed).toMatchObject({ ok: false, error: "robots-disallowed" });
+    expect(
+      await validateFeed(url, options({ [url]: () => new Response("", { status: 404 }) })),
+    ).toMatchObject({ ok: false, error: "unreachable", message: "HTTP 404" });
+    expect(await validateFeed(url, options({}))).toMatchObject({
+      ok: false,
+      error: "unreachable",
+    });
+    expect(await validateFeed("ftp://feeds.example/x", options({}))).toMatchObject({
+      ok: false,
+      error: "unreachable",
+    });
+    expect(await validateFeed("not a url", options({}))).toMatchObject({
+      ok: false,
+      error: "unreachable",
+    });
+    expect([...agents]).toEqual([USER_AGENT]);
+  });
+});
+
 const live = process.env.EARLYSCRIPT_LIVE_TESTS === "1";
 describe.skipIf(!live)("live network (EARLYSCRIPT_LIVE_TESTS=1)", () => {
   // A fixed recent day keeps wall-clock reads out of tests; override for a fresh check.
@@ -405,5 +559,12 @@ describe.skipIf(!live)("live network (EARLYSCRIPT_LIVE_TESTS=1)", () => {
     const result = await adapter!.collectDay(liveDay);
     expect(result.coverage?.status).not.toBe("unavailable");
     expect(result.coverage?.note).toMatch(/^feeds=\d+ responded=\d+/);
+  });
+  it("validates a real feed and refuses lobste.rs by robots.txt", async () => {
+    expect(await validateFeed(simon.feedUrl)).toMatchObject({ ok: true });
+    expect(await validateFeed("https://lobste.rs/newest.rss")).toMatchObject({
+      ok: false,
+      error: "robots-disallowed",
+    });
   });
 });

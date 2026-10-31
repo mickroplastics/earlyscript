@@ -1,4 +1,4 @@
-import type { SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
+import type { RssFeed, SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
 import type { SourceAdapter } from "./adapter.ts";
 import { createHttpClient, type HttpOptions } from "./http.ts";
@@ -36,14 +36,18 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     },
     coverage_policy: "census",
   },
-  rss: {
+  rss: rssDescriptor(RSS_FEEDS),
+};
+
+/** The feed list is the selection: adding a feed changes the corpus hash. */
+export function rssDescriptor(feeds: ReadonlyArray<RssFeed>): SourceDescriptor {
+  return {
     id: "rss",
     label: "RSS/Atom",
-    // The feed list is the selection: adding a feed changes the corpus hash.
-    selection: { rss: RSS_FEEDS.map((feed) => feed.feedUrl).join(" ") },
+    selection: { rss: feeds.map((feed) => feed.feedUrl).join(" ") },
     coverage_policy: "census",
-  },
-};
+  };
+}
 
 export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
 
@@ -56,7 +60,18 @@ export { collectHnDay } from "./hn.ts";
 export { collectGithubDay } from "./github.ts";
 
 export { collectLobstersDay } from "./lobsters.ts";
-export { collectRssDay } from "./rss.ts";
+export {
+  collectRssDay,
+  validateFeed,
+  type FeedValidation,
+  type FeedValidationError,
+} from "./rss.ts";
+export { RSS_FEEDS, readRssFeedList } from "./rss-feeds.ts";
+
+export interface LiveSourceConfig {
+  /** Feeds of the `rss` source; the built-in RSS_FEEDS when absent. */
+  readonly rssFeeds?: ReadonlyArray<RssFeed>;
+}
 
 /** Lobsters, with its robots.txt read through the same paced client. */
 function lobstersAdapter(options: HttpOptions): SourceAdapter {
@@ -76,12 +91,12 @@ function lobstersAdapter(options: HttpOptions): SourceAdapter {
 }
 
 /** RSS, paced per host; validators and robots rules last for the whole collect run. */
-function rssAdapter(options: HttpOptions): SourceAdapter {
+function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): SourceAdapter {
   const states = new Map<string, { nextStart: number; blockedUntil: number }>();
   const rules = new Map<string, ReadonlyArray<RobotsRule>>();
   const cache = new Map<string, CachedFeed>();
   return {
-    descriptor: SOURCES.rss,
+    descriptor: rssDescriptor(feeds),
     collectDay: (day) => {
       const clients = new Map<string, ReturnType<typeof createHttpClient>>();
       const getFor = (url: string) => {
@@ -95,7 +110,7 @@ function rssAdapter(options: HttpOptions): SourceAdapter {
         return client;
       };
       return collectRssDay(day, {
-        feeds: RSS_FEEDS,
+        feeds,
         getFor,
         robots: robotsGate(getFor, rules),
         cache,
@@ -107,10 +122,11 @@ function rssAdapter(options: HttpOptions): SourceAdapter {
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
   options: HttpOptions = {},
+  config: LiveSourceConfig = {},
 ): Array<SourceAdapter> {
   return ids.map((id) => {
     if (id === "lobsters") return lobstersAdapter(options);
-    if (id === "rss") return rssAdapter(options);
+    if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
     const state = { nextStart: 0, blockedUntil: 0 };
     return {
       descriptor: SOURCES[id],

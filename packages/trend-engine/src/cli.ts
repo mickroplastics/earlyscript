@@ -6,7 +6,7 @@ import * as NodeUtil from "node:util";
 
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus } from "./collect.ts";
-import { liveSources } from "./sources/index.ts";
+import { liveSources, readRssFeedList } from "./sources/index.ts";
 import * as Schema from "effect/Schema";
 import { SourceId } from "@earlyscript/editorial-contracts/source";
 import { runEngine } from "./run.ts";
@@ -16,7 +16,7 @@ const isSourceId = Schema.is(SourceId);
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
-  "       engine collect --corpus <dir> --sources hn,github,lobsters,rss --from <day> --to <exclusive-day> [--force]";
+  "       engine collect --corpus <dir> --sources hn,github,lobsters,rss --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]";
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
@@ -26,6 +26,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       from: { type: "string" },
       to: { type: "string" },
       sources: { type: "string" },
+      "rss-feeds": { type: "string" },
       force: { type: "boolean" },
       corpus: { type: "string" },
       cutoff: { type: "string" },
@@ -47,7 +48,11 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       dir: values.corpus,
       from: values.from,
       to: values.to,
-      adapters: liveSources(ids),
+      adapters: liveSources(
+        ids,
+        {},
+        values["rss-feeds"] ? { rssFeeds: await readRssFeedList(values["rss-feeds"]) } : {},
+      ),
       ...(values.force ? { force: true } : {}),
     });
     console.log(JSON.stringify(rows));
