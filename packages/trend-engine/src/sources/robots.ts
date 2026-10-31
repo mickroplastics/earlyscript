@@ -69,6 +69,12 @@ export function robotsAllows(rules: ReadonlyArray<RobotsRule>, url: string): boo
 /** Returns null when the URL may be fetched, else the refusal reason for the coverage note. */
 export type RobotsGate = (url: string) => Promise<string | null>;
 
+/** A source's documented exception to robots.txt (`SourceDescriptor.robots_override`). */
+export interface RobotsOverride {
+  readonly reason: string;
+  readonly terms_url: string;
+}
+
 /**
  * One robots.txt per origin, cached for the life of `cache` (one collect run). A 4xx means
  * no rules (RFC 9309 §2.3.1.3); an unreachable or 5xx robots.txt disallows the origin.
@@ -76,6 +82,7 @@ export type RobotsGate = (url: string) => Promise<string | null>;
 export function robotsGate(
   getFor: (url: string) => GetResponse,
   cache: Map<string, ReadonlyArray<RobotsRule>>,
+  exception?: { readonly override: RobotsOverride; readonly onOverride: (url: string) => void },
 ): RobotsGate {
   return async (url) => {
     const origin = new URL(url).origin;
@@ -95,9 +102,13 @@ export function robotsGate(
       }
       cache.set(origin, rules);
     }
-    return robotsAllows(rules, url)
-      ? null
-      : `robots_disallowed: ${origin}/robots.txt disallows ${new URL(url).pathname} for Earlyscript`;
+    if (robotsAllows(rules, url)) return null;
+    // Only a Disallow is overridden; an unreachable robots.txt still stops the day.
+    if (exception) {
+      exception.onOverride(url);
+      return null;
+    }
+    return `robots_disallowed: ${origin}/robots.txt disallows ${new URL(url).pathname} for Earlyscript`;
   };
 }
 
