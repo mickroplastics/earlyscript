@@ -1181,14 +1181,21 @@ Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada
 
 ## 20. Fuentes Hugging Face y dev.to (rama `es/sources-hf-devto`, 31 de octubre de 2026)
 
-Base: `f75eebfae2`. Cero archivos de upstream modificados y ninguna dependencia nueva. Archivos nuevos: `packages/trend-engine/src/sources/{huggingface,devto}.ts` con sus pruebas y tres fixtures en `src/testkit/` (`hf-models-pages.json`, `hf-daily-papers-2026-10-30.json`, `devto-latest-pages.json`), recortados de respuestas reales del 31 de octubre. Archivos propios modificados: `SourceId` en `packages/editorial-contracts/src/source.ts` (una línea: `huggingface` y `devto`), `src/sources/{http,shared,index}.ts` y la CLI, que ahora acepta cualquier id registrado en `SOURCES`. `engine.v1.json` sigue con `hn,github`: las fuentes nuevas solo capturan y no entran al motor.
+Base: `f75eebfae2`. Cero archivos de upstream modificados y ninguna dependencia nueva. Archivos nuevos: `packages/trend-engine/src/sources/{huggingface,devto}.ts` con sus pruebas; `src/sources/robots.ts`, copia byte a byte del de S4 (`es/sources-lobsters-rss`, `a5ec1257fb`), así que la fusión lo añade igual desde las dos ramas; y cinco fixtures en `src/testkit/`: `hf-models-pages.json`, `hf-daily-papers-2026-10-30.json` y `devto-latest-pages.json`, recortados de respuestas reales del 31 de octubre, más `huggingface-robots.txt` y `devto-robots.txt`, copias íntegras de esa fecha. Archivos propios modificados: `SourceId` en `packages/editorial-contracts/src/source.ts` (una línea: `huggingface` y `devto`), `src/sources/{http,shared,index}.ts` y la CLI, que ahora acepta cualquier id registrado en `SOURCES`. `engine.v1.json` sigue con `hn,github`: las fuentes nuevas solo capturan y no entran al motor.
 
-Cliente HTTP (`src/sources/http.ts`):
+Cliente HTTP (`src/sources/http.ts`), con la misma forma que en S4 para que la fusión solo una listas:
 
-- Una tabla `HOSTS` reúne por fuente la pausa entre peticiones, el límite de bytes y el presupuesto de tiempo por día. HN y GitHub conservan sus valores y su `User-Agent`. Hugging Face pausa 700 ms (350 ms con `HF_TOKEN`), acepta 2 MiB por respuesta y tiene 10 minutos por día. dev.to pausa 3 s, acepta 4 MiB y tiene 15 minutos por día.
-- Las fuentes nuevas envían `User-Agent: Earlyscript/0.1.5 (+https://git.r.biste.cc/miguel/earlyscript)`. `HF_TOKEN` se lee solo de la variable de entorno y viaja como `Authorization: Bearer`; no se guarda ni se escribe en las notas.
+- `MAX_RESPONSE_BYTES` y `PAUSE_MS` ganan las claves `huggingface` (2 MiB; 700 ms, 350 ms con `HF_TOKEN`) y `devto` (4 MiB; 3 s). `DAY_TIMEOUT_MS` da 10 minutos por día a Hugging Face y 15 a dev.to; las demás siguen con 5.
+- Todas las fuentes envían `User-Agent: Earlyscript/0.1 (+https://github.com/miwgel)` (`USER_AGENT`, el de S4). dev.to añade `Accept: application/vnd.forem.api-v1+json`. `HF_TOKEN` se lee solo de la variable de entorno y viaja como `Authorization: Bearer`; no se guarda ni se escribe en las notas.
 - La cabecera `RateLimit: "api";r=<restantes>;t=<segundos>` del Hub (borrador IETF) bloquea la fuente hasta el reinicio de la ventana, más 1,5 s, cuando `r=0` o la respuesta es un 429. Se suma al tratamiento existente de `Retry-After` y `x-ratelimit-reset`. Los cubos `api` y `resolvers` del Hub comparten el bloqueo: es una simplificación conservadora.
-- `GetResponse` acepta `"text"` para leer las tarjetas de modelo y expone `next`, el destino de `Link: <...>; rel="next"` (RFC 8288).
+- `GetResponse(url, headers?)` y `options.text`, como en S4: un cliente de texto lee las tarjetas de modelo y `robots.txt`. `FrozenResponse` expone además `next`, el destino de `Link: <...>; rel="next"` (RFC 8288), y `age`, los segundos que la respuesta pasó en una caché compartida.
+
+robots.txt (regla de coordinación del 31 de octubre, salida de S4):
+
+- `liveSources` da a cada adaptador `robotsGate` de `robots.ts`, con una caché de reglas por corrida y el cliente de texto de la misma fuente, que comparte su pausa. Se comprueba el token `earlyscript` según RFC 9309. Un 4xx del `robots.txt` cuenta como permitido; un 5xx o un fallo de red dejan el día `unavailable` con `robots_unavailable: ...`; una prohibición lo deja `unavailable` con `robots_disallowed: ...`. En los dos casos no se pide ningún dato.
+- Hugging Face comprueba `/api/models` y `/api/daily_papers` antes de la primera petición del día, y cada tarjeta (`/{id}/resolve/main/README.md`) antes de pedirla. Si una tarjeta está prohibida, el modelo se queda con las etiquetas como cuerpo y la nota registra el motivo. dev.to comprueba `/api/articles/latest` al empezar cada día; todo el recorrido usa esa ruta.
+- Resultado el 31 de octubre con ese `User-Agent`: los dos responden 200. `huggingface.co/robots.txt` solo tiene `User-agent: *` con `Allow: /`. `dev.to/robots.txt` tiene `User-agent: *` y prohíbe rutas de interfaz (`/search?q=*`, `/admin/*`, `/mod/*`, `/reactions?*`, `/users/auth/*`, `/connect/@*`, entre otras), ninguna bajo `/api/`. Ninguno de los dos nombra a Earlyscript. Una prueba aplica `robotsAllows` a los dos archivos guardados: todas las URL que piden los adaptadores están permitidas y `dev.to/search?q=` no.
+- HN y GitHub (`hn.ts`, `github.ts`) reciben la compuerta, pero todavía no la consultan: quedan fuera de esta unidad.
 
 Hugging Face (`huggingface.ts`), política `sample`:
 
@@ -1203,19 +1210,26 @@ dev.to (`devto.ts`), política `census`:
 - Etiquetas (al menos una): `ai`, `llm`, `agents`, `machinelearning`, `programming`, `devtools`, `opensource`, `python`, `typescript`, `rust`, elegidas a partir del perfil del canal. No filtran por afinidad; eso lo hace el motor.
 - El cuerpo es `description` del listado (unos 150 caracteres), porque `body_markdown` solo viene al pedir cada artículo: unos 2000 artículos por día a 10 peticiones cada 30 s serían unos 100 minutos por día. `canonical_url` fuera de dev.to pasa a `external_url` y, si apunta a GitHub, a entidad.
 - La cobertura es `complete` si el recorrido pasó el inicio del día y el día había terminado antes de la primera página. Es `partial` o `unavailable` en estos casos: el día sigue abierto (`day not over`), el listado terminó antes, hubo un fallo, o se alcanzó el tope de 300 páginas, unos dos meses. La nota cuenta los ítems por etiqueta y las páginas recorridas. La paginación es por número de página: los artículos nuevos repiten algunos de la página anterior (se unen por id) y un artículo borrado durante el recorrido puede desplazar otro fuera de la vista.
+- Caché del CDN. dev.to responde `cache-control: public, no-cache`, pero su CDN sirve páginas guardadas: la página 7 pedida dos veces con 4 s de diferencia volvió con `x-cache: HIT` y `age: 5`, y pedida otra vez 5 minutos después, con `age: 281`. Si una página llega de una instantánea anterior a la de la página previa, los artículos publicados entre las dos no aparecen en ninguna. El adaptador calcula la instantánea de cada página (`observed_at` menos `age`). Cuando una página es más vieja que la anterior y no repite ninguno de sus artículos, guarda el tramo de fechas de publicación entre las dos. Los días que lo tocan quedan `partial`, con `possible gap <desde>..<hasta>: cached page older than the previous one` en la nota. El adaptador no evita la caché ni la fuerza con parámetros inventados.
 
 Licencias y condiciones:
 
 - Hugging Face Hub: límites leídos en `huggingface.co/docs/hub/rate-limits` (500 peticiones de API y 3000 de resolvers por IP cada 5 minutos en anónimo; 1000 y 5000 con cuenta gratuita). Las Condiciones de servicio del Hub son _por confirmar_, porque no se leyeron. El contenido de cada repositorio (tarjetas de modelo) sigue su propia licencia, declarada en la cabecera YAML que la limpieza descarta. Los resúmenes de papers son de sus autores, con la licencia que cada uno eligió en arXiv. El listado `/api/models` no está en el OpenAPI; sus parámetros salen del cliente `huggingface_hub` (_por confirmar_ en la documentación oficial).
 - dev.to: API pública de lectura sin clave. La documentación v1 (`developers.forem.com/api/v1`) no publica límites ni condiciones. La exigencia de `user-agent` y el límite de 10 peticiones cada 30 s vienen de la revisión previa de la referencia beta (v0) y quedan _por confirmar_. El contenido pertenece a sus autores; las condiciones de reutilización de DEV son _por confirmar_. El corpus guarda título, descripción, autor y enlace, no el texto completo.
 
-Captura real en Beatriz (31 de octubre de 2026, 03:47 a 03:49 UTC, sin `HF_TOKEN`): `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31` en `~/earlyscript-data/live/corpus-s3-prueba/`, 112 s, código de salida 0, ningún error ni 429.
+Capturas reales en Beatriz (31 de octubre de 2026, sin `HF_TOKEN`, sin errores en stderr ni respuestas 429), con `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31`:
 
-| Fuente      | Día        | Estado   | Ítems | Detalle                                                                  |
-| ----------- | ---------- | -------- | ----: | ------------------------------------------------------------------------ |
-| huggingface | 2026-10-29 | partial  |    67 | 50 modelos (0 sin tarjeta) y 17 papers                                   |
-| huggingface | 2026-10-30 | partial  |    89 | 50 modelos (0 sin tarjeta) y 39 papers                                   |
-| devto       | 2026-10-29 | complete |  2169 | 12 páginas; `ai` 1616, `opensource` 327, `python` 322, `programming` 300 |
-| devto       | 2026-10-30 | complete |  1832 | 12 páginas; `ai` 1354, `opensource` 356, `programming` 288, `python` 250 |
+1. 03:47 a 03:49 UTC, 112 s, antes de la compuerta de robots y con el `User-Agent` anterior. Hugging Face: 67 y 89 ítems. dev.to: 2169 y 1832, los dos `complete`. Se conserva en `~/earlyscript-data/live/corpus-s3-prueba-v1/`.
+2. 03:55 a 03:57 UTC, 115 s, con la compuerta, `--force` sobre el mismo corpus. dev.to del 30 subió a 1884 porque `collect` une por id: los 52 nuevos eran todos del 30 de octubre entre las 03:44 y las 04:59 UTC. La primera captura tenía un hueco por una página vieja del CDN, probablemente guardada por los sondeos manuales previos de las 03:39 con `per_page=1000`. Esto motivó la detección descrita arriba. Está en `history/` del mismo directorio.
+3. Captura final, 03:59 a 04:01 UTC, 114 s, código de salida 0, en un directorio nuevo `~/earlyscript-data/live/corpus-s3-prueba/`:
 
-dev.to aporta entre 1800 y 2200 ítems por día, más que HN, y tres cuartas partes llevan `ai`. Antes de que entre al motor hace falta decidir si se acota (menos etiquetas, un mínimo de reacciones o una muestra) y comprobar en un backtest que no empeora P@5.
+| Fuente      | Día        | Estado  | Ítems | Detalle |
+| ----------- | ---------- | ------- | ----: | ------- |
+| huggingface | 2026-10-29 | partial |    67 | 50 modelos (0 sin tarjeta) y 17 papers |
+| huggingface | 2026-10-30 | partial |    89 | 50 modelos (0 sin tarjeta) y 39 papers |
+| devto       | 2026-10-29 | partial |  2161 | 12 páginas; dos tramos posibles sin ver (23:21 a 23:31 y 17:12 a 17:13 UTC) |
+| devto       | 2026-10-30 | partial |  1845 | 12 páginas; dos tramos posibles sin ver (19:49 a 20:39 y 11:21 a 11:35 UTC); faltan 39 artículos que sí tenía la unión de las capturas 1 y 2 |
+
+Una segunda pasada inmediata sin `--force` (37 s) volvió a pedir los dos días `partial` de dev.to, recibió las mismas páginas en caché y no añadió ninguno: la caché dura al menos varios minutos. Una corrida diaria no debería encontrar sus propias entradas; el plazo real de la caché es *por confirmar*. Si hace falta cerrar los huecos, la opción reversible es pedir páginas puente con otro `per_page`, otra clave de caché, alrededor del tramo marcado. No está implementada.
+
+dev.to aporta entre 1800 y 2200 ítems por día, más que HN, y tres cuartas partes llevan `ai` (1610 de 2169 el 29 de octubre). Antes de que entre al motor hace falta decidir si se acota (menos etiquetas, un mínimo de reacciones o una muestra) y comprobar en un backtest que no empeora P@5.
