@@ -20,6 +20,7 @@ import { SidebarContent, SidebarGroup, SidebarMenu } from "../components/ui/side
 import { runGroupLabel, splitInbox } from "./editorial.logic";
 import { editorialEnvironment } from "./state";
 import { TrendInboxRow } from "./TrendInboxRow";
+import { TrendPresentationRunButton } from "./TrendPresentationRunButton";
 
 const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly label: string }> =
   [
@@ -64,6 +65,9 @@ export function TrendInbox({
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
               {inbox?.run ? runGroupLabel(inbox.run, nowMinute) : "Tendencias"}
             </span>
+            {inbox?.run ? (
+              <TrendPresentationRunButton environmentId={environmentId} runId={inbox.run.runId} />
+            ) : null}
             <Menu>
               <MenuTrigger
                 render={

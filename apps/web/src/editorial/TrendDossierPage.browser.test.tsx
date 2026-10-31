@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
-import { TrendDossierView } from "./TrendDossierPage";
+import { TrendDossierView, type TrendPresentationActions } from "./TrendDossierPage";
 
 const state = vi.hoisted(() => ({ opened: [] as string[] }));
 vi.mock("../browser/useOpenLink", () => ({
@@ -159,5 +159,111 @@ describe("TrendDossierView", () => {
     await expect
       .element(screen.getByRole("link", { name: "discusión" }))
       .toHaveAttribute("href", "https://news.ycombinator.com/item?id=5");
+  });
+
+  it("shows the assistant's title and summary with citations linked to the evidence", async () => {
+    setup();
+    const actions: TrendPresentationActions = {
+      busy: null,
+      error: null,
+      onDraft: vi.fn(),
+      onRegenerate: vi.fn(),
+    };
+    const drafted: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        presentation: {
+          title: "IBM abre su pila de computación cuántica",
+          summary: {
+            whatHappened: "IBM publicó herramientas abiertas [itm_hn_2] y un SDK [itm_hn_8].",
+            whyItMatters: "Toca herramientas para desarrolladores [itm_hn_1].",
+            videoAngle: "Un video podría probar el SDK [itm_unknown].",
+          },
+          citedItemIds: ["itm_hn_2", "itm_hn_8", "itm_hn_1"],
+          provider: "claudeAgent",
+          model: "claude-haiku-5-5",
+          promptVersion: "trend-presentation.v2",
+          generatedAt: "2026-10-31T12:00:00.000Z",
+        },
+      },
+    };
+    await using screen = await render(
+      <TrendDossierView
+        dossier={drafted}
+        evidence={drafted}
+        onEvidencePage={() => {}}
+        citationEvidence={[1, 2, 3, 4, 5, 6, 7, 8].map(evidence)}
+        presentationActions={actions}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("heading", { level: 1 }))
+      .toHaveTextContent("IBM abre su pila de computación cuántica");
+    await expect.element(screen.getByText("Redactado por el asistente")).toBeVisible();
+    // The engine's words stay under the title.
+    await expect
+      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
+      .toBeVisible();
+    await expect.element(screen.getByText("Por qué importa al canal")).toBeVisible();
+
+    // A citation past the first evidence page still resolves to its item.
+    await userEvent.click(screen.getByRole("link", { name: "Evidencia 8: Quantum item 8" }));
+    await userEvent.click(screen.getByRole("link", { name: "Evidencia 2: Quantum item 2" }));
+    expect(state.opened).toEqual(["https://example.com/8", "https://example.com/2"]);
+    // An id the dossier does not list stays as text, never as a link.
+    await expect
+      .element(screen.getByText("Un video podría probar el SDK [itm_unknown]."))
+      .toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Regenerar" }));
+    expect(actions.onRegenerate).toHaveBeenCalledOnce();
+    expect(screen.container.textContent).not.toContain("Redactar con el asistente");
+  });
+
+  it("offers drafting when there is no presentation and reports a failure in place", async () => {
+    setup();
+    const onDraft = vi.fn();
+    await using screen = await render(
+      <TrendDossierView
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+        presentationActions={{
+          busy: null,
+          error: "Text generation failed in generateTrendPresentation: quota",
+          onDraft,
+          onRegenerate: vi.fn(),
+        }}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("heading", { level: 1 }))
+      .toHaveTextContent("quantum computing ibm open");
+    await userEvent.click(screen.getByRole("button", { name: "Redactar con el asistente" }));
+    expect(onDraft).toHaveBeenCalledOnce();
+    await expect
+      .element(screen.getByRole("alert").filter({ hasText: "No se pudo redactar" }))
+      .toHaveTextContent(
+        "No se pudo redactar: Text generation failed in generateTrendPresentation: quota",
+      );
+  });
+
+  it("disables drafting while it runs", async () => {
+    setup();
+    await using screen = await render(
+      <TrendDossierView
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+        presentationActions={{
+          busy: "draft",
+          error: null,
+          onDraft: vi.fn(),
+          onRegenerate: vi.fn(),
+        }}
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: /Redactando/ })).toBeDisabled();
   });
 });

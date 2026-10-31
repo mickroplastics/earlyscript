@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "../lib/utils";
 import { Badge } from "../components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../components/ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { sourceLabel } from "./editorial.logic";
 
 const SPARK_BAR_WIDTH = 2;
@@ -81,7 +82,7 @@ export function TrendInboxRow({
   readonly isActive: boolean;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
-  const title = trend.presentation?.title ?? trend.label;
+  const presentation = trend.presentation;
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -103,14 +104,39 @@ export function TrendInboxRow({
         }
       >
         <span className="flex min-w-0 items-center gap-2">
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-sm text-foreground",
-              trend.isNew ? "font-medium" : "font-normal",
-            )}
-          >
-            {title}
-          </span>
+          {presentation ? (
+            // The assistant's title replaces the engine label; the engine's words stay one hover away.
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    data-presentation-title=""
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-sm text-foreground",
+                      trend.isNew ? "font-medium" : "font-normal",
+                    )}
+                  />
+                }
+              >
+                {presentation.title}
+              </TooltipTrigger>
+              <TooltipPopup side="right" className="max-w-72">
+                Redactado por el asistente · términos del motor: {trend.label}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-sm text-foreground",
+                trend.isNew ? "font-medium" : "font-normal",
+              )}
+            >
+              {trend.label}
+            </span>
+          )}
+          {presentation ? (
+            <span className="sr-only">Términos del motor: {trend.label}.</span>
+          ) : null}
           {trend.isNew ? <span className="sr-only">Nueva.</span> : null}
           <TrendSparkline values={trend.sparkline} />
         </span>

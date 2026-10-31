@@ -2,22 +2,34 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EditorialCurveDay,
   EditorialDossierId,
+  EditorialEvidenceItem,
   EditorialRunId,
   EditorialSourceCoverage,
   EditorialTrendDossier,
+  EditorialTrendPresentation,
   EnvironmentId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { CircleCheckIcon, ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  ExternalLinkIcon,
+  RefreshCwIcon,
+  SparklesIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useState, type MouseEvent, type ReactNode } from "react";
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
+import { useAtomCommand } from "../state/use-atom-command";
 import {
+  citationSegments,
   coverageStatus,
   coverageText,
   evidenceHeading,
@@ -31,11 +43,15 @@ import {
   whyHereReasons,
 } from "./editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "./EditorialPage";
+import {
+  CITATION_EVIDENCE_LIMIT,
+  DOSSIER_EVIDENCE_PAGE_SIZE as EVIDENCE_PAGE_SIZE,
+  presentationEnvironment,
+} from "./presentationState";
 import { editorialEnvironment } from "./state";
 import { useTrendInbox } from "./TrendInbox";
 
 const SPACE_LABEL = "Tendencias";
-const EVIDENCE_PAGE_SIZE = 6;
 const NEXT_UNIT_TOOLTIP = "Disponible en la siguiente unidad.";
 
 function DossierSection({
@@ -182,11 +198,16 @@ function EvidenceList({
   return (
     <div className="flex flex-col gap-3">
       <ul className="flex flex-col gap-3">
-        {dossier.evidence.map((item) => {
+        {dossier.evidence.map((item, index) => {
           const links = evidenceLinks(item);
           const url = links.title;
           return (
-            <li key={item.itemId} className="flex min-w-0 flex-col gap-0.5">
+            <li
+              key={item.itemId}
+              id={evidenceAnchorId(item.itemId)}
+              data-evidence-number={dossier.evidenceOffset + index + 1}
+              className="flex min-w-0 flex-col gap-0.5"
+            >
               {url ? (
                 <a
                   href={url}
@@ -203,6 +224,8 @@ function EvidenceList({
                 <span className="text-sm font-medium text-foreground">{item.title}</span>
               )}
               <span className="text-xs text-muted-foreground">
+                <span className="tabular-nums">{dossier.evidenceOffset + index + 1}</span>
+                {" · "}
                 {sourceLabel(item.source)} · {formatDate(item.publishedAt)}
                 {item.author ? ` · ${item.author}` : null}
                 {links.discussion ? (
@@ -249,6 +272,173 @@ function EvidenceList({
   );
 }
 
+const evidenceAnchorId = (itemId: string) => `evidence-${itemId}`;
+
+/** A citation number that opens its evidence, like the evidence list's links. */
+function CitationLink({
+  number,
+  item,
+}: {
+  readonly number: number;
+  readonly item: EditorialEvidenceItem;
+}) {
+  const openLink = useOpenLink(null);
+  const url = evidenceLinks(item).title;
+  const label = `Evidencia ${number}: ${item.title}`;
+  const className =
+    "mx-px inline-flex min-w-4 items-center justify-center rounded-sm bg-muted px-1 align-super text-2xs leading-4 font-medium text-muted-foreground tabular-nums";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          url ? (
+            <a
+              href={url}
+              aria-label={label}
+              data-citation={item.itemId}
+              onClick={(event) => {
+                event.preventDefault();
+                openLink(url, { event }).catch((error: unknown) => {
+                  console.error("Could not open the cited evidence.", error);
+                });
+              }}
+              className={cn(
+                className,
+                "outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              )}
+            />
+          ) : (
+            <span aria-label={label} data-citation={item.itemId} className={className} />
+          )
+        }
+      >
+        {number}
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-80">
+        {sourceLabel(item.source)} · {item.title}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function CitedText({
+  text,
+  evidence,
+}: {
+  readonly text: string;
+  readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
+}) {
+  return (
+    <>
+      {citationSegments(text, evidence).map((segment, index) =>
+        segment.kind === "text" ? (
+          // oxlint-disable-next-line react/no-array-index-key -- segments are positional
+          <span key={index}>{segment.text}</span>
+        ) : (
+          <CitationLink
+            // oxlint-disable-next-line react/no-array-index-key -- the same item can be cited twice
+            key={index}
+            number={segment.number}
+            item={segment.item}
+          />
+        ),
+      )}
+    </>
+  );
+}
+
+const SUMMARY_PARTS = [
+  { key: "whatHappened", label: "Qué pasó" },
+  { key: "whyItMatters", label: "Por qué importa al canal" },
+  { key: "videoAngle", label: "Ángulo de video" },
+] as const;
+
+/** Drafting is a human action: these come from the page, the view only renders them. */
+export interface TrendPresentationActions {
+  readonly busy: "draft" | "regenerate" | null;
+  readonly error: string | null;
+  readonly onDraft: () => void;
+  readonly onRegenerate: () => void;
+}
+
+function PresentationError({ message }: { readonly message: string }) {
+  return (
+    <p role="alert" className="flex items-start gap-1.5 text-xs text-destructive-foreground">
+      <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+      <span>No se pudo redactar: {message}</span>
+    </p>
+  );
+}
+
+function TrendPresentationSummary({
+  presentation,
+  evidence,
+  actions,
+}: {
+  readonly presentation: EditorialTrendPresentation;
+  readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
+  readonly actions: TrendPresentationActions | undefined;
+}) {
+  return (
+    <section aria-label="Resumen del asistente" className="flex flex-col gap-3">
+      <dl className="flex flex-col gap-2.5 text-sm text-foreground">
+        {SUMMARY_PARTS.map((part) => (
+          <div key={part.key} className="flex flex-col gap-0.5">
+            <dt className="text-xs text-muted-foreground">{part.label}</dt>
+            <dd className="leading-relaxed">
+              <CitedText text={presentation.summary[part.key]} evidence={evidence} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span>
+          {presentation.model} · {formatDate(presentation.generatedAt)} · no cambia el orden ni el
+          puntaje
+        </span>
+        {actions ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={actions.busy !== null}
+            onClick={actions.onRegenerate}
+          >
+            {actions.busy === "regenerate" ? <Spinner /> : <RefreshCwIcon aria-hidden />}
+            {actions.busy === "regenerate" ? "Regenerando…" : "Regenerar"}
+          </Button>
+        ) : null}
+      </div>
+      {actions?.error ? <PresentationError message={actions.error} /> : null}
+    </section>
+  );
+}
+
+function DraftPresentationPrompt({ actions }: { readonly actions: TrendPresentationActions }) {
+  return (
+    <section
+      aria-label="Resumen del asistente"
+      className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-3 py-2.5"
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+          El asistente puede escribir un título y un resumen de tres partes que citan la evidencia.
+          Usa el modelo de generación de texto de Ajustes.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={actions.busy !== null}
+          onClick={actions.onDraft}
+        >
+          {actions.busy === "draft" ? <Spinner /> : <SparklesIcon aria-hidden />}
+          {actions.busy === "draft" ? "Redactando…" : "Redactar con el asistente"}
+        </Button>
+      </div>
+      {actions.error ? <PresentationError message={actions.error} /> : null}
+    </section>
+  );
+}
+
 function PendingAction({
   label,
   variant,
@@ -273,11 +463,16 @@ export function TrendDossierView({
   dossier,
   evidence,
   onEvidencePage,
+  citationEvidence,
+  presentationActions,
 }: {
   readonly dossier: EditorialTrendDossier;
   /** The evidence page shown; the dossier's own first page until another one loads. */
   readonly evidence: EditorialTrendDossier;
   readonly onEvidencePage: (offset: number) => void;
+  /** Evidence the assistant could cite, in dossier order; the first page until it loads. */
+  readonly citationEvidence?: ReadonlyArray<EditorialEvidenceItem>;
+  readonly presentationActions?: TrendPresentationActions;
 }) {
   const { trend } = dossier;
   const presentation = trend.presentation;
@@ -289,13 +484,17 @@ export function TrendDossierView({
   return (
     <>
       <header className="flex min-w-0 flex-col gap-2">
+        {presentation ? (
+          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <SparklesIcon aria-hidden className="size-3.5" />
+            Redactado por el asistente
+          </p>
+        ) : null}
         <h1 className="text-xl font-semibold text-foreground">
           {presentation?.title ?? trend.label}
         </h1>
         {presentation ? (
-          <p className="text-xs text-muted-foreground">
-            Redactado por el asistente · términos del motor: {trend.label}
-          </p>
+          <p className="text-xs text-muted-foreground">Términos del motor: {trend.label}</p>
         ) : trend.subtitle ? (
           <p className="text-sm text-muted-foreground">{trend.subtitle}</p>
         ) : null}
@@ -309,11 +508,13 @@ export function TrendDossierView({
       </header>
 
       {presentation ? (
-        <section className="flex flex-col gap-1.5 text-sm text-foreground">
-          <p>{presentation.summary.whatHappened}</p>
-          <p>{presentation.summary.whyItMatters}</p>
-          <p>{presentation.summary.videoAngle}</p>
-        </section>
+        <TrendPresentationSummary
+          presentation={presentation}
+          evidence={citationEvidence ?? dossier.evidence}
+          actions={presentationActions}
+        />
+      ) : presentationActions ? (
+        <DraftPresentationPrompt actions={presentationActions} />
       ) : null}
 
       <section className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-4">
@@ -427,11 +628,20 @@ function LoadedTrendDossierPage({
   );
   const dossier = AsyncResult.getOrElse(result, () => null);
   const page = AsyncResult.getOrElse(pageResult, () => null);
+  // Citations can point past the first evidence page; the assistant read at most twelve.
+  const citationResult = useAtomValue(
+    editorialEnvironment.dossier({
+      environmentId,
+      input: { runId, dossierId, evidenceLimit: CITATION_EVIDENCE_LIMIT },
+    }),
+  );
+  const citationEvidence = AsyncResult.getOrElse(citationResult, () => null)?.evidence;
+  const presentationActions = usePresentationActions(environmentId, { runId, dossierId });
   if (dossier === null) {
     return result._tag === "Failure" ? (
       <EditorialEmptyPage
         space={SPACE_LABEL}
-        title="No se encontró el expediente"
+        title="No se encontró la ficha de tendencia"
         description="Puede que la corrida ya no esté en el directorio de corridas."
       />
     ) : (
@@ -447,7 +657,52 @@ function LoadedTrendDossierPage({
         dossier={dossier}
         evidence={page ?? dossier}
         onEvidencePage={setEvidenceOffset}
+        presentationActions={presentationActions}
+        {...(citationEvidence === undefined ? {} : { citationEvidence })}
       />
     </EditorialPage>
   );
+}
+
+/** Server reasons in the operator's words; anything else keeps the provider's message. */
+function presentationErrorText(cause: Cause.Cause<unknown>): string {
+  const error = Cause.squash(cause);
+  if (typeof error === "object" && error !== null && "reason" in error) {
+    switch (error.reason) {
+      case "unavailable":
+        return "este servidor no tiene activada la redacción.";
+      case "run-not-found":
+      case "dossier-not-found":
+        return "la ficha de tendencia ya no está en el directorio de corridas.";
+      case "storage-failed":
+        return "no se pudo guardar en la base editorial.";
+    }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function usePresentationActions(
+  environmentId: EnvironmentId,
+  target: { readonly runId: EditorialRunId; readonly dossierId: EditorialDossierId },
+): TrendPresentationActions {
+  const [busy, setBusy] = useState<TrendPresentationActions["busy"]>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The error shows in place, next to the button; no toast on top of it.
+  const ensure = useAtomCommand(presentationEnvironment.ensure, { reportFailure: false });
+  const regenerate = useAtomCommand(presentationEnvironment.regenerate, { reportFailure: false });
+  const run = (kind: "draft" | "regenerate") => {
+    setBusy(kind);
+    setError(null);
+    const command = kind === "draft" ? ensure : regenerate;
+    void command({ environmentId, input: target }).then((result) => {
+      setBusy(null);
+      if (result._tag === "Failure") setError(presentationErrorText(result.cause));
+    });
+  };
+  return {
+    busy,
+    error,
+    onDraft: () => run("draft"),
+    onRegenerate: () => run("regenerate"),
+  };
 }
