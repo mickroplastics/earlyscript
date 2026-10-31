@@ -5,14 +5,21 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Migrator from "effect/sql/Migrator";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as EditorialThreadService from "../EditorialThreadService.ts";
 import * as EditorialPersistence from "../persistenceLayer.ts";
 import * as EditorialDatabase from "./EditorialDatabase.ts";
+import { EDITORIAL_MIGRATIONS_TABLE } from "./Migrations.ts";
+import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
+import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
+import Migration0003 from "./Migrations/003_EditorialScriptHead.ts";
+import Migration0004 from "./Migrations/004_EditorialRuns.ts";
 
 export const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment:editorial-test");
 
@@ -58,3 +65,21 @@ export const withEditorialDatabase = <A, E, R>(
     Effect.ensuring(removeDir(dir)),
   );
 };
+
+const MIGRATIONS = {
+  1: ["EditorialFoundation", Migration0001],
+  2: ["EditorialOrdering", Migration0002],
+  3: ["EditorialScriptHead", Migration0003],
+  4: ["EditorialRuns", Migration0004],
+} as const;
+
+/** Applies only `ids`, in order, to the file at `dbPath`, as an older checkout would have. */
+export const applyOnly = (dbPath: string, ids: ReadonlyArray<keyof typeof MIGRATIONS>) =>
+  Migrator.make({})({
+    loader: Migrator.fromRecord(
+      Object.fromEntries(
+        ids.map((id) => [`${id}_${MIGRATIONS[id][0]}`, MIGRATIONS[id][1]] as const),
+      ),
+    ),
+    table: EDITORIAL_MIGRATIONS_TABLE,
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
