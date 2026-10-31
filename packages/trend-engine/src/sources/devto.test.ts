@@ -360,7 +360,7 @@ describe("Hugging Face and dev.to in a corpus/1 collection", () => {
       });
       expect(corpus.verified).toBe(true);
       expect(SOURCES.huggingface.coverage_policy).toBe("sample");
-      expect(SOURCES.devto.coverage_policy).toBe("census");
+      expect(SOURCES.devto.coverage_policy).toBe("sample");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

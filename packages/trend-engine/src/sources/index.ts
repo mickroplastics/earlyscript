@@ -50,7 +50,8 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     id: "devto",
     label: "DEV Community",
     selection: { devto: DEVTO_SELECTION },
-    coverage_policy: "census",
+    // Up to 500 articles a day by present-day reactions: a declared sample.
+    coverage_policy: "sample",
   },
 };
 
