@@ -7,6 +7,7 @@ import { EarlywindowCorpusManifest } from "@earlyscript/editorial-contracts/earl
 import { CoverageRecord } from "@earlyscript/editorial-contracts/source";
 import { Item } from "@earlyscript/editorial-contracts/item";
 import { hashCorpus } from "./corpus.ts";
+import { purgeFilter } from "./purge.ts";
 import { daysBetween } from "./days.ts";
 import { sha256 } from "./hash.ts";
 import { readJsonLines } from "./sources/fixture.ts";
@@ -81,6 +82,8 @@ export async function collectCorpus(options: {
       await NodeFSP.rename(`${file}.tmp`, file);
       files.set(path, { path, sha256: sha256(text), bytes: Buffer.byteLength(text) });
     }
+    // Items a recorded purge removed are never stored again, even if the provider still serves them.
+    const purged = purgeFilter(previous?.purges);
     const results: Array<CoverageRecord> = [];
     for (const adapter of options.adapters) {
       for (const day of days) {
@@ -103,7 +106,7 @@ export async function collectCorpus(options: {
           const item = decodeTypedItem(raw);
           if (item.source !== adapter.descriptor.id || !item.published_at.startsWith(`${day}T`))
             throw new Error("Invalid source day");
-          merged.set(item.id, item);
+          if (!purged(item)) merged.set(item.id, item);
         }
         const items = [...merged.values()].toSorted(
           (a, b) => a.published_at.localeCompare(b.published_at) || a.id.localeCompare(b.id),

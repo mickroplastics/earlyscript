@@ -1,19 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
 //   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]
 //   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
+//   node src/cli.ts purge --corpus <dir> --source <id> (--author <name> | --url <permalink> | --feed <feed-url>)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus } from "./collect.ts";
-import { liveSources, SOURCES } from "./sources/index.ts";
-import type { SourceId } from "@earlyscript/editorial-contracts/source";
+import { purgeCorpus } from "./purge.ts";
+import { liveSources, readRssFeedList } from "./sources/index.ts";
+import * as Schema from "effect/Schema";
+import { SourceId } from "@earlyscript/editorial-contracts/source";
 import { runEngine } from "./run.ts";
+
+const isSourceId = Schema.is(SourceId);
 
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
-  "       engine collect --corpus <dir> --sources hn,github[,huggingface,devto] --from <day> --to <exclusive-day> [--force]";
+  "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,devto --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
+  "       engine purge --corpus <dir> --source <id> (--author <name> | --url <permalink> | --feed <feed-url>)";
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
@@ -23,6 +29,12 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       from: { type: "string" },
       to: { type: "string" },
       sources: { type: "string" },
+      "rss-feeds": { type: "string" },
+      source: { type: "string" },
+      author: { type: "string" },
+      url: { type: "string" },
+      uri: { type: "string" },
+      feed: { type: "string" },
       force: { type: "boolean" },
       corpus: { type: "string" },
       cutoff: { type: "string" },
@@ -39,15 +51,33 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   });
   if (command === "collect" && values.corpus && values.from && values.to && values.sources) {
     const ids = [...new Set(values.sources.split(","))];
-    if (ids.some((id) => !Object.hasOwn(SOURCES, id))) throw new Error("Unknown source");
+    if (!ids.every(isSourceId)) throw new Error("Unknown source");
     const rows = await collectCorpus({
       dir: values.corpus,
       from: values.from,
       to: values.to,
-      adapters: liveSources(ids as Array<SourceId>),
+      adapters: liveSources(
+        ids,
+        {},
+        values["rss-feeds"] ? { rssFeeds: await readRssFeedList(values["rss-feeds"]) } : {},
+      ),
       ...(values.force ? { force: true } : {}),
     });
     console.log(JSON.stringify(rows));
+    return 0;
+  }
+  if (command === "purge" && values.corpus && values.source) {
+    if (!isSourceId(values.source)) throw new Error("Unknown source");
+    // --uri is the spelling of the es/sources-earlywindow purge; --url the same match.
+    const uri = values.url ?? values.uri;
+    const purge = await purgeCorpus({
+      dir: values.corpus,
+      source: values.source,
+      ...(values.author !== undefined ? { author: values.author } : {}),
+      ...(uri !== undefined ? { uri } : {}),
+      ...(values.feed !== undefined ? { feed: values.feed } : {}),
+    });
+    console.log(JSON.stringify(purge));
     return 0;
   }
   const log = (line: string) => console.error(line);

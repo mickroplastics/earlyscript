@@ -5,8 +5,13 @@ import * as NodeTimersPromises from "node:timers/promises";
 export interface FrozenResponse {
   readonly observed_at: string;
   readonly status: number;
-  /** Parsed JSON (or raw text for text clients) for 2xx responses; null otherwise. */
+  /** Parsed JSON (or raw text for text sources) for 2xx responses; null otherwise. */
   readonly body: unknown;
+  /** Validators of a 2xx response, replayed as If-None-Match / If-Modified-Since. */
+  readonly etag?: string | null;
+  readonly last_modified?: string | null;
+  /** `Location` of a 3xx: the client never follows redirects itself (see robots.ts). */
+  readonly location?: string | null;
   /** Target of a `Link: <...>; rel="next"` header, for cursor pagination. */
   readonly next?: string | null;
   /** Seconds a shared cache held the response (`Age`); 0 when absent. */
@@ -25,7 +30,7 @@ export interface HttpOptions {
   readonly sleep?: (ms: number) => Promise<unknown>;
   readonly dayTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
-  /** Return 2xx bodies as text instead of JSON (model cards, robots.txt). */
+  /** Return 2xx bodies as text instead of JSON (feeds, model cards, robots.txt); default only for `rss`. */
   readonly text?: boolean;
 }
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
@@ -36,22 +41,27 @@ export interface SourceState {
 
 /**
  * Largest accepted body. An HN page holds at most 1000 hits with unbounded story text;
- * a GitHub search page holds 100 repositories; a Hub page holds 1000 models (about 350 KiB)
- * or 100 daily papers; a dev.to page holds 1000 article summaries (about 2.2 MiB).
+ * a GitHub search page holds 100 repositories; a Lobsters page 25 stories; the largest
+ * curated feed measured on 31 October 2026 was 2.6 MB; a Hub page holds 1000 models (about
+ * 350 KiB) or 100 daily papers; a dev.to page holds 1000 article summaries (about 2.2 MiB).
  * Larger bodies are aborted, not parsed.
  */
 export const MAX_RESPONSE_BYTES = {
   hn: 4 * 1024 * 1024,
   github: 2 * 1024 * 1024,
+  lobsters: 1024 * 1024,
+  rss: 4 * 1024 * 1024,
   huggingface: 2 * 1024 * 1024,
   devto: 4 * 1024 * 1024,
 } as const;
 export type HttpSource = keyof typeof MAX_RESPONSE_BYTES;
 
-/** Minimum gap between two request starts of one client. */
+/** Minimum gap between two request starts of one client (one host for RSS). */
 export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
   hn: 250,
   github: 6500,
+  lobsters: 2000,
+  rss: 1000,
   // Anonymous Hub API quota: 500 requests per 5-minute window per IP; halved with HF_TOKEN.
   huggingface: 700,
   // Unpublished limits; the beta reference states 10 requests per 30 seconds.
@@ -154,6 +164,8 @@ export function createHttpClient(
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...extraHeaders,
           },
+          // A redirect could lead to a path robots.txt forbids; followRedirects gates each hop.
+          redirect: "manual",
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(
@@ -206,14 +218,19 @@ export function createHttpClient(
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
-        return { observed_at: new Date(wall()).toISOString(), status: response.status, body: null };
+        return {
+          observed_at: new Date(wall()).toISOString(),
+          status: response.status,
+          body: null,
+          location: response.headers.get("location"),
+        };
       }
       const next = nextLink(response.headers.get("link"));
       let body: unknown;
       try {
         const text = await readBounded(response, controller, MAX_RESPONSE_BYTES[source]);
-        // Model cards and robots.txt are text; the JSON APIs are parsed here.
-        body = options.text ? text : JSON.parse(text);
+        // Feeds, model cards and robots.txt are text; the JSON APIs are parsed here.
+        body = (options.text ?? source === "rss") ? text : JSON.parse(text);
       } catch (error) {
         if (error instanceof SourceFailure) throw error;
         if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");
@@ -225,6 +242,8 @@ export function createHttpClient(
         observed_at: new Date(wall()).toISOString(),
         status: response.status,
         body,
+        etag: response.headers.get("etag"),
+        last_modified: response.headers.get("last-modified"),
         next,
         age: Number.isFinite(age) && age > 0 ? age : 0,
       };

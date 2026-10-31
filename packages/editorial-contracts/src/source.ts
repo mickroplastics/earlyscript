@@ -1,7 +1,14 @@
 import * as Schema from "effect/Schema";
 
 // Sources with an adapter. A new source adds its id here and an adapter in trend-engine.
-export const SourceId = Schema.Literals(["hn", "github", "huggingface", "devto"]);
+export const SourceId = Schema.Literals([
+  "hn",
+  "github",
+  "lobsters",
+  "rss",
+  "huggingface",
+  "devto",
+]);
 export type SourceId = typeof SourceId.Type;
 
 export const UtcDay = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
@@ -90,3 +97,55 @@ export const GithubSearch = Schema.Struct({
     }),
   ),
 });
+/** One page of lobste.rs `/newest/page/N.json`, newest first. */
+export const LobstersPage = Schema.Array(
+  Schema.Struct({
+    short_id: Schema.String.check(Schema.isPattern(/^[a-z0-9]+$/)),
+    created_at: Schema.String,
+    title: Schema.String,
+    url: Schema.String,
+    description_plain: Schema.optionalKey(Schema.String),
+    submitter_user: Schema.NullOr(Schema.String),
+    tags: Schema.Array(Schema.String),
+    short_id_url: Schema.String,
+    comments_url: Schema.String,
+  }),
+);
+
+const HttpUrl = Schema.String.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === "https:" || protocol === "http:";
+    } catch {
+      return false;
+    }
+  }),
+);
+
+/** One RSS 2.0 or Atom feed of the `rss` source; the built-in list and user lists share it. */
+export const RssFeed = Schema.Struct({
+  /** Stable slug, part of every item id: `itm_rss_<id>_<hash>`. */
+  id: Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,39}$/)),
+  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  feedUrl: HttpUrl,
+  siteUrl: HttpUrl,
+  /** License or usage note; "" when unknown. */
+  license: Schema.String.check(Schema.isMaxLength(500)),
+  /** Why the feed is in the list. */
+  why: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
+});
+export type RssFeed = typeof RssFeed.Type;
+
+/** A feed list file (`engine collect --rss-feeds <file.json>`): unique ids and feed URLs. */
+export const RssFeedList = Schema.Array(RssFeed).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+  Schema.makeFilter(
+    (feeds) =>
+      new Set(feeds.map((feed) => feed.id)).size === feeds.length &&
+      new Set(feeds.map((feed) => feed.feedUrl)).size === feeds.length,
+  ),
+);
+export type RssFeedList = typeof RssFeedList.Type;
