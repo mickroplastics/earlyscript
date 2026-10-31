@@ -3,9 +3,12 @@ import * as NodeFSP from "node:fs/promises";
 import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import { huggingfaceCollector, hfModelsUrl } from "./huggingface.ts";
 import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
+import { liveSources } from "./index.ts";
+import type { RobotsGate } from "./robots.ts";
 import { markdownText } from "./shared.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
+const allow: RobotsGate = async () => null;
 const NEXT = `${hfModelsUrl()}&cursor=page2`;
 async function fixture<T>(name: string): Promise<T> {
   return JSON.parse(
@@ -61,13 +64,13 @@ describe("Hugging Face source", () => {
   it("walks the model listing once across days and selects liked models of each day", async () => {
     const { get, calls } = await recordedHub();
     const collect = huggingfaceCollector();
-    const later = await collect("2026-10-31", get);
+    const later = await collect("2026-10-31", get, allow, get);
     expect(later.items.map((item) => item.id)).toEqual([
       "itm_hf_model_jgod123/DeepSeek-V4.1-Flash-UNCENSORED-FP8",
     ]);
     expect(calls.filter((url) => url.includes("/api/models?"))).toHaveLength(1);
 
-    const day = await collect("2026-10-30", get);
+    const day = await collect("2026-10-30", get, allow, get);
     expect(calls.filter((url) => url.includes("/api/models?"))).toEqual([hfModelsUrl(), NEXT]);
     const models = day.items.filter((item) => item.id.startsWith("itm_hf_model_"));
     // Unliked models never enter; order in the corpus is by creation time.
@@ -107,28 +110,24 @@ describe("Hugging Face source", () => {
 
   it("keeps the papers when the model listing fails and goes unavailable when both fail", async () => {
     const { get } = await recordedHub();
-    const brokenModels = async (url: string, format?: "json" | "text") =>
-      url.includes("/api/models?")
-        ? { observed_at: observed, status: 500, body: null }
-        : get(url, format);
-    const half = await huggingfaceCollector()("2026-10-30", brokenModels);
+    const brokenModels: GetResponse = async (url) =>
+      url.includes("/api/models?") ? { observed_at: observed, status: 500, body: null } : get(url);
+    const half = await huggingfaceCollector()("2026-10-30", brokenModels, allow, get);
     expect(half.coverage).toMatchObject({ status: "partial", items: 3 });
     expect(half.coverage?.note).toContain("models unavailable: HTTP 500");
 
-    const none = await huggingfaceCollector()("2026-10-30", async () => ({
-      observed_at: observed,
-      status: 503,
-      body: null,
-    }));
+    const down: GetResponse = async () => ({ observed_at: observed, status: 503, body: null });
+    const none = await huggingfaceCollector()("2026-10-30", down, allow, down);
     expect(none.coverage).toMatchObject({ status: "unavailable", items: 0 });
   });
 
   it("refuses a pagination link outside the Hub model listing", async () => {
     const { get } = await recordedHub();
-    const result = await huggingfaceCollector()("2026-10-30", async (url, format) => {
-      const response = await get(url, format);
+    const evil: GetResponse = async (url) => {
+      const response = await get(url);
       return url === hfModelsUrl() ? { ...response, next: "https://evil.example/api" } : response;
-    });
+    };
+    const result = await huggingfaceCollector()("2026-10-30", evil, allow, get);
     expect(result.coverage?.note).toContain("models unavailable: Unexpected Hub pagination link");
   });
 
@@ -189,14 +188,37 @@ describe("Hugging Face source", () => {
         return new Response("x".repeat(MAX_RESPONSE_BYTES.huggingface + 1));
       },
       sleep: async () => undefined,
+      text: true,
     });
-    const result = await huggingfaceCollector()("2026-10-30", async (url, format) =>
-      url.includes("/resolve/main/README.md") ? big(url, format) : get(url, format),
-    );
+    const result = await huggingfaceCollector()("2026-10-30", get, allow, big);
     expect(aborted).toBe(true);
     expect(MAX_RESPONSE_BYTES.huggingface).toBe(2 * 1024 * 1024);
     expect(result.items.filter((item) => item.id.startsWith("itm_hf_model_"))).toHaveLength(5);
     expect(result.coverage?.note).toContain("model card: response_too_large");
+  });
+
+  it("asks robots.txt first and requests no data when the Hub refuses", async () => {
+    const { get, calls } = await recordedHub();
+    const gate: Array<string> = [];
+    const refuse: RobotsGate = async (url) => {
+      gate.push(url);
+      return "robots_disallowed: https://huggingface.co/robots.txt disallows /api/models for Earlyscript";
+    };
+    const result = await huggingfaceCollector()("2026-10-30", get, refuse, get);
+    expect(gate).toEqual([hfModelsUrl()]);
+    expect(calls).toEqual([]);
+    expect(result.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(result.coverage?.note).toMatch(/^robots_disallowed: /);
+  });
+
+  it("skips one model card that robots.txt refuses and keeps the model", async () => {
+    const { get, calls } = await recordedHub();
+    const gate: RobotsGate = async (url) =>
+      url.includes("/ostris/") ? "robots_disallowed: test" : null;
+    const result = await huggingfaceCollector()("2026-10-30", get, gate, get);
+    expect(calls.some((url) => url.includes("/ostris/"))).toBe(false);
+    expect(result.items.map((item) => item.title)).toContain("ostris/primal_vae");
+    expect(result.coverage?.note).toContain("model card: robots_disallowed: test");
   });
 
   it("turns a model card into plain text", () => {
@@ -211,9 +233,11 @@ const live = process.env.EARLYSCRIPT_LIVE_TESTS === "1";
 // Network gate: the day is that of the newest model, so the walk stays within one or two pages.
 describe.skipIf(!live)("Hugging Face source (live)", () => {
   it("collects the current day from the public Hub", async () => {
-    const get = createHttpClient("huggingface");
-    const newest = (await get(hfModelsUrl())).body as Array<{ createdAt: string }>;
-    const result = await huggingfaceCollector()(newest[0]!.createdAt.slice(0, 10), get);
+    const newest = (await createHttpClient("huggingface")(hfModelsUrl())).body as Array<{
+      createdAt: string;
+    }>;
+    const [adapter] = liveSources(["huggingface"]);
+    const result = await adapter!.collectDay(newest[0]!.createdAt.slice(0, 10));
     expect(result.coverage?.status).toBe("partial");
     expect(result.coverage?.note).not.toContain("unavailable");
     expect(result.items.length).toBeGreaterThan(0);

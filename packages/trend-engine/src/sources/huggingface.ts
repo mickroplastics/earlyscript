@@ -5,6 +5,7 @@ import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
 import { githubEntity, itemBody, markdownText, plainText, sortItems } from "./shared.ts";
+import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
 /** Models kept per day: the most liked among those created that day, with at least one like. */
@@ -113,7 +114,8 @@ function modelStream() {
 
 async function modelItems(
   day: string,
-  get: GetResponse,
+  getText: GetResponse,
+  robots: RobotsGate,
   models: ReadonlyArray<ModelEntry>,
   notes: Array<string>,
 ): Promise<Array<Item>> {
@@ -128,7 +130,10 @@ async function modelItems(
     let text = "";
     let retrievedAt = model.observed;
     try {
-      const response = await get(readmeUrl(model.id), "text");
+      const url = readmeUrl(model.id);
+      const refusal = await robots(url);
+      if (refusal) throw new SourceFailure(refusal);
+      const response = await getText(url);
       retrievedAt = response.observed_at;
       if (response.status === 200 && typeof response.body === "string")
         text = markdownText(response.body);
@@ -198,17 +203,43 @@ async function paperItems(day: string, get: GetResponse, notes: Array<string>) {
 
 /**
  * A sample by design: models are a popularity selection, so a full day is `partial`; the day is
- * `unavailable` only when neither the model listing nor Daily Papers answered.
+ * `unavailable` only when neither the model listing nor Daily Papers answered. robots.txt is
+ * read before the first request of the day; a refusal of either endpoint leaves the day
+ * `unavailable` without requesting data. Model cards are checked one by one.
  */
-export function huggingfaceCollector(): (day: string, get: GetResponse) => Promise<DayResult> {
+export function huggingfaceCollector(): (
+  day: string,
+  get: GetResponse,
+  robots: RobotsGate,
+  getText: GetResponse,
+) => Promise<DayResult> {
   const reachBefore = modelStream();
-  return async (day, get) => {
+  return async (day, get, robots, getText) => {
+    const refusal = (await robots(hfModelsUrl())) ?? (await robots(hfPapersUrl(day, 0)));
+    if (refusal)
+      return {
+        items: [],
+        coverage: {
+          source: "huggingface",
+          day,
+          status: "unavailable",
+          items: 0,
+          retrieved_at: new Date().toISOString(),
+          note: refusal,
+        },
+      };
     const notes: Array<string> = [];
     const items: Array<Item> = [];
     let failures = 0;
     try {
       items.push(
-        ...(await modelItems(day, get, await reachBefore(dayStart(day), get, notes), notes)),
+        ...(await modelItems(
+          day,
+          getText,
+          robots,
+          await reachBefore(dayStart(day), get, notes),
+          notes,
+        )),
       );
     } catch (error) {
       if (!(error instanceof SourceFailure)) throw error;

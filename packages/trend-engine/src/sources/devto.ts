@@ -5,6 +5,7 @@ import type { Item } from "@earlyscript/editorial-contracts/item";
 import { DAY_MS, dayStart } from "../days.ts";
 import { SourceFailure, type GetResponse } from "./http.ts";
 import { githubEntity, itemBody, plainText, sortItems } from "./shared.ts";
+import type { RobotsGate } from "./robots.ts";
 import type { DayResult } from "./adapter.ts";
 
 /** Tags close to the channel profile; an article enters when it carries at least one. */
@@ -59,7 +60,11 @@ interface Tagged {
  * stay in memory. Page numbers shift while new articles arrive: repeats are merged by id, and
  * an article deleted during the walk can push one unseen article back a page.
  */
-export function devtoCollector(): (day: string, get: GetResponse) => Promise<DayResult> {
+export function devtoCollector(): (
+  day: string,
+  get: GetResponse,
+  robots: RobotsGate,
+) => Promise<DayResult> {
   const tagged = new Map<number, Tagged>();
   const wanted = new Set<string>(DEVTO_TAGS);
   let page = 0;
@@ -110,8 +115,22 @@ export function devtoCollector(): (day: string, get: GetResponse) => Promise<Day
       }
     }
   }
-  return async (day, get) => {
+  return async (day, get, robots) => {
     const start = dayStart(day);
+    // Every request of the walk is on this path: one robots.txt check before the day's first.
+    const refusal = await robots(devtoLatestUrl(1));
+    if (refusal)
+      return {
+        items: [],
+        coverage: {
+          source: "devto",
+          day,
+          status: "unavailable",
+          items: 0,
+          retrieved_at: new Date().toISOString(),
+          note: refusal,
+        },
+      };
     let failure: string | null = null;
     try {
       await reachBefore(start, get);

@@ -5,12 +5,15 @@ import * as NodeTimersPromises from "node:timers/promises";
 export interface FrozenResponse {
   readonly observed_at: string;
   readonly status: number;
-  /** Parsed JSON (or the text when asked for `text`) for 2xx responses; null otherwise. */
+  /** Parsed JSON (or raw text for text clients) for 2xx responses; null otherwise. */
   readonly body: unknown;
   /** Target of a `Link: <...>; rel="next"` header, for cursor pagination. */
   readonly next?: string | null;
 }
-export type GetResponse = (url: string, format?: "json" | "text") => Promise<FrozenResponse>;
+export type GetResponse = (
+  url: string,
+  headers?: Readonly<Record<string, string>>,
+) => Promise<FrozenResponse>;
 /** Messages that start with `rate_limited:` or `response_too_large:` carry that reason into the coverage note. */
 export class SourceFailure extends Error {}
 export interface HttpOptions {
@@ -20,6 +23,8 @@ export interface HttpOptions {
   readonly sleep?: (ms: number) => Promise<unknown>;
   readonly dayTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** Return 2xx bodies as text instead of JSON (model cards, robots.txt). */
+  readonly text?: boolean;
 }
 /** Shared by every day of one source, so pacing and quota blocks survive the day boundary. */
 export interface SourceState {
@@ -27,57 +32,38 @@ export interface SourceState {
   blockedUntil: number;
 }
 
-/** Contact for providers that ask clients to identify themselves (dev.to requires a user-agent). */
-export const COLLECTOR_USER_AGENT =
-  "Earlyscript/0.1.5 (+https://git.r.biste.cc/miguel/earlyscript)";
-
-/**
- * Per-host request policy: one request at a time, `pauseMs` between request starts,
- * `maxBytes` per body and `dayBudgetMs` per collected day.
- */
-const HOSTS = {
-  hn: { pauseMs: 250, maxBytes: 4 * 1024 * 1024, dayBudgetMs: 300_000 },
-  github: { pauseMs: 6500, maxBytes: 2 * 1024 * 1024, dayBudgetMs: 300_000 },
-  // Anonymous Hub API quota: 500 requests per 5-minute window per IP, 1000 with a free token.
-  huggingface: { pauseMs: 700, maxBytes: 2 * 1024 * 1024, dayBudgetMs: 600_000 },
-  // Unpublished limits; the beta reference states 10 requests per 30 seconds.
-  devto: { pauseMs: 3000, maxBytes: 4 * 1024 * 1024, dayBudgetMs: 900_000 },
-} as const;
-export type HttpSource = keyof typeof HOSTS;
-
 /**
  * Largest accepted body. An HN page holds at most 1000 hits with unbounded story text;
  * a GitHub search page holds 100 repositories; a Hub page holds 1000 models (about 350 KiB)
  * or 100 daily papers; a dev.to page holds 1000 article summaries (about 2.2 MiB).
  * Larger bodies are aborted, not parsed.
  */
-export const MAX_RESPONSE_BYTES: Readonly<Record<HttpSource, number>> = Object.fromEntries(
-  Object.entries(HOSTS).map(([source, host]) => [source, host.maxBytes]),
-) as Record<HttpSource, number>;
+export const MAX_RESPONSE_BYTES = {
+  hn: 4 * 1024 * 1024,
+  github: 2 * 1024 * 1024,
+  huggingface: 2 * 1024 * 1024,
+  devto: 4 * 1024 * 1024,
+} as const;
+export type HttpSource = keyof typeof MAX_RESPONSE_BYTES;
 
-function requestHeaders(source: HttpSource): Record<string, string> {
-  switch (source) {
-    case "github": {
-      const token = process.env.GITHUB_TOKEN;
-      return {
-        "User-Agent": "Earlyscript-academic-collector",
-        Accept: "application/vnd.github+json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-    }
-    case "huggingface": {
-      const token = process.env.HF_TOKEN;
-      return {
-        "User-Agent": COLLECTOR_USER_AGENT,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-    }
-    case "devto":
-      return { "User-Agent": COLLECTOR_USER_AGENT, Accept: "application/vnd.forem.api-v1+json" };
-    default:
-      return { "User-Agent": "Earlyscript-academic-collector" };
-  }
-}
+/** Minimum gap between two request starts of one client. */
+export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
+  hn: 250,
+  github: 6500,
+  // Anonymous Hub API quota: 500 requests per 5-minute window per IP; halved with HF_TOKEN.
+  huggingface: 700,
+  // Unpublished limits; the beta reference states 10 requests per 30 seconds.
+  devto: 3000,
+};
+
+/** Time budget per collected day where 5 minutes is short: listings walked back from today. */
+const DAY_TIMEOUT_MS: Partial<Record<HttpSource, number>> = {
+  huggingface: 600_000,
+  devto: 900_000,
+};
+
+/** Collector name, protocol version and contact, as polite crawlers identify themselves. */
+export const USER_AGENT = "Earlyscript/0.1 (+https://github.com/miwgel)";
 
 /** `Link: <url>; rel="next"` (RFC 8288), as the Hub uses for cursor pagination. */
 function nextLink(header: string | null): string | null {
@@ -131,10 +117,14 @@ export function createHttpClient(
   const wall = options.now ?? Date.now;
   const wait = options.sleep ?? NodeTimersPromises.setTimeout;
   const fetcher = options.fetch ?? fetch;
-  const host = HOSTS[source];
-  const deadline = now() + (options.dayTimeoutMs ?? host.dayBudgetMs);
-  const pause = source === "huggingface" && process.env.HF_TOKEN ? host.pauseMs / 2 : host.pauseMs;
-  const headers = requestHeaders(source);
+  const deadline = now() + (options.dayTimeoutMs ?? DAY_TIMEOUT_MS[source] ?? 300_000);
+  const token =
+    source === "github"
+      ? process.env.GITHUB_TOKEN
+      : source === "huggingface"
+        ? process.env.HF_TOKEN
+        : undefined;
+  const pause = source === "huggingface" && token ? PAUSE_MS[source] / 2 : PAUSE_MS[source];
   async function delay(ms: number, limited: boolean) {
     if (now() + ms >= deadline)
       throw new SourceFailure(
@@ -144,7 +134,7 @@ export function createHttpClient(
       );
     if (ms > 0) await wait(ms);
   }
-  return async (url, format = "json") => {
+  return async (url, extraHeaders = {}) => {
     for (let attempt = 0; attempt <= 3; attempt++) {
       const blocked = state.blockedUntil - now();
       await delay(Math.max(0, state.nextStart - now(), blocked), blocked > 0);
@@ -155,7 +145,13 @@ export function createHttpClient(
       let response: Response;
       try {
         response = await fetcher(url, {
-          headers,
+          headers: {
+            "User-Agent": USER_AGENT,
+            ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
+            ...(source === "devto" ? { Accept: "application/vnd.forem.api-v1+json" } : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...extraHeaders,
+          },
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(
@@ -213,8 +209,9 @@ export function createHttpClient(
       const next = nextLink(response.headers.get("link"));
       let body: unknown;
       try {
-        const text = await readBounded(response, controller, host.maxBytes);
-        body = format === "text" ? text : JSON.parse(text);
+        const text = await readBounded(response, controller, MAX_RESPONSE_BYTES[source]);
+        // Model cards and robots.txt are text; the JSON APIs are parsed here.
+        body = options.text ? text : JSON.parse(text);
       } catch (error) {
         if (error instanceof SourceFailure) throw error;
         if (attempt === 3) throw new SourceFailure("Network, timeout or invalid JSON response");

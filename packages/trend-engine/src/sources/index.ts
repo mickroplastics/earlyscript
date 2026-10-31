@@ -2,6 +2,7 @@ import type { SourceDescriptor, SourceId } from "@earlyscript/editorial-contract
 
 import type { DayResult, SourceAdapter } from "./adapter.ts";
 import { createHttpClient, type GetResponse, type HttpOptions } from "./http.ts";
+import { robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
 import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
@@ -41,12 +42,16 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
   },
 };
 
+type Collector = (
+  day: string,
+  get: GetResponse,
+  robots: RobotsGate,
+  getText: GetResponse,
+) => Promise<DayResult>;
 /** A fresh collector per adapter: listings walked once are kept between that adapter's days. */
-const COLLECTORS: Readonly<
-  Record<SourceId, () => (day: string, get: GetResponse) => Promise<DayResult>>
-> = {
-  hn: () => collectHnDay,
-  github: () => collectGithubDay,
+const COLLECTORS: Readonly<Record<SourceId, () => Collector>> = {
+  hn: () => (day, get) => collectHnDay(day, get),
+  github: () => (day, get) => collectGithubDay(day, get),
   huggingface: huggingfaceCollector,
   devto: devtoCollector,
 };
@@ -69,10 +74,20 @@ export function liveSources(
 ): Array<SourceAdapter> {
   return ids.map((id) => {
     const state = { nextStart: 0, blockedUntil: 0 };
+    const rules = new Map<string, ReadonlyArray<RobotsRule>>();
     const collect = COLLECTORS[id]();
     return {
       descriptor: SOURCES[id],
-      collectDay: (day) => collect(day, createHttpClient(id, options, state)),
+      collectDay: (day) => {
+        // robots.txt and model cards are text, read through the same paced client state.
+        const text = createHttpClient(id, { ...options, text: true }, state);
+        return collect(
+          day,
+          createHttpClient(id, options, state),
+          robotsGate(() => text, rules),
+          text,
+        );
+      },
     };
   });
 }

@@ -7,10 +7,14 @@ import { devtoCollector, devtoLatestUrl } from "./devto.ts";
 import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
 import { hfModelsUrl } from "./huggingface.ts";
 import { fixtureSources, liveSources, SOURCES } from "./index.ts";
+import { robotsAllows, robotsGate, robotsRules, type RobotsGate } from "./robots.ts";
 import { collectCorpus } from "../collect.ts";
 import { readCorpus } from "../corpus.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
+const allow: RobotsGate = async () => null;
+const robotsFile = (name: string) =>
+  NodeFSP.readFile(new URL(`../testkit/${name}`, import.meta.url), "utf8");
 type Pages = { page1: unknown[]; page2: unknown[]; page3: unknown[] };
 async function fixture<T>(name: string): Promise<T> {
   return JSON.parse(
@@ -34,7 +38,7 @@ describe("dev.to source", () => {
   it("collects a whole UTC day of tagged articles and keeps the walk between days", async () => {
     const { get, calls } = await recordedListing();
     const collect = devtoCollector();
-    const day = await collect("2026-10-30", get);
+    const day = await collect("2026-10-30", get, allow);
     expect(calls).toEqual([1, 2, 3]);
     // Untagged and out-of-day articles stay out; the repeated article appears once.
     expect(day.items).toHaveLength(5);
@@ -49,14 +53,14 @@ describe("dev.to source", () => {
     expect(day.coverage?.note).toMatch(/^tags ai=\d+,llm=\d+,.*rust=\d+; pages walked=3$/);
 
     // The next day is already walked; it began before the walk, so it is not over.
-    const today = await collect("2026-10-31", get);
+    const today = await collect("2026-10-31", get, allow);
     expect(calls).toEqual([1, 2, 3]);
     expect(today.items).toHaveLength(1);
     expect(today.coverage?.status).toBe("partial");
     expect(today.coverage?.note).toContain("day not over");
 
     // An earlier day continues the walk; an empty page ends the listing before its start.
-    const earlier = await collect("2026-10-29", get);
+    const earlier = await collect("2026-10-29", get, allow);
     expect(calls).toEqual([1, 2, 3, 4]);
     expect(earlier.items).toHaveLength(1);
     expect(earlier.coverage).toMatchObject({ status: "partial", items: 1 });
@@ -125,10 +129,55 @@ describe("dev.to source", () => {
       createHttpClient("devto", {
         fetch: async () => new Response(`[${" ".repeat(MAX_RESPONSE_BYTES.devto)}]`),
       }),
+      allow,
     );
     expect(MAX_RESPONSE_BYTES.devto).toBe(4 * 1024 * 1024);
     expect(result.coverage).toMatchObject({ status: "unavailable", items: 0 });
     expect(result.coverage?.note).toContain("response_too_large");
+  });
+});
+
+describe("robots.txt of Hugging Face and dev.to", () => {
+  it("allows every API path the adapters request (files recorded on 31 October 2026)", async () => {
+    const hub = robotsRules(await robotsFile("huggingface-robots.txt"));
+    for (const url of [
+      hfModelsUrl(),
+      "https://huggingface.co/api/daily_papers?date=2026-10-30&limit=100&p=0",
+      "https://huggingface.co/ostris/primal_vae/resolve/main/README.md",
+    ])
+      expect(robotsAllows(hub, url)).toBe(true);
+    const dev = robotsRules(await robotsFile("devto-robots.txt"));
+    expect(robotsAllows(dev, devtoLatestUrl(1))).toBe(true);
+    // The file is parsed, not ignored: its interface paths stay closed.
+    expect(robotsAllows(dev, "https://dev.to/search?q=agents")).toBe(false);
+  });
+
+  it("requests no listing page when robots.txt refuses or answers 5xx", async () => {
+    const { get, calls } = await recordedListing();
+    const refused = await devtoCollector()(
+      "2026-10-30",
+      get,
+      robotsGate(
+        () => async () => ({
+          observed_at: observed,
+          status: 200,
+          body: "User-agent: Earlyscript\nDisallow: /api/\n",
+        }),
+        new Map(),
+      ),
+    );
+    expect(calls).toEqual([]);
+    expect(refused.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(refused.coverage?.note).toMatch(/^robots_disallowed: https:\/\/dev\.to\/robots\.txt/);
+
+    const down = await devtoCollector()(
+      "2026-10-30",
+      get,
+      robotsGate(() => async () => ({ observed_at: observed, status: 503, body: null }), new Map()),
+    );
+    expect(calls).toEqual([]);
+    expect(down.coverage?.status).toBe("unavailable");
+    expect(down.coverage?.note).toMatch(/^robots_unavailable: /);
   });
 });
 
@@ -140,8 +189,14 @@ describe("Hugging Face and dev.to in a corpus/1 collection", () => {
       const models = await fixture<{ page1: unknown[] }>("hf-models-pages.json");
       const papers = await fixture<unknown[]>("hf-daily-papers-2026-10-30.json");
       let clock = Date.parse("2026-11-01T00:00:00Z");
+      const robots = {
+        "dev.to": await robotsFile("devto-robots.txt"),
+        "huggingface.co": await robotsFile("huggingface-robots.txt"),
+      };
       const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
         const url = new URL(String(input));
+        if (url.pathname === "/robots.txt")
+          return new Response(robots[url.hostname as keyof typeof robots]);
         if (url.hostname === "dev.to") {
           const page = Number(url.searchParams.get("page"));
           return Response.json([listing.page1, listing.page2, listing.page3][page - 1] ?? []);
@@ -191,9 +246,11 @@ const live = process.env.EARLYSCRIPT_LIVE_TESTS === "1";
 // Network gate: the day is that of the newest article, so the walk stays within a few pages.
 describe.skipIf(!live)("dev.to source (live)", () => {
   it("collects the current day from the public API", async () => {
-    const get = createHttpClient("devto");
-    const newest = (await get(devtoLatestUrl(1))).body as Array<{ published_at: string }>;
-    const result = await devtoCollector()(newest[0]!.published_at.slice(0, 10), get);
+    const newest = (await createHttpClient("devto")(devtoLatestUrl(1))).body as Array<{
+      published_at: string;
+    }>;
+    const [adapter] = liveSources(["devto"]);
+    const result = await adapter!.collectDay(newest[0]!.published_at.slice(0, 10));
     // `partial` while the day runs ("day not over"); `complete` only right after midnight UTC.
     expect(["partial", "complete"]).toContain(result.coverage?.status);
     expect(result.items.length).toBeGreaterThan(0);
