@@ -2,7 +2,6 @@
 
 Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos propios que añade. Es la lista de revisión de cada fusión desde `upstream-main`: si upstream cambió uno de estos archivos, comprobar que nuestro cambio sigue aplicado y que no apareció un literal nuevo de T3 Code al lado. Las líneas corresponden al último commit que tocó el enganche; tras una fusión, buscar el enganche por su texto (`EarlyscriptBrand`, `earlyscriptFlags`, `Earlyscript*`, `earlyscript/`, `visible*`).
 
-Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
 Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su propia base de comparación. El número de cada línea es el de su sección:
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`; ampliada por `es/brand-2` (icono propio y superficies de uso diario, base `815f5f2a04`), ver la subsección de recorte.
