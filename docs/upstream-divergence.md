@@ -26,6 +26,10 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), base `f75eebfae2`; cero archivos de upstream tocados. dev.to se retiró el 1 de noviembre de 2026 (`es/retire-devto`); queda Hugging Face.
 21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
 
+Los números 22 a 24 quedan para unidades en curso.
+
+25. Home propio de la app instalada (`es/desktop-daily`), base `d0f38f927a`; único archivo de upstream tocado: `apps/desktop/src/main.ts`.
+
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
@@ -1454,3 +1458,17 @@ Corrección tras la reverificación de Sol (31 de octubre de 2026, NO APTO sobre
 - R2, purgas idempotentes. Una purga ya registrada (misma fuente, tipo y hash) no se vuelve a escribir. Un objetivo sin coincidencias no deja registro ni reescribe archivos. En ambos casos el resultado lleva `unchanged: true` y `message` («Already purged; corpus unchanged» o «No matches; corpus unchanged») y el corpus queda igual byte a byte, `corpus_hash` incluido. Las ediciones se planifican antes de escribir nada. Bloquear de antemano un objetivo que todavía no está en el corpus sería otra decisión; no se hace.
 - R3, profundidad. El límite de 64 niveles se comprueba antes de añadir cualquier elemento, también las hojas autocerradas: `<b/>` dentro de 64 `<a>` se rechaza.
 - R4, `body_kind`. Describe el origen del texto: `summary` si vino de `description`/`summary`, `content` si vino de `content:encoded`/`content`. `truncated` indica si se cortó a 500 caracteres.
+
+## 25. Home propio de la app instalada (rama `es/desktop-daily`, 31 de octubre de 2026)
+
+Base: `d0f38f927a`. Las terminales de T3 Code exportan `T3CODE_HOME=~/.t3`. Lanzada desde una de ellas con `open`, la app instalada heredaba la variable y `resolveDesktopBaseDir` la tomaba como directorio base. El guardia de upstream impedía arrancar el servidor, pero antes la app ya escribía `server-child.log` en `~/.t3/userdata/logs/`. Lo detectó la verificación de Astra (`~/earlyscript-data/macos/daily/informe-verificacion-astra.md`, hallazgo 1).
+
+Arreglo: `apps/desktop/src/earlyscript/inheritedHome.ts` (`dropInheritedT3Home`) borra `T3CODE_HOME` de `process.env` cuando `app.isPackaged`, antes de construir cualquier capa. `DesktopConfig`, el arranque temprano y el entorno del backend leen el entorno de forma diferida, así que todos resuelven `~/.earlyscript`. En desarrollo la variable se respeta, porque el dev-runner la fija al `.t3` del worktree. No se cambia la semántica de `DesktopStatePaths`, que usan muchas pruebas de upstream con `T3CODE_HOME` y una app de producción. No existe `EARLYSCRIPT_HOME`, y no se añade. El guardia «This T3 home is unavailable» sigue intacto para un T3 Code que use el mismo directorio.
+
+| Archivo                    | Líneas | Cambio                                                                   | Motivo                                                    |
+| -------------------------- | ------ | ------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `apps/desktop/src/main.ts` | 2, 81  | Import de `dropInheritedT3Home` y llamada con `Electron.app.isPackaged`. | La app instalada nunca usa el home de T3 Code que hereda. |
+
+Archivos nuevos: `apps/desktop/src/earlyscript/inheritedHome.ts` y `inheritedHome.test.ts`. La prueba resuelve el entorno de escritorio empaquetado con `T3CODE_HOME=~/.t3` y comprueba que `baseDir` y `logDir` quedan bajo `~/.earlyscript`. Sin el arreglo falla. También comprueba que el desarrollo conserva la variable.
+
+Fuera de alcance: el lanzador CLI `~/.earlyscript/bin/earlyscript` (`DesktopCliShim.ts`) mantiene el `${T3CODE_HOME:-$home}` de upstream. Desde una terminal de T3 Code hay que ejecutarlo con `env -u T3CODE_HOME`, como indica `docs/earlyscript-macos.md`.
