@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
 //   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]
 //   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
-//   node src/cli.ts purge --corpus <dir> --source <id> (--author <name> | --url <permalink> | --feed <feed-url>)
+//   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
@@ -18,8 +18,8 @@ const isSourceId = Schema.is(SourceId);
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
-  "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
-  "       engine purge --corpus <dir> --source <id> (--author <name> | --url <permalink> | --feed <feed-url>)";
+  "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
+  "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
