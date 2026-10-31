@@ -1,3 +1,4 @@
+import { EDITORIAL_REASON_MAX_CHARS } from "@t3tools/contracts";
 import { useId, useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -15,15 +16,14 @@ import { Textarea } from "../components/ui/textarea";
 
 /** The reason is part of the record of what the operator chose, so it is required. */
 const DISMISS_REASON_MIN_CHARS = 3;
-const DISMISS_REASON_MAX_CHARS = 300;
 
 function dismissReasonError(reason: string): string | null {
   const length = reason.trim().length;
   if (length < DISMISS_REASON_MIN_CHARS) {
     return `Escribe el motivo, al menos ${DISMISS_REASON_MIN_CHARS} caracteres.`;
   }
-  if (length > DISMISS_REASON_MAX_CHARS) {
-    return `El motivo admite hasta ${DISMISS_REASON_MAX_CHARS} caracteres.`;
+  if (length > EDITORIAL_REASON_MAX_CHARS) {
+    return `El motivo admite hasta ${EDITORIAL_REASON_MAX_CHARS} caracteres.`;
   }
   return null;
 }
@@ -79,7 +79,7 @@ export function TrendDismissDialog({
               <Textarea
                 id={`${id}-reason`}
                 value={reason}
-                maxLength={DISMISS_REASON_MAX_CHARS}
+                maxLength={EDITORIAL_REASON_MAX_CHARS}
                 aria-invalid={error !== null}
                 aria-describedby={error !== null ? `${id}-error` : undefined}
                 placeholder="Ya cubierto, fuera del tema del canal, poca evidencia…"

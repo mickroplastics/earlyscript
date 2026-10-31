@@ -144,6 +144,50 @@ function formatMetric(value: number): string {
   return Number.isInteger(value) ? String(value) : formatDecimal(value);
 }
 
+const SNOOZE_LABELS_ES: Readonly<Record<string, string>> = {
+  "This morning": "Esta mañana",
+  "This afternoon": "Esta tarde",
+  "This evening": "Esta noche",
+  Tomorrow: "Mañana",
+  "Next week": "La próxima semana",
+};
+
+const WEEKDAYS_ES: Readonly<Record<string, string>> = {
+  Sunday: "domingo",
+  Monday: "lunes",
+  Tuesday: "martes",
+  Wednesday: "miércoles",
+  Thursday: "jueves",
+  Friday: "viernes",
+  Saturday: "sábado",
+};
+
+const DURATION_UNITS_ES: Readonly<Record<string, readonly [string, string]>> = {
+  minute: ["minuto", "minutos"],
+  hour: ["hora", "horas"],
+  day: ["día", "días"],
+};
+
+/**
+ * A thread snooze preset label (`resolveSnoozePresets`, in English) in the editorial space's
+ * Spanish. The presets, their times and their order stay T3's; a label this table does not
+ * know is shown as T3 wrote it.
+ */
+export function snoozePresetLabel(label: string): string {
+  const duration = /^In (\d+) (minute|hour|day)s?$/.exec(label);
+  if (duration) {
+    const count = Number(duration[1]);
+    const units = DURATION_UNITS_ES[duration[2] ?? ""];
+    if (units) return `En ${count} ${count === 1 ? units[0] : units[1]}`;
+  }
+  const next = /^Next (\w+)$/.exec(label);
+  const nextDay = next ? WEEKDAYS_ES[next[1] ?? ""] : undefined;
+  if (nextDay) return `El próximo ${nextDay}`;
+  const day = WEEKDAYS_ES[label];
+  if (day) return `El ${day}`;
+  return SNOOZE_LABELS_ES[label] ?? label;
+}
+
 export type TrendMenuAction =
   | "create-video"
   | "open-video"
@@ -182,7 +226,7 @@ export function trendMenuItems(
         { id: "keep-watching", label: "Hasta que crezca" },
         ...snoozePresets.map((preset, index) => ({
           id: `snooze:${preset.id}` as const,
-          label: `${preset.label} (${preset.whenLabel})`,
+          label: `${snoozePresetLabel(preset.label)} (${preset.whenLabel})`,
           separatorBefore: index === 0,
         })),
         { id: "snooze:custom", label: "Personalizado…", separatorBefore: true },

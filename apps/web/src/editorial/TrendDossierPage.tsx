@@ -56,6 +56,7 @@ import {
   formatDay,
   formatDecimal,
   growthText,
+  snoozePresetLabel,
   snoozeStateText,
   sourceLabel,
   trendSourceText,
@@ -512,7 +513,7 @@ function KeepWatchingControl({
                 if (picked) void actions.keepWatching(trendKey, picked);
               }}
             >
-              {preset.label}
+              {snoozePresetLabel(preset.label)}
               <MenuShortcut>{preset.whenLabel}</MenuShortcut>
             </MenuItem>
           ))}

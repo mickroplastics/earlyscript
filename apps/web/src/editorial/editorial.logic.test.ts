@@ -20,6 +20,7 @@ import {
   resolveRouteSpace,
   runGroupLabel,
   runPresentationProgressText,
+  snoozePresetLabel,
   snoozeStateText,
   spaceTabName,
   splitInbox,
@@ -196,6 +197,36 @@ describe("trendMenuItems", () => {
     expect(ids(trendMenuItems({ ...base, dismissed: { at: AT, reason: "No" } }, presets))).toEqual([
       "create-video",
       "reopen",
+    ]);
+  });
+});
+
+describe("snoozePresetLabel", () => {
+  it("says T3's snooze times in Spanish and keeps a label it does not know", () => {
+    expect(
+      [
+        "In 1 hour",
+        "In 3 hours",
+        "In 90 minutes",
+        "In 2 days",
+        "This evening",
+        "Tomorrow",
+        "Next week",
+        "Next Monday",
+        "Friday",
+        "Someday",
+      ].map(snoozePresetLabel),
+    ).toEqual([
+      "En 1 hora",
+      "En 3 horas",
+      "En 90 minutos",
+      "En 2 días",
+      "Esta noche",
+      "Mañana",
+      "La próxima semana",
+      "El próximo lunes",
+      "El viernes",
+      "Someday",
     ]);
   });
 });

@@ -277,7 +277,8 @@ export const EditorialMarkReadInput = Schema.Struct({
 });
 export type EditorialMarkReadInput = typeof EditorialMarkReadInput.Type;
 
-const EDITORIAL_REASON_MAX_CHARS = 500;
+/** Longest dismissal reason the server stores. */
+export const EDITORIAL_REASON_MAX_CHARS = 500;
 
 export const EditorialSnoozeInput = Schema.Struct({
   trendKey: EditorialTrendKey,
