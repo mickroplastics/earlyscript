@@ -50,6 +50,13 @@ export const SourceGovernance = Schema.Struct({
    */
   engineBaseline: Schema.Boolean,
   notes: Schema.String,
+  /**
+   * A documented exception to the host's robots.txt: the provider's own API terms authorise the
+   * calls the adapter makes. Only the adapter's descriptor turns it on; this shows why.
+   */
+  robotsOverride: Schema.optionalKey(
+    Schema.Struct({ reason: Schema.String, termsUrl: Schema.String, quote: Schema.String }),
+  ),
 });
 export type SourceGovernance = typeof SourceGovernance.Type;
 
@@ -119,14 +126,21 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     coverage: "census",
     engineBaseline: false,
     notes:
-      "Términos de la API leídos: una petición cada 3 segundos y una sola conexión; no almacenar PDFs ni fuentes, solo metadatos. Entra al motor tras un backtest que no empeore P@5.",
+      "Términos de la API leídos: una petición cada 3 segundos y una sola conexión; no almacenar PDFs ni fuentes, solo metadatos. export.arxiv.org/robots.txt dice `Disallow: /` para todo agente; la captura usa la API con la excepción documentada (decisión de Miguel, 1 de noviembre de 2026) y cada día lo anota en su cobertura. OAI-PMH (oaipmh.arxiv.org) no respondió ni a su robots.txt. Entra al motor tras un backtest que no empeore P@5.",
+    robotsOverride: {
+      reason:
+        "export.arxiv.org/robots.txt prohíbe todas las rutas, pero los Términos de uso de la API de arXiv autorizan la API heredada a una petición cada tres segundos y una sola conexión.",
+      termsUrl: "https://info.arxiv.org/help/api/tou.html",
+      quote:
+        "When using the legacy APIs (including OAI-PMH, RSS, and the arXiv API), make no more than one request every three seconds, and limit requests to a single connection at a time.",
+    },
   },
   wikipedia: {
     id: "wikipedia",
     name: "Wikipedia (páginas más vistas)",
     origin: "https://wikimedia.org/api/rest_v1/metrics/pageviews",
     license: {
-      text: "Recuentos de visitas bajo CC0 (conjuntos de Analytics de Wikimedia); resúmenes de artículos bajo CC BY-SA 4.0 con atribución.",
+      text: "Recuentos de visitas bajo CC0 (conjuntos de Analytics de Wikimedia); se guardan títulos, URL, vistas y rango, no texto de artículos.",
       url: "https://creativecommons.org/licenses/by-sa/4.0/",
     },
     termsReviewedAt: "2026-10-31",
@@ -137,10 +151,10 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     language: "en",
     cost: "none",
     status: "ready",
-    coverage: "census",
+    coverage: "sample",
     engineBaseline: false,
     notes:
-      "Términos (vigentes desde el 7 de junio de 2023) leídos: prohíben el uso automatizado abusivo o la carga indebida de una API y exigen la User-Agent Policy (nombre, versión y contacto); no mencionan IA ni minería de textos. Sin datos personales. Puede diluir la señal técnica (hipótesis C05): entra al motor solo tras backtest.",
+      "Términos (vigentes desde el 7 de junio de 2023) leídos: prohíben el uso automatizado abusivo o la carga indebida de una API y exigen la User-Agent Policy (nombre, versión y contacto); no mencionan IA ni minería de textos. Sin resúmenes por robots.txt (en.wikipedia.org prohíbe /api/ y /w/ salvo mobileview, que no se usa): solo título, URL, vistas y rango. Muestra declarada: el top 1000 del día; un día es completo solo si la lista trae sus 1000 filas. Sin datos personales. Puede diluir la señal técnica (hipótesis C05): entra al motor solo tras backtest.",
   },
   npm: {
     id: "npm",
@@ -161,7 +175,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     coverage: "sample",
     engineBaseline: false,
     notes:
-      "Open Source Terms (10 de marzo de 2022): se permite replicar datos del registro por las API públicas; se prohíbe rastrear el sitio web y usar el registro como base de datos general. La carga debe ser razonable, y cinco millones de peticiones en un mes ya incumplen ese umbral; una cifra menor no queda garantizada. La regla de 1 petición por segundo es para rastreadores experimentales del sitio web (https://docs.npmjs.com/policies/crawlers); Earlyscript la adopta como límite propio para la API del registro (decisión interna). Falta la regla de paquete «conocido» (M28).",
+      "Open Source Terms (10 de marzo de 2022): se permite replicar datos del registro por las API públicas; se prohíbe rastrear el sitio web y usar el registro como base de datos general. La carga debe ser razonable, y cinco millones de peticiones en un mes ya incumplen ese umbral; una cifra menor no queda garantizada. La regla de 1 petición por segundo es para rastreadores experimentales del sitio web (https://docs.npmjs.com/policies/crawlers); Earlyscript la adopta como límite propio para la API del registro (decisión interna). Regla de paquete «conocido» (M28): la versión más reciente publicada ese día y al menos 500 descargas semanales actuales; los 100 con más descargas.",
   },
   stackexchange: {
     id: "stackexchange",
@@ -179,10 +193,10 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     language: "en",
     cost: "none",
     status: "pending-review",
-    coverage: "census",
+    coverage: "sample",
     engineBaseline: false,
     notes:
-      "Sin leer: el 31 de octubre de 2026 las páginas de API Terms y Acceptable Use Policy respondieron 403 con un desafío de Cloudflare. Terceros afirman que el uso para IA generativa exige consentimiento escrito (no verificado). No se captura hasta leerlas (M28).",
+      "Sin leer: el 31 de octubre de 2026 las páginas de API Terms y Acceptable Use Policy respondieron 403 con un desafío de Cloudflare. Terceros afirman que el uso para IA generativa exige consentimiento escrito (no verificado). No se captura hasta leerlas (M28). Muestra declarada: 300 preguntas por sitio y día, por votos; el adaptador existe y no entra al redactor.",
   },
   bluesky: {
     id: "bluesky",
@@ -196,14 +210,15 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://docs.bsky.app/docs/support/developer-guidelines",
     access: "public",
     retention: "ephemeral",
-    deletion: DELETION_NONE_DOCUMENTED,
+    deletion:
+      "engine purge --source bluesky --author <did|handle> o --url <at://…|permalink>: quita los ítems de todos los días y de history/, registra el hash en el manifiesto y collect no los vuelve a guardar.",
     language: "en",
     cost: "none",
-    status: "blocked",
-    coverage: "census",
+    status: "pending-review",
+    coverage: "sample",
     engineBaseline: false,
     notes:
-      "Guía leída (fuente del sitio en github.com/bluesky-social/bsky-docs; la página redirige a bsky.network y no carga sin JavaScript): «All services must have a method for deleting content a user has requested to be deleted». Earlyscript no tiene ese método por autor y URI, así que queda bloqueada (M29). La guía no habla de IA.",
+      "Guía leída (fuente del sitio en github.com/bluesky-social/bsky-docs; la página redirige a bsky.network y no carga sin JavaScript): «All services must have a method for deleting content a user has requested to be deleted». El método existe desde es/sources-earlywindow (engine purge por DID, handle o URI). Sigue sin captura hasta confirmar la licencia del contenido en los Terms of Service y la decisión de Miguel sobre retención (M29: opt-in, fuera del corpus congelado). Muestra declarada: búsqueda por términos de desarrollo, una página de 100 por ventana. La guía no habla de IA.",
   },
   huggingface: {
     id: "huggingface",
