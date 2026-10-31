@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { EditorialDossierId, type EditorialTrendSummary } from "@t3tools/contracts";
 
-import { compareTrends, competitionRanks, webUrlOrNull, windowCurve } from "./dossierFormat.ts";
+import { compareTrends, webUrlOrNull, windowCurve } from "./dossierFormat.ts";
 
 const day = (date: string, items: number, known = true) => ({
   day: date,
@@ -28,12 +28,6 @@ describe("windowCurve", () => {
       ["2026-10-17", 0, false],
       ["2026-10-18", 2, true],
     ]);
-  });
-});
-
-describe("competitionRanks", () => {
-  it("lets equal values share the better rank", () => {
-    expect(competitionRanks([16, 11, 11, 3])).toEqual([1, 2, 2, 4]);
   });
 });
 

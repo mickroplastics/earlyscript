@@ -1,0 +1,326 @@
+{
+  "schema_version": "earlyscript.dossier/1",
+  "origin": "earlyscript",
+  "dossier_id": "dos_38ceab3f670f",
+  "run_id": "run_20261031_20261031T003855_5e57bf",
+  "created_at": "2026-10-31T00:45:08.765Z",
+  "cutoff_at": "2026-10-31T00:00:00.000Z",
+  "engine": {
+    "version": "0.1.0",
+    "config_hash": "sha256:290b9ddeec9bf5bc4e0512972d047c106623a3d050789fe0a8c145504d2e9095",
+    "corpus_hash": "sha256:25ceab85123577f8be59aada621f14b0ca2893bdd7424e741c876e98740e1a1d",
+    "embedding": {
+      "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      "revision": "c25a394dd583836952667c12f008335071b3f43d",
+      "dtype": "q8",
+      "pooling": "last_token",
+      "batch_size": 1,
+      "runtime": "transformers.js@4.3.1+onnxruntime-node@1.30.0+cpu+intra_op_threads=2",
+      "platform": "linux",
+      "arch": "x64"
+    }
+  },
+  "profile": {
+    "name": "SingulariDev",
+    "version": null,
+    "hash": "sha256:db510e303cb7f3cff7099230a00d36b1918f28a0e6aa6b8be01727649b8bb80d"
+  },
+  "trend": {
+    "id": "sig_2da277446bf4",
+    "label": "workers job jobs work",
+    "label_source": "terms",
+    "top_terms": ["workers", "job", "jobs", "work", "never", "replace"],
+    "stage": "growing",
+    "corroboration": "single_source",
+    "first_seen_at": "2026-10-06T17:09:07.000Z",
+    "last_seen_at": "2026-10-30T15:52:18.000Z",
+    "sources": ["hn"],
+    "items_total": 14,
+    "items_7d": 11,
+    "items_prev_7d": 1,
+    "authors_7d": 11,
+    "growth": 1.791759
+  },
+  "profile_fit": {
+    "include_score": 0.66077,
+    "exclude_score": 0.533733,
+    "passes": true,
+    "nearest_include": "developer tooling, SDKs and protocols for building AI products"
+  },
+  "rankings": {
+    "eligible": 15,
+    "baseline": {
+      "method": "baseline.items_7d",
+      "score": 11,
+      "components": [
+        {
+          "name": "items_7d",
+          "value": 11,
+          "weight": 1,
+          "contribution": 11
+        }
+      ],
+      "position": 3
+    },
+    "weighted": {
+      "method": "weighted_sum.v0.01",
+      "score": 1.591092,
+      "components": [
+        {
+          "name": "growth",
+          "value": 1.791759,
+          "weight": 0.5,
+          "contribution": 0.89588
+        },
+        {
+          "name": "log_authors_7d",
+          "value": 2.484907,
+          "weight": 0.2,
+          "contribution": 0.496981
+        },
+        {
+          "name": "include_score",
+          "value": 0.66077,
+          "weight": 0.3,
+          "contribution": 0.198231
+        }
+      ],
+      "position": 1
+    }
+  },
+  "curve": [
+    {
+      "day": "2026-10-06",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-07",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-08",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-09",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-10",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-11",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-12",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-13",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-14",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-15",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-16",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-17",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-18",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-19",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-20",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-21",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-22",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-23",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-24",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-25",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-26",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-27",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-28",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-10-29",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-30",
+      "items": 4,
+      "sources": 1,
+      "authors": 4,
+      "known": true
+    }
+  ],
+  "coverage": {
+    "window_days": 28,
+    "by_source": [
+      {
+        "source": "hn",
+        "days_complete": 28,
+        "days_partial": 0,
+        "days_unavailable": 0
+      },
+      {
+        "source": "github",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      }
+    ],
+    "uncertain": false
+  },
+  "data_gaps": [],
+  "evidence": [
+    {
+      "item_id": "itm_hn_50280739",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50280739",
+      "external_url": "https://project507.substack.com/p/when-ai-does-the-work-what-will-humans",
+      "published_at": "2026-10-28T20:52:31.000Z",
+      "author": "massigenta",
+      "title": "When AI Does the Work, What Will Humans Do?",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:34:29.302Z",
+      "similarity": 0.859965
+    },
+    {
+      "item_id": "itm_hn_49981294",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=49981294",
+      "external_url": "https://humanistreview.ai/issue-1/acemoglu-ai-replace-workers/",
+      "published_at": "2026-10-06T17:09:07.000Z",
+      "author": "anorak27",
+      "title": "Will AI replace workers? Not if we build it right",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:33:47.907Z",
+      "similarity": 0.841758
+    },
+    {
+      "item_id": "itm_hn_50253524",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50253524",
+      "external_url": null,
+      "published_at": "2026-10-27T01:14:09.000Z",
+      "author": "andrea81",
+      "title": "Do you want to keep your job? Stop feeding AI models",
+      "excerpt": "How about we stop giving your skills to these guys who are putting us out of work?",
+      "retrieved_at": "2026-10-31T00:34:26.228Z",
+      "similarity": 0.826917
+    }
+  ],
+  "evidence_status": "sufficient"
+}

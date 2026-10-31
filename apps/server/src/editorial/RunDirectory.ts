@@ -14,14 +14,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import {
-  DossierFile,
+  decodeDossierJson,
+  decodeRunJson,
   loadRunDossiers,
-  RunFile,
   runSummary,
+  toDossiers,
   type LoadedDossier,
+  type RunInfo,
 } from "./dossierFormat.ts";
 
 const EDITORIAL_RUNS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_RUNS_DIR";
@@ -29,7 +30,7 @@ const EDITORIAL_RUNS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_RUNS_DIR";
 /** A directory of the runs directory that holds a readable run.json. */
 export interface RunEntry {
   readonly directory: string;
-  readonly run: RunFile;
+  readonly run: RunInfo;
   /** File names and mtimes of run.json and every dossier; a change reloads the run. */
   readonly version: string;
   readonly dossierPaths: ReadonlyArray<string>;
@@ -92,9 +93,6 @@ export class EditorialRunDirectory extends Context.Service<
   EditorialRunDirectoryShape
 >()("t3/editorial/RunDirectory/EditorialRunDirectory") {}
 
-const decodeRunFile = Schema.decodeUnknownEffect(Schema.fromJsonString(RunFile));
-const decodeDossierFile = Schema.decodeUnknownEffect(Schema.fromJsonString(DossierFile));
-
 const unreadable = (message: string) => new EditorialReadError({ reason: "unreadable", message });
 
 const sha256 = (content: string) =>
@@ -136,7 +134,7 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
       const runMtime = yield* mtimeOf(runJson).pipe(Effect.option);
       if (Option.isNone(runMtime)) return Option.none<DirectoryRead>();
       const decoded = yield* Effect.result(
-        fs.readFileString(runJson).pipe(Effect.flatMap(decodeRunFile)),
+        fs.readFileString(runJson).pipe(Effect.flatMap(decodeRunJson)),
       );
       if (decoded._tag === "Failure") {
         const reason = reasonOf(decoded.failure);
@@ -206,7 +204,7 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
         .readFileString(file)
         .pipe(
           Effect.flatMap((text) =>
-            decodeDossierFile(text).pipe(
+            decodeDossierJson(text).pipe(
               Effect.map((dossier) => ({ file, dossier, hash: sha256(text) })),
             ),
           ),
@@ -243,7 +241,7 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
       );
       const loaded = loadRunDossiers(
         entry.run.run_id,
-        read.map((item) => item.dossier),
+        toDossiers(read.map((item) => item.dossier)),
       );
       const dossiers = loaded.map((dossier, index) => ({
         ...dossier,
