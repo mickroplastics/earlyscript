@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- the engine package is found through its module URL.
+// @effect-diagnostics nodeBuiltinImport:off -- the engine package is found through its module URL; a former child is ended by pid.
+import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -119,3 +120,39 @@ export function lastJsonLine(stdout: string): unknown {
   }
   return null;
 }
+
+/**
+ * The server tags every engine child with `--lock-token <job>:<owner>:<generation>`, which
+ * the CLI accepts and ignores. A process is that child only if `ps` shows the token, so a
+ * recycled pid is never waited for or killed.
+ */
+export const LOCK_TOKEN_FLAG = "--lock-token";
+
+const TOKEN_PATTERN = new RegExp(`${LOCK_TOKEN_FLAG}[ =](\\S+)`);
+
+/** Pids of live processes that carry `token`; null where `ps` cannot run (Windows). */
+export const processesWithToken = Effect.fn("EditorialEngine.processesWithToken")(function* (
+  token: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const lines = yield* spawner
+    .lines(ChildProcess.make("ps", ["-A", "-o", "pid=,command="]))
+    .pipe(Effect.option);
+  if (Option.isNone(lines)) return null;
+  const pids: Array<number> = [];
+  for (const line of lines.value) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (match !== null && TOKEN_PATTERN.exec(match[2] ?? "")?.[1] === token) {
+      pids.push(Number(match[1]));
+    }
+  }
+  return pids;
+});
+
+export const killProcess = (pid: number) => {
+  try {
+    NodeProcess.kill(pid, "SIGKILL");
+  } catch {
+    // Gone already.
+  }
+};

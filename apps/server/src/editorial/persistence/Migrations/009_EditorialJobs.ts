@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// The nightly run's durable calendar: one job per profile, cutoff and engine configuration,
-// with its lease, attempts, error and artifacts. Each claim takes a new owner and generation;
-// every write of the executor requires both, so a former owner can no longer write. The settings row holds the operator's time
-// of day; a database without it keeps the nightly run disabled.
+// The nightly run's jobs and the operator's time of day. Every executor write requires the
+// claim's lease_owner and lease_generation. engine_* names the claim's engine child before it
+// starts; a claim copies the former one into prev_engine_* so the new owner waits for it.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -23,6 +22,11 @@ export default Effect.gen(function* () {
       lease_until TEXT,
       lease_owner TEXT,
       lease_generation INTEGER NOT NULL DEFAULT 0,
+      engine_token TEXT,
+      engine_pid INTEGER,
+      engine_started_at TEXT,
+      prev_engine_token TEXT,
+      prev_engine_pid INTEGER,
       status TEXT NOT NULL
         CHECK (status IN ('pending', 'running', 'done', 'failed', 'skipped')),
       error TEXT,

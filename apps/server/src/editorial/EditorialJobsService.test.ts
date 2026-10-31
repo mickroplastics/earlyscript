@@ -241,6 +241,57 @@ const traceReaches = (fx: Fixture, line: string, count = 1) =>
     return Effect.sync(() => watcher.close());
   });
 
+/** Resolves once `file` exists; watches the fixture, never polls. */
+const fileAppears = (fx: Fixture, file: string) =>
+  Effect.callback<void>((resume) => {
+    const watcher = NodeFS.watch(fx.root, { recursive: true }, () => {
+      if (NodeFS.existsSync(file)) resume(Effect.void);
+    });
+    if (NodeFS.existsSync(file)) resume(Effect.void);
+    return Effect.sync(() => watcher.close());
+  });
+
+/** Pids of live processes whose command line carries `--lock-token <prefix>…`. */
+const processesCarrying = (prefix: string) =>
+  NodeChildProcess.execFileSync("ps", ["-A", "-o", "pid=,command="], { encoding: "utf8" })
+    .split("\n")
+    .filter((line) => line.includes(`--lock-token ${prefix}`))
+    .map((line) => Number(line.trim().split(/\s+/)[0]));
+
+/** A corpus that already reaches yesterday, so the job's first engine command is `run`. */
+const corpusUpToDate = (fx: Fixture, job: EditorialJob) => {
+  const today = job.cutoffAt.slice(0, 10);
+  NodeFS.mkdirSync(fx.corpusDir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(fx.corpusDir, "corpus-manifest.json"),
+    JSON.stringify({
+      schema_version: "corpus/1",
+      from_day: addDays(today, -28),
+      to_day: addDays(today, 1),
+      files: [],
+    }),
+  );
+};
+
+const engineOf = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  const rows = yield* sql<{
+    readonly lease_owner: string | null;
+    readonly lease_generation: number;
+    readonly engine_token: string | null;
+    readonly engine_pid: number | null;
+    readonly prev_engine_token: string | null;
+    readonly prev_engine_pid: number | null;
+  }>`
+    SELECT lease_owner, lease_generation, engine_token, engine_pid, prev_engine_token,
+      prev_engine_pid
+    FROM editorial_jobs
+  `;
+  const row = rows[0];
+  assert.isDefined(row);
+  return row!;
+});
+
 const leaseOf = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const rows = yield* sql<{
@@ -640,16 +691,7 @@ describe("EditorialJobsService with two owners of one job", () => {
           { stdio: "ignore" },
         );
         const exited = new Promise<void>((resolve) => orphan.once("exit", () => resolve()));
-        NodeFS.mkdirSync(NodePath.join(jobDir, "engine.lock.d"));
-        NodeFS.writeFileSync(
-          NodePath.join(jobDir, "engine.lock.d", "dead-server-g1.json"),
-          JSON.stringify({
-            owner: "dead-server",
-            generation: 1,
-            token: `${job.jobId}:dead-server:1`,
-            pid: orphan.pid,
-          }),
-        );
+
         const artifacts = {
           ...job.artifacts,
           phases: job.artifacts.phases.map((phase) =>
@@ -664,6 +706,7 @@ describe("EditorialJobsService with two owners of one job", () => {
           UPDATE editorial_jobs SET
             status = 'running', attempt = 1, started_at = ${PAST}, lease_until = ${PAST},
             lease_owner = 'dead-server', lease_generation = 1,
+            engine_token = ${`${job.jobId}:dead-server:1`}, engine_pid = ${orphan.pid ?? null},
             artifacts_json = ${JSON.stringify(artifacts)}
           WHERE job_id = ${job.jobId}
         `;
@@ -677,7 +720,127 @@ describe("EditorialJobsService with two owners of one job", () => {
         assert.deepStrictEqual(fx.events(), ["run done"]);
         assert.deepStrictEqual(fx.runDirs(), [done.artifacts.runId]);
         assert.deepStrictEqual(done.artifacts.notices, [{ code: "stale_engine_waited" }]);
+        const engine = yield* engineOf;
+        assert.strictEqual(engine.prev_engine_token, `${job.jobId}:dead-server:1`);
+        assert.strictEqual(engine.prev_engine_pid, orphan.pid);
       }),
     );
   });
+
+  it.live("a child published by a claim that lost the job before naming its pid is killed", () => {
+    const fx = makeFixture();
+    fx.slowRun(1500);
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        const job = yield* jobs.runNow;
+        corpusUpToDate(fx, job);
+        // Another server claims the job the moment this one publishes its engine.
+        yield* sql`
+          CREATE TRIGGER take_over AFTER UPDATE OF engine_token ON editorial_jobs
+          WHEN NEW.engine_token IS NOT NULL AND OLD.engine_token IS NULL
+          BEGIN
+            UPDATE editorial_jobs SET lease_owner = 'other-server',
+              lease_generation = lease_generation + 1 WHERE job_id = NEW.job_id;
+          END
+        `;
+        yield* jobs.runDue;
+
+        assert.notInclude(fx.events(), "run done");
+        assert.deepStrictEqual(fx.runDirs(), []);
+        assert.deepStrictEqual(processesCarrying(`${job.jobId}:`), []);
+        const engine = yield* engineOf;
+        assert.strictEqual(engine.lease_owner, "other-server");
+        assert.match(engine.engine_token ?? "", /:1$/);
+        assert.isNull(engine.engine_pid);
+        assert.strictEqual((yield* onlyJob).status, "running");
+      }),
+    );
+  });
+
+  it.live(
+    "a recorded pid that does not carry the former token is neither waited for nor killed",
+    () => {
+      const fx = makeFixture();
+      const stranger = NodeChildProcess.spawn("sleep", ["30"], { stdio: "ignore" });
+      const strangerExited = new Promise<void>((resolve) => stranger.once("exit", () => resolve()));
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const job = yield* jobs.runNow;
+          yield* sql`
+          UPDATE editorial_jobs SET
+            status = 'running', attempt = 1, started_at = ${PAST}, lease_until = ${PAST},
+            lease_owner = 'dead-server', lease_generation = 1,
+            engine_token = ${`${job.jobId}:dead-server:1`}, engine_pid = ${stranger.pid ?? null}
+          WHERE job_id = ${job.jobId}
+        `;
+          yield* jobs.runDue;
+
+          const done = yield* onlyJob;
+          assert.strictEqual(done.status, "done");
+          assert.deepStrictEqual(done.artifacts.notices, []);
+          assert.strictEqual(stranger.exitCode, null);
+          assert.isNull(stranger.signalCode);
+          const engine = yield* engineOf;
+          assert.strictEqual(engine.prev_engine_pid, stranger.pid);
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => stranger.kill("SIGKILL")).pipe(
+              Effect.andThen(Effect.promise(() => strangerExited)),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "two claims publishing at nearly the same time: only the current generation stays",
+    () => {
+      const fx = makeFixture();
+      fx.slowRun(1500);
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const job = yield* jobs.runNow;
+          corpusUpToDate(fx, job);
+          // The first claim's lease lapses as it publishes, so a second claim can take the job
+          // while the first one is still launching.
+          yield* sql`
+          CREATE TRIGGER lapse AFTER UPDATE OF engine_token ON editorial_jobs
+          WHEN NEW.engine_token IS NOT NULL AND NEW.lease_generation = 1
+          BEGIN
+            UPDATE editorial_jobs SET lease_until = '2000-01-01T00:00:00.000Z'
+            WHERE job_id = NEW.job_id;
+          END
+        `;
+          const first = yield* Effect.forkChild(jobs.runDue);
+          yield* fileAppears(fx, NodePath.join(job.artifacts.jobDir, "run.g1.log"));
+          yield* jobs.runDue;
+          yield* Fiber.join(first);
+
+          const done = yield* onlyJob;
+          assert.strictEqual(done.status, "done");
+          assert.notInclude(fx.events(), "OVERLAP");
+          assert.deepStrictEqual(
+            fx.events().filter((line) => line === "run done"),
+            ["run done"],
+          );
+          assert.deepStrictEqual(fx.runDirs(), [done.artifacts.runId]);
+          const engine = yield* engineOf;
+          assert.strictEqual(engine.lease_generation, 2);
+          assert.match(engine.engine_token ?? "", /:2$/);
+          assert.isNotNull(engine.engine_pid);
+          assert.match(engine.prev_engine_token ?? "", /:1$/);
+        }),
+      );
+    },
+  );
 });
