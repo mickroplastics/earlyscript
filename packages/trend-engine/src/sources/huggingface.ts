@@ -120,9 +120,7 @@ async function modelItems(
   const start = dayStart(day);
   const chosen = models
     .filter((model) => model.created >= start && model.created < start + DAY_MS)
-    .toSorted(
-      (a, b) => b.likes - a.likes || b.downloads - a.downloads || a.id.localeCompare(b.id),
-    )
+    .toSorted((a, b) => b.likes - a.likes || b.downloads - a.downloads || a.id.localeCompare(b.id))
     .slice(0, HF_MODELS_PER_DAY);
   let missingCards = 0;
   const items: Array<Item> = [];
@@ -209,7 +207,9 @@ export function huggingfaceCollector(): (day: string, get: GetResponse) => Promi
     const items: Array<Item> = [];
     let failures = 0;
     try {
-      items.push(...(await modelItems(day, get, await reachBefore(dayStart(day), get, notes), notes)));
+      items.push(
+        ...(await modelItems(day, get, await reachBefore(dayStart(day), get, notes), notes)),
+      );
     } catch (error) {
       if (!(error instanceof SourceFailure)) throw error;
       failures++;
@@ -223,7 +223,10 @@ export function huggingfaceCollector(): (day: string, get: GetResponse) => Promi
       notes.push(`papers unavailable: ${error.message}`);
     }
     const retrievedAt =
-      items.map((item) => item.retrieved_at).toSorted().at(-1) ?? new Date().toISOString();
+      items
+        .map((item) => item.retrieved_at)
+        .toSorted()
+        .at(-1) ?? new Date().toISOString();
     return {
       items: sortItems(items),
       coverage: {

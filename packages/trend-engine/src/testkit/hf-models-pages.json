@@ -1,186 +1,171 @@
 {
- "page1": [
-  {
-   "id": "tooldev/MyAwesomeModel-TestRepo",
-   "likes": 0,
-   "downloads": 0,
-   "tags": [
-    "region:us"
-   ],
-   "createdAt": "2026-10-31T03:37:49.000Z"
-  },
-  {
-   "id": "jgod123/DeepSeek-V4.1-Flash-UNCENSORED-FP8",
-   "likes": 1,
-   "downloads": 0,
-   "tags": [
-    "transformers",
-    "safetensors",
-    "deepseek_v41",
-    "text-generation",
-    "deepseek",
-    "deepseek-v4.1",
-    "abliterated",
-    "uncensored",
-    "crack",
-    "multimodal",
-    "moe",
-    "fp8",
-    "image-text-to-text",
-    "base_model:deepseek-ai/DeepSeek-V4.1-Flash",
-    "base_model:quantized:deepseek-ai/DeepSeek-V4.1-Flash",
-    "license:mit",
-    "endpoints_compatible",
-    "8-bit",
-    "region:us"
-   ],
-   "createdAt": "2026-10-31T03:20:15.000Z"
-  },
-  {
-   "id": "defnoteatin/PseudoBrain-Qwen3-Coder-30B-A3B-NVFP4",
-   "likes": 0,
-   "downloads": 0,
-   "tags": [
-    "vllm",
-    "safetensors",
-    "qwen3_moe",
-    "pseudobrain",
-    "qwen3",
-    "qwen3-coder",
-    "coding",
-    "agentic",
-    "moe",
-    "gated-deltanet",
-    "long-context",
-    "1m-context",
-    "constant-memory",
-    "nvfp4",
-    "text-generation",
-    "conversational",
-    "base_model:NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4",
-    "base_model:quantized:NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4",
-    "license:apache-2.0",
-    "8-bit",
-    "modelopt",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T23:59:46.000Z"
-  },
-  {
-   "id": "starrydark/Tricolour_Lovestory_Qwen3_TTS",
-   "likes": 1,
-   "downloads": 0,
-   "tags": [
-    "qwen-tts",
-    "safetensors",
-    "qwen3_tts",
-    "text-to-speech",
-    "tts",
-    "qwen3-tts",
-    "custom-voice",
-    "character-voice",
-    "mandarin",
-    "chinese",
-    "tricolour-lovestory",
-    "\u4e09\u8272\u7ed8\u604b",
-    "visual-novel",
-    "emotion-control",
-    "emotional-tts",
-    "expressive-tts",
-    "multi-speaker",
-    "chinese-tts",
-    "speech-synthesis",
-    "voice-model",
-    "game-voice",
-    "galgame",
-    "zh",
-    "dataset:starrydark/Tricolour_Lovestory_Voice",
-    "arxiv:2601.15621",
-    "base_model:Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-    "base_model:finetune:Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-    "license:other",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T23:13:09.000Z"
-  },
-  {
-   "id": "shkelqim2026/EfficientNet",
-   "likes": 1,
-   "downloads": 0,
-   "tags": [
-    "keras",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T23:09:26.000Z"
-  }
- ],
- "page2": [
-  {
-   "id": "ostris/primal_vae",
-   "likes": 21,
-   "downloads": 0,
-   "tags": [
-    "diffusers",
-    "vae",
-    "autoencoder",
-    "latent-diffusion",
-    "custom_code",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T20:40:00.000Z"
-  },
-  {
-   "id": "SeightCZE/ABA_1-0.12B",
-   "likes": 2,
-   "downloads": 0,
-   "tags": [
-    "pytorch",
-    "safetensors",
-    "aba_transformer",
-    "text-generation",
-    "transformer",
-    "czech",
-    "english",
-    "code",
-    "llama-style",
-    "cs",
-    "en",
-    "license:mit",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T20:17:04.000Z"
-  },
-  {
-   "id": "guideboardlabs/SenseNova-Loop-9B-Preview-GGUF",
-   "likes": 2,
-   "downloads": 0,
-   "tags": [
-    "gguf",
-    "sensenova",
-    "sensenova-loop",
-    "llama.cpp",
-    "quantized",
-    "text-generation",
-    "en",
-    "zh",
-    "base_model:sensenova/SenseNova-Loop-9B-Preview",
-    "base_model:quantized:sensenova/SenseNova-Loop-9B-Preview",
-    "license:apache-2.0",
-    "endpoints_compatible",
-    "region:us",
-    "conversational"
-   ],
-   "createdAt": "2026-10-30T20:05:22.000Z"
-  },
-  {
-   "id": "vllm-project/qwen36-35ba3b-2d-weights-poken-lora",
-   "likes": 0,
-   "downloads": 0,
-   "tags": [
-    "safetensors",
-    "region:us"
-   ],
-   "createdAt": "2026-10-30T15:57:48.000Z"
-  }
- ]
+  "page1": [
+    {
+      "id": "tooldev/MyAwesomeModel-TestRepo",
+      "likes": 0,
+      "downloads": 0,
+      "tags": ["region:us"],
+      "createdAt": "2026-10-31T03:37:49.000Z"
+    },
+    {
+      "id": "jgod123/DeepSeek-V4.1-Flash-UNCENSORED-FP8",
+      "likes": 1,
+      "downloads": 0,
+      "tags": [
+        "transformers",
+        "safetensors",
+        "deepseek_v41",
+        "text-generation",
+        "deepseek",
+        "deepseek-v4.1",
+        "abliterated",
+        "uncensored",
+        "crack",
+        "multimodal",
+        "moe",
+        "fp8",
+        "image-text-to-text",
+        "base_model:deepseek-ai/DeepSeek-V4.1-Flash",
+        "base_model:quantized:deepseek-ai/DeepSeek-V4.1-Flash",
+        "license:mit",
+        "endpoints_compatible",
+        "8-bit",
+        "region:us"
+      ],
+      "createdAt": "2026-10-31T03:20:15.000Z"
+    },
+    {
+      "id": "defnoteatin/PseudoBrain-Qwen3-Coder-30B-A3B-NVFP4",
+      "likes": 0,
+      "downloads": 0,
+      "tags": [
+        "vllm",
+        "safetensors",
+        "qwen3_moe",
+        "pseudobrain",
+        "qwen3",
+        "qwen3-coder",
+        "coding",
+        "agentic",
+        "moe",
+        "gated-deltanet",
+        "long-context",
+        "1m-context",
+        "constant-memory",
+        "nvfp4",
+        "text-generation",
+        "conversational",
+        "base_model:NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4",
+        "base_model:quantized:NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4",
+        "license:apache-2.0",
+        "8-bit",
+        "modelopt",
+        "region:us"
+      ],
+      "createdAt": "2026-10-30T23:59:46.000Z"
+    },
+    {
+      "id": "starrydark/Tricolour_Lovestory_Qwen3_TTS",
+      "likes": 1,
+      "downloads": 0,
+      "tags": [
+        "qwen-tts",
+        "safetensors",
+        "qwen3_tts",
+        "text-to-speech",
+        "tts",
+        "qwen3-tts",
+        "custom-voice",
+        "character-voice",
+        "mandarin",
+        "chinese",
+        "tricolour-lovestory",
+        "\u4e09\u8272\u7ed8\u604b",
+        "visual-novel",
+        "emotion-control",
+        "emotional-tts",
+        "expressive-tts",
+        "multi-speaker",
+        "chinese-tts",
+        "speech-synthesis",
+        "voice-model",
+        "game-voice",
+        "galgame",
+        "zh",
+        "dataset:starrydark/Tricolour_Lovestory_Voice",
+        "arxiv:2601.15621",
+        "base_model:Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "base_model:finetune:Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "license:other",
+        "region:us"
+      ],
+      "createdAt": "2026-10-30T23:13:09.000Z"
+    },
+    {
+      "id": "shkelqim2026/EfficientNet",
+      "likes": 1,
+      "downloads": 0,
+      "tags": ["keras", "region:us"],
+      "createdAt": "2026-10-30T23:09:26.000Z"
+    }
+  ],
+  "page2": [
+    {
+      "id": "ostris/primal_vae",
+      "likes": 21,
+      "downloads": 0,
+      "tags": ["diffusers", "vae", "autoencoder", "latent-diffusion", "custom_code", "region:us"],
+      "createdAt": "2026-10-30T20:40:00.000Z"
+    },
+    {
+      "id": "SeightCZE/ABA_1-0.12B",
+      "likes": 2,
+      "downloads": 0,
+      "tags": [
+        "pytorch",
+        "safetensors",
+        "aba_transformer",
+        "text-generation",
+        "transformer",
+        "czech",
+        "english",
+        "code",
+        "llama-style",
+        "cs",
+        "en",
+        "license:mit",
+        "region:us"
+      ],
+      "createdAt": "2026-10-30T20:17:04.000Z"
+    },
+    {
+      "id": "guideboardlabs/SenseNova-Loop-9B-Preview-GGUF",
+      "likes": 2,
+      "downloads": 0,
+      "tags": [
+        "gguf",
+        "sensenova",
+        "sensenova-loop",
+        "llama.cpp",
+        "quantized",
+        "text-generation",
+        "en",
+        "zh",
+        "base_model:sensenova/SenseNova-Loop-9B-Preview",
+        "base_model:quantized:sensenova/SenseNova-Loop-9B-Preview",
+        "license:apache-2.0",
+        "endpoints_compatible",
+        "region:us",
+        "conversational"
+      ],
+      "createdAt": "2026-10-30T20:05:22.000Z"
+    },
+    {
+      "id": "vllm-project/qwen36-35ba3b-2d-weights-poken-lora",
+      "likes": 0,
+      "downloads": 0,
+      "tags": ["safetensors", "region:us"],
+      "createdAt": "2026-10-30T15:57:48.000Z"
+    }
+  ]
 }

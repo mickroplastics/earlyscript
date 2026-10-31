@@ -28,7 +28,8 @@ export interface SourceState {
 }
 
 /** Contact for providers that ask clients to identify themselves (dev.to requires a user-agent). */
-export const COLLECTOR_USER_AGENT = "Earlyscript/0.1.5 (+https://git.r.biste.cc/miguel/earlyscript)";
+export const COLLECTOR_USER_AGENT =
+  "Earlyscript/0.1.5 (+https://git.r.biste.cc/miguel/earlyscript)";
 
 /**
  * Per-host request policy: one request at a time, `pauseMs` between request starts,
@@ -132,8 +133,7 @@ export function createHttpClient(
   const fetcher = options.fetch ?? fetch;
   const host = HOSTS[source];
   const deadline = now() + (options.dayTimeoutMs ?? host.dayBudgetMs);
-  const pause =
-    source === "huggingface" && process.env.HF_TOKEN ? host.pauseMs / 2 : host.pauseMs;
+  const pause = source === "huggingface" && process.env.HF_TOKEN ? host.pauseMs / 2 : host.pauseMs;
   const headers = requestHeaders(source);
   async function delay(ms: number, limited: boolean) {
     if (now() + ms >= deadline)

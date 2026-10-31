@@ -157,7 +157,12 @@ describe("Hugging Face and dev.to in a corpus/1 collection", () => {
           clock += ms;
         },
       });
-      const rows = await collectCorpus({ dir: root, from: "2026-10-30", to: "2026-10-31", adapters });
+      const rows = await collectCorpus({
+        dir: root,
+        from: "2026-10-30",
+        to: "2026-10-31",
+        adapters,
+      });
       expect(rows.map(({ source, status, items }) => ({ source, status, items }))).toEqual([
         { source: "huggingface", status: "partial", items: 5 },
         { source: "devto", status: "complete", items: 5 },

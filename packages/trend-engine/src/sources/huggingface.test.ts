@@ -140,9 +140,9 @@ describe("Hugging Face source", () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
       headers.push(new Headers(init?.headers));
       const n = headers.length;
-      if (n === 1) return new Response("slow down", { status: 429, headers: { "retry-after": "70" } });
-      if (n === 2)
-        return Response.json([], { headers: { ratelimit: '"api";r=0;t=120' } });
+      if (n === 1)
+        return new Response("slow down", { status: 429, headers: { "retry-after": "70" } });
+      if (n === 2) return Response.json([], { headers: { ratelimit: '"api";r=0;t=120' } });
       return Response.json([]);
     });
     const get = createHttpClient("huggingface", {

@@ -141,8 +141,10 @@ export function devtoCollector(): (day: string, get: GetResponse) => Promise<Day
         status: notes.length ? (items.length ? "partial" : "unavailable") : "complete",
         items: items.length,
         retrieved_at:
-          items.map((item) => item.retrieved_at).toSorted().at(-1) ??
-          new Date(firstObserved ?? Date.now()).toISOString(),
+          items
+            .map((item) => item.retrieved_at)
+            .toSorted()
+            .at(-1) ?? new Date(firstObserved ?? Date.now()).toISOString(),
         note: [...notes, `tags ${perTag}; pages walked=${page}`].join("; "),
       },
     };
