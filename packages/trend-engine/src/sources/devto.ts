@@ -227,9 +227,8 @@ export function devtoCollector(): (
     const perTag = DEVTO_TAGS.map(
       (tag) => `${tag}=${inDay.filter(({ tags }) => tags.includes(tag)).length}`,
     ).join(",");
-    // Complete only when the walk passed the day start and the day had ended before it began.
+    // Access failures make an empty day `unavailable`; the rest only stop it being `complete`.
     const notes: Array<string> = [];
-    if (failure) notes.push(failure);
     for (const gap of gaps)
       if (gap.from < start + DAY_MS && gap.to >= start)
         notes.push(
@@ -238,6 +237,7 @@ export function devtoCollector(): (
     if (ended && oldest >= start) notes.push("listing ended before the day start");
     if (firstObserved !== null && firstObserved < start + DAY_MS) notes.push("day not over");
     if (newestSeen === null && !failure) notes.push("empty listing");
+    if (failure) notes.unshift(failure);
     const items = sortItems(inDay.map(({ item }) => item));
     // A sample by design; `complete` only when every eligible article of a whole walk fits.
     const capped = eligible.length > DEVTO_PER_DAY;
@@ -246,13 +246,12 @@ export function devtoCollector(): (
       coverage: {
         source: "devto",
         day,
-        status: notes.length
-          ? items.length
-            ? "partial"
-            : "unavailable"
-          : capped
-            ? "partial"
-            : "complete",
+        status:
+          failure && !items.length
+            ? "unavailable"
+            : failure || notes.length || capped
+              ? "partial"
+              : "complete",
         items: items.length,
         retrieved_at:
           items
