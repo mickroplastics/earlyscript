@@ -160,6 +160,38 @@ describe("Hugging Face source", () => {
     expect(headers[0]!.get("user-agent")).toMatch(/^Earlyscript\/[\d.]+ \(\+https:\/\//);
   });
 
+  it("sends HF_TOKEN only to huggingface.co, never to robots.txt or a CDN redirect", async () => {
+    vi.stubEnv("HF_TOKEN", "hf_secret_token");
+    const { get } = await recordedHub();
+    const seen = new Map<string, string | null>();
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      seen.set(url, new Headers(init?.headers).get("authorization"));
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /\n");
+      if (url === "https://huggingface.co/ostris/primal_vae/resolve/main/README.md")
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://cdn-lfs.hf.co/ostris/primal_vae/README.md" },
+        });
+      if (url.startsWith("https://cdn-lfs.hf.co/ostris/")) return new Response(CARD);
+      const response = await get(url);
+      return response.status === 200
+        ? new Response(JSON.stringify(response.body), {
+            headers: response.next ? { link: `<${response.next}>; rel="next"` } : {},
+          })
+        : new Response("", { status: response.status });
+    });
+    const [adapter] = liveSources(["huggingface"], { fetch: fetcher, sleep: async () => undefined });
+    const day = await adapter!.collectDay("2026-10-30");
+    expect(day.items.find((item) => item.title === "ostris/primal_vae")?.body).toContain(
+      "Primal VAE",
+    );
+    expect(seen.get(hfModelsUrl())).toBe("Bearer hf_secret_token");
+    expect(seen.get("https://huggingface.co/robots.txt")).toBeNull();
+    expect(seen.get("https://cdn-lfs.hf.co/robots.txt")).toBeNull();
+    expect(seen.get("https://cdn-lfs.hf.co/ostris/primal_vae/README.md")).toBeNull();
+  });
+
   it("paces anonymous Hub requests at 700 ms", async () => {
     vi.stubEnv("HF_TOKEN", "");
     const waits: Array<number> = [];
