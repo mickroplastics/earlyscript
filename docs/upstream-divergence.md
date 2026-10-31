@@ -19,6 +19,7 @@ Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su p
 10. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
 
 11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
+12. Presentación de tendencias en la interfaz (`es/trend-presentation-ui`), base `638a6cf64e`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -799,3 +800,69 @@ Puntos de extensión:
 
 - Bandeja con estado (U3): `EditorialTrendSummary.isNew` y `EditorialInbox.newCount` se calculan hoy como «todas las de la corrida más reciente» en `loadRunDossiers`; con `editorial_trend_inbox`, la revisión vista decide `isNew`. `resolveLandingTarget` es el sitio de la regla «corrida nueva abre Tendencias». Las acciones del expediente (`PendingAction`) esperan los comandos de escritura y su scope de operación.
 - Redacción por asistente (U7): `EditorialTrendSummary.presentation` es opcional; la fila y el expediente ya muestran su título y las tres partes del resumen, con «Redactado por el asistente» y los términos del motor a la vista.
+
+## 14. Presentación de tendencias en la interfaz
+
+Base: `638a6cf64e`. Rama `es/trend-presentation-ui`. Une la operación `generateTrendPresentation` (§7) con el espacio Tendencias (§8) y la base editorial (§9): el servidor redacta y guarda un título de una línea y un resumen de tres partes por ficha de tendencia, las lecturas de bandeja y ficha los devuelven en `presentation` y la interfaz los muestra con el rótulo «Redactado por el asistente», las palabras del motor a la vista y las citas `[itemId]` convertidas en enlaces a la evidencia. Decisión 2 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §5 y §12. Redactar es siempre una acción humana: nada redacta solo.
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialPresentation.ts` (`EditorialPresentationRpcGroup` con `editorial.presentation.ensure`, `regenerate`, `ensureRun` y `getRunProgress`; `EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES`; `EditorialPresentationError`). No cambia `editorial.ts`: usa su `EditorialTrendPresentation`.
+- Servidor, en `apps/server/src/editorial/`: `EditorialPresentationService.ts` (servicio y su lado de lectura), `presentationRead.ts` (`EditorialPresentationReader` y `withPresentations`), `presentationDossierSource.ts` (lectura de los `dossier/1` para el redactor), `channelProfile.ts` (perfil fijo), `presentationRpc.ts`, `persistence/Migrations/005_EditorialPresentations.ts` y `EditorialPresentationService.test.ts`.
+- Cliente, en `apps/web/src/editorial/`: `presentationState.ts` y `TrendPresentationRunButton.tsx`.
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                                                                                                        |
+| ----------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialPresentationRpcGroup` y lo compone con `.merge` después de `EditorialRpcGroup`.                                                                                              |
+| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialPresentation.ts`.                                                                                                                                                          |
+| `packages/provider-core/src/server/textGeneration.ts` | 25        | Reexporta `hashTrendPresentationInput`, que el servicio necesita antes de generar para buscar la fila guardada.                                                                                |
+| `apps/server/src/ws.ts`                               | 245, 1874 | Importa `presentationRpc.ts` y esparce sus handlers tras los editoriales. El servicio es opcional (`Effect.serviceOption`): `layerWsRpc` y sus dobles no ganan requisitos.                     |
+| `apps/server/src/server.ts`                           | 52, 631   | Importa el servicio y lo añade al final del `Layer.mergeAll` de `layerRuntimeCoreDependenciesBase`, donde ya tiene `EditorialSql`, `TextGeneration`, `ServerSettingsService` y `ServerConfig`. |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES`.                                                                                                                                          |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_PRESENTATION_RPC_AGGREGATES`.                                                                                                                                               |
+
+Archivos propios de otras unidades tocados:
+
+| Archivo                                                                                                | Líneas    | Alcance                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/editorial/EditorialReadService.ts`                                                    | 31, 242   | Importa `withPresentations` y envuelve el objeto que devuelve `makeWithRunsDir`. Sin el lector en contexto devuelve el servicio sin cambios. |
+| `apps/server/src/editorial/persistence/Migrations.ts`                                                  | 6, 14     | Registra la migración 5.                                                                                                                     |
+| `apps/web/src/editorial/TrendInbox.tsx`                                                                | 23, 68-70 | Monta `TrendPresentationRunButton` en la cabecera de la lista, antes del menú de orden.                                                      |
+| `apps/web/src/editorial/TrendDossierPage.tsx`, `TrendInboxRow.tsx`, `editorial.logic.ts` y sus pruebas | varias    | Bloque redactado, citas, acciones, título en la fila con los términos en tooltip, `citationSegments` y `runPresentationProgressText`.        |
+| `apps/web/src/routes/_chat.editorial.$environmentId.trends.tsx`                                        | 13        | «expediente» pasa a «ficha de tendencia».                                                                                                    |
+
+Esquema de `005_EditorialPresentations`: `editorial_presentations` con `presentation_id`, `run_id`, `dossier_id`, `trend_key`, `input_hash`, `revision`, `prompt_version`, `provider`, `model`, `title`, `what_happened`, `why_it_matters`, `video_angle`, `cited_item_ids_json`, `warnings_json`, `requested_at`, `generated_at`, `status` (`pending`, `ready`, `failed`) y `error`. Una fila `ready` exige texto y procedencia completos (`CHECK`). Única por `run_id + dossier_id + input_hash + revision`.
+
+Comportamiento:
+
+- `ensure(runId, dossierId)` calcula el `input_hash` con el perfil, los datos deterministas de la ficha y hasta 12 evidencias, y devuelve la fila `ready` más reciente con ese hash (`reused: true`) o genera una nueva. Un candado por ficha hace que dos peticiones simultáneas generen una sola vez.
+- `regenerate` siempre genera y añade una revisión; las anteriores quedan. Las lecturas muestran la revisión `ready` más alta de cada ficha.
+- `ensureAll(runId, { concurrency })` recorre la corrida, salta las que ya están listas para su hash, registra cada fallo como fila `failed` con su error y sigue con las demás. `startRun` lo lanza en segundo plano en el ámbito del servicio, una vez por corrida a la vez; `runProgress` cuenta listas y fallidas frente al hash actual. Una fila que quedó `pending` por una caída se marca `failed` («interrupted by a server restart») al arrancar.
+- La selección de modelo sale de `textGenerationModelSelection` de los ajustes, como los títulos de hilo. El fallback de cuota y el aislamiento de §7 siguen aplicando.
+- Lectura: `withPresentations` añade `presentation` a `getInbox` y `getDossier` cuando hay una fila `ready`. Un fallo al leer la tabla se registra y la bandeja sale con los términos del motor.
+- Interfaz: la ficha muestra «Redactado por el asistente», el título, «Términos del motor: …» y las insignias, las tres partes («Qué pasó», «Por qué importa al canal», «Ángulo de video») con citas numeradas en superíndice que abren la evidencia, el modelo y la fecha, y «Regenerar». Sin presentación, un recuadro con «Redactar con el asistente». Los errores se muestran en su sitio, sin toast. La evidencia de la ficha lleva su número para que la cita se pueda seguir. La fila del sidebar usa el título redactado y deja los términos en el tooltip y en texto para lectores de pantalla. La cabecera de la lista tiene «Redactar todas las de esta corrida» con un contador `listas/total` mientras redacta.
+- «Expediente» pasa a «Ficha de tendencia» en los textos visibles; los identificadores (`dossier`, `TrendDossierPage`) no cambian.
+
+Desviaciones respecto al encargo:
+
+- Unicidad con `revision`: el encargo pedía unicidad por `run_id + dossier_id + input_hash` y, a la vez, que `regenerate` añadiera una fila sin borrar la anterior con el mismo hash. Las dos cosas solo caben con una columna de revisión.
+- Cuarto método `getRunProgress` (lectura, `orchestration:read`): sin él, el cliente tendría que consultar el progreso llamando a `ensureRun`, que vuelve a lanzar la corrida y reintenta los fallos en cada consulta.
+- `awaitRun` en el servicio, no expuesto por RPC: espera la redacción en segundo plano de una corrida. Lo usan las pruebas y lo podrá usar la corrida nocturna.
+- `presentationDossierSource.ts` vuelve a leer los `dossier/1` de la corrida con las reglas de `dossierFormat.ts` (puestos, cobertura, validación de enlaces), porque el contrato de lectura no trae los extractos de la evidencia ni `signal.id`. Duplica la resolución del directorio de corridas (`EARLYSCRIPT_EDITORIAL_RUNS_DIR` o `~/earlyscript-data/runs`) y el recorrido por `run_id`. Cuando exista un servicio compartido del directorio de corridas (`EditorialRunDirectory` de `es/editorial-write`), su `layer` es lo único que hay que reemplazar.
+
+Riesgo de fusión: el `Migrator` de Effect solo ejecuta migraciones con id mayor que la última aplicada. Si una base aplica la 5 antes de que existan la 3 (`es/video-thread-server`) y la 4 (`es/editorial-write`), esas dos no se ejecutarán nunca en ella. Fusionar esta rama después de las que traen la 3 y la 4, o renumerar antes de fusionar.
+
+Decisiones reversibles:
+
+- Perfil fijo: los bytes de `profiles/singularidev.v1.json` de Earlywindow en `channelProfile.ts`, versión 1, con su SHA-256 (igual al `profile.hash` de los expedientes de la corrida del 19 de octubre; lo comprueba una prueba). El texto que lee el modelo es una versión en líneas del JSON. Punto de extensión: `EditorialChannelProfile.layer`, que reemplazará la unidad de perfiles versionados.
+- Concurrencia 2 en `ensureAll` y `startRun` (`ENSURE_RUN_CONCURRENCY`).
+- Hasta 12 evidencias por ficha, en el orden del motor (`PRESENTATION_EVIDENCE_LIMIT`), igual que el límite del prompt; la ficha pide 12 ítems para resolver las citas que caen fuera de su primera página de 6.
+- `ensure` compara solo el `input_hash`, como pide el encargo: un prompt nuevo no invalida las presentaciones guardadas hasta que alguien pulse «Regenerar».
+- `trend_key`: `trend_key` del expediente si existe, si no `signal.id`, si no el id de la ficha. También es el `trend.id` que lee el modelo.
+- `growth` y `affinity` ausentes se envían como 0.
+- `cwd` de la operación: el directorio de estado del servidor (Claude corre en un temporal; Codex no carga instrucciones del proyecto).
+- Idioma: el predeterminado del prompt, `es`.
+- Scopes: `orchestration:operate` para redactar (gasta inferencia, como `pullRequestsGenerateReviewGuide`), `orchestration:read` para el progreso.
+- Refresco en el cliente: tras redactar se refrescan las lecturas de bandeja (los tres órdenes) y de la ficha (6 y 12 evidencias) con `registry.refresh`, porque esas consultas aún no tienen señal de revisión. Durante una corrida, la bandeja se refresca cada vez que cambia el número de listas. Cuando la bandeja tenga su átomo de revisión, cambiarlo por ese.
