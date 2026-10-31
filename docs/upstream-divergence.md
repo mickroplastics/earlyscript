@@ -1229,6 +1229,18 @@ Procedimiento de borrado (`src/purge.ts`, el módulo de §21; esta rama solo le 
 - `collect` lee esas purgas y no vuelve a guardar un ítem que coincida, aunque el proveedor lo siga sirviendo o se fuerce la recolección. Desde la versión idempotente de `main` (`fd42d3b09d`), una purga sin coincidencias no se registra y una repetida no cambia nada. Consecuencia para Bluesky: una petición de borrado de una publicación que todavía no está en el corpus no impide capturarla después; si el autor la borró en Bluesky, el proveedor ya no la sirve, y si solo pidió no aparecer, hay que repetir la purga tras la siguiente captura.
 - Las ejecuciones (`runs`) ya calculadas con esos ítems no se reescriben: guardan extractos de evidencia. Si un borrado debe alcanzarlas, hay que volver a correr el motor sobre el corpus purgado y borrar la corrida vieja.
 
+Captura real (Beatriz, 31 de octubre de 2026, días 28 y 29 de octubre, corpus temporal `~/earlyscript-data/live/corpus-s2-prueba/`, sin embeddings ni `engine run`; código `7525f197c`, equivalente para estas fuentes a la cabeza fusionada salvo el cliente anónimo de `robots.txt`):
+
+| Fuente | 28 oct | 29 oct | Tiempo (2 días) | Observaciones |
+| --- | --- | --- | --- | --- |
+| `arxiv` | `unavailable`, 0 | `unavailable`, 0 | 3 s | `robots_disallowed`; ninguna petición de datos |
+| `wikipedia` | `complete`, 986 | `complete`, 986 | 3 s | Sin resúmenes (`robots_disallowed`). El 28 dio primero un 404 pasajero (`unavailable`); una segunda ejecución lo rellenó en 2 s sin repetir el 29 |
+| `npm` | `partial`, 100 | `partial`, 100 | 146 s | 259 y 338 lanzamientos con 500 o más descargas en el día; 13 y 8 por debajo |
+| `stackexchange` | `complete`, 72 | `complete`, 64 | 41 s | stackoverflow 72 y 61 (el total del 28 coincide con `filter=total`), ai 0 y 3 |
+| `bluesky` | `partial`, 4143 | `partial`, 4201 | 188 s | 96 y 90 peticiones; solo `agent` desbordó ventanas; 957 y 975 publicaciones descartadas por no nombrar el término en su texto |
+
+Sin errores de proceso. Una captura piloto previa, con npm a 5250 resultados por consulta, tardó 598 s en npm y dejó tres de sus cinco consultas sin leer; de ahí el cambio de npm descrito arriba.
+
 Pruebas: respuestas grabadas reales recortadas (top de Wikipedia y un resumen, dos preguntas de ai.stackexchange, cinco resultados de npm sin correos) y sintéticas (feed de arXiv y publicaciones de Bluesky con cuentas inventadas, para no guardar publicaciones reales). Cubren selección del día, regla de 4 días, `robots_disallowed` sin petición de datos, resúmenes omitidos, tope de Stack Exchange y su throttle en cuerpo, regla de npm, reparto de ventanas de Bluesky y `engine purge` (por DID, handle, at-URI y permalink de HN; historia limpia; recolección forzada sin reaparición; manifiesto verificado). En vivo, una prueba por fuente con `EARLYSCRIPT_LIVE_TESTS=1`.
 
 ## 21. Fuentes Lobste.rs y RSS/Atom (rama `es/sources-lobsters-rss`, 31 de octubre de 2026)
