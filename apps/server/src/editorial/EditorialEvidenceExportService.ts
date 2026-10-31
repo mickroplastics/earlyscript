@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- `git rev-parse` names the fork's commit when no build SHA is set.
+// @effect-diagnostics nodeBuiltinImport:off -- `git rev-parse` names the fork's commit when no build SHA is set; lstat and realpath guard the destination against links.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -26,6 +27,7 @@ import {
   ALL_EVIDENCE_FILES,
   CAPTURES_FILE,
   DECISIONS_FILE,
+  EVIDENCE_COLUMNS,
   EVENTS_FILE,
   EVIDENCE_FILES,
   EVIDENCE_SCHEMA,
@@ -41,8 +43,9 @@ import {
   packageHashOf,
   renderCsv,
   sha256Hex,
-  shareEventData,
+  describeRule,
   shareEventDataWhitelist,
+  shareValue,
   shareWhitelist,
   stableJson,
   utcDay,
@@ -99,7 +102,8 @@ const BUILD_SHA_ENV = "EARLYSCRIPT_BUILD_SHA";
 /** The fork's commit: the build's, or the checkout's when running from source; else null. */
 const resolveForkSha = (): string | null => {
   const fromEnv = process.env[BUILD_SHA_ENV]?.trim();
-  if (fromEnv) return fromEnv;
+  // The build may set it; only a commit hash leaves, never other text.
+  if (fromEnv) return /^[0-9a-f]{7,40}$/.test(fromEnv) ? fromEnv : null;
   try {
     const cwd = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
     const sha = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
@@ -286,6 +290,7 @@ const decisionRow = (decision: EditorialResultsDecision, current: boolean): CsvR
 
 interface SummaryInput {
   readonly mode: EditorialEvidenceMode;
+  readonly names: Pseudonyms;
   readonly since: string | null;
   readonly until: string | null;
   readonly lastEventSeq: number;
@@ -295,13 +300,50 @@ interface SummaryInput {
   readonly fileRows: ReadonlyArray<{ readonly name: string; readonly rows: number }>;
 }
 
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Closed formats only: the backtest table is stored text, so each part is checked. */
+const backtestSummary = (backtest: NonNullable<EditorialSourceEntry["backtest"]>): string => {
+  const verdict =
+    backtest.verdict === "not-worse" || backtest.verdict === "worse" ? backtest.verdict : "?";
+  const status =
+    backtest.status === "final" || backtest.status === "provisional" ? backtest.status : "?";
+  const day = (value: string) => (DAY_PATTERN.test(value) ? value : "?");
+  const number = (value: number | null) =>
+    typeof value === "number" && Number.isFinite(value) ? formatDecimal(value) : "sin datos";
+  return `${verdict}, ${status}, ${day(backtest.cutoffFrom)} a ${day(backtest.cutoffTo)}, P@5 ${number(backtest.p5Candidate)} frente a ${number(backtest.p5Baseline)}`;
+};
+
+/**
+ * The filter as the package states it. `share` rounds an instant to its day (the rows were
+ * filtered with the instant as given); `full` keeps it.
+ */
+const filterBound = (mode: EditorialEvidenceMode, value: string | null): string | null => {
+  if (value === null) return null;
+  if (DAY_PATTERN.test(value) || mode === "full") return value;
+  return utcDay(value);
+};
+
+const filterText = (
+  mode: EditorialEvidenceMode,
+  since: string | null,
+  until: string | null,
+): string => {
+  if (since === null && until === null) return "sin filtro de fechas";
+  const bound = (value: string | null, edge: "desde" | "hasta") => {
+    if (value === null) return edge === "desde" ? "desde el inicio" : "hasta el final";
+    if (DAY_PATTERN.test(value)) return `${edge} el día ${value}`;
+    return mode === "full"
+      ? `${edge} el instante ${value}`
+      : `${edge} un instante del día ${utcDay(value) ?? "?"} (redondeado al día en este paquete)`;
+  };
+  return `${bound(since, "desde")} ${bound(until, "hasta")} (UTC; los días son inclusivos)`;
+};
+
 /** `resumen.md`: aggregates only, no free text and no export timestamp. */
 const renderSummary = (input: SummaryInput): string => {
   const { modes, comparisons } = EditorialResultsService.summarizeDecisions(input.decisions);
-  const filter =
-    input.since === null && input.until === null
-      ? "sin filtro de fechas"
-      : `desde ${input.since ?? "el inicio"} hasta ${input.until ?? "el final"} (UTC, días inclusivos)`;
+  const filter = filterText(input.mode, input.since, input.until);
   const stageRows = modes.flatMap((mode) => [
     ...mode.stages.map((entry) => [
       MODE_LABEL[mode.mode],
@@ -355,27 +397,37 @@ const renderSummary = (input: SummaryInput): string => {
     mode.citations.cited,
     mode.citations.ratio === null ? "sin datos" : formatDecimal(mode.citations.ratio),
   ]);
+  // In share every cell goes through its column rule, as in `corridas.csv`.
+  const runCell = (column: string, value: unknown): string | number => {
+    if (input.mode === "full") return value === null ? "" : (value as string | number);
+    const rule = EVIDENCE_COLUMNS[RUNS_FILE]?.find((spec) => spec.name === column)?.share;
+    const shared = rule ? shareValue(rule, value, input.names) : null;
+    return typeof shared === "string" || typeof shared === "number" ? shared : "";
+  };
   const runRows = input.runs.map((run) => [
-    run.run_id,
+    runCell("corrida", run.run_id),
     utcDay(run.cutoff_at) ?? "sin corte",
-    run.import_state,
+    runCell("estado_importacion", run.import_state),
     run.dossier_count,
     run.seen,
     run.dismissed,
     run.produced,
   ]);
   const yesNo = (value: boolean) => (value ? "sí" : "no");
-  const sourceRows = input.sources.map((entry) => {
-    const backtest = entry.backtest;
-    const backtestText =
-      backtest === null
-        ? entry.backtestRunId === null
-          ? "ninguno"
-          : "registrado (sin resumen)"
-        : `${backtest.verdict}, ${backtest.status}, ${backtest.cutoffFrom} a ${backtest.cutoffTo}, P@5 ${formatDecimal(backtest.p5Candidate)} frente a ${formatDecimal(backtest.p5Baseline)}`;
-    const catalog = SOURCE_CATALOG[entry.source as keyof typeof SOURCE_CATALOG];
-    return [catalog?.name ?? entry.source, yesNo(entry.collect), yesNo(entry.rank), backtestText];
-  });
+  // Only catalog sources: their names are constants of this build.
+  const sourceRows = input.sources
+    .filter((entry) => Object.hasOwn(SOURCE_CATALOG, entry.source))
+    .map((entry) => {
+      const backtest = entry.backtest;
+      const backtestText =
+        backtest === null
+          ? entry.backtestRunId === null
+            ? "ninguno"
+            : "registrado (sin resumen)"
+          : backtestSummary(backtest);
+      const catalog = SOURCE_CATALOG[entry.source as keyof typeof SOURCE_CATALOG];
+      return [catalog.name, yesNo(entry.collect), yesNo(entry.rank), backtestText];
+    });
   return [
     "# Evidencia de Earlyscript",
     "",
@@ -457,14 +509,15 @@ const SHARE_RULES = [
   "Solo las columnas listadas en `columns`; cualquier otra columna queda fuera aunque la base la tenga.",
   "Sin texto libre: ni motivos de decisión, descarte o pausa, ni notas, ni resultados escritos a mano.",
   "Sin URL ni títulos de capturas o páginas visitadas, sin rutas de archivos y sin guiones (solo su sha256).",
-  "Hilos como h001… y tendencias como t001…, por orden de aparición en la base; las corridas del motor conservan su id.",
-  "Fechas redondeadas al día UTC.",
-  "Sin credenciales, sesiones, identificadores de entorno ni operación, ni datos crudos de fuentes.",
+  "Hilos como h001…, tendencias como t001… y corridas como r001…, por orden de aparición en la base; los hashes de cada corrida se conservan si son sha256 válidos y permiten reproducirla.",
+  "Cada valor pasa por la regla de su columna (`columns[].rule`) o de su campo (`eventData`): enumeraciones cerradas, enteros, días, sha256 de 64 hexadecimales, versión x.y.z o engine.vX.Y e ids del catálogo de fuentes. Un valor que no cumple su regla queda vacío.",
+  "Fechas redondeadas al día UTC, también las de los filtros (`filters`); las filas se filtraron con el instante pedido.",
+  "Sin identificadores de entorno, operación ni sesión, y sin datos crudos de fuentes.",
 ];
 
 const FULL_RULES = [
   "Paquete local para el operador: incluye texto libre (motivos, notas de captura, URL, títulos) y la carga íntegra de cada evento.",
-  "No incluye credenciales, sesiones ni el texto de los guiones (solo su sha256).",
+  "No incluye la sesión de cada evento ni el texto de los guiones (solo su sha256). La carga de cada evento se copia tal cual, sin sanear.",
   "No publicar ni subir a repositorios; para el informe y los revisores, exportar con --share.",
 ];
 
@@ -488,7 +541,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** Every thread and trend the base has seen, in first-seen order, filters aside. */
+  /** Every thread, trend and run the base has seen, in first-seen order, filters aside. */
   const readPseudonyms = Effect.gen(function* () {
     const threads = yield* sql<{ readonly id: string }>`
       SELECT id FROM (
@@ -523,10 +576,32 @@ const make = Effect.gen(function* () {
       GROUP BY trend_key
       ORDER BY MIN(at), trend_key
     `;
-    return makePseudonyms(
-      threads.map((row) => row.id),
-      trends.map((row) => row.trend_key),
-    );
+    const runs = yield* sql<{ readonly id: string }>`
+      SELECT id FROM (
+        SELECT run_id AS id, 0 AS bucket, cutoff_at AS at, 0 AS seq FROM editorial_runs
+        UNION ALL
+        SELECT aggregate_id, 1, NULL, MIN(seq) FROM editorial_events
+        WHERE aggregate_kind = 'run' GROUP BY aggregate_id
+        UNION ALL
+        SELECT json_extract(payload_json, '$.runId'), 1, NULL, MIN(seq) FROM editorial_events
+        WHERE json_extract(payload_json, '$.runId') IS NOT NULL GROUP BY 1
+        UNION ALL
+        SELECT json_extract(payload_json, '$.observed.runId'), 1, NULL, MIN(seq)
+        FROM editorial_events
+        WHERE json_extract(payload_json, '$.observed.runId') IS NOT NULL GROUP BY 1
+        UNION ALL
+        SELECT run_id, 1, NULL, 9007199254740991 FROM editorial_video_threads
+        WHERE run_id IS NOT NULL
+      )
+      WHERE typeof(id) = 'text'
+      GROUP BY id
+      ORDER BY MIN(bucket), MIN(at), MIN(seq), id
+    `;
+    return makePseudonyms({
+      threads: threads.map((row) => row.id),
+      trends: trends.map((row) => row.trend_key),
+      runs: runs.map((row) => row.id),
+    });
   });
 
   const intervalRows = Effect.fn("EditorialEvidenceExportService.intervalRows")(function* (
@@ -577,7 +652,8 @@ const make = Effect.gen(function* () {
       }));
   });
 
-  const eventRows = (window: DateWindow, mode: EditorialEvidenceMode, names: Pseudonyms) =>
+  // `datos` is the raw payload; `renderCsv` projects it for share by `tipo`.
+  const eventRows = (window: DateWindow) =>
     sql<EventRow>`
       SELECT seq, type, aggregate_kind, aggregate_id, operation_id, actor, payload_json, created_at
       FROM editorial_events ORDER BY seq
@@ -595,9 +671,7 @@ const make = Effect.gen(function* () {
               id: row.aggregate_id,
               actor: row.actor,
               operacion: row.operation_id,
-              datos: stableJson(
-                mode === "full" ? payload : shareEventData(row.type, payload, names),
-              ),
+              datos: stableJson(payload),
             };
           }),
       ),
@@ -681,7 +755,7 @@ const make = Effect.gen(function* () {
         names,
         lastEventSeq: lastEvent[0]?.seq ?? 0,
         intervals: yield* intervalRows(window),
-        events: yield* eventRows(window, mode, names),
+        events: yield* eventRows(window),
         runs: yield* readRuns(window),
         captures: mode === "full" ? yield* captureRows(window) : [],
       };
@@ -717,6 +791,7 @@ const make = Effect.gen(function* () {
     const csvNames = EVIDENCE_FILES[mode].filter((name) => name !== SUMMARY_FILE);
     const summary = renderSummary({
       mode,
+      names: data.names,
       since: options.since ?? null,
       until: options.until ?? null,
       lastEventSeq: data.lastEventSeq,
@@ -757,9 +832,15 @@ const make = Effect.gen(function* () {
       exportedAt: mode === "full" ? now : day,
       fork: { sha: forkSha, version: packageJson.version },
       filters: {
-        since: options.since ?? null,
-        until: options.until ?? null,
+        since: filterBound(mode, options.since ?? null),
+        until: filterBound(mode, options.until ?? null),
         timezone: "UTC",
+        ...(mode === "share" &&
+        [options.since, options.until].some(
+          (value) => value !== undefined && !DAY_PATTERN.test(value),
+        )
+          ? { roundedToDay: true }
+          : {}),
         appliesTo: {
           [DECISIONS_FILE]: "decidida",
           [INTERVALS_FILE]: "inicio",
@@ -779,7 +860,11 @@ const make = Effect.gen(function* () {
       columns: Object.fromEntries(
         csvNames.map((name) => [
           name,
-          columnsOf(name, mode).map((spec) => ({ name: spec.name, description: spec.description })),
+          columnsOf(name, mode).map((spec) =>
+            mode === "share" && spec.share !== null
+              ? { name: spec.name, description: spec.description, rule: describeRule(spec.share) }
+              : { name: spec.name, description: spec.description },
+          ),
         ]),
       ),
       ...(mode === "share"
@@ -810,44 +895,76 @@ const make = Effect.gen(function* () {
         message: `The destination must be an absolute path: ${directory}`,
       });
     }
-    const failed = targetError(directory, `Could not write the evidence package to ${directory}.`);
-    const exists = yield* fs.exists(directory).pipe(Effect.catch(failed));
-    if (exists) {
-      const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(failed));
-      if (entries.length > 0) {
-        const manifestPath = path.join(directory, MANIFEST_FILE);
-        const previous = yield* fs.readFileString(manifestPath).pipe(
-          Effect.map(parseJson),
-          Effect.orElseSucceed(() => null),
-        );
-        const ours =
-          typeof previous === "object" &&
-          previous !== null &&
-          (previous as { readonly schema?: unknown }).schema === EVIDENCE_SCHEMA;
-        if (!ours) {
-          return yield* new EditorialEvidenceExportError({
-            reason: "target",
-            message: `${directory} is not empty and holds no evidence package. Choose an empty or new folder.`,
-          });
-        }
-        // Replace only our files, so a share export over a full one leaves no capturas.csv.
-        for (const name of ALL_EVIDENCE_FILES) {
-          yield* fs.remove(path.join(directory, name), { force: true }).pipe(Effect.catch(failed));
-        }
-      }
-    } else {
-      yield* fs.makeDirectory(directory, { recursive: true }).pipe(Effect.catch(failed));
+    const target = path.resolve(directory);
+    const refuse = (message: string) =>
+      Effect.fail(new EditorialEvidenceExportError({ reason: "target", message }));
+    const failed = targetError(target, `Could not write the evidence package to ${target}.`);
+    const unreachable = (entry: string) => () =>
+      new EditorialEvidenceExportError({
+        reason: "target",
+        message: `Could not inspect ${entry} before writing the evidence package.`,
+      });
+    const lstat = (entry: string) =>
+      Effect.try({
+        try: () => NodeFS.lstatSync(entry, { throwIfNoEntry: false }),
+        catch: unreachable(entry),
+      });
+    const realPath = (entry: string) =>
+      Effect.try({ try: () => NodeFS.realpathSync(entry), catch: unreachable(entry) });
+
+    const parent = path.dirname(target);
+    yield* fs.makeDirectory(parent, { recursive: true }).pipe(Effect.catch(failed));
+    // The destination is a real folder of its parent, never a link to somewhere else.
+    const before = yield* lstat(target);
+    if (before?.isSymbolicLink()) {
+      return yield* refuse(`${target} is a symbolic link. Choose a real folder.`);
     }
+    if (before !== undefined && !before.isDirectory()) {
+      return yield* refuse(`${target} exists and is not a folder.`);
+    }
+    // Not recursive: if something appears there meanwhile, this fails instead of following it.
+    if (before === undefined) yield* fs.makeDirectory(target).pipe(Effect.catch(failed));
+    const resolved = yield* realPath(target);
+    if (resolved !== path.join(yield* realPath(parent), path.basename(target))) {
+      return yield* refuse(`${target} resolves outside its parent folder.`);
+    }
+
+    const entries = yield* fs.readDirectory(target).pipe(Effect.catch(failed));
+    if (entries.length > 0) {
+      const manifestPath = path.join(target, MANIFEST_FILE);
+      const manifestStat = yield* lstat(manifestPath);
+      const previous = manifestStat?.isFile()
+        ? yield* fs.readFileString(manifestPath).pipe(
+            Effect.map(parseJson),
+            Effect.orElseSucceed(() => null),
+          )
+        : null;
+      const ours =
+        typeof previous === "object" &&
+        previous !== null &&
+        (previous as { readonly schema?: unknown }).schema === EVIDENCE_SCHEMA;
+      if (!ours) {
+        return yield* refuse(
+          `${target} is not empty and holds no evidence package. Choose an empty or new folder.`,
+        );
+      }
+      // Replace only our files (a link with one of our names goes, not what it points to), so a
+      // share export over a full one leaves no capturas.csv.
+      for (const name of ALL_EVIDENCE_FILES) {
+        yield* fs.remove(path.join(target, name), { force: true }).pipe(Effect.catch(failed));
+      }
+    }
+    // `wx`: a file that reappears, or a link planted with one of our names, fails the export.
     for (const file of pkg.files) {
       yield* fs
-        .writeFileString(path.join(directory, file.name), file.content)
+        .writeFileString(path.join(target, file.name), file.content, { flag: "wx" })
         .pipe(Effect.catch(failed));
     }
     // Last, so a folder with a manifest always holds the files it lists.
     yield* fs
-      .writeFileString(path.join(directory, MANIFEST_FILE), pkg.manifest)
+      .writeFileString(path.join(target, MANIFEST_FILE), pkg.manifest, { flag: "wx" })
       .pipe(Effect.catch(failed));
-    return directory;
+    return target;
   });
 
   return EditorialEvidenceExportService.of({ build, write });

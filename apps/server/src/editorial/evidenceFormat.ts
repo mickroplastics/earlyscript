@@ -4,7 +4,9 @@ import * as NodeCrypto from "node:crypto";
 import type { EditorialEvidenceMode } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
-import type { EditorialEventType } from "./persistence/EditorialModel.ts";
+import { SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
+
+import { EditorialEventType, WORK_STAGES } from "./persistence/EditorialModel.ts";
 import { parseIso } from "./persistence/support.ts";
 
 // Pure half of the evidence export: column lists, the share whitelist, pseudonyms, CSV and
@@ -15,36 +17,62 @@ export const MANIFEST_FILE = "manifest.json";
 export const SUMMARY_FILE = "resumen.md";
 
 /**
- * How `share` writes a column: `text` (typed text, titles, URLs) never; `thread`, `trend` and
- * `aggregate-id` (by the row's `agregado`) as stable indices; `date` as its UTC day; `value`
- * and `event-data` (already projected by the service) as they are.
+ * What `share` accepts in a cell or event field. Every rule is a closed format: an enum with
+ * its real values, an integer, a UTC day, a 64-hex sha256, a strict engine version, catalog
+ * source ids, or an index (`h001`, `t001`, `r001`). A value that fails its rule leaves an
+ * empty cell; nothing is copied without passing one.
  */
-export type ColumnKind =
-  | "value"
-  | "date"
-  | "thread"
-  | "trend"
-  | "text"
-  | "aggregate-id"
-  | "event-data";
+export type ShareRule =
+  | { readonly kind: "enum"; readonly values: ReadonlyArray<string> }
+  | { readonly kind: "int" }
+  | { readonly kind: "number" }
+  | { readonly kind: "bool" }
+  | { readonly kind: "day" }
+  | { readonly kind: "hash" }
+  | { readonly kind: "version" }
+  | { readonly kind: "sources" }
+  | { readonly kind: "thread" }
+  | { readonly kind: "trend" }
+  | { readonly kind: "run" }
+  | { readonly kind: "aggregate-id" }
+  | { readonly kind: "event-data" }
+  | { readonly kind: "object"; readonly fields: Readonly<Record<string, ShareRule>> };
+
+const oneOf = (...values: ReadonlyArray<string>): ShareRule => ({ kind: "enum", values });
+const INT: ShareRule = { kind: "int" };
+const NUMBER: ShareRule = { kind: "number" };
+const BOOL: ShareRule = { kind: "bool" };
+const DAY: ShareRule = { kind: "day" };
+const HASH: ShareRule = { kind: "hash" };
+const THREAD: ShareRule = { kind: "thread" };
+const TREND: ShareRule = { kind: "trend" };
+const RUN: ShareRule = { kind: "run" };
+const object = (fields: Readonly<Record<string, ShareRule>>): ShareRule => ({
+  kind: "object",
+  fields,
+});
+
+const MODES = oneOf("assisted", "manual");
+const STAGES = oneOf(...WORK_STAGES);
+const IMPORT_STATES = oneOf("imported", "partial", "invalid");
+const CLOCK_STATES = oneOf("running", "paused");
+const SNOOZE_METRICS = oneOf("items7d", "authors7d", "items28d", "score");
 
 export interface ColumnSpec {
   readonly name: string;
-  readonly kind: ColumnKind;
-  /** Whether `share` keeps the column. A `text` column never does. */
-  readonly share: boolean;
+  /** How `share` writes the column; null when only `full` has it (free text, raw ids). */
+  readonly share: ShareRule | null;
   readonly description: string;
 }
 
 export type CsvValue = string | number | boolean | null;
 export type CsvRow = Readonly<Record<string, CsvValue>>;
 
-const column = (
-  name: string,
-  kind: ColumnKind,
-  share: boolean,
-  description: string,
-): ColumnSpec => ({ name, kind, share: kind === "text" ? false : share, description });
+const column = (name: string, share: ShareRule | null, description: string): ColumnSpec => ({
+  name,
+  share,
+  description,
+});
 
 export const DECISIONS_FILE = "decisiones.csv";
 export const INTERVALS_FILE = "tiempos.csv";
@@ -54,112 +82,111 @@ export const CAPTURES_FILE = "capturas.csv";
 
 export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>>> = {
   [DECISIONS_FILE]: [
-    column("hilo", "thread", true, "Hilo de video; en share, índice estable h001…"),
-    column("entorno", "value", false, "Entorno de T3 que registró el hilo."),
-    column("modo", "value", true, "assisted o manual."),
-    column("tendencia", "trend", true, "Clave de tendencia; en share, índice estable t001…"),
-    column("corrida", "value", true, "Corrida del motor de la que salió el hilo asistido."),
-    column("expediente", "value", false, "Expediente de la corrida."),
-    column("decision", "value", false, "Identificador de la decisión."),
-    column("accion", "value", true, "accept, edit o reject."),
-    column("utilidad", "value", true, "Utilidad 1 a 5 que registró el operador."),
-    column("motivo", "text", false, "Motivo escrito con la decisión."),
-    column("vigente", "value", true, "1 si es la última decisión del hilo dentro del filtro."),
+    column("hilo", THREAD, "Hilo de video; en share, índice estable h001…"),
+    column("entorno", null, "Entorno de T3 que registró el hilo."),
+    column("modo", MODES, "assisted o manual."),
+    column("tendencia", TREND, "Clave de tendencia; en share, índice estable t001…"),
+    column("corrida", RUN, "Corrida del motor del hilo asistido; en share, índice r001…"),
+    column("expediente", null, "Expediente de la corrida."),
+    column("decision", null, "Identificador de la decisión."),
+    column("accion", oneOf("accept", "edit", "reject"), "accept, edit o reject."),
+    column("utilidad", INT, "Utilidad 1 a 5 que registró el operador."),
+    column("motivo", null, "Motivo escrito con la decisión."),
+    column("vigente", BOOL, "1 si es la última decisión del hilo dentro del filtro."),
+    column("reloj_definitivo", BOOL, "0 si un tramo esperaba resolución: los tiempos son un piso."),
     column(
-      "reloj_definitivo",
-      "value",
-      true,
-      "0 si un tramo esperaba resolución: los tiempos son un piso.",
+      "cobertura",
+      oneOf("complete", "partial"),
+      "complete si el hilo registró todas las etapas de su modo.",
     ),
-    column("cobertura", "value", true, "complete si el hilo registró todas las etapas de su modo."),
-    column("explorar_ms", "value", true, "Milisegundos activos en Explorar; vacío si no corrió."),
-    column("leer_ms", "value", true, "Milisegundos activos en Leer; vacío si no corrió."),
-    column("escribir_ms", "value", true, "Milisegundos activos en Escribir; vacío si no corrió."),
-    column("decidir_ms", "value", true, "Milisegundos activos en Decidir; vacío si no corrió."),
-    column("total_ms", "value", true, "Suma de las etapas registradas."),
-    column("guion_hash", "value", true, "sha256 de la versión del guion decidida."),
-    column("afirmaciones", "value", true, "Oraciones del guion decidido (conteo mecánico)."),
-    column("con_cita", "value", true, "De ellas, con marcador de cita (no mide respaldo)."),
-    column("vistas", "value", true, "Última observación registrada a mano."),
-    column("suscriptores", "value", true, "Última observación registrada a mano."),
-    column("clics", "value", true, "Última observación registrada a mano."),
-    column("comentarios", "value", true, "Última observación registrada a mano."),
-    column("metricas_observadas", "date", true, "Fecha de esa observación."),
-    column("decidida", "date", true, "Fecha de la decisión."),
+    column("explorar_ms", INT, "Milisegundos activos en Explorar; vacío si no corrió."),
+    column("leer_ms", INT, "Milisegundos activos en Leer; vacío si no corrió."),
+    column("escribir_ms", INT, "Milisegundos activos en Escribir; vacío si no corrió."),
+    column("decidir_ms", INT, "Milisegundos activos en Decidir; vacío si no corrió."),
+    column("total_ms", INT, "Suma de las etapas registradas."),
+    column("guion_hash", HASH, "sha256 de la versión del guion decidida."),
+    column("afirmaciones", INT, "Oraciones del guion decidido (conteo mecánico)."),
+    column("con_cita", INT, "De ellas, con marcador de cita (no mide respaldo)."),
+    column("vistas", INT, "Última observación registrada a mano."),
+    column("suscriptores", INT, "Última observación registrada a mano."),
+    column("clics", INT, "Última observación registrada a mano."),
+    column("comentarios", INT, "Última observación registrada a mano."),
+    column("metricas_observadas", DAY, "Fecha de esa observación."),
+    column("decidida", DAY, "Fecha de la decisión."),
   ],
   [INTERVALS_FILE]: [
-    column("hilo", "thread", true, "Hilo de video; en share, índice estable."),
-    column("modo", "value", true, "assisted o manual."),
-    column("tramo", "value", true, "Orden del tramo dentro del hilo, desde 1."),
-    column("tramo_id", "value", false, "Identificador del tramo."),
-    column("etapa", "value", true, "explore, read, write o decide."),
-    column("estado", "value", true, "closed, open o needs_resolution."),
-    column("inicio", "date", true, "Inicio del tramo."),
-    column("fin", "date", true, "Fin del tramo; vacío si sigue abierto o sin resolver."),
-    column("duracion_ms", "value", true, "fin − inicio; vacío si el tramo no está cerrado."),
-    column("motivo_fin", "value", true, "paused, stage_changed, stopped, decided o resolved."),
-    column("motivo_pausa", "text", false, "Motivo escrito al pausar."),
-    column("fin_pausa", "date", true, "Fin de la pausa que siguió al tramo."),
-    column("recuperado", "date", true, "Momento en que el servidor marcó el tramo para resolver."),
+    column("hilo", THREAD, "Hilo de video; en share, índice estable."),
+    column("modo", MODES, "assisted o manual."),
+    column("tramo", INT, "Orden del tramo dentro del hilo, desde 1."),
+    column("tramo_id", null, "Identificador del tramo."),
+    column("etapa", STAGES, "explore, read, write o decide."),
+    column(
+      "estado",
+      oneOf("closed", "open", "needs_resolution"),
+      "closed, open o needs_resolution.",
+    ),
+    column("inicio", DAY, "Inicio del tramo."),
+    column("fin", DAY, "Fin del tramo; vacío si sigue abierto o sin resolver."),
+    column("duracion_ms", INT, "fin − inicio; vacío si el tramo no está cerrado."),
+    column(
+      "motivo_fin",
+      oneOf("paused", "stage_changed", "stopped", "decided", "resolved"),
+      "paused, stage_changed, stopped, decided o resolved.",
+    ),
+    column("motivo_pausa", null, "Motivo escrito al pausar."),
+    column("fin_pausa", DAY, "Fin de la pausa que siguió al tramo."),
+    column("recuperado", DAY, "Momento en que el servidor marcó el tramo para resolver."),
   ],
   [EVENTS_FILE]: [
-    column("seq", "value", true, "Orden del evento en la bitácora."),
-    column("tipo", "value", true, "Tipo de evento editorial."),
-    column("fecha", "date", true, "Momento del evento."),
-    column("agregado", "value", true, "trend, video_thread o run."),
+    column("seq", INT, "Orden del evento en la bitácora."),
+    column("tipo", oneOf(...EditorialEventType.literals), "Tipo de evento editorial."),
+    column("fecha", DAY, "Momento del evento."),
+    column("agregado", oneOf("trend", "video_thread", "run"), "trend, video_thread o run."),
     column(
       "id",
-      "aggregate-id",
-      true,
-      "Tendencia, hilo o corrida; en share, índices para tendencia e hilo.",
+      { kind: "aggregate-id" },
+      "Tendencia, hilo o corrida; en share, su índice (t001, h001, r001).",
     ),
-    column("actor", "value", true, "operator o system."),
-    column("operacion", "value", false, "Identificador de operación idempotente."),
+    column("actor", oneOf("operator", "system"), "operator o system."),
+    column("operacion", null, "Identificador de operación idempotente."),
     column(
       "datos",
-      "event-data",
-      true,
-      "Carga del evento en JSON; en share, solo los campos de eventData.",
+      { kind: "event-data" },
+      "Carga del evento en JSON; en share, solo los campos de eventData, cada uno validado.",
     ),
   ],
   [RUNS_FILE]: [
-    column("corrida", "value", true, "Identificador de la corrida del motor."),
-    column("corte", "date", true, "Corte de la corrida."),
-    column("terminada", "date", true, "Fin de la corrida según el motor."),
-    column("estado_motor", "value", true, "Estado que declaró el motor."),
-    column("estado_importacion", "value", true, "imported, partial o invalid."),
-    column("version_motor", "value", true, "Versión del motor."),
-    column("config_hash", "value", true, "Hash de la configuración del motor."),
-    column("hash_logico", "value", true, "Hash lógico de la corrida (reproducibilidad)."),
-    column("corpus_hash", "value", true, "Hash del corpus usado."),
-    column("contenido_hash", "value", true, "sha256 de run.json y de los expedientes leídos."),
+    column("corrida", RUN, "Identificador de la corrida del motor; en share, índice r001…"),
+    column("corte", DAY, "Corte de la corrida."),
+    column("terminada", DAY, "Fin de la corrida según el motor."),
+    column("estado_motor", oneOf("ok", "failed", "unknown"), "Estado que declaró el motor."),
+    column("estado_importacion", IMPORT_STATES, "imported, partial o invalid."),
+    column("version_motor", { kind: "version" }, "Versión del motor (x.y.z o engine.vX.Y)."),
+    column("config_hash", HASH, "Hash de la configuración del motor."),
+    column("hash_logico", HASH, "Hash lógico de la corrida (reproducibilidad)."),
+    column("corpus_hash", HASH, "Hash del corpus usado."),
+    column("contenido_hash", HASH, "sha256 de run.json y de los expedientes leídos."),
+    column("perfil_hash", HASH, "Hash del perfil del canal usado por la corrida nocturna."),
     column(
-      "perfil_hash",
-      "value",
-      true,
-      "Hash del perfil del canal usado por la corrida nocturna.",
+      "fuentes",
+      { kind: "sources" },
+      "Fuentes del catálogo usadas por la corrida, separadas por punto y coma.",
     ),
-    column("fuentes", "value", true, "Fuentes de la corrida, separadas por punto y coma."),
-    column("expedientes", "value", true, "Expedientes indexados (tendencias emitidas)."),
-    column("vistas", "value", true, "Tendencias distintas abiertas en esta corrida (trend.read)."),
-    column(
-      "descartadas",
-      "value",
-      true,
-      "Tendencias de la corrida descartadas en la bandeja actual.",
-    ),
-    column("producidas", "value", true, "Hilos de video registrados desde esta corrida."),
-    column("omitidos", "value", true, "Archivos de la corrida que no se pudieron leer."),
-    column("omitidos_motivos", "text", false, "Archivo y motivo de cada omitido, en JSON."),
+    column("expedientes", INT, "Expedientes indexados (tendencias emitidas)."),
+    column("vistas", INT, "Tendencias distintas abiertas en esta corrida (trend.read)."),
+    column("descartadas", INT, "Tendencias de la corrida descartadas en la bandeja actual."),
+    column("producidas", INT, "Hilos de video registrados desde esta corrida."),
+    column("omitidos", INT, "Archivos de la corrida que no se pudieron leer."),
+    column("omitidos_motivos", null, "Archivo y motivo de cada omitido, en JSON."),
   ],
   [CAPTURES_FILE]: [
-    column("hilo", "thread", false, "Hilo de video."),
-    column("captura", "value", false, "Identificador de la captura."),
-    column("url", "text", false, "Página capturada."),
-    column("titulo", "text", false, "Título de la página."),
-    column("nota", "text", false, "Nota del operador."),
-    column("capturada", "date", false, "Momento de la captura."),
-    column("retirada", "date", false, "Momento en que se retiró, si se retiró."),
+    column("hilo", null, "Hilo de video."),
+    column("captura", null, "Identificador de la captura."),
+    column("url", null, "Página capturada."),
+    column("titulo", null, "Título de la página."),
+    column("nota", null, "Nota del operador."),
+    column("capturada", null, "Momento de la captura."),
+    column("retirada", null, "Momento en que se retiró, si se retiró."),
   ],
 };
 
@@ -175,7 +202,7 @@ export const ALL_EVIDENCE_FILES: ReadonlyArray<string> = [
 ];
 
 export const columnsOf = (file: string, mode: EditorialEvidenceMode): ReadonlyArray<ColumnSpec> =>
-  (EVIDENCE_COLUMNS[file] ?? []).filter((spec) => mode === "full" || spec.share);
+  (EVIDENCE_COLUMNS[file] ?? []).filter((spec) => mode === "full" || spec.share !== null);
 
 /** The share whitelist by file, as the manifest documents it. */
 export const shareWhitelist = (): Readonly<Record<string, ReadonlyArray<string>>> =>
@@ -185,121 +212,164 @@ export const shareWhitelist = (): Readonly<Record<string, ReadonlyArray<string>>
       .map((file) => [file, columnsOf(file, "share").map((spec) => spec.name)]),
   );
 
-/**
- * What `share` keeps of an event payload, by type. Exhaustive over `EditorialEventType`, so a
- * new event type does not compile until someone decides what of it may leave. Anything not
- * named is dropped; free text (reasons, notes, URLs, titles, paths) is never named.
- */
-type PayloadRule =
-  | "enum"
-  | "number"
-  | "boolean"
-  | "date"
-  | "thread"
-  | "trend"
-  | "id"
-  | "hash"
-  | "flat";
-
-const SLUG = /^[a-z][a-z0-9_-]{0,39}$/;
-const ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/;
-const HASH = /^(sha256:)?[0-9a-f]{16,128}$/;
-
 const PURGE_COUNTS = {
-  visits: "number",
-  captures: "number",
-  decisions: "number",
-  results: "number",
-  workIntervals: "number",
-  scriptVersions: "number",
-  versionFiles: "number",
-  events: "number",
+  visits: INT,
+  captures: INT,
+  decisions: INT,
+  results: INT,
+  workIntervals: INT,
+  scriptVersions: INT,
+  versionFiles: INT,
+  events: INT,
 } as const;
 
 const RUN_IMPORT = {
-  cutoffAt: "date",
-  dossierCount: "number",
-  importState: "enum",
-  previousImportState: "enum",
-  contentHash: "hash",
-  previousContentHash: "hash",
-  logicalHash: "hash",
-  interpretationVersion: "number",
-  previousInterpretationVersion: "number",
+  cutoffAt: DAY,
+  dossierCount: INT,
+  importState: IMPORT_STATES,
+  previousImportState: IMPORT_STATES,
+  contentHash: HASH,
+  previousContentHash: HASH,
+  logicalHash: HASH,
+  interpretationVersion: INT,
+  previousInterpretationVersion: INT,
 } as const;
 
+/**
+ * What `share` keeps of an event payload, by type, nested objects included. A `Record` over
+ * `EditorialEventType`, so a new event type does not compile until someone declares what of it
+ * may leave. Properties not named, at any depth, are dropped with their keys.
+ */
 export const SHARE_EVENT_DATA: Readonly<
-  Record<EditorialEventType, Readonly<Record<string, PayloadRule>>>
+  Record<EditorialEventType, Readonly<Record<string, ShareRule>>>
 > = {
-  "trend.read": { runId: "id", runCutoffAt: "date" },
-  "trend.snoozed": { until: "date", returnWhen: "flat" },
-  "trend.unsnoozed": { cause: "enum", observed: "flat" },
+  "trend.read": { runId: RUN, runCutoffAt: DAY },
+  "trend.snoozed": {
+    until: DAY,
+    returnWhen: object({ metric: SNOOZE_METRICS, baseline: NUMBER, atLeast: NUMBER }),
+  },
+  "trend.unsnoozed": {
+    cause: oneOf("operator", "growth", "expired"),
+    observed: object({ runId: RUN, metric: SNOOZE_METRICS, value: NUMBER }),
+  },
   "trend.dismissed": {},
   "trend.reopened": {},
-  "trend.production-linked": { threadId: "thread", previousThreadId: "thread" },
-  "video-thread.registered": { mode: "enum", trendKey: "trend", runId: "id" },
-  "video-thread.launched": { previous: "enum" },
-  "video-thread.launch-failed": { previous: "enum" },
-  "video-thread.purged": { mode: "enum", ...PURGE_COUNTS },
+  "trend.production-linked": { threadId: THREAD, previousThreadId: THREAD },
+  "video-thread.registered": { mode: MODES, trendKey: TREND, runId: RUN },
+  "video-thread.launched": { previous: oneOf("pending", "launched", "failed") },
+  "video-thread.launch-failed": { previous: oneOf("pending", "launched", "failed") },
+  "video-thread.purged": { mode: MODES, ...PURGE_COUNTS },
   "video-thread.t3-deleted": {},
-  "work.started": { stage: "enum" },
-  "work.paused": { stage: "enum" },
-  "work.resumed": { stage: "enum" },
-  "work.stage-changed": { from: "enum", to: "enum", fromState: "enum" },
-  "work.stopped": { stage: "enum", reason: "enum", from: "enum" },
-  "work.recovery-needed": { stage: "enum", startedAt: "date" },
-  "work.resolved": { endedAt: "date" },
+  "work.started": { stage: STAGES },
+  "work.paused": { stage: STAGES },
+  "work.resumed": { stage: STAGES },
+  "work.stage-changed": { from: STAGES, to: STAGES, fromState: CLOCK_STATES },
+  "work.stopped": { stage: STAGES, reason: oneOf("stopped", "decided"), from: CLOCK_STATES },
+  "work.recovery-needed": { stage: STAGES, startedAt: DAY },
+  "work.resolved": { endedAt: DAY },
   "decision.recorded": {
-    action: "enum",
-    utility: "number",
-    scriptVersionHash: "hash",
-    clockDefinitive: "boolean",
+    action: oneOf("accept", "edit", "reject"),
+    utility: INT,
+    scriptVersionHash: HASH,
+    clockDefinitive: BOOL,
   },
-  "script.version-saved": { contentHash: "hash", bytes: "number" },
-  "script.head-restored": { contentHash: "hash" },
+  "script.version-saved": { contentHash: HASH, bytes: INT },
+  "script.head-restored": { contentHash: HASH },
   "capture.saved": {},
   "capture.removed": {},
-  "browser.visited": { origin: "enum", titleOnly: "boolean" },
+  "browser.visited": { origin: oneOf("desktop", "server", "automation"), titleOnly: BOOL },
   "result.saved": {
-    views: "number",
-    subscribers: "number",
-    clicks: "number",
-    comments: "number",
-    observedAt: "date",
+    views: INT,
+    subscribers: INT,
+    clicks: INT,
+    comments: INT,
+    observedAt: DAY,
   },
   "run.imported": RUN_IMPORT,
   "run.updated": RUN_IMPORT,
-  "run.invalidated": { previousImportState: "enum", contentHash: "hash" },
+  "run.invalidated": { previousImportState: IMPORT_STATES, contentHash: HASH },
 };
 
-/** Field lists of `SHARE_EVENT_DATA`, for the manifest. */
-export const shareEventDataWhitelist = (): Readonly<Record<string, ReadonlyArray<string>>> =>
-  Object.fromEntries(
+/** A rule in words, for the manifest. */
+export const describeRule = (rule: ShareRule): string => {
+  switch (rule.kind) {
+    case "enum":
+      return `uno de: ${rule.values.join(", ")}`;
+    case "int":
+      return "entero";
+    case "number":
+      return "número finito";
+    case "bool":
+      return "1 o 0";
+    case "day":
+      return "día UTC AAAA-MM-DD";
+    case "hash":
+      return "sha256 de 64 hexadecimales, con o sin prefijo sha256:";
+    case "version":
+      return "x.y.z o engine.vX.Y";
+    case "sources":
+      return "ids del catálogo de fuentes";
+    case "thread":
+      return "índice h001…";
+    case "trend":
+      return "índice t001…";
+    case "run":
+      return "índice r001…";
+    case "aggregate-id":
+      return "índice según agregado (t, h o r)";
+    case "event-data":
+      return "JSON con los campos de eventData";
+    case "object":
+      return "objeto con propiedades cerradas";
+  }
+};
+
+/** Every allowed field path of each event type (`returnWhen.metric`), with its rule. */
+export const shareEventDataWhitelist = (): Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> => {
+  const paths = (fields: Readonly<Record<string, ShareRule>>, prefix: string) =>
+    Object.entries(fields).flatMap(([key, rule]): ReadonlyArray<readonly [string, string]> =>
+      rule.kind === "object"
+        ? paths(rule.fields, `${prefix}${key}.`)
+        : [[`${prefix}${key}`, describeRule(rule)]],
+    );
+  return Object.fromEntries(
     Object.entries(SHARE_EVENT_DATA)
       .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([type, fields]) => [type, Object.keys(fields).toSorted()]),
+      .map(([type, fields]) => [
+        type,
+        Object.fromEntries(paths(fields, "").toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+      ]),
   );
+};
 
-/** Stable pseudonyms: `h001` for threads and `t001` for trends, in first-seen order. */
+/** Stable pseudonyms: `h001` threads, `t001` trends, `r001` runs, in first-seen order. */
 export interface Pseudonyms {
   readonly thread: (threadId: string | null) => string | null;
   readonly trend: (trendKey: string | null) => string | null;
+  readonly run: (runId: string | null) => string | null;
 }
 
-export const makePseudonyms = (
-  threadIds: ReadonlyArray<string>,
-  trendKeys: ReadonlyArray<string>,
-): Pseudonyms => {
-  const index = (prefix: string, ids: ReadonlyArray<string>) => {
-    const width = Math.max(3, String(ids.length).length);
+export const makePseudonyms = (ids: {
+  readonly threads: ReadonlyArray<string>;
+  readonly trends: ReadonlyArray<string>;
+  readonly runs: ReadonlyArray<string>;
+}): Pseudonyms => {
+  const index = (prefix: string, list: ReadonlyArray<string>) => {
+    const width = Math.max(3, String(list.length).length);
     const map = new Map<string, string>();
-    for (const id of ids) {
+    for (const id of list) {
       if (!map.has(id)) map.set(id, `${prefix}${String(map.size + 1).padStart(width, "0")}`);
     }
     // An id outside the universe (should not happen) still never leaves as is.
     return (id: string | null) => (id === null ? null : (map.get(id) ?? `${prefix}?`));
   };
-  return { thread: index("h", threadIds), trend: index("t", trendKeys) };
+  return {
+    thread: index("h", ids.threads),
+    trend: index("t", ids.trends),
+    run: index("r", ids.runs),
+  };
 };
 
 /** The UTC day of an ISO date-time, or null when it does not parse. */
@@ -309,53 +379,94 @@ export const utcDay = (value: string | null): string | null =>
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const applyRule = (rule: PayloadRule, value: unknown, names: Pseudonyms): CsvValue | object => {
+const HASH_FORMAT = /^(sha256:)?[0-9a-f]{64}$/;
+const VERSION_FORMAT = /^(\d{1,4}\.\d{1,4}\.\d{1,4}|engine\.v\d{1,4}\.\d{1,4})$/;
+const CATALOG_SOURCES: ReadonlySet<string> = new Set(SOURCE_IDS);
+
+const sharedObject = (
+  fields: Readonly<Record<string, ShareRule>>,
+  value: unknown,
+  names: Pseudonyms,
+): Record<string, unknown> => {
+  const kept: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return kept;
+  for (const [key, rule] of Object.entries(fields)) {
+    if (!Object.hasOwn(value, key)) continue;
+    const entry = shareValue(rule, value[key], names);
+    if (entry !== null) kept[key] = entry;
+  }
+  return kept;
+};
+
+/**
+ * The share form of one value under its rule, or null when it does not pass. The only way a
+ * value reaches a share file.
+ */
+export const shareValue = (
+  rule: ShareRule,
+  value: unknown,
+  names: Pseudonyms,
+  context?: { readonly aggregate?: unknown; readonly eventType?: unknown },
+): CsvValue | Record<string, unknown> => {
   if (value === null || value === undefined) return null;
-  switch (rule) {
+  switch (rule.kind) {
     case "enum":
-      return typeof value === "string" && SLUG.test(value) ? value : null;
+      return typeof value === "string" && rule.values.includes(value) ? value : null;
+    case "int":
+      return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
     case "number":
       return typeof value === "number" && Number.isFinite(value) ? value : null;
-    case "boolean":
-      return typeof value === "boolean" ? value : null;
-    case "date":
+    case "bool":
+      return typeof value === "boolean" ? value : value === 1 ? true : value === 0 ? false : null;
+    case "day":
       return typeof value === "string" ? utcDay(value) : null;
+    case "hash":
+      return typeof value === "string" && HASH_FORMAT.test(value) ? value : null;
+    case "version":
+      return typeof value === "string" && VERSION_FORMAT.test(value) ? value : null;
+    case "sources": {
+      if (typeof value !== "string") return null;
+      const kept = value.split(";").filter((source) => CATALOG_SOURCES.has(source));
+      return kept.length === 0 ? null : kept.join(";");
+    }
     case "thread":
       return typeof value === "string" ? names.thread(value) : null;
     case "trend":
       return typeof value === "string" ? names.trend(value) : null;
-    case "id":
-      return typeof value === "string" && ENGINE_ID.test(value) ? value : null;
-    case "hash":
-      return typeof value === "string" && HASH.test(value) ? value : null;
-    case "flat": {
-      // A small condition object: only slugs and finite numbers survive.
-      if (!isPlainObject(value)) return null;
-      const kept: Record<string, CsvValue> = {};
-      for (const [key, entry] of Object.entries(value)) {
-        if (typeof entry === "number" && Number.isFinite(entry)) kept[key] = entry;
-        else if (typeof entry === "string" && SLUG.test(entry)) kept[key] = entry;
+    case "run":
+      return typeof value === "string" ? names.run(value) : null;
+    case "aggregate-id": {
+      if (typeof value !== "string") return null;
+      switch (context?.aggregate) {
+        case "video_thread":
+          return names.thread(value);
+        case "trend":
+          return names.trend(value);
+        case "run":
+          return names.run(value);
+        default:
+          return null;
       }
-      return kept;
+    }
+    case "event-data": {
+      const type = context?.eventType;
+      if (typeof type !== "string" || !Object.hasOwn(SHARE_EVENT_DATA, type)) return "{}";
+      const payload = typeof value === "string" ? parseJson(value) : value;
+      return stableJson(sharedObject(SHARE_EVENT_DATA[type as EditorialEventType], payload, names));
+    }
+    case "object": {
+      const kept = sharedObject(rule.fields, value, names);
+      return Object.keys(kept).length === 0 ? null : kept;
     }
   }
 };
 
-/** The share projection of an event payload: only whitelisted fields, each checked. */
-export const shareEventData = (
-  type: EditorialEventType,
-  payload: unknown,
-  names: Pseudonyms,
-): Readonly<Record<string, unknown>> => {
-  const rules = SHARE_EVENT_DATA[type] ?? {};
-  if (!isPlainObject(payload)) return {};
-  const kept: Record<string, unknown> = {};
-  for (const [key, rule] of Object.entries(rules)) {
-    if (!(key in payload)) continue;
-    const value = applyRule(rule, payload[key], names);
-    if (value !== null) kept[key] = value;
+const parseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
-  return kept;
 };
 
 /** JSON with object keys sorted at every level, so equal data gives equal bytes. */
@@ -380,8 +491,9 @@ const csvCell = (value: CsvValue): string => {
 };
 
 /**
- * Renders `rows` with the columns of `file` for `mode`, transforming each value by its kind.
- * Only the listed columns are read from a row, so a new field on a row never leaks.
+ * Renders `rows` with the columns of `file` for `mode`. `full` copies; `share` passes every
+ * cell through `shareValue`. Only the listed columns are read from a row, so a new field on a
+ * row never leaks. `datos` holds the raw payload; `share` projects it here, by `tipo`.
  */
 export const renderCsv = (
   file: string,
@@ -396,28 +508,14 @@ export const renderCsv = (
       specs
         .map((spec) => {
           const value = row[spec.name] ?? null;
-          if (mode === "full" || value === null) return csvCell(value);
-          switch (spec.kind) {
-            case "date":
-              return csvCell(utcDay(String(value)));
-            case "thread":
-              return csvCell(names.thread(String(value)));
-            case "trend":
-              return csvCell(names.trend(String(value)));
-            case "aggregate-id":
-              return csvCell(
-                row.agregado === "video_thread"
-                  ? names.thread(String(value))
-                  : row.agregado === "trend"
-                    ? names.trend(String(value))
-                    : value,
-              );
-            case "text":
-              return "";
-            case "value":
-            case "event-data":
-              return csvCell(value);
-          }
+          if (mode === "full" || spec.share === null) return csvCell(value);
+          const shared = shareValue(spec.share, value, names, {
+            aggregate: row.agregado,
+            eventType: row.tipo,
+          });
+          return csvCell(
+            typeof shared === "object" && shared !== null ? stableJson(shared) : shared,
+          );
         })
         .join(","),
     );
