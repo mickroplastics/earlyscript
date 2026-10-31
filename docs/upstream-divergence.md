@@ -3,24 +3,21 @@
 Registro de cada archivo de T3 Code que Earlyscript modifica y de los archivos propios que añade. Es la lista de revisión de cada fusión desde `upstream-main`: si upstream cambió uno de estos archivos, comprobar que nuestro cambio sigue aplicado y que no apareció un literal nuevo de T3 Code al lado. Las líneas corresponden al último commit que tocó el enganche; tras una fusión, buscar el enganche por su texto (`EarlyscriptBrand`, `earlyscriptFlags`, `Earlyscript*`, `earlyscript/`, `visible*`).
 
 Unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
-
-Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su propia base de comparación:
+Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su propia base de comparación. El número de cada línea es el de su sección:
 
 1. Capa de marca (`es/rebrand`), base `aa11ef6783`; ampliada por `es/brand-2` (icono propio y superficies de uso diario, base `815f5f2a04`), ver la subsección de recorte.
 2. Banderas de funciones (`es/telemetry-flags`), base `06a7d1555d`.
 3. Batería rápida (`es/build-scope`), base `87512cd84c`; único archivo de upstream tocado: `package.json`.
 4. Funciones escondidas (`es/flags-lote-a`), base `cf8174bd47`, con `main` fusionado en `c7c2cb720a`.
-5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; upstream tocado: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
+5. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`. Incluye la subsección de rendimiento del apilado (`es/engine-perf`).
 6. Validador del guion (`es/editorial-script`), base `815f5f2a04`; único archivo de upstream tocado: `pnpm-lock.yaml`.
 7. Título y resumen de tendencia (`es/trend-presentation`), base `815f5f2a04`.
-8. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único enganche: `apps/server/src/server.ts`.
+8. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 9. Base editorial y servicios de estado (`es/editorial-db`), base `d820a87685`; único archivo de upstream tocado: `apps/server/src/server.ts`.
-
-10. Motor de tendencias, paso 1 (`es/engine-1`), base `815f5f2a04`; archivos de upstream tocados: `pnpm-workspace.yaml` y `pnpm-lock.yaml`.
-
-11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
-
-12. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
+10. Hilo de video, servidor (`es/video-thread-server`).
+11. Fuentes en vivo del motor (`es/live-sources`).
+12. Reservado: importador y escritura editorial (`es/editorial-write`), pendiente de fusión.
+13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
