@@ -1565,3 +1565,29 @@ Veredicto (`decideVerdict`): `not-worse` si la P@5 media de la candidata es al m
 - `engine check --backtest <backtest.json>` recalcula el hash, comprueba que el id lo nombra y que el veredicto es el que dan los totales; con `--rerun --out <dir>` vuelve a correr el backtest con las entradas registradas y compara el hash lógico, como `engine check --run`.
 
 Registro (`apps/server/scripts/record-source-backtest.ts --db <editorial.sqlite> --source <id> --backtest <backtest.json>`): rechaza una fuente fuera del catálogo o de la línea base, un informe cuyo hash no se recalcula, un backtest que no compare exactamente la línea base del catálogo (`engineBaseline`: `hn`, `github`) con la línea base más esa fuente, un veredicto `worse` y una base de datos inexistente (no crea una vacía). Si todo pasa, llama a `recordBacktest(fuente, backtest_id)`; Ajustes muestra «Backtest registrado: bt_…». No enciende `rank`: lo decide el operador. Una fuente con ficha que no está en `ready` sigue bloqueada por la ficha.
+
+Operación (Beatriz, 31 de octubre de 2026; nada se registró en la base editorial):
+
+- Relleno: copia `~/earlyscript-data/live/corpus-backtest/` del corpus de 28 días de HN y GitHub (`corpus-2026-10-31`, intacto), capturas del 3 al 30 de octubre una fuente a la vez. Hugging Face con `16ed5593cc` (su colector no cambia en `main`); las demás con `53afe315c4`, ya con el `robots_override` de arXiv.
+
+| Fuente          | Días                                                          | Ítems  | Tiempo | Fallos                                                                                                                                               |
+| --------------- | ------------------------------------------------------------- | ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `huggingface`   | 28 `partial` (muestra declarada)                              | 2642   | 2002 s | Ninguno. Daily papers en 0 los primeros días (la nota de cada día los cuenta)                                                                          |
+| `stackexchange` | 20 `complete`, 4 `partial`, 4 `unavailable`                   | 825    | 1689 s | HTTP 429 de la cuota anónima los días 10, 17, 20 y 27; el día siguiente de cada uno agotó su presupuesto de 5 minutos (11, 18, 21 y 28). No se reintentó |
+| `npm`           | 28 `partial` (siempre, por diseño)                            | 1424   | 146 s  | Ninguno. Los primeros días solo tienen 12 o 13 paquetes: la búsqueda guarda la versión más reciente, y la de casi todos ya pasó de ese día               |
+| `wikipedia`     | 25 `complete`, 3 `unavailable`                                | 24 654 | 12 s   | HTTP 404 de Wikimedia para el top de los días 12, 13 y 26; un reintento dio lo mismo                                                                  |
+| `arxiv`         | 23 `complete`, 3 `partial`, 2 `unavailable`                   | 10 737 | 569 s  | 15 de octubre: HTTP 429; 27 a 29: `partial` por el retraso de 4 días de los anuncios; 30: aún sin envíos                                                 |
+
+Bluesky y RSS no admiten relleno hacia atrás y quedan fuera del backtest. Lobsters está bloqueada.
+
+- Backtest: base `hn,github` frente a `hn,github,<fuente>`, 14 cortes (17 a 30 de octubre), 6 workers, caché de embeddings compartida, perfil `singularidev.v1.json`, configuración `engine.v1.json`. Los 14 cortes quedaron emparejados en las cinco fuentes. La línea base da lo mismo en los cinco backtests (P@5 media 0,786, 220 candidatas, 181 positivas), y un `check --backtest --rerun` de Stack Exchange reprodujo su `logical_hash`.
+
+| Fuente          | P@5 base | P@5 con la fuente | P@10 base / con | Anticipación mediana base / con (días) | Tendencias emitidas con la fuente (en el top 5) | Veredicto   | `backtest_id`         |
+| --------------- | -------- | ----------------- | --------------- | -------------------------------------- | ----------------------------------------------- | ----------- | --------------------- |
+| `huggingface`   | 0,786    | 0,729             | 0,786 / 0,679   | 1 / 1                                  | 156 (37)                                        | `worse`     | `bt_efd37ff19c83baec` |
+| `stackexchange` | 0,786    | 0,786             | 0,786 / 0,786   | 1 / 1                                  | 0 (0)                                           | `not-worse` | `bt_68e5392fd870c349` |
+| `npm`           | 0,786    | 0,786             | 0,786 / 0,807   | 1 / 1                                  | 6 (0)                                           | `not-worse` | `bt_270a6a39c532f096` |
+| `wikipedia`     | 0,786    | 0,786             | 0,786 / 0,793   | 1 / 1                                  | 0 (0)                                           | `not-worse` | `bt_68c5a288182666bc` |
+| `arxiv`         | 0,786    | 0,643             | 0,786 / 0,643   | 1 / 1                                  | 140 (23)                                        | `worse`     | `bt_2d6ca13ef8f4016f` |
+
+Lectura: Stack Exchange y Wikipedia pasan sin cambiar el top 5. Ninguna tendencia emitida contiene ítems suyos (Stack Exchange no altera ninguna candidata; Wikipedia añade dos en los dos últimos cortes, sin ítems propios). Su `not-worse` dice que no estorban, no que aporten. npm entra en 6 tendencias, todas positivas, ninguna en el top 5. Hugging Face y arXiv llevan muchas tendencias propias al top 5 que HN y GitHub no siguen en los 14 días siguientes. Límites: la verdad son HN y GitHub; el seguimiento de los últimos cortes queda truncado por el fin del corpus (de 14 días en el corte del 17 a 1 día en el del 30); los cortes se solapan, no son muestras independientes y no hay intervalos de confianza.
