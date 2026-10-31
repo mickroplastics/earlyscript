@@ -1,8 +1,8 @@
 // @effect-diagnostics globalDate:off nodeBuiltinImport:off preferSchemaOverJson:off - corpus/1 filesystem boundary.
 // Deletion requests: removes one author's, one URL's or one feed's items from every day and
 // history file of a corpus/1 directory and records the purge in the manifest, so collect never
-// stores them again. Same record shape as the purge of es/sources-earlywindow (S2), plus the
-// `feed` match for rss; the two merge into one module.
+// stores them again. One module for every source: S2 (es/sources-earlywindow) adds Bluesky DIDs
+// and at:// URIs, S4 (es/sources-lobsters-rss) the `feed` match for rss.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
@@ -10,6 +10,7 @@ import { EarlywindowCorpusManifest } from "@earlyscript/editorial-contracts/earl
 import { CoverageRecord, SourceId } from "@earlyscript/editorial-contracts/source";
 import { hashCorpus } from "./corpus.ts";
 import { sha256 } from "./hash.ts";
+import { blueskyPermalink } from "./sources/bluesky.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(EarlywindowCorpusManifest);
 const decodeCoverage = Schema.decodeUnknownSync(CoverageRecord);
@@ -32,9 +33,9 @@ const isPurgeRecord = Schema.is(PurgeRecord);
 
 export interface PurgeTarget {
   readonly source: SourceId;
-  /** The `author` field of an item. */
+  /** The `author` field of an item; for bluesky also the author's DID. */
   readonly author?: string;
-  /** An item permalink. */
+  /** An item permalink; for bluesky also the post's at:// URI. */
   readonly uri?: string;
   /** A feed URL (rss): every item whose `feed_url` is this feed. */
   readonly feed?: string;
@@ -56,14 +57,30 @@ function targetValue(target: PurgeTarget): { match: PurgeRecord["match"]; value:
   if (!raw) throw new Error(`Empty --${match}`);
   if (match === "author") return { match, value: raw.replace(/^@/, "").toLowerCase() };
   if (match === "feed" && target.source !== "rss") throw new Error("--feed applies to rss only");
+  // A Bluesky post URI names the same post as its bsky.app permalink.
+  if (match === "uri" && raw.startsWith("at://")) {
+    const permalink = target.source === "bluesky" ? blueskyPermalink(raw) : null;
+    if (!permalink) throw new Error(`Not a purgeable URI: ${raw}`);
+    return { match, value: permalink };
+  }
   return { match, value: raw };
 }
 
-/** Hashes an item would match under each purge kind. */
+/**
+ * Hashes an item would match under each purge kind. A Bluesky author also matches by the DID
+ * in its permalink, which survives a handle change.
+ */
 function itemValues(item: Matchable): Record<PurgeRecord["match"], Array<string>> {
   const text = (value: unknown) => (typeof value === "string" && value ? [value] : []);
+  const did =
+    item.source === "bluesky"
+      ? text(item.permalink).flatMap((value) => {
+          const found = /^https:\/\/bsky\.app\/profile\/(did:[^/]+)\//.exec(value)?.[1];
+          return found ? [found] : [];
+        })
+      : [];
   return {
-    author: text(item.author).map((value) => sha256(value.toLowerCase())),
+    author: [...text(item.author), ...did].map((value) => sha256(value.toLowerCase())),
     uri: text(item.permalink).map((value) => sha256(value)),
     feed: text(item.feed_url).map((value) => sha256(value)),
   };

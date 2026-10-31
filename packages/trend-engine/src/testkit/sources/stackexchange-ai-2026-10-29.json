@@ -1,0 +1,32 @@
+{
+  "_comment": "Synthetic questions in the shape of /2.3/questions?filter=withbody on ai.stackexchange; no real users or posts.",
+  "items": [
+    {
+      "tags": ["hardware", "hardware-evaluation"],
+      "owner": {
+        "display_name": "example-asker-one"
+      },
+      "creation_date": 1793259585,
+      "question_id": 90001,
+      "link": "https://ai.stackexchange.com/questions/90001/example-question-about-running-models-on-cpu-memory",
+      "title": "Example question: can a model run from CPU memory?",
+      "body": "<p>If I want to run an example model on a server, do I need a GPU?</p>\n<p>This body is <em>synthetic</em> &amp; only keeps the shape of a real question.</p>",
+      "content_license": "CC BY-SA 4.0"
+    },
+    {
+      "tags": ["neural-networks", "example"],
+      "owner": {
+        "display_name": "example-asker-two"
+      },
+      "creation_date": 1793302641,
+      "question_id": 90002,
+      "link": "https://ai.stackexchange.com/questions/90002/example-question-about-studying",
+      "title": "Example question about studying with assistants",
+      "body": "<p>A second synthetic question.</p>\n<ol>\n<li><p>First point.</p></li>\n<li><p>Second point.</p></li>\n</ol>",
+      "content_license": "CC BY-SA 4.0"
+    }
+  ],
+  "has_more": false,
+  "quota_max": 300,
+  "quota_remaining": 298
+}
