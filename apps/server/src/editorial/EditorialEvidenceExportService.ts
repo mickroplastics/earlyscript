@@ -959,7 +959,7 @@ const make = Effect.gen(function* () {
       state: { lastEventSeq },
       domain: {
         excludedDecisions: excludedByDomain,
-        rule: "Una decisión vigente con un valor fuera de su dominio (utilidad de 1 a 5, tiempos de 0 a 7 días por etapa, conteos no negativos, fechas entre 2020 y 2099) queda fuera de los agregados del resumen; solo se cuenta.",
+        rule: "Una decisión vigente con un valor fuera de su dominio (utilidad de 1 a 5, tiempos de 0 a 7 días por etapa, conteos no negativos) queda fuera de los agregados del resumen; solo se cuenta. Las fechas fuera de 2020 a 2099 quedan vacías en share y no excluyen la decisión.",
       },
       packageHash,
       files: files.map((file) => ({

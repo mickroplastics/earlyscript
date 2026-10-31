@@ -240,7 +240,7 @@ describe("decisionsFailureText", () => {
   it("explains decisions left out by domain", () => {
     expect(domainNote(summary([]))).toBeNull();
     expect(domainNote({ ...summary([]), excludedByDomain: 2 })).toBe(
-      "2 decisiones quedan fuera de los agregados: un valor guardado está fuera de su dominio (utilidad de 1 a 5, tiempos y conteos no negativos, fechas plausibles).",
+      "2 decisiones quedan fuera de los agregados: un valor guardado está fuera de su dominio (utilidad de 1 a 5, tiempos y conteos no negativos).",
     );
   });
 });

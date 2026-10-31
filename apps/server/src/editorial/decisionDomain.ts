@@ -31,7 +31,7 @@ export const dateInRange = (value: unknown): value is string => {
 
 const optional = (value: unknown, max: number) => value === null || intInRange(value, 0, max);
 
-/** Whether every value of the decision is inside its domain, so it may enter an aggregate. */
+/** Whether every value that an aggregate uses is inside its domain. */
 export const decisionInDomain = (decision: EditorialResultsDecision): boolean => {
   if (decision.mode !== "assisted" && decision.mode !== "manual") return false;
   if (!["accept", "edit", "reject"].includes(decision.action)) return false;
@@ -46,12 +46,12 @@ export const decisionInDomain = (decision: EditorialResultsDecision): boolean =>
     if (!intInRange(claims, 0, COUNT_MAX) || !intInRange(cited, 0, claims)) return false;
   }
   if (decision.video !== null) {
-    const { views, subscribers, clicks, comments, observedAt } = decision.video;
+    const { views, subscribers, clicks, comments } = decision.video;
     if (![views, subscribers, clicks, comments].every((count) => optional(count, COUNT_MAX))) {
       return false;
     }
-    if (!dateInRange(observedAt)) return false;
   }
-  // The export rebuilds decisions without their date; only a stored one is checked.
-  return decision.decidedAt === "" || dateInRange(decision.decidedAt);
+  // Dates enter no aggregate, so they do not exclude a decision; share empties an implausible
+  // one (`dateInRange` in its day rule).
+  return true;
 };

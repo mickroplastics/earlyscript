@@ -139,7 +139,7 @@ export const EditorialResultsSummary = Schema.Struct({
   inbox: EditorialResultsInbox,
   /**
    * Current decisions left out of every statistic because a stored value is out of its domain
-   * (utility outside 1 to 5, a negative or absurd time, a negative count, an implausible date).
+   * (utility outside 1 to 5, a negative or absurd time, a negative count).
    */
   excludedByDomain: NonNegativeInt,
   /** Every decision recorded, superseded ones included. */
