@@ -160,6 +160,11 @@ describe("EditorialResultsService", () => {
         assert.strictEqual(inMinutes(comparison("explore").manual).median, 45);
         assert.strictEqual(inMinutes(comparison("write").manual).median, 50);
         assert.strictEqual(inMinutes(comparison("total").assisted).median, 40);
+        assert.deepStrictEqual(comparison("total").partial, { assisted: 0, manual: 0 });
+        assert.deepStrictEqual(
+          inMinutes(comparison("recorded").manual),
+          inMinutes(comparison("total").manual),
+        );
       }),
     ),
   );
@@ -312,4 +317,60 @@ describe("EditorialResultsService", () => {
       }),
     ),
   );
+
+  it.effect("keeps a thread with only one stage out of the whole process", () =>
+    withResults(
+      Effect.gen(function* () {
+        yield* seedResultsFixture;
+        yield* runFixtureThread({
+          threadId: "thread-write-only",
+          mode: "assisted",
+          steps: [{ stage: "write", minutes: 1 }],
+          script: FULLY_CITED_SCRIPT,
+          action: "accept",
+          utility: 4,
+          gapMinutes: 24 * 60,
+        });
+        const results = yield* EditorialResultsService.EditorialResultsService;
+        const summary = yield* results.summary;
+        const comparison = (key: string) => summary.comparisons.find((entry) => entry.key === key)!;
+
+        // The whole process keeps the three complete assisted threads: 40 minutes, n = 3.
+        assert.deepStrictEqual(inMinutes(comparison("total").assisted), {
+          n: 3,
+          median: 40,
+          q1: 36.5,
+          q3: 41,
+        });
+        assert.strictEqual(comparison("total").partial.assisted, 0);
+        // The recorded total takes it in and says so.
+        assert.strictEqual(comparison("recorded").assisted.n, 4);
+        assert.strictEqual(comparison("recorded").assisted.minMs, minutes(1));
+        assert.strictEqual(comparison("recorded").partial.assisted, 1);
+        assert.strictEqual(modeOf(summary, "assisted").partialCoverage, 1);
+        assert.strictEqual(modeOf(summary, "assisted").total.n, 4);
+
+        const [latest] = (yield* results.decisions({ limit: 1 })).decisions;
+        assert.strictEqual(latest!.threadId, "thread-write-only");
+        assert.deepStrictEqual(latest!.stages, ["write"]);
+        assert.strictEqual(latest!.coverage, "partial");
+      }),
+    ),
+  );
+
+  it("decides coverage from the stages of the mode", () => {
+    assert.strictEqual(
+      EditorialResultsService.coverageOf("assisted", ["read", "write", "decide"]),
+      "complete",
+    );
+    assert.strictEqual(
+      EditorialResultsService.coverageOf("assisted", ["explore", "write", "decide"]),
+      "partial",
+    );
+    assert.strictEqual(
+      EditorialResultsService.coverageOf("manual", ["explore", "write", "decide"]),
+      "complete",
+    );
+    assert.strictEqual(EditorialResultsService.coverageOf("manual", ["write"]), "partial");
+  });
 });

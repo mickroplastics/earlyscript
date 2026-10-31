@@ -1,6 +1,7 @@
 import type {
   EditorialDurationStats,
   EditorialResultsAction,
+  EditorialResultsComparison,
   EditorialResultsComparisonKey,
   EditorialResultsMode,
   EditorialResultsModeSummary,
@@ -18,6 +19,35 @@ const RESULTS_SECTIONS = [
   { id: "decisiones", label: "Decisiones" },
 ] as const;
 export type ResultsSectionId = (typeof RESULTS_SECTIONS)[number]["id"];
+
+/** Only the section the hash selects is the current location; the others carry nothing. */
+export function sectionAriaCurrent(
+  hash: string,
+  sectionId: ResultsSectionId,
+): "location" | undefined {
+  return hash.replace(/^#/, "") === sectionId ? "location" : undefined;
+}
+
+/**
+ * Link props without the route-active marks (`aria-current="page"`, `data-status` and the
+ * `active` class, the only class the anchors get from the router): the section anchors share
+ * one route, so the router marks all of them.
+ */
+export function withoutRouteActive<P extends object>(
+  props: P,
+): Omit<P, "aria-current" | "data-status" | "className"> {
+  const {
+    "aria-current": _current,
+    "data-status": _status,
+    className: _className,
+    ...rest
+  } = props as P & {
+    readonly "aria-current"?: unknown;
+    readonly "data-status"?: unknown;
+    readonly className?: unknown;
+  };
+  return rest;
+}
 
 export const RESULTS_MODES: ReadonlyArray<EditorialResultsMode> = ["assisted", "manual"];
 
@@ -59,8 +89,9 @@ export function actionLabel(action: EditorialResultsAction): string {
 }
 
 /**
- * The three comparisons of the manual mode design (doc 04, decision 9). Writing and the whole
- * process stay apart: a writing time is never read as a process time.
+ * The comparisons of the manual mode design (doc 04, decision 9). Writing and the whole
+ * process stay apart: a writing time is never read as a process time. The whole process only
+ * takes threads with complete coverage; `recorded` takes every timed thread.
  */
 export const COMPARISON_TEXT: Readonly<
   Record<
@@ -83,9 +114,58 @@ export const COMPARISON_TEXT: Readonly<
     assisted: "Todas las etapas, asistido",
     manual: "Todas las etapas, manual",
   },
+  recorded: {
+    title: "Total de etapas registradas",
+    assisted: "Etapas registradas, asistido",
+    manual: "Etapas registradas, manual",
+  },
 };
 
+/** The comparisons shown as cards; `recorded` is a line under them. */
+export function comparisonCards(
+  comparisons: ReadonlyArray<EditorialResultsComparison>,
+): ReadonlyArray<EditorialResultsComparison> {
+  return comparisons.filter((comparison) => comparison.key !== "recorded");
+}
+
+/**
+ * Who the whole process leaves out, or who a recorded total takes in: threads without every
+ * stage of their mode (assisted: leer, escribir y decidir; manual: explorar, escribir y decidir).
+ */
+export function coverageNote(comparison: EditorialResultsComparison): string | null {
+  const count = comparison.partial.assisted + comparison.partial.manual;
+  if (comparison.key === "total") {
+    return "Solo hilos con todas las etapas de su modo registradas.";
+  }
+  if (comparison.key !== "recorded" || count === 0) return null;
+  return `Cobertura parcial: incluye ${formatCount(count, "hilo", "hilos")} sin todas las etapas de su modo; no es el proceso completo.`;
+}
+
+/** "Total de etapas registradas: asistido 40 min (n = 4) · manual 1 h 40 min (n = 3)". */
+export function recordedTotalText(comparison: EditorialResultsComparison): string {
+  const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) =>
+    `${MODE_LABELS[mode].toLowerCase()} ${stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)} (n = ${stats.n})`;
+  return `${COMPARISON_TEXT.recorded.title}, mediana: ${side("assisted", comparison.assisted)} · ${side("manual", comparison.manual)}`;
+}
+
 const MINUTE_MS = 60_000;
+
+/** Why the decisions page failed, in the operator's words, from the RPC error. */
+export function decisionsFailureText(error: unknown): string {
+  const fields =
+    typeof error === "object" && error !== null
+      ? (error as { readonly _tag?: unknown; readonly reason?: unknown })
+      : {};
+  if (fields._tag === "EditorialResultsError") {
+    return fields.reason === "unavailable"
+      ? "La base editorial de este entorno no está disponible."
+      : "La base editorial de este entorno no se pudo leer.";
+  }
+  if (fields._tag === "EnvironmentAuthorizationError") {
+    return "Este entorno no autoriza la lectura de resultados.";
+  }
+  return "No hubo respuesta del entorno.";
+}
 
 /** "26 min", "1 h 40 min", "45 s"; rounded to the minute from one minute up. */
 export function formatDuration(ms: number): string {

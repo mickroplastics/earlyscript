@@ -3,6 +3,7 @@ import {
   EditorialResultsError,
   type EditorialDurationStats,
   type EditorialResultsComparison,
+  type EditorialResultsCoverage,
   type EditorialResultsDecision,
   type EditorialResultsDecisionPage,
   type EditorialResultsDecisionsInput,
@@ -62,6 +63,23 @@ export const durationStats = (values: ReadonlyArray<number>): EditorialDurationS
     maxMs: sorted.at(-1) ?? null,
   };
 };
+
+/**
+ * The stages a mode needs for the whole process. Assisted `explore` is optional: the engine
+ * explored and the operator reads the dossier. Manual has no dossier to read.
+ */
+const COMPLETE_STAGES: Readonly<
+  Record<EditorialResultsMode, ReadonlyArray<EditorialResultsStage>>
+> = {
+  assisted: ["read", "write", "decide"],
+  manual: ["explore", "write", "decide"],
+};
+
+export const coverageOf = (
+  mode: EditorialResultsMode,
+  stages: ReadonlyArray<EditorialResultsStage>,
+): EditorialResultsCoverage =>
+  COMPLETE_STAGES[mode].every((stage) => stages.includes(stage)) ? "complete" : "partial";
 
 interface DecisionRow {
   readonly decision_id: string;
@@ -150,39 +168,45 @@ const make = Effect.gen(function* () {
     return count;
   };
 
-  const toDecision = (row: DecisionRow): EditorialResultsDecision => ({
-    decisionId: row.decision_id,
-    threadId: row.thread_id,
-    environmentId: row.environment_id,
-    mode: row.mode,
-    trendKey: row.trend_key,
-    runId: row.run_id,
-    dossierId: row.dossier_id,
-    action: row.action,
-    utility: row.utility,
-    reason: row.reason,
-    decidedAt: row.decided_at,
-    current: row.is_current === 1,
-    clockDefinitive: row.clock_definitive === 1,
-    durations: {
+  const toDecision = (row: DecisionRow): EditorialResultsDecision => {
+    const durations = {
       exploreMs: row.explore_ms,
       readMs: row.read_ms,
       writeMs: row.write_ms,
       decideMs: row.decide_ms,
       totalMs: row.total_ms,
-    },
-    script: countScript(row.script_version_hash, row.snapshot),
-    video:
-      row.observed_at === null
-        ? null
-        : {
-            views: row.views,
-            subscribers: row.subscribers,
-            clicks: row.clicks,
-            comments: row.comments,
-            observedAt: row.observed_at,
-          },
-  });
+    };
+    const stages = WORK_STAGES.filter((stage) => stageDuration(durations, stage) !== null);
+    return {
+      decisionId: row.decision_id,
+      threadId: row.thread_id,
+      environmentId: row.environment_id,
+      mode: row.mode,
+      trendKey: row.trend_key,
+      runId: row.run_id,
+      dossierId: row.dossier_id,
+      action: row.action,
+      utility: row.utility,
+      reason: row.reason,
+      decidedAt: row.decided_at,
+      current: row.is_current === 1,
+      clockDefinitive: row.clock_definitive === 1,
+      stages,
+      coverage: coverageOf(row.mode, stages),
+      durations,
+      script: countScript(row.script_version_hash, row.snapshot),
+      video:
+        row.observed_at === null
+          ? null
+          : {
+              views: row.views,
+              subscribers: row.subscribers,
+              clicks: row.clicks,
+              comments: row.comments,
+              observedAt: row.observed_at,
+            },
+    };
+  };
 
   const unreadable = (operation: string) => (cause: unknown) =>
     Effect.logWarning(`editorial results: ${operation} failed`, { cause }).pipe(
@@ -263,18 +287,24 @@ const make = Effect.gen(function* () {
   return EditorialResultsService.of({ summary, decisions });
 });
 
-const stageMs = (decision: EditorialResultsDecision, stage: EditorialResultsStage) => {
+function stageDuration(
+  durations: EditorialResultsDecision["durations"],
+  stage: EditorialResultsStage,
+): number | null {
   switch (stage) {
     case "explore":
-      return decision.durations.exploreMs;
+      return durations.exploreMs;
     case "read":
-      return decision.durations.readMs;
+      return durations.readMs;
     case "write":
-      return decision.durations.writeMs;
+      return durations.writeMs;
     case "decide":
-      return decision.durations.decideMs;
+      return durations.decideMs;
   }
-};
+}
+
+const stageMs = (decision: EditorialResultsDecision, stage: EditorialResultsStage) =>
+  stageDuration(decision.durations, stage);
 
 /** Assisted exploring is the explore stage plus reading the dossier; null if neither ran. */
 const exploringMs = (decision: EditorialResultsDecision) => {
@@ -320,6 +350,7 @@ const summarizeDecisions = (
         stats: collect(clocked, (decision) => stageMs(decision, stage)),
       })),
       total: collect(clocked, (decision) => decision.durations.totalMs),
+      partialCoverage: all.filter((decision) => decision.coverage === "partial").length,
       utility: {
         n: utilities.length,
         mean:
@@ -340,22 +371,40 @@ const summarizeDecisions = (
     };
   });
 
+  const complete = (mode: EditorialResultsMode) =>
+    timed(mode).filter((decision) => decision.coverage === "complete");
+  const compare = (
+    key: EditorialResultsComparison["key"],
+    threads: (mode: EditorialResultsMode) => ReadonlyArray<EditorialResultsDecision>,
+    pick: (mode: EditorialResultsMode) => (decision: EditorialResultsDecision) => number | null,
+  ): EditorialResultsComparison => {
+    const side = (mode: EditorialResultsMode) => {
+      const included = threads(mode).filter((decision) => pick(mode)(decision) !== null);
+      return {
+        stats: collect(included, pick(mode)),
+        partial: included.filter((decision) => decision.coverage === "partial").length,
+      };
+    };
+    const assisted = side("assisted");
+    const manual = side("manual");
+    return {
+      key,
+      assisted: assisted.stats,
+      manual: manual.stats,
+      partial: { assisted: assisted.partial, manual: manual.partial },
+    };
+  };
+  const totalMs = () => (decision: EditorialResultsDecision) => decision.durations.totalMs;
+
   const comparisons: Array<EditorialResultsComparison> = [
-    {
-      key: "explore",
-      assisted: collect(timed("assisted"), exploringMs),
-      manual: collect(timed("manual"), (decision) => decision.durations.exploreMs),
-    },
-    {
-      key: "write",
-      assisted: collect(timed("assisted"), (decision) => decision.durations.writeMs),
-      manual: collect(timed("manual"), (decision) => decision.durations.writeMs),
-    },
-    {
-      key: "total",
-      assisted: collect(timed("assisted"), (decision) => decision.durations.totalMs),
-      manual: collect(timed("manual"), (decision) => decision.durations.totalMs),
-    },
+    compare("explore", timed, (mode) =>
+      mode === "assisted" ? exploringMs : (decision) => decision.durations.exploreMs,
+    ),
+    compare("write", timed, () => (decision) => decision.durations.writeMs),
+    // The whole process: only threads that recorded every stage of their mode.
+    compare("total", complete, totalMs),
+    // Every timed thread, whatever it recorded; the page warns about partial coverage.
+    compare("recorded", timed, totalMs),
   ];
   return { modes, comparisons };
 };

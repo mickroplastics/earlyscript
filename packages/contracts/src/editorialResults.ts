@@ -44,17 +44,34 @@ export const EditorialStageStats = Schema.Struct({
 export type EditorialStageStats = typeof EditorialStageStats.Type;
 
 /**
- * The three comparisons of the manual mode design: exploring (manual `explore` against
- * assisted `explore` plus `read`), writing (`write` in both) and the whole process (total).
- * Kept apart so writing time is never mixed with the whole process.
+ * Which stages a thread recorded. `complete` is the whole process of its mode: assisted with
+ * `read`, `write` and `decide` (assisted `explore` is optional, the engine explored), manual
+ * with `explore`, `write` and `decide`. Anything less is `partial`. A stage is recorded when
+ * its duration is not null; zero milliseconds still count as recorded.
  */
-export const EditorialResultsComparisonKey = Schema.Literals(["explore", "write", "total"]);
+export const EditorialResultsCoverage = Schema.Literals(["complete", "partial"]);
+export type EditorialResultsCoverage = typeof EditorialResultsCoverage.Type;
+
+/**
+ * The comparisons of the manual mode design: exploring (manual `explore` against assisted
+ * `explore` plus `read`), writing (`write` in both) and the whole process (`total`, only
+ * threads with `complete` coverage). `recorded` sums the recorded stages of every timed
+ * thread, partial ones included, and is never read as the whole process.
+ */
+export const EditorialResultsComparisonKey = Schema.Literals([
+  "explore",
+  "write",
+  "total",
+  "recorded",
+]);
 export type EditorialResultsComparisonKey = typeof EditorialResultsComparisonKey.Type;
 
 export const EditorialResultsComparison = Schema.Struct({
   key: EditorialResultsComparisonKey,
   assisted: EditorialDurationStats,
   manual: EditorialDurationStats,
+  /** Timed threads with `partial` coverage inside these statistics, per mode. */
+  partial: Schema.Struct({ assisted: NonNegativeInt, manual: NonNegativeInt }),
 });
 export type EditorialResultsComparison = typeof EditorialResultsComparison.Type;
 
@@ -91,7 +108,10 @@ export const EditorialResultsModeSummary = Schema.Struct({
     reject: NonNegativeInt,
   }),
   stages: Schema.Array(EditorialStageStats),
+  /** Sum of the recorded stages over timed threads, partial coverage included. */
   total: EditorialDurationStats,
+  /** Of the threads, those with `partial` coverage. */
+  partialCoverage: NonNegativeInt,
   utility: EditorialUtilityStats,
   citations: EditorialCitationStats,
   /** Threads with at least one video result recorded. */
@@ -145,6 +165,9 @@ export const EditorialResultsDecision = Schema.Struct({
   current: Schema.Boolean,
   /** False when a segment awaited resolution: the durations are a floor. */
   clockDefinitive: Schema.Boolean,
+  /** Stages with a duration, in work order. */
+  stages: Schema.Array(EditorialResultsStage),
+  coverage: EditorialResultsCoverage,
   /** Null when the stage never ran, never zero by omission. */
   durations: Schema.Struct({
     exploreMs: Schema.NullOr(NonNegativeInt),

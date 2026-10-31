@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type {
   EditorialDurationStats,
   EditorialResultsComparison,
@@ -9,11 +9,13 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { InfoIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../components/ui/empty";
@@ -40,6 +42,9 @@ import {
   actionsText,
   decisionTotalText,
   citationDetail,
+  comparisonCards,
+  coverageNote,
+  decisionsFailureText,
   decisionThreadFallback,
   formatCount,
   formatDuration,
@@ -53,6 +58,7 @@ import {
   modeSummary,
   pageRangeText,
   provisionalNote,
+  recordedTotalText,
   stageChartMaxMs,
   stageLabel,
   stageStats,
@@ -130,6 +136,7 @@ function ModeSwatch({ mode }: { readonly mode: EditorialResultsMode }) {
 function ComparisonCard({ comparison }: { readonly comparison: EditorialResultsComparison }) {
   const text = COMPARISON_TEXT[comparison.key];
   const difference = medianDifferenceText(comparison.assisted, comparison.manual);
+  const coverage = coverageNote(comparison);
   const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) => (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -156,8 +163,19 @@ function ComparisonCard({ comparison }: { readonly comparison: EditorialResultsC
       </div>
       <p className="border-t border-border pt-2 text-xs text-muted-foreground">
         {difference ?? "Sin las dos medianas no hay diferencia que describir."}
+        {coverage ? ` ${coverage}` : null}
       </p>
     </div>
+  );
+}
+
+/** Every timed thread, partial ones included, kept apart from the whole process. */
+function RecordedTotal({ comparison }: { readonly comparison: EditorialResultsComparison }) {
+  const coverage = coverageNote(comparison);
+  return (
+    <p data-comparison={comparison.key} className="text-xs text-muted-foreground tabular-nums">
+      {recordedTotalText(comparison)}.{coverage ? ` ${coverage}` : null}
+    </p>
   );
 }
 
@@ -283,7 +301,7 @@ function StageTable({ summary }: { readonly summary: EditorialResultsSummary }) 
     })),
     {
       key: "total",
-      label: "Total",
+      label: "Total registrado",
       stats: (mode: EditorialResultsMode) => modeSummary(summary, mode)?.total,
     },
   ];
@@ -416,8 +434,15 @@ const DECISION_FILTERS: ReadonlyArray<{
   { value: "manual", label: "Manual" },
 ];
 
+/** The decisions page as the table sees it: loading, failed with a reason, or loaded. */
+export type ResultsDecisionsState =
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "failure"; readonly message: string }
+  | { readonly _tag: "ready"; readonly page: EditorialResultsDecisionPage };
+
 export interface ResultsDecisionsControls {
-  readonly page: EditorialResultsDecisionPage | null;
+  readonly state: ResultsDecisionsState;
+  readonly onRetry: () => void;
   readonly filter: "all" | EditorialResultsMode;
   readonly onFilter: (filter: "all" | EditorialResultsMode) => void;
   readonly onPage: (offset: number) => void;
@@ -462,6 +487,45 @@ function InboxMetrics({ summary }: { readonly summary: EditorialResultsSummary }
   );
 }
 
+function DecisionsPage({
+  page,
+  threadTitles,
+  onPage,
+}: {
+  readonly page: EditorialResultsDecisionPage;
+  readonly threadTitles: ReadonlyMap<string, string>;
+  readonly onPage: (offset: number) => void;
+}) {
+  return (
+    <>
+      <DecisionsTable page={page} threadTitles={threadTitles} />
+      {page.total > DECISIONS_PAGE_SIZE ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="tabular-nums">
+            {pageRangeText(page.offset, page.decisions.length, page.total)}
+          </span>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={page.offset === 0}
+            onClick={() => onPage(Math.max(0, page.offset - DECISIONS_PAGE_SIZE))}
+          >
+            Anteriores
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={page.offset + page.decisions.length >= page.total}
+            onClick={() => onPage(page.offset + DECISIONS_PAGE_SIZE)}
+          >
+            Siguientes
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 /** The Results space with its data; the page fetches, this renders. */
 export function ResultsView({
   summary,
@@ -491,7 +555,8 @@ export function ResultsView({
   const assisted = modeSummary(summary, "assisted");
   const manual = modeSummary(summary, "manual");
   const provisional = provisionalNote(summary);
-  const page = decisions.page;
+  const state = decisions.state;
+  const recorded = summary.comparisons.find((comparison) => comparison.key === "recorded");
   return (
     <>
       <header className="flex min-w-0 flex-col gap-1">
@@ -509,8 +574,8 @@ export function ResultsView({
         <InfoIcon />
         <AlertDescription>
           Comparación descriptiva sobre la decisión vigente de cada hilo, con hilos y temas
-          distintos en cada modo. No se calcula un ahorro: la comparación de la tesis es por pares,
-          sobre el mismo tema y con revisores externos.
+          distintos en cada modo. Estas diferencias son descriptivas: la comparación de la tesis es
+          por pares, sobre el mismo tema y con revisores externos.
         </AlertDescription>
       </Alert>
 
@@ -525,10 +590,11 @@ export function ResultsView({
         }
       >
         <div className="grid gap-3 lg:grid-cols-3">
-          {summary.comparisons.map((comparison) => (
+          {comparisonCards(summary.comparisons).map((comparison) => (
             <ComparisonCard key={comparison.key} comparison={comparison} />
           ))}
         </div>
+        {recorded ? <RecordedTotal comparison={recorded} /> : null}
       </ResultsSection>
 
       <ResultsSection id="etapas" title="Mediana por etapa">
@@ -625,33 +691,22 @@ export function ResultsView({
           </ToggleGroup>
         }
       >
-        {page === null ? null : (
-          <>
-            <DecisionsTable page={page} threadTitles={threadTitles} />
-            {page.total > DECISIONS_PAGE_SIZE ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="tabular-nums">
-                  {pageRangeText(page.offset, page.decisions.length, page.total)}
-                </span>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={page.offset === 0}
-                  onClick={() => decisions.onPage(Math.max(0, page.offset - DECISIONS_PAGE_SIZE))}
-                >
-                  Anteriores
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  disabled={page.offset + page.decisions.length >= page.total}
-                  onClick={() => decisions.onPage(page.offset + DECISIONS_PAGE_SIZE)}
-                >
-                  Siguientes
-                </Button>
-              </div>
-            ) : null}
-          </>
+        {state._tag === "loading" ? (
+          <p role="status" className="text-xs text-muted-foreground">
+            Cargando decisiones…
+          </p>
+        ) : state._tag === "failure" ? (
+          <Alert variant="error">
+            <AlertTitle>No se pudieron leer las decisiones</AlertTitle>
+            <AlertDescription>{state.message}</AlertDescription>
+            <AlertAction>
+              <Button size="xs" variant="outline" onClick={decisions.onRetry}>
+                Reintentar
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : (
+          <DecisionsPage page={state.page} threadTitles={threadTitles} onPage={decisions.onPage} />
         )}
       </ResultsSection>
     </>
@@ -670,18 +725,29 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
   const summaryResult = useAtomValue(
     editorialResultsEnvironment.summary({ environmentId, input: {} }),
   );
-  const decisionsResult = useAtomValue(
-    editorialResultsEnvironment.decisions({
-      environmentId,
-      input: {
-        limit: DECISIONS_PAGE_SIZE,
-        ...(offset === 0 ? {} : { offset }),
-        ...(filter === "all" ? {} : { mode: filter }),
-      },
-    }),
-  );
+  const decisionsAtom = editorialResultsEnvironment.decisions({
+    environmentId,
+    input: {
+      limit: DECISIONS_PAGE_SIZE,
+      ...(offset === 0 ? {} : { offset }),
+      ...(filter === "all" ? {} : { mode: filter }),
+    },
+  });
+  const decisionsResult = useAtomValue(decisionsAtom);
+  const retryDecisions = useAtomRefresh(decisionsAtom);
   const summary = AsyncResult.getOrElse(summaryResult, () => null);
   const page = AsyncResult.getOrElse(decisionsResult, () => null);
+  const decisionsState: ResultsDecisionsState =
+    page !== null
+      ? { _tag: "ready", page }
+      : decisionsResult._tag === "Failure" && !decisionsResult.waiting
+        ? {
+            _tag: "failure",
+            message: decisionsFailureText(
+              Option.getOrUndefined(Cause.findErrorOption(decisionsResult.cause)),
+            ),
+          }
+        : { _tag: "loading" };
   if (summary === null) {
     return summaryResult._tag === "Failure" ? (
       <EditorialEmptyPage
@@ -699,7 +765,8 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
         summary={summary}
         threadTitles={threadTitles}
         decisions={{
-          page,
+          state: decisionsState,
+          onRetry: retryDecisions,
           filter,
           onFilter: (next) => {
             setFilter(next);

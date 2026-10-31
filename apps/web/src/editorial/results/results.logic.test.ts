@@ -3,6 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   actionsText,
+  coverageNote,
+  decisionsFailureText,
+  recordedTotalText,
+  sectionAriaCurrent,
+  withoutRouteActive,
   decisionThreadFallback,
   decisionTotalText,
   formatDuration,
@@ -42,6 +47,7 @@ const modeSummary = (
     stats: EMPTY_STATS,
   })),
   total: EMPTY_STATS,
+  partialCoverage: 0,
   utility: { n: 0, mean: null, distribution: [0, 0, 0, 0, 0] },
   citations: { threads: 0, claims: 0, cited: 0, ratio: null },
   withVideoResults: 0,
@@ -168,5 +174,64 @@ describe("iqrText and actionsText", () => {
     expect(actionsText({ accept: 1, edit: 2, reject: 0 })).toBe(
       "1 aceptada, 2 editadas, 0 rechazadas",
     );
+  });
+});
+
+describe("coverage", () => {
+  const comparison = (
+    key: "total" | "recorded",
+    partial: { assisted: number; manual: number },
+  ) => ({
+    key,
+    assisted: stats({ n: 4, medianMs: 37 * MINUTE }),
+    manual: stats({ n: 3, medianMs: 100 * MINUTE }),
+    partial,
+  });
+
+  it("warns when the recorded total takes partial threads in", () => {
+    expect(coverageNote(comparison("recorded", { assisted: 1, manual: 0 }))).toBe(
+      "Cobertura parcial: incluye 1 hilo sin todas las etapas de su modo; no es el proceso completo.",
+    );
+    expect(coverageNote(comparison("recorded", { assisted: 0, manual: 0 }))).toBeNull();
+    expect(coverageNote(comparison("total", { assisted: 0, manual: 0 }))).toBe(
+      "Solo hilos con todas las etapas de su modo registradas.",
+    );
+    expect(recordedTotalText(comparison("recorded", { assisted: 1, manual: 0 }))).toBe(
+      "Total de etapas registradas, mediana: asistido 37 min (n = 4) · manual 1 h 40 min (n = 3)",
+    );
+  });
+});
+
+describe("section anchors", () => {
+  it("marks only the section the hash selects", () => {
+    expect(sectionAriaCurrent("utilidad", "utilidad")).toBe("location");
+    expect(sectionAriaCurrent("#utilidad", "utilidad")).toBe("location");
+    expect(sectionAriaCurrent("utilidad", "tiempos")).toBeUndefined();
+    expect(sectionAriaCurrent("", "tiempos")).toBeUndefined();
+  });
+
+  it("drops the route-active marks of a link", () => {
+    const props = withoutRouteActive({
+      href: "/editorial/env/results#tiempos",
+      "aria-current": "page",
+      "data-status": "active",
+      className: "active",
+    });
+    expect(props).toEqual({ href: "/editorial/env/results#tiempos" });
+  });
+});
+
+describe("decisionsFailureText", () => {
+  it("names the reason of the failure", () => {
+    expect(decisionsFailureText({ _tag: "EditorialResultsError", reason: "unreadable" })).toBe(
+      "La base editorial de este entorno no se pudo leer.",
+    );
+    expect(decisionsFailureText({ _tag: "EditorialResultsError", reason: "unavailable" })).toBe(
+      "La base editorial de este entorno no está disponible.",
+    );
+    expect(decisionsFailureText({ _tag: "EnvironmentAuthorizationError" })).toBe(
+      "Este entorno no autoriza la lectura de resultados.",
+    );
+    expect(decisionsFailureText(undefined)).toBe("No hubo respuesta del entorno.");
   });
 });

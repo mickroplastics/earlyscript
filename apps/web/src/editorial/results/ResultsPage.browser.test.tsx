@@ -37,10 +37,13 @@ const mode = (
     stats: stages[stage],
   })),
   total,
+  partialCoverage: 0,
   utility: { n: 3, mean: name === "assisted" ? 4 : 3, distribution: [0, 0, 1, 1, 1] },
   citations: { threads: 3, claims: 13, cited: 11, ratio: 11 / 13 },
   withVideoResults: 1,
 });
+
+const NONE = { assisted: 0, manual: 0 };
 
 // The six-thread fixture of the server tests, in minutes.
 const SUMMARY: EditorialResultsSummary = {
@@ -67,9 +70,25 @@ const SUMMARY: EditorialResultsSummary = {
     ),
   ],
   comparisons: [
-    { key: "explore", assisted: stats(3, 10, 9, 10), manual: stats(3, 45, 41.5, 52.5) },
-    { key: "write", assisted: stats(3, 26, 24, 28), manual: stats(3, 50, 45, 52.5) },
-    { key: "total", assisted: stats(3, 40, 36.5, 41), manual: stats(3, 100, 98.5, 101.5) },
+    {
+      key: "explore",
+      assisted: stats(3, 10, 9, 10),
+      manual: stats(3, 45, 41.5, 52.5),
+      partial: NONE,
+    },
+    { key: "write", assisted: stats(3, 26, 24, 28), manual: stats(3, 50, 45, 52.5), partial: NONE },
+    {
+      key: "total",
+      assisted: stats(3, 40, 36.5, 41),
+      manual: stats(3, 100, 98.5, 101.5),
+      partial: NONE,
+    },
+    {
+      key: "recorded",
+      assisted: stats(4, 37, 25, 40.25),
+      manual: stats(3, 100, 98.5, 101.5),
+      partial: { assisted: 1, manual: 0 },
+    },
   ],
   inbox: { read: 6, observing: 1, dismissed: 2, production: 3 },
   decisionCount: 7,
@@ -92,6 +111,8 @@ const decision = (overrides: Partial<EditorialResultsDecision>): EditorialResult
   decidedAt: "2026-10-20T13:38:00.000Z",
   current: true,
   clockDefinitive: true,
+  stages: ["read", "write", "decide"],
+  coverage: "complete",
   durations: {
     exploreMs: null,
     readMs: 8 * MINUTE,
@@ -111,32 +132,37 @@ const decision = (overrides: Partial<EditorialResultsDecision>): EditorialResult
 });
 
 const controls = (overrides: Partial<ResultsDecisionsControls> = {}): ResultsDecisionsControls => ({
-  page: {
-    offset: 0,
-    total: 2,
-    decisions: [
-      decision({
-        decisionId: "decision-2",
-        threadId: "thread-manual-1",
-        mode: "manual",
-        trendKey: null,
-        action: "edit",
-        utility: 3,
-        decidedAt: "2026-10-28T14:00:00.000Z",
-        clockDefinitive: false,
-        durations: {
-          exploreMs: 45 * MINUTE,
-          readMs: null,
-          writeMs: 50 * MINUTE,
-          decideMs: 5 * MINUTE,
-          totalMs: 100 * MINUTE,
-        },
-        script: null,
-        video: null,
-      }),
-      decision({ current: false }),
-    ],
+  state: {
+    _tag: "ready",
+    page: {
+      offset: 0,
+      total: 2,
+      decisions: [
+        decision({
+          decisionId: "decision-2",
+          threadId: "thread-manual-1",
+          mode: "manual",
+          trendKey: null,
+          action: "edit",
+          utility: 3,
+          decidedAt: "2026-10-28T14:00:00.000Z",
+          clockDefinitive: false,
+          stages: ["explore", "write", "decide"],
+          durations: {
+            exploreMs: 45 * MINUTE,
+            readMs: null,
+            writeMs: 50 * MINUTE,
+            decideMs: 5 * MINUTE,
+            totalMs: 100 * MINUTE,
+          },
+          script: null,
+          video: null,
+        }),
+        decision({ current: false }),
+      ],
+    },
   },
+  onRetry: () => {},
   filter: "all",
   onFilter: () => {},
   onPage: () => {},
@@ -156,7 +182,9 @@ describe("ResultsView", () => {
           lastDecidedAt: null,
           inbox: { read: 2, observing: 0, dismissed: 1, production: 0 },
         }}
-        decisions={controls({ page: { offset: 0, total: 0, decisions: [] } })}
+        decisions={controls({
+          state: { _tag: "ready", page: { offset: 0, total: 0, decisions: [] } },
+        })}
         threadTitles={new Map()}
       />,
     );
@@ -180,7 +208,15 @@ describe("ResultsView", () => {
     expect(total?.textContent).toContain("40 min");
     expect(total?.textContent).toContain("1 h 40 min");
     expect(total?.textContent).toContain("Mediana manual 1 h mayor (n = 3 y 3)");
+    expect(total?.textContent).toContain("Solo hilos con todas las etapas de su modo registradas.");
+    // The recorded total takes partial threads in, apart from the whole process, and warns.
+    const recorded = screen.container.querySelector('[data-comparison="recorded"]');
+    expect(recorded?.textContent).toContain("Total de etapas registradas");
+    expect(recorded?.textContent).toContain("asistido 37 min (n = 4)");
+    expect(recorded?.textContent).toContain("Cobertura parcial: incluye 1 hilo");
+    expect(recorded?.closest("[data-comparison=total]")).toBeNull();
     expect(screen.container.querySelector("#tiempos")?.textContent).not.toMatch(/%|ahorr/i);
+    expect(screen.container.textContent).not.toMatch(/ahorr/i);
     // A stage that never ran in a mode is a dashed line, not a zero-length bar.
     const missing = screen.container.querySelector('[data-stage-bar="manual:read"]');
     expect(missing?.querySelector("rect")).toBeNull();
@@ -219,5 +255,40 @@ describe("ResultsView", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Manual" }));
     expect(onFilter).toHaveBeenCalledWith("manual");
+  });
+
+  it("says the decisions are loading", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls({ state: { _tag: "loading" } })}
+        threadTitles={new Map()}
+      />,
+    );
+    await expect.element(screen.getByRole("status")).toHaveTextContent("Cargando decisiones…");
+    expect(screen.container.querySelector("[data-decision]")).toBeNull();
+  });
+
+  it("explains a failed decisions read and retries it", async () => {
+    const onRetry = vi.fn();
+    await using screen = await render(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls({
+          state: {
+            _tag: "failure",
+            message: "La base editorial de este entorno no se pudo leer.",
+          },
+          onRetry,
+        })}
+        threadTitles={new Map()}
+      />,
+    );
+    await expect.element(screen.getByText("No se pudieron leer las decisiones")).toBeVisible();
+    await expect
+      .element(screen.getByText("La base editorial de este entorno no se pudo leer."))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });
