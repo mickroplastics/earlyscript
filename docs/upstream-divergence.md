@@ -246,6 +246,7 @@ Cada valor de marca se define una sola vez en `packages/shared/src/earlyscriptBr
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/shared/src/earlyscriptBrand.ts`                        | Nombre del producto, directorio base, puertos por defecto, esquema de URL, identificadores de escritorio y nombres de binario.                                    |
 | `docs/upstream-divergence.md`                                    | Este registro.                                                                                                                                                    |
+| `README.md` y `docs/README-t3code.md`                            | README propio de Earlyscript (propósito académico, problema y solución, requisitos, ejecución, pipeline, carpetas, pruebas, fuentes, limitaciones); el README de T3 Code se movió íntegro a `docs/README-t3code.md`. |
 | `apps/desktop/resources/linux/cc.biste.earlyscript.metainfo.xml` | Metadatos AppStream del paquete `.deb`: id `cc.biste.earlyscript`, nombre, lanzador `earlyscript-desktop.desktop` e icono. Sustituye al de T3 Code en el paquete. |
 
 ## Documentación de upstream
