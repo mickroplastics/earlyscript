@@ -107,8 +107,9 @@ export interface RecordDecisionInput extends ActorOption {
   /** Refuses while a segment recovered after a restart awaits resolution. */
   readonly requireDefinitiveClock?: boolean | undefined;
   /**
-   * Moves a running or paused clock to this stage first, in the same transaction. The stage
-   * then closes at once: it records the time it actually ran, zero when it opens here.
+   * Moves the clock to this stage first, in the same transaction, from any state, stopped
+   * included. The stage then closes at once: it records the time it actually ran, zero when
+   * it opens here.
    */
   readonly openStage?: WorkStage | undefined;
 }
@@ -557,10 +558,10 @@ const make = Effect.gen(function* () {
             });
           }
           const state = clockStateOf(intervals);
+          // From idle too: a clock stopped by a recovery records Decidir as the zero it ran.
           if (
             input.openStage !== undefined &&
-            state._tag !== "idle" &&
-            state.stage !== input.openStage
+            (state._tag === "idle" || state.stage !== input.openStage)
           ) {
             if (state._tag === "running") {
               yield* closeInterval(sql, state.intervalId, at, "stage_changed");
@@ -576,17 +577,20 @@ const make = Effect.gen(function* () {
             // No operation id: the decision's own event carries it, and replay looks it up.
             stageEvents.push(
               yield* appendEvent(sql, {
-                type: "work.stage-changed",
+                type: state._tag === "idle" ? "work.started" : "work.stage-changed",
                 aggregateKind: "video_thread",
                 aggregateId: input.threadId,
                 actor,
-                payload: {
-                  from: state.stage,
-                  to: input.openStage,
-                  fromState: state._tag,
-                  intervalId,
-                  cause: "decision",
-                },
+                payload:
+                  state._tag === "idle"
+                    ? { stage: input.openStage, intervalId, cause: "decision" }
+                    : {
+                        from: state.stage,
+                        to: input.openStage,
+                        fromState: state._tag,
+                        intervalId,
+                        cause: "decision",
+                      },
                 createdAt: at,
               }),
             );

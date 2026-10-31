@@ -574,4 +574,59 @@ describe("editorial video RPC, review of 76967e71c6", () => {
       }),
     ),
   );
+
+  // H3-R, Sol's fifth adversarial test inverted: a clock left idle by a recovery and its
+  // resolution still records Decidir, as the zero it ran, so the thread counts as complete.
+  it.effect("records Decidir when deciding from a clock a recovery left stopped", () =>
+    withVideoRpc(({ write }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        yield* write(SCRIPT_PATH, SCRIPT);
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: THREAD,
+          command: { _tag: "start", stage: "read" },
+        });
+        yield* TestClock.adjust(MINUTE);
+        const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
+        yield* TestClock.adjust(MINUTE);
+        yield* WorkClockService.use((clock) => clock.recoverOpenIntervals());
+        const pending = yield* client[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: THREAD });
+        const intervalId = pending.video!.clock.unresolved[0]!.intervalId;
+        const resolved = yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: THREAD,
+          command: { _tag: "resolve", intervalId, endedAt: "1970-01-01T00:02:00.000Z" },
+          operationId: "resolved",
+        });
+        assert.strictEqual(resolved.clock.state._tag, "idle");
+
+        const decided = yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: THREAD,
+          action: "accept",
+          utility: 4,
+          scriptVersionHash: saved.script.head?.contentHash ?? null,
+          operationId: "decision",
+        });
+        assert.deepStrictEqual(decided.decision?.durations, {
+          exploreMs: null,
+          readMs: MINUTE,
+          writeMs: MINUTE,
+          decideMs: 0,
+          totalMs: 2 * MINUTE,
+        });
+        assert.strictEqual(decided.decision?.clockDefinitive, true);
+        assert.strictEqual(decided.clock.state._tag, "idle");
+        const summary = yield* EditorialResultsService.EditorialResultsService.use(
+          (service) => service.summary,
+        ).pipe(Effect.provide(EditorialResultsService.layer));
+        assert.strictEqual(
+          summary.modes.find((mode) => mode.mode === "assisted")?.partialCoverage,
+          0,
+        );
+        assert.strictEqual(
+          summary.comparisons.find((comparison) => comparison.key === "total")?.assisted.n,
+          1,
+        );
+      }),
+    ),
+  );
 });
