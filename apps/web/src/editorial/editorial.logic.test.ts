@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  citationSegments,
   compactCount,
   coverageStatus,
   editorialClaimsRoot,
@@ -17,6 +18,7 @@ import {
   resolveLandingTarget,
   resolveRouteSpace,
   runGroupLabel,
+  runPresentationProgressText,
   spaceTabName,
   splitInbox,
   whyHereReasons,
@@ -237,5 +239,63 @@ describe("whyHereReasons", () => {
     expect(growthReason(0.1)).toBe("Crecimiento 0,10 en escala logarítmica: estable.");
     expect(growthReason(0.5)).toBe("Crecimiento 0,50 en escala logarítmica: crece.");
     expect(growthReason(1.8)).toBe("Crecimiento 1,80 en escala logarítmica: crece rápido.");
+  });
+});
+
+describe("citationSegments", () => {
+  const item = (itemId: string) => ({
+    itemId,
+    source: "hn",
+    title: `Title ${itemId}`,
+    author: null,
+    publishedAt: "2026-10-15T18:26:30.000Z",
+    permalink: null,
+    externalUrl: `https://example.com/${itemId}`,
+  });
+  const evidence = [item("itm_hn_1"), item("itm_hn_2"), item("itm_gh_3")];
+
+  it("turns known [itemId] markers into numbered citations in evidence order", () => {
+    const segments = citationSegments(
+      "IBM opened a quantum stack [itm_hn_2] and a SDK [itm_gh_3][itm_hn_1].",
+      evidence,
+    );
+    expect(
+      segments.map((segment) =>
+        segment.kind === "text" ? segment.text : `#${segment.number}:${segment.itemId}`,
+      ),
+    ).toEqual([
+      "IBM opened a quantum stack",
+      "#2:itm_hn_2",
+      " and a SDK",
+      "#3:itm_gh_3",
+      "#1:itm_hn_1",
+      ".",
+    ]);
+  });
+
+  it("keeps unknown markers and other brackets as written", () => {
+    const segments = citationSegments("Claim [itm_x_9] and [a note] stay [itm_hn_1]", evidence);
+    expect(
+      segments.map((segment) => (segment.kind === "text" ? segment.text : `#${segment.number}`)),
+    ).toEqual(["Claim [itm_x_9] and [a note] stay", "#1"]);
+  });
+
+  it("returns the text whole when there is nothing to cite", () => {
+    expect(citationSegments("No citations here.", evidence)).toEqual([
+      { kind: "text", text: "No citations here." },
+    ]);
+    expect(citationSegments("", evidence)).toEqual([]);
+  });
+});
+
+describe("runPresentationProgressText", () => {
+  it("counts drafted trends and names failures apart", () => {
+    expect(runPresentationProgressText({ total: 18, ready: 3, failed: 0 })).toBe("3/18 redactadas");
+    expect(runPresentationProgressText({ total: 1, ready: 0, failed: 1 })).toBe(
+      "0/1 redactada · 1 falló",
+    );
+    expect(runPresentationProgressText({ total: 18, ready: 15, failed: 3 })).toBe(
+      "15/18 redactadas · 3 fallaron",
+    );
   });
 });
