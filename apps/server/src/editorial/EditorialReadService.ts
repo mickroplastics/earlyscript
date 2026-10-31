@@ -28,6 +28,7 @@ import {
   runSummary,
   type LoadedDossier,
 } from "./dossierFormat.ts";
+import { withPresentations } from "./presentationRead.ts";
 
 const EDITORIAL_RUNS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_RUNS_DIR";
 const DEFAULT_INBOX_LIMIT = 100;
@@ -238,7 +239,7 @@ export const makeWithRunsDir = Effect.fn("EditorialReadService.make")(function* 
     };
   });
 
-  return EditorialReadService.of({ listRuns, getInbox, getDossier });
+  return EditorialReadService.of(yield* withPresentations({ listRuns, getInbox, getDossier }));
 });
 
 /** `EARLYSCRIPT_EDITORIAL_RUNS_DIR`, or `~/earlyscript-data/runs`. */

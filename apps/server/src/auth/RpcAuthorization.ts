@@ -1,6 +1,7 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   EDITORIAL_RPC_REQUIRED_SCOPES,
+  EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
@@ -41,6 +42,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
   ...EDITORIAL_RPC_REQUIRED_SCOPES,
+  ...EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
