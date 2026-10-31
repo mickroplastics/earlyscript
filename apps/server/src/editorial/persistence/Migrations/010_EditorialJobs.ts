@@ -68,4 +68,12 @@ export default Effect.gen(function* () {
 
   // Content deduplication compares the profile too; rows indexed before this stay null.
   yield* sql`ALTER TABLE editorial_runs ADD COLUMN profile_hash TEXT`;
+
+  // One indexed run per inputs and content, across importers and servers. Rows indexed before
+  // this have no profile_hash, so the index cannot reject the data already in the table.
+  yield* sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS editorial_runs_content_key
+    ON editorial_runs (cutoff_at, config_hash, profile_hash, logical_hash)
+    WHERE profile_hash IS NOT NULL
+  `;
 });

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import type { SqlError } from "effect/sql/SqlError";
 
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import type { RunInfo } from "./dossierFormat.ts";
@@ -119,6 +120,18 @@ const isNewer = (row: IndexedVersion) => row.interpretation_version > IMPORT_INT
 const coverageOf = (loaded: LoadedRun): unknown =>
   loaded.entry.run.coverage ?? loaded.dossiers[0]?.file.coverage ?? null;
 
+/** What importing one loaded run came to. */
+interface Decided {
+  readonly outcome: ImportOutcome;
+  readonly keptRunId?: string;
+}
+
+/**
+ * The insert hit `editorial_runs_content_key`: these inputs and content are indexed already.
+ * The insert's other unique key, `run_id`, is an upsert and never raises.
+ */
+const violatesContentKey = (error: SqlError) => error.reason._tag === "UniqueViolation";
+
 const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const eventLog = yield* EditorialEventLog;
@@ -136,16 +149,34 @@ const make = Effect.gen(function* () {
         runId: run.run_id,
         cutoffAt: run.cutoff_at,
       });
-      return "skipped" as const;
+      return { outcome: "skipped" } satisfies Decided;
     }
     const finishedAt = Option.getOrNull(parseIso(run.finished_at ?? ""));
-    return yield* eventLog.transact(
+    return yield* eventLog.transact<Decided, never>(
       "editorial.importRun",
       Effect.gen(function* () {
         const at = yield* nowIso;
         const existing = yield* sql<IndexedVersion>`
           SELECT ${sql.literal(INDEXED_COLUMNS)} FROM editorial_runs WHERE run_id = ${run.run_id}
         `.pipe(Effect.map((rows) => rows[0]));
+        // The binding admission: this transaction began IMMEDIATE, so no other importer or
+        // server can index a run or accept one for this job between this read and the insert.
+        if (existing === undefined) {
+          const decision = yield* admission(run);
+          if (decision._tag === "wait") {
+            return { result: { outcome: "waiting" } satisfies Decided, events: [] };
+          }
+          if (decision._tag === "exclude") {
+            yield* exclude(loaded.entry, decision);
+            return {
+              result: {
+                outcome: decision.reason,
+                keptRunId: decision.keptRunId,
+              } satisfies Decided,
+              events: [],
+            };
+          }
+        }
         // A placeholder left while this directory's run.json did not decode, under the folder
         // name: the run now has its own row.
         yield* sql`
@@ -168,7 +199,7 @@ const make = Effect.gen(function* () {
               artifact_path = ${loaded.entry.directory}, updated_at = ${at}
             WHERE run_id = ${run.run_id}
           `;
-          return { result: "unchanged" as const, events: [] };
+          return { result: { outcome: "unchanged" } satisfies Decided, events: [] };
         }
         const importState = loaded.skippedFiles.length === 0 ? "imported" : "partial";
         const payload = {
@@ -183,7 +214,7 @@ const make = Effect.gen(function* () {
           interpretationVersion: IMPORT_INTERPRETATION_VERSION,
           previousInterpretationVersion: existing?.interpretation_version ?? null,
         };
-        yield* sql`
+        const inserted = yield* sql`
           INSERT INTO editorial_runs (
             run_id, cutoff_at, finished_at, engine_status, run_schema_version, engine_version,
             config_version, config_hash, corpus_hash, corpus_used_hash, logical_hash,
@@ -215,7 +246,26 @@ const make = Effect.gen(function* () {
             skipped_files_json = excluded.skipped_files_json,
             interpretation_version = excluded.interpretation_version,
             updated_at = excluded.updated_at
-        `;
+        `.pipe(
+          Effect.as(true),
+          Effect.catchIf(violatesContentKey, () => Effect.succeed(false)),
+        );
+        if (!inserted) {
+          // The unique index is the last word: another writer indexed these inputs first.
+          const kept = yield* sql<{ readonly run_id: string }>`
+            SELECT run_id FROM editorial_runs
+            WHERE cutoff_at = ${cutoffAt.value} AND config_hash = ${run.config_hash}
+              AND profile_hash = ${run.profile_hash} AND logical_hash = ${run.logical_hash}
+          `;
+          const keptRunId = kept[0]?.run_id ?? run.run_id;
+          yield* exclude(loaded.entry, {
+            _tag: "exclude",
+            reason: "duplicate",
+            keptRunId,
+            jobId: null,
+          });
+          return { result: { outcome: "duplicate", keptRunId } satisfies Decided, events: [] };
+        }
         // Dossier rows are derived from the files; the operator's state lives in
         // editorial_trend_inbox under the trend key, which this import does not touch.
         yield* sql`DELETE FROM editorial_dossiers WHERE run_id = ${run.run_id}`;
@@ -249,7 +299,7 @@ const make = Effect.gen(function* () {
             payload,
             createdAt: at,
           });
-          return { result: "updated" as const, events: [updated] };
+          return { result: { outcome: "updated" } satisfies Decided, events: [updated] };
         }
         // A run new to the index is announced once per content: an index rebuilt from the
         // same files appends nothing.
@@ -268,7 +318,7 @@ const make = Effect.gen(function* () {
                 createdAt: at,
               }),
             ];
-        return { result: "imported" as const, events };
+        return { result: { outcome: "imported" } satisfies Decided, events };
       }),
     );
   });
@@ -535,7 +585,8 @@ const make = Effect.gen(function* () {
       ) {
         continue;
       }
-      // Only a run that is not indexed yet is admitted again; a reindex keeps its row.
+      // A shortcut that spares reading the dossiers of a run that has to wait; the decision
+      // that binds is taken again inside the import transaction.
       if (known === undefined) {
         const decision = yield* admission(entry.run).pipe(
           Effect.mapError(toPersistenceError("editorial.admission")),
@@ -544,20 +595,9 @@ const make = Effect.gen(function* () {
           runs.push({ runId: entry.run.run_id, outcome: "waiting" });
           continue;
         }
-        if (decision._tag === "exclude") {
-          yield* exclude(entry, decision).pipe(
-            Effect.mapError(toPersistenceError("editorial.excludeRun")),
-          );
-          runs.push({
-            runId: entry.run.run_id,
-            outcome: decision.reason,
-            keptRunId: decision.keptRunId,
-          });
-          continue;
-        }
       }
       const loaded = yield* directory.load(entry);
-      runs.push({ runId: entry.run.run_id, outcome: yield* importLoaded(loaded) });
+      runs.push({ runId: entry.run.run_id, ...(yield* importLoaded(loaded)) });
     }
     const returned = yield* returnSnoozed();
     return { runs, returned };
