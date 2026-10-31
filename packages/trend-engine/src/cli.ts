@@ -47,6 +47,8 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       run: { type: "string" },
       rerun: { type: "boolean" },
       "allow-unverified-corpus": { type: "boolean" },
+      // Ignored: the server tags the children it launches so it can tell them from a recycled pid.
+      "lock-token": { type: "string" },
     },
   });
   if (command === "collect" && values.corpus && values.from && values.to && values.sources) {

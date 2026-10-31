@@ -634,13 +634,21 @@ describe("EditorialJobsService with two owners of one job", () => {
             fx.runsDir,
             "--config",
             configFile,
+            "--lock-token",
+            `${job.jobId}:dead-server:1`,
           ],
           { stdio: "ignore" },
         );
         const exited = new Promise<void>((resolve) => orphan.once("exit", () => resolve()));
+        NodeFS.mkdirSync(NodePath.join(jobDir, "engine.lock.d"));
         NodeFS.writeFileSync(
-          NodePath.join(jobDir, "engine.lock"),
-          JSON.stringify({ owner: "dead-server", generation: 1, pid: orphan.pid, at: 0 }),
+          NodePath.join(jobDir, "engine.lock.d", "dead-server-g1.json"),
+          JSON.stringify({
+            owner: "dead-server",
+            generation: 1,
+            token: `${job.jobId}:dead-server:1`,
+            pid: orphan.pid,
+          }),
         );
         const artifacts = {
           ...job.artifacts,

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- liveness of an engine child by pid, which may belong to a server that died.
+// @effect-diagnostics nodeBuiltinImport:off -- liveness and termination of an engine child by pid, which may outlive the server that started it.
 import * as NodeProcess from "node:process";
 
 import * as Clock from "effect/Clock";
@@ -7,165 +7,179 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-/**
- * One engine process per job directory, across owners and server processes. The file is
- * created exclusively before the child starts and then names its pid; a later owner waits
- * while that child lives, so a recovered job never runs a second engine beside the first.
- */
-const ENGINE_LOCK_FILE = "engine.lock";
+// One engine per job. Each claim writes or deletes only its own `<owner>-g<generation>.json`
+// (or a foreign one proved abandoned, by exact name), never a shared file. A child counts as
+// this job's engine only if `ps` shows its `--lock-token`; without `ps` (Windows) no pid is
+// identified and only the starting grace of the files holds a new owner back.
+const LOCK_DIR = "engine.lock.d";
+export const LOCK_TOKEN_FLAG = "--lock-token";
 
-const LockFile = Schema.Struct({
-  owner: Schema.String,
-  generation: Schema.Number,
-  pid: Schema.NullOr(Schema.Number),
-  /** Epoch milliseconds the lock was taken. */
-  at: Schema.Number,
-});
-type LockFile = typeof LockFile.Type;
-const LockJson = Schema.fromJsonString(LockFile);
-const decodeLock = Schema.decodeUnknownOption(LockJson);
-const encodeLock = Schema.encodeSync(LockJson);
-
-export interface EngineLockOwner {
+export interface EngineClaim {
+  readonly jobId: string;
   readonly owner: string;
   readonly generation: number;
 }
 
+export const engineToken = (claim: EngineClaim) =>
+  `${claim.jobId}:${claim.owner}:${claim.generation}`;
+
+const fileNameOf = (claim: EngineClaim) => `${claim.owner}-g${claim.generation}.json`;
+
+const LockFile = Schema.Struct({
+  owner: Schema.String,
+  generation: Schema.Number,
+  token: Schema.String,
+  pid: Schema.NullOr(Schema.Number),
+});
+const LockJson = Schema.fromJsonString(LockFile);
+const decodeLock = Schema.decodeUnknownOption(LockJson);
+const encodeLock = Schema.encodeSync(LockJson);
+
 export interface EngineLockTiming {
-  /** How often a waiting owner looks at the lock again. */
+  /** How often a waiting owner looks again. */
   readonly pollMs: number;
-  /** A lock without a pid older than this lost its owner before the child started. */
+  /** A file without a pid, or unreadable, older than this lost its owner before the child started. */
   readonly startingGraceMs: number;
-  /** After waiting this long for a former child, it is killed. */
+  /** After waiting this long for an identified former child, it is killed. */
   readonly staleEngineTimeoutMs: number;
 }
 
-const signal = (pid: number, value: NodeJS.Signals | 0) => {
+const TOKEN_PATTERN = new RegExp(`${LOCK_TOKEN_FLAG}[ =](\\S+)`);
+
+/** Live processes and their command lines, or null where `ps` cannot run. */
+const processTable = Effect.gen(function* () {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const lines = yield* spawner.lines(ChildProcess.make("ps", ["-A", "-o", "pid=,command="]));
+  const table = new Map<number, string>();
+  for (const line of lines) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (match !== null) table.set(Number(match[1]), match[2] ?? "");
+  }
+  return table;
+}).pipe(Effect.orElseSucceed(() => null));
+
+/** The lock token on a process's command line, if it is an engine child. */
+const tokenOf = (command: string | undefined) =>
+  command === undefined ? null : (TOKEN_PATTERN.exec(command)?.[1] ?? null);
+
+const kill = (pid: number) => {
   try {
-    NodeProcess.kill(pid, value);
-    return true;
-  } catch (error) {
-    // EPERM: the process exists but belongs to someone else.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    NodeProcess.kill(pid, "SIGKILL");
+  } catch {
+    // Gone already.
   }
 };
 
-/**
- * Whether `pid` is still an engine of `cli`. Where /proc exists its command line must name
- * the CLI, so a recycled pid does not hold a job forever; elsewhere a live pid is enough.
- */
-const isEngineAlive = Effect.fn("EngineLock.isEngineAlive")(function* (pid: number, cli: string) {
-  const fs = yield* FileSystem.FileSystem;
-  if (!signal(pid, 0)) return false;
-  const procExists = yield* fs.exists("/proc/self/cmdline").pipe(Effect.orElseSucceed(() => false));
-  if (!procExists) return true;
-  const cmdline = yield* fs.readFileString(`/proc/${pid}/cmdline`).pipe(Effect.option);
-  return Option.isSome(cmdline) && cmdline.value.split("\u0000").includes(cli);
-});
-
 export interface EngineLockOutcome {
-  /** A former owner's child this owner waited for, or killed after the timeout. */
+  /** A former child of this job this owner waited for, or killed after the timeout. */
   readonly waitedFor: {
     readonly pid: number;
-    readonly generation: number;
+    readonly token: string;
     readonly killed: boolean;
   } | null;
 }
 
+/** Writes this claim's own file; the temporary carries the same claim in its name. */
+const writeOwn = Effect.fn("EngineLock.writeOwn")(function* (
+  jobDir: string,
+  claim: EngineClaim,
+  pid: number | null,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(jobDir, LOCK_DIR);
+  yield* fs.makeDirectory(dir, { recursive: true });
+  const file = path.join(dir, fileNameOf(claim));
+  const tmp = `${file}.tmp`;
+  yield* fs.writeFileString(
+    tmp,
+    encodeLock({
+      owner: claim.owner,
+      generation: claim.generation,
+      token: engineToken(claim),
+      pid,
+    }),
+  );
+  yield* fs.rename(tmp, file);
+});
+
 /**
- * Takes the job's engine lock for `holder`, waiting while a former owner's child runs. The
- * caller holds it while it decides whether to launch the engine and while the child lives.
+ * Records this claim, then waits while another claim of the job may run an engine: a live
+ * process with this job's token, or a foreign file still inside its starting grace. Foreign
+ * files proved abandoned are deleted by exact name.
  */
 export const acquireEngineLock = Effect.fn("EngineLock.acquire")(function* (
   jobDir: string,
-  holder: EngineLockOwner,
-  cli: string,
+  claim: EngineClaim,
   timing: EngineLockTiming,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const lockPath = path.join(jobDir, ENGINE_LOCK_FILE);
+  const dir = path.join(jobDir, LOCK_DIR);
+  const ownName = fileNameOf(claim);
+  const ownToken = engineToken(claim);
+  yield* writeOwn(jobDir, claim, null);
   const waitStarted = yield* Clock.currentTimeMillis;
   let waitedFor: EngineLockOutcome["waitedFor"] = null;
   while (true) {
     const nowMs = yield* Clock.currentTimeMillis;
-    const created = yield* fs
-      .writeFileString(lockPath, encodeLock({ ...holder, pid: null, at: nowMs }), { flag: "wx" })
-      .pipe(
-        Effect.as(true),
-        Effect.catchReason("PlatformError", "AlreadyExists", () => Effect.succeed(false)),
-      );
-    if (created) return { waitedFor } satisfies EngineLockOutcome;
-    const text = yield* fs.readFileString(lockPath).pipe(Effect.option);
-    const lock = Option.flatMap(text, decodeLock);
-    // Created a moment ago and not yet written: treat it as a child about to start.
-    const current: LockFile = Option.getOrElse(lock, () => ({
-      owner: "",
-      generation: -1,
-      pid: null,
-      at: nowMs,
-    }));
-    if (current.owner === holder.owner && current.generation === holder.generation) {
-      return { waitedFor } satisfies EngineLockOutcome;
+    const table = yield* processTable;
+    const engines: Array<{ readonly pid: number; readonly token: string }> = [];
+    for (const [pid, command] of table ?? []) {
+      const token = tokenOf(command);
+      if (token !== null && token !== ownToken && token.startsWith(`${claim.jobId}:`)) {
+        engines.push({ pid, token });
+      }
     }
-    const alive = current.pid !== null && (yield* isEngineAlive(current.pid, cli));
-    const abandoned = current.pid === null ? nowMs - current.at > timing.startingGraceMs : !alive;
-    if (abandoned) {
-      yield* fs.remove(lockPath).pipe(Effect.ignore);
-      continue;
-    }
-    if (current.pid !== null) {
-      const killed = nowMs - waitStarted > timing.staleEngineTimeoutMs;
-      waitedFor = { pid: current.pid, generation: current.generation, killed };
-      if (killed) {
-        signal(current.pid, "SIGKILL");
-        yield* fs.remove(lockPath).pipe(Effect.ignore);
+    let starting = false;
+    for (const name of yield* fs.readDirectory(dir)) {
+      if (name === ownName || name === `${ownName}.tmp`) continue;
+      const file = path.join(dir, name);
+      const info = yield* fs.stat(file).pipe(Effect.option);
+      if (Option.isNone(info)) continue;
+      // The file's own age, never the time of this look: an unreadable file ages too.
+      const modifiedMs = Option.match(info.value.mtime, {
+        onNone: () => 0,
+        onSome: (date) => date.getTime(),
+      });
+      const lock = Option.flatMap(yield* fs.readFileString(file).pipe(Effect.option), decodeLock);
+      const identified =
+        Option.isSome(lock) &&
+        lock.value.pid !== null &&
+        tokenOf(table?.get(lock.value.pid)) === lock.value.token;
+      if (identified) continue;
+      const namesPid = Option.isSome(lock) && lock.value.pid !== null;
+      if (!namesPid && nowMs - modifiedMs <= timing.startingGraceMs) {
+        starting = true;
         continue;
       }
+      // Its child is gone or was never this job's engine, or it never got one.
+      yield* fs.remove(file).pipe(Effect.ignore);
+    }
+    if (engines.length === 0 && !starting) return { waitedFor } satisfies EngineLockOutcome;
+    const first = engines[0];
+    if (first !== undefined) {
+      const killed = nowMs - waitStarted > timing.staleEngineTimeoutMs;
+      waitedFor = { pid: first.pid, token: first.token, killed };
+      if (killed) for (const engine of engines) kill(engine.pid);
     }
     yield* Effect.sleep(`${timing.pollMs} millis`);
   }
 });
 
-const readOwn = Effect.fn("EngineLock.readOwn")(function* (
-  lockPath: string,
-  holder: EngineLockOwner,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(lockPath).pipe(Effect.option);
-  return Option.filter(
-    Option.flatMap(text, decodeLock),
-    (lock) => lock.owner === holder.owner && lock.generation === holder.generation,
-  );
-});
+/** Names the child in this claim's own file. */
+export const recordEnginePid = (jobDir: string, claim: EngineClaim, pid: number) =>
+  writeOwn(jobDir, claim, pid);
 
-/** Names the child in the lock; false when the lock is no longer this holder's. */
-export const recordEnginePid = Effect.fn("EngineLock.recordPid")(function* (
-  jobDir: string,
-  holder: EngineLockOwner,
-  pid: number,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const lockPath = path.join(jobDir, ENGINE_LOCK_FILE);
-  const own = yield* readOwn(lockPath, holder);
-  if (Option.isNone(own)) return false;
-  const tmp = `${lockPath}.${holder.generation}.tmp`;
-  yield* fs.writeFileString(tmp, encodeLock({ ...own.value, pid }));
-  yield* fs.rename(tmp, lockPath);
-  return true;
-});
-
-/** Removes the lock if it is still this holder's. */
+/** Deletes this claim's own file, by its exact name. */
 export const releaseEngineLock = Effect.fn("EngineLock.release")(function* (
   jobDir: string,
-  holder: EngineLockOwner,
+  claim: EngineClaim,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const lockPath = path.join(jobDir, ENGINE_LOCK_FILE);
-  if (Option.isSome(yield* readOwn(lockPath, holder))) {
-    yield* fs.remove(lockPath).pipe(Effect.ignore);
-  }
+  yield* fs.remove(path.join(jobDir, LOCK_DIR, fileNameOf(claim))).pipe(Effect.ignore);
 });

@@ -36,7 +36,14 @@ import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
-import { acquireEngineLock, recordEnginePid, releaseEngineLock } from "./engineLock.ts";
+import {
+  acquireEngineLock,
+  engineToken,
+  LOCK_TOKEN_FLAG,
+  recordEnginePid,
+  releaseEngineLock,
+  type EngineClaim,
+} from "./engineLock.ts";
 import {
   EngineSpawnRejected,
   lastJsonLine,
@@ -822,6 +829,12 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     readonly confirmLease: Effect.Effect<void, EditorialJobsError | LeaseLost>;
   }
 
+  const claimOf = (ctx: PhaseContext): EngineClaim => ({
+    jobId: ctx.job.job_id,
+    owner: ctx.lease.owner,
+    generation: ctx.lease.generation,
+  });
+
   /** Files of one claim: a former owner still running cannot overwrite the current one's. */
   const jobFile = (ctx: PhaseContext, name: string, extension: string) =>
     path.join(ctx.jobDir, `${name}.g${ctx.lease.generation}.${extension}`);
@@ -836,20 +849,20 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const outcome = yield* acquireEngineLock(ctx.jobDir, ctx.lease, options.engine.cli, {
+        const outcome = yield* acquireEngineLock(ctx.jobDir, claimOf(ctx), {
           pollMs: options.pollMs,
           startingGraceMs: options.startingGraceMs,
           staleEngineTimeoutMs: options.staleEngineTimeoutMs,
         }).pipe(Effect.provide(context), Effect.mapError(storage));
         yield* Effect.addFinalizer(() =>
-          releaseEngineLock(ctx.jobDir, ctx.lease).pipe(Effect.provide(context), Effect.ignore),
+          releaseEngineLock(ctx.jobDir, claimOf(ctx)).pipe(Effect.provide(context), Effect.ignore),
         );
         if (outcome.waitedFor !== null) {
-          const { pid, generation, killed } = outcome.waitedFor;
+          const { pid, token, killed } = outcome.waitedFor;
           yield* ctx.save({
             notes: [
               ...ctx.artifacts().notes,
-              `Waited for the engine (pid ${pid}) of generation ${generation}${killed ? "; killed after the timeout" : ""}.`,
+              `Waited for the engine (pid ${pid}, ${token})${killed ? "; killed after the timeout" : ""}.`,
             ],
             notices: [...ctx.artifacts().notices, { code: "stale_engine_waited" }],
           });
@@ -869,16 +882,16 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     return ctx.confirmLease.pipe(
       Effect.andThen(
         runEngineCommand(options.engine, {
-          args,
+          args: [...args, LOCK_TOKEN_FLAG, engineToken(claimOf(ctx))],
           logFile,
+          // Named in this claim's file, then the lease confirmed again: a claim that lost the
+          // job while launching kills the child it just started.
           onSpawn: (pid) =>
-            recordEnginePid(ctx.jobDir, ctx.lease, pid).pipe(
+            recordEnginePid(ctx.jobDir, claimOf(ctx), pid).pipe(
               Effect.provide(context),
-              Effect.orElseSucceed(() => false),
-              Effect.flatMap((recorded) =>
-                recorded
-                  ? Effect.void
-                  : Effect.fail(new EngineSpawnRejected({ message: "the engine lock moved" })),
+              Effect.andThen(ctx.confirmLease),
+              Effect.mapError(
+                (cause) => new EngineSpawnRejected({ message: `child ${pid}: ${cause.message}` }),
               ),
             ),
           onStderrLine: (line) =>
