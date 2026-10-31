@@ -65,6 +65,18 @@ export function interpolateClock(
   return { activeMs: clock.activeMs + elapsed, stageMs };
 }
 
+/** Active time of one stage moved forward to `nowMs`; only the running stage moves. */
+export function stageClockMs(
+  clock: EditorialVideoClock,
+  stage: EditorialResultsStage,
+  receivedAtMs: number,
+  nowMs: number,
+): number {
+  const recorded = clock.stages.find((entry) => entry.stage === stage)?.activeMs ?? 0;
+  const running = clock.state._tag === "running" && clock.state.stage === stage;
+  return recorded + (running ? Math.max(0, nowMs - receivedAtMs) : 0);
+}
+
 /** `mm:ss` under an hour, `h:mm:ss` from there; whole seconds, rounded down. */
 export function formatClock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));

@@ -14,6 +14,7 @@ import { cn } from "../lib/utils";
 import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../state/environments";
 import { compactCount, isThreadRouteId, resolveRouteSpace, spaceTabName } from "./editorial.logic";
 import { selectEnvironmentSpace, useSpaceStore, type EditorialSpace } from "./spaceStore";
+import { NewManualThreadButton } from "./NewManualThreadButton";
 import { ResultsNavigation } from "./results/ResultsNavigation";
 import { TrendInbox, useTrendInbox } from "./TrendInbox";
 
@@ -173,6 +174,9 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
   return (
     <>
       {environmentId ? <SpaceTabs environmentId={environmentId} space={space} /> : null}
+      {environmentId && space === "threads" ? (
+        <NewManualThreadButton environmentId={environmentId} />
+      ) : null}
       <div className="contents *:order-2 [&>*:first-child]:order-0" data-editorial-space={space}>
         {space === "threads" || environmentId === null ? (
           <ThreadSidebar {...props} />

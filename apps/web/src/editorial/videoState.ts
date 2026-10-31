@@ -10,10 +10,13 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import { AsyncResult } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+
+/** Stands in for the subscription of a route with no server thread. */
+const NO_VIDEO_VIEW_ATOM = Atom.make(AsyncResult.initial<LiveVideoView, never>());
 
 /** The server's view with the client time it arrived, which the clock interpolates from. */
 export interface LiveVideoView {
@@ -58,7 +61,44 @@ export const editorialVideoEnvironment = {
     label: "environment-data:editorial:video-save-result",
     tag: EDITORIAL_VIDEO_WS_METHODS.saveResult,
   }),
+  createManual: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-create-manual",
+    tag: EDITORIAL_VIDEO_WS_METHODS.createManual,
+  }),
+  capture: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-capture",
+    tag: EDITORIAL_VIDEO_WS_METHODS.capture,
+  }),
+  removeCapture: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-remove-capture",
+    tag: EDITORIAL_VIDEO_WS_METHODS.removeCapture,
+  }),
 };
+
+/**
+ * Whether a thread is a manual video thread: `unknown` until the server's first view arrives,
+ * so the route never shows a composer for a moment before it learns there is no chat. A
+ * failed read counts as not manual: the server refuses agent work in a manual thread anyway.
+ */
+export type VideoThreadModeState = "unknown" | "manual" | "other";
+
+export function useVideoThreadMode(threadRef: ScopedThreadRef | null): VideoThreadModeState {
+  const result = useAtomValue(
+    threadRef === null
+      ? NO_VIDEO_VIEW_ATOM
+      : editorialVideoEnvironment.live({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId },
+        }),
+  );
+  if (threadRef === null) return "other";
+  const live = AsyncResult.getOrElse(result, () => null);
+  // A view of another thread, kept while the next one loads, says nothing about this one.
+  if (live !== null && live.view.threadId === threadRef.threadId) {
+    return live.view.video?.thread.mode === "manual" ? "manual" : "other";
+  }
+  return AsyncResult.isFailure(result) ? "other" : "unknown";
+}
 
 /** Null until the first view arrives, on failure, and for a thread with no editorial side. */
 export function useVideoThread(threadRef: ScopedThreadRef): LiveVideoView | null {
