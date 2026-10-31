@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalized, signalId, type StackInput, stackItems, type StackResult } from "./cluster.ts";
+import {
+  dot,
+  normalized,
+  signalId,
+  type StackInput,
+  stackItems,
+  type StackResult,
+} from "./cluster.ts";
 import { DAY_MS } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import { prepare } from "./prepare.ts";
@@ -168,6 +175,55 @@ describe("stackItems", () => {
     expect(result.signals.map((s) => s.itemIds.length)).toEqual([9]);
     expectSameAsReference(items.slice(0, 2), 0.8, 30);
     expectSameAsReference(items.slice(0, 1), 0.8, 30);
+  });
+
+  it("keeps a candidate whose pruning bound sits exactly at a saturated threshold", () => {
+    // Three identical near-unit vectors and a threshold one hair below their cosine:
+    // the reference joins all three. A pruning slack with the wrong sign, or a bound
+    // computed against the wrong tail norm, splits them into three signals instead.
+    const next = random(424242);
+    const vector = normalized(Float32Array.from({ length: 1024 }, () => next() * 2 - 1)).map(
+      (x) => x * (1 - 1e-7),
+    );
+    const items = [0, 1, 2].map((n) => ({
+      id: `itm_${n}`,
+      publishedMs: START_MS + n,
+      vector: Float32Array.from(vector),
+    }));
+    const threshold = dot(vector, vector) - 1e-10;
+    const fast = expectSameAsReference(items, threshold, 30);
+    expect(fast.signals).toHaveLength(1);
+    expect(fast.signals[0]!.itemIds).toEqual(["itm_0", "itm_1", "itm_2"]);
+  });
+
+  it("matches the reference around representable neighbours of the threshold", () => {
+    // Cosine exactly at, one ULP below and one ULP above the threshold, in dimensions
+    // that are and are not multiples of the pruning cuts.
+    const ulp = (x: number, direction: 1n | -1n) => {
+      const view = new DataView(new ArrayBuffer(8));
+      view.setFloat64(0, x);
+      view.setBigUint64(0, view.getBigUint64(0) + direction);
+      return view.getFloat64(0);
+    };
+    for (const dim of [1021, 1023, 1024]) {
+      const a = new Float32Array(dim);
+      a[0] = 1;
+      for (const target of [0.7 - 1e-7, 0.7, 0.7 + 1e-7]) {
+        const b = new Float32Array(dim);
+        b[0] = target;
+        b[dim - 1] = Math.sqrt(1 - target * target);
+        const unitB = normalized(b);
+        const cosine = dot(a, unitB);
+        const items = [a, unitB, unitB].map((v, n) => ({
+          id: `itm_${n}`,
+          publishedMs: START_MS + n,
+          vector: Float32Array.from(v),
+        }));
+        for (const threshold of [cosine, ulp(cosine, -1n), ulp(cosine, 1n), target]) {
+          expectSameAsReference(items, threshold, 30);
+        }
+      }
+    }
   });
 
   it("returns no signals for no items", () => {
