@@ -246,17 +246,17 @@ function ManualVideoWorkspaceView({
       </div>
 
       {stage === "explore" ? (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(16rem,22rem)_1fr] border-t">
-          <div className="min-h-0 overflow-y-auto border-e p-3">{captures}</div>
-          <div className="flex min-h-0 flex-col">{slots.browser}</div>
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)] border-t">
+          <div className="min-h-0 min-w-0 overflow-y-auto border-e p-3">{captures}</div>
+          <div className="flex min-h-0 min-w-0 flex-col">{slots.browser}</div>
         </div>
       ) : stage === "write" ? (
-        <div className="grid min-h-0 flex-1 grid-cols-[1.4fr_1fr] border-t">
-          <div className="flex min-h-0 flex-col border-e">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] border-t">
+          <div className="flex min-h-0 min-w-0 flex-col border-e">
             {slots.editor}
             <VersionBar video={video} busy={controls.busy} onSaveVersion={controls.onSaveVersion} />
           </div>
-          <div className="flex min-h-0 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-col">
             <div className="shrink-0 p-2">
               <SideTabs tab={sideTab} onTab={setSideTab} />
             </div>
@@ -268,12 +268,12 @@ function ManualVideoWorkspaceView({
           </div>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[1.4fr_1fr] border-t">
-          <div className="flex min-h-0 flex-col border-e">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] border-t">
+          <div className="flex min-h-0 min-w-0 flex-col border-e">
             {slots.editor}
             <VersionBar video={video} busy={controls.busy} onSaveVersion={controls.onSaveVersion} />
           </div>
-          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto py-3">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto py-3">
             <section aria-label="Decidir" className="flex flex-col gap-2">
               <h2 className="px-2.5 font-medium text-sm">Decisión</h2>
               <VideoDecisionPanel

@@ -25,6 +25,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 19. Fuentes de Earlywindow: arXiv, Wikipedia, npm, Stack Exchange, Bluesky (`es/sources-earlywindow`), pendiente de fusión.
 20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), base `f75eebfae2`; cero archivos de upstream tocados. dev.to se retiró el 1 de noviembre de 2026 (`es/retire-devto`); queda Hugging Face.
 21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
+22. Modo manual (`es/manual-mode`), base `4384513ef9`, con `main` fusionado en `4849a10661` (`d0f38f927a`); un enganche de una línea en `apps/web/src/routes/_chat.tsx`; recepción del estado del preview sin tocar: suscripción al `PreviewManager` desde la capa propia.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1454,3 +1455,34 @@ Corrección tras la reverificación de Sol (31 de octubre de 2026, NO APTO sobre
 - R2, purgas idempotentes. Una purga ya registrada (misma fuente, tipo y hash) no se vuelve a escribir. Un objetivo sin coincidencias no deja registro ni reescribe archivos. En ambos casos el resultado lleva `unchanged: true` y `message` («Already purged; corpus unchanged» o «No matches; corpus unchanged») y el corpus queda igual byte a byte, `corpus_hash` incluido. Las ediciones se planifican antes de escribir nada. Bloquear de antemano un objetivo que todavía no está en el corpus sería otra decisión; no se hace.
 - R3, profundidad. El límite de 64 niveles se comprueba antes de añadir cualquier elemento, también las hojas autocerradas: `<b/>` dentro de 64 `<a>` se rechaza.
 - R4, `body_kind`. Describe el origen del texto: `summary` si vino de `description`/`summary`, `content` si vino de `content:encoded`/`content`. `truncated` indica si se cortó a 500 caracteres.
+
+## 24. Modo manual (rama `es/manual-mode`, 31 de octubre de 2026)
+
+Base: `4384513ef9`, con `main` fusionado en `4849a10661` (`d0f38f927a`). Decisión 9 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md` y maqueta `05-maqueta-modo-manual.html`; mapa de integración §3, §4, §8 y §9 (U6). Hilo de video sin chat ni motor, etiqueta «manual», tres etapas (Explorar, Escribir, Decidir) y dos relojes. `ManualThreadPolicy` no cambia: sus pruebas de rechazo en `ManualThreadPolicy.integration.test.ts` (WS `dispatchCommand`, `sendToThread`, `launch` sobre el hilo, tarea programada, efectos pendientes) siguen cubriendo los hilos creados por las entradas nuevas, que pasan por el mismo `EditorialThreadService.createVideo`.
+
+Archivos de upstream tocados:
+
+| Archivo                               | Líneas  | Alcance                                                                                                                                           |
+| ------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/routes/_chat.tsx`       | 7, 37   | Importa `EditorialThreadRouteView` y lo monta en lugar de `ThreadRouteView`, con las mismas props. Sustituye la importación de `ThreadRouteView`. |
+| `packages/contracts/src/editorial.ts` | 325-329 | `EditorialCreateVideoInput.mode` opcional (`assisted` por omisión): «Crear hilo manual» desde la ficha.                                           |
+
+La recepción del estado del preview no se modifica. Las dos rutas de navegador (escritorio por `preview.reportStatus` y navegador del servidor) terminan en `PreviewManager.reportStatus`, que publica `navigated`; `BrowserVisitService` se suscribe a `PreviewManager.subscribeEvents` desde la capa de `videoRpc.ts` (`Effect.serviceOption`, así que un servidor o una prueba sin previews construye igual) y registra solo cargas terminadas (`Success`) de hilos manuales sin decidir. Cero líneas en `preview/`, `server.ts` o `ws.ts`.
+
+Archivos nuevos:
+
+- Servidor: `apps/server/src/editorial/BrowserVisitService.ts`, `persistence/Migrations/009_EditorialManualWork.ts` (columna `removed_at` en `editorial_captures`, tabla `editorial_browser_visits`; repetible, en `REPLAYABLE_MIGRATION_IDS`), `manualMode.test.ts`.
+- Cliente, en `apps/web/src/editorial/`: `EditorialThreadRouteView.tsx`, `ManualVideoWorkspace.tsx`, `ManualCaptureList.tsx`, `ManualBrowser.tsx`, `ScriptEditor.tsx`, `NewManualThreadButton.tsx`, `useVideoDecision.ts`, `manualMode.logic.ts`, `ManualVideoWorkspace.browser.test.tsx`.
+
+RPC añadidas en `EditorialVideoRpcGroup` (`packages/contracts/src/editorialVideo.ts`), con scope `orchestration:operate`: `editorial.video.createManual` (hilo manual sin tendencia, `trendKey` opcional para la comparación por pares, id de operación del cliente), `editorial.video.capture` y `editorial.video.removeCapture` (rechazadas con `decided` tras la decisión, dentro de la transacción). `EditorialVideoState` gana `captures` (vigentes, en orden) y `visits` (historial del hilo manual, 200 más recientes; vacío en asistido), así que `editorial.video.get` y `subscribe` los exponen.
+
+Archivos propios tocados: `EditorialCommandService.ts` (`removeCapture`, `refuseWhenDecided` en capturas), `EditorialThreadService.ts` (un hilo manual con `trendKey` no mueve el vínculo de producción de la tendencia), `EditorialInboxCommands.ts` (`createVideo` con `mode: "manual"`: un hilo manual por expediente, operación `editorial:trend-video-manual:<run>:<dossier>`, registra tendencia y corrida pero no adjunta expediente), `videoRpc.ts`, `EditorialModel.ts` (eventos `capture.removed` y `browser.visited`), `Errors.ts` (entidad `capture`), `VideoThreadSections.tsx` (la decisión pasa a `useVideoDecision`, compartida; exporta `UnresolvedInterval`), `WorkClock.tsx` (variante `stages`: un reloj por etapa de trabajo, la activa marcada, pausa y reanudar), `videoCommands.ts` (`capture`, `removeCapture`, `ensureScriptFile`), `videoState.ts` (`useVideoThreadMode`), `TrendDossierPage.tsx` y `trendActions.ts` (botón «Crear hilo manual»), `EditorialSidebar.tsx` («Nuevo hilo manual» en el espacio Hilos).
+
+Decisiones reversibles:
+
+- Mientras no se sabe si el hilo es manual, `ThreadRouteView` sigue montado pero oculto (`visibility: hidden` en línea) e inerte, en vez de desmontarse: un hilo ordinario conserva su único `ChatView` entre navegaciones y el composer nunca aparece habilitado en un hilo manual. Un fallo al leer la vista editorial cuenta como «no manual»; el servidor rechaza igual el trabajo de agentes en un hilo manual.
+- Cambiar de etapa es una orden `stage` del reloj existente (`changeStage`, una transacción que cierra el tramo vivo y abre el siguiente); volver a Explorar abre otro tramo de `explore`. Antes de entrar a Escribir el cliente crea el guion desde la plantilla si falta. La decisión cierra el tramo vivo con `openStage: "decide"` como en asistido.
+- Editor: `@pierre/diffs/edit` (`File` con `edit`, `EditProvider`, `Virtualizer`, `DiffWorkerPoolProvider`) con las mismas sesiones de guardado del panel de archivos (`useFileSaveSession`, `changeFileSaveSession`, `setProjectFileQueryData`), sin `FilePreviewPanel`: sus anotaciones de línea agregan comentarios de revisión al composer, un control de chat. El reloj de la cabecera (`WorkClock`) toma una versión tras cada pausa del autoguardado, igual que en asistido. Vista previa con `FileMarkdownPreview`.
+- Navegador: `PreviewPanel` en modo `embedded`, sin `onSendAnnotation`. Mientras no hay pestaña, botones a los sitios de la maqueta (x.com, news.ycombinator.com, github.com/trending, threads.net) que abren una con `openPreviewSession`. «Capturar» lee URL y título del snapshot de la pestaña activa en `previewStateStore`.
+- Un hilo manual creado desde una tendencia guarda `trendKey` y `runId` como condición de la comparación por pares, sin expediente adjunto y sin vínculo de producción: el botón «Crear hilo de video» de la tendencia sigue creando o abriendo el hilo asistido.
+- El historial no cuenta recargas de la misma página ni cargas en curso o fallidas; si el título llega después de la carga, actualiza la misma visita. Tras la decisión no se registran visitas ni se aceptan capturas.

@@ -160,9 +160,10 @@ export function ScriptEditor({
             if (next === "source" || next === "preview") setView(next);
           }}
         >
-          <Toggle value="source" aria-label="Editar">
+          {/* "Texto", not "Editar": Decidir shows this beside the decision's own "Editar". */}
+          <Toggle value="source" aria-label="Texto">
             <CodeIcon aria-hidden />
-            Editar
+            Texto
           </Toggle>
           <Toggle value="preview" aria-label="Vista previa">
             <EyeIcon aria-hidden />
