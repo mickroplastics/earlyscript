@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as EditorialSourcesService from "../src/editorial/EditorialSourcesService.ts";
 import * as EditorialDatabase from "../src/editorial/persistence/EditorialDatabase.ts";
 import { makeTempDir, removeDir } from "../src/editorial/persistence/EditorialDatabase.testkit.ts";
-import { runRecordSourceBacktest } from "./record-source-backtest.ts";
+import { RecordSourceBacktestError, runRecordSourceBacktest } from "./record-source-backtest.ts";
 
 /** A report as `engine backtest` writes it, reduced to what the hash and the reader need. */
 function report(options: {
@@ -68,6 +68,9 @@ const entryOf = (dbPath: string, source: string) =>
     ),
   );
 
+const reasonOfError = (error: { readonly _tag: string }) =>
+  error instanceof RecordSourceBacktestError ? error.reason : error._tag;
+
 it.effect("records a not-worse backtest and refuses worse, tampered or mismatched ones", () => {
   const dir = makeTempDir();
   const dbPath = NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME);
@@ -78,10 +81,7 @@ it.effect("records a not-worse backtest and refuses worse, tampered or mismatche
         Effect.provide(NodeServices.layer),
       );
     const reasonOf = (source: string, file: string) =>
-      record(source, file).pipe(
-        Effect.flip,
-        Effect.map((error) => error.reason),
-      );
+      record(source, file).pipe(Effect.flip, Effect.map(reasonOfError));
 
     const worse = write(dir, "worse.json", report({ candidateP5: 0.6 }));
     assert.strictEqual(yield* reasonOf("npm", worse), "worse");
@@ -106,11 +106,7 @@ it.effect("records a not-worse backtest and refuses worse, tampered or mismatche
         databasePath: NodePath.join(dir, "typo.sqlite"),
         source: "npm",
         backtestPath: goodFile,
-      }).pipe(
-        Effect.provide(NodeServices.layer),
-        Effect.flip,
-        Effect.map((error) => error.reason),
-      ),
+      }).pipe(Effect.provide(NodeServices.layer), Effect.flip, Effect.map(reasonOfError)),
       "missing-database",
     );
     assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "typo.sqlite")));

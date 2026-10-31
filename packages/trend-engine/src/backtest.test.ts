@@ -7,15 +7,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import type { SourceId } from "@earlyscript/editorial-contracts/source";
 
-import {
-  checkBacktest,
-  crossingLabel,
-  labelCandidates,
-  parseCutoffList,
-  precisionAt,
-  runBacktest,
-  type Story,
-} from "./backtest.ts";
+import { checkBacktest, parseCutoffList, runBacktest } from "./backtest.ts";
+import { crossingLabel, labelCandidates, precisionAt, type Story } from "./backtest-label.ts";
 import { checkBacktestReport, decideVerdict } from "./backtest-report.ts";
 import { daysBetween } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
