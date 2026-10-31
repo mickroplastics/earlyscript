@@ -1,7 +1,12 @@
 import type { RssFeed, SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
 import type { DayResult, SourceAdapter } from "./adapter.ts";
-import { createHttpClient, type GetResponse, type HttpOptions } from "./http.ts";
+import {
+  createHttpClient,
+  type FrozenResponse,
+  type GetResponse,
+  type HttpOptions,
+} from "./http.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
 import { collectLobstersDay } from "./lobsters.ts";
@@ -64,7 +69,7 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     id: "npm",
     label: "npm",
     selection: {
-      npm: `Registry search keywords:ai,llm,agent,mcp,cli; first 5,250 results per query; latest version date on the day; at least ${NPM_MIN_WEEKLY_DOWNLOADS} present weekly downloads; top 100 by them`,
+      npm: `Registry search keywords:ai,llm,agent,mcp,cli; first 1,250 results per query; latest version date on the day; at least ${NPM_MIN_WEEKLY_DOWNLOADS} present weekly downloads; top 100 by them`,
     },
     coverage_policy: "sample",
   },
@@ -179,12 +184,25 @@ const GATED: Readonly<
 };
 const isGated = (id: SourceId): id is GatedSource => Object.hasOwn(GATED, id);
 
+/** Caches 200 responses for the life of one adapter (one collect run). */
+function memoized(get: GetResponse, memo: Map<string, FrozenResponse>): GetResponse {
+  return async (url, headers) => {
+    const hit = memo.get(url);
+    if (hit) return hit;
+    const response = await get(url, headers);
+    if (response.status === 200) memo.set(url, response);
+    return response;
+  };
+}
+
 /**
  * One paced client per source shared by its data and its robots.txt requests. robots.txt is
- * read again each day: the rules map lives for one collectDay call.
+ * read again each day: the rules map lives for one collectDay call. npm search pages do not
+ * depend on the day, so one collect run reads them once for all its days.
  */
 function gatedAdapter(id: GatedSource, options: HttpOptions): SourceAdapter {
   const state = { nextStart: 0, blockedUntil: 0 };
+  const pages = new Map<string, FrozenResponse>();
   const own = {
     ...options,
     ...(id === "stackexchange" ? { throttle: stackExchangeThrottle } : {}),
@@ -195,7 +213,8 @@ function gatedAdapter(id: GatedSource, options: HttpOptions): SourceAdapter {
       const text = createHttpClient(id, { ...own, text: true }, state);
       const robots = robotsGate(() => text, new Map<string, ReadonlyArray<RobotsRule>>());
       // The arXiv API answers Atom XML, read as text like robots.txt.
-      const data = id === "arxiv" ? text : createHttpClient(id, own, state);
+      const client = id === "arxiv" ? text : createHttpClient(id, own, state);
+      const data = id === "npm" ? memoized(client, pages) : client;
       return GATED[id](
         day,
         followRedirects(() => data, robots),

@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { collectArxivDay } from "./arxiv.ts";
 import { BLUESKY_MAX_REQUESTS_PER_TERM, BLUESKY_TERMS, collectBlueskyDay } from "./bluesky.ts";
 import { createHttpClient, type FrozenResponse, type GetResponse } from "./http.ts";
-import { collectNpmDay } from "./npm.ts";
+import { liveSources } from "./index.ts";
+import { collectNpmDay, NPM_QUERIES } from "./npm.ts";
 import { robotsGate, type RobotsGate } from "./robots.ts";
 import { collectStackExchangeDay, stackExchangeThrottle } from "./stackexchange.ts";
 import { collectWikipediaDay, wikipediaTopUrl } from "./wikipedia.ts";
@@ -171,7 +172,8 @@ describe("Stack Exchange", () => {
     expect(result.coverage?.note).toContain("ai capped at 300 questions by score");
   });
   it("waits for a throttle declared in the body of a 400 and of a 200", async () => {
-    let clock = 0;
+    // After the day ends, so the day is not partial for being unfinished.
+    let clock = Date.parse("2026-10-31T00:00:00Z");
     const waits: Array<number> = [];
     const fetcher = vi
       .fn<typeof fetch>()
@@ -238,6 +240,31 @@ describe("npm", () => {
     });
     expect(result.coverage).toMatchObject({ status: "partial", items: 4 });
     expect(result.coverage?.note).toContain("below=1");
+  });
+});
+
+describe("npm search pages", () => {
+  it("reads each page once per collect run and robots.txt once per day", async () => {
+    let clock = Date.parse("2026-10-31T00:00:00Z");
+    const urls: Array<string> = [];
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+      urls.push(String(url));
+      return new URL(String(url)).pathname === "/robots.txt"
+        ? new Response("", { status: 404 })
+        : response({ objects: [], total: 0 });
+    });
+    const [adapter] = liveSources(["npm"], {
+      fetch: fetcher,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    await adapter!.collectDay("2026-10-28");
+    const second = await adapter!.collectDay("2026-10-29");
+    expect(urls.filter((url) => url.endsWith("/robots.txt"))).toHaveLength(2);
+    expect(urls.filter((url) => url.includes("/-/v1/search"))).toHaveLength(NPM_QUERIES.length);
+    expect(second.coverage).toMatchObject({ status: "partial", items: 0 });
   });
 });
 

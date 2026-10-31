@@ -16,8 +16,12 @@ export const NPM_QUERIES = [
   "keywords:cli",
 ] as const;
 const PAGE = 250;
-/** The registry serves results 0..5249; a larger offset silently returns the first page again. */
-const MAX_FROM = 5000;
+/**
+ * Results read per query, ranked by relevance (which weighs popularity). The registry serves up
+ * to 5250, but a page of 250 took about 7 s on 31 October 2026: five queries at full depth do
+ * not fit the five-minute day budget, five pages each do.
+ */
+export const NPM_DEPTH = 1250;
 export const NPM_MAX_ITEMS = 100;
 /**
  * Known-package rule (Earlywindow M28): a release enters its day only if the package has at
@@ -86,64 +90,72 @@ export async function collectNpmDay(
   let retrievedAt = now;
   let invalid = 0;
   const below = new Set<string>();
-  for (const query of NPM_QUERIES) {
-    let received = 0;
-    let total = 0;
-    try {
-      for (let from = 0; from <= MAX_FROM; from += PAGE) {
+  const progress = new Map(
+    NPM_QUERIES.map((query) => [query, { received: 0, total: 0, done: false }]),
+  );
+  // Breadth-first over queries: a spent day budget cuts every query at the same depth.
+  let stopped = false;
+  for (let from = 0; from < NPM_DEPTH && !stopped; from += PAGE) {
+    for (const query of NPM_QUERIES) {
+      const state = progress.get(query)!;
+      if (state.done || stopped) continue;
+      try {
         const response = await get(npmSearchUrl(query, from));
         retrievedAt = response.observed_at;
         if (response.status !== 200) throw new SourceFailure(`${query} HTTP ${response.status}`);
         if (!isSearch(response.body))
           throw new SourceFailure(`${query} invalid npm search response`);
-        total = response.body.total;
-        received += response.body.objects.length;
-        for (const object of response.body.objects) {
-          if (!isObject(object)) {
-            invalid++;
-            continue;
+        state.total = response.body.total;
+        state.received += response.body.objects.length;
+          for (const object of response.body.objects) {
+            if (!isObject(object)) {
+              invalid++;
+              continue;
+            }
+            const { package: pkg, downloads } = object;
+            const published = Date.parse(pkg.date);
+            if (!Number.isFinite(published) || published < start || published >= start + DAY_MS)
+              continue;
+            const weekly = downloads?.weekly ?? 0;
+            if (weekly < NPM_MIN_WEEKLY_DOWNLOADS) {
+              below.add(pkg.name);
+              continue;
+            }
+            const description = plainText(pkg.description ?? "");
+            const repository = link(pkg.links?.repository);
+            candidates.set(pkg.name, {
+              weekly,
+              item: {
+                id: `itm_npm_${pkg.name}@${pkg.version}`,
+                source: "npm",
+                permalink: `https://www.npmjs.com/package/${pkg.name}`,
+                external_url: repository ?? link(pkg.links?.homepage),
+                published_at: new Date(published).toISOString(),
+                // CI releases publish as "GitHub Actions"; the first maintainer keeps authors countable.
+                author:
+                  (pkg.publisher?.trustedPublisher
+                    ? pkg.maintainers?.[0]?.username
+                    : pkg.publisher?.username) ?? null,
+                title: `${pkg.name} ${pkg.version}`,
+                ...bodyFields(
+                  [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
+                ),
+                retrieved_at: response.observed_at,
+                entities: githubEntity(repository),
+              },
+            });
           }
-          const { package: pkg, downloads } = object;
-          const published = Date.parse(pkg.date);
-          if (!Number.isFinite(published) || published < start || published >= start + DAY_MS)
-            continue;
-          const weekly = downloads?.weekly ?? 0;
-          if (weekly < NPM_MIN_WEEKLY_DOWNLOADS) {
-            below.add(pkg.name);
-            continue;
-          }
-          const description = plainText(pkg.description ?? "");
-          const repository = link(pkg.links?.repository);
-          candidates.set(pkg.name, {
-            weekly,
-            item: {
-              id: `itm_npm_${pkg.name}@${pkg.version}`,
-              source: "npm",
-              permalink: `https://www.npmjs.com/package/${pkg.name}`,
-              external_url: repository ?? link(pkg.links?.homepage),
-              published_at: new Date(published).toISOString(),
-              // CI releases publish as "GitHub Actions"; the first maintainer keeps authors countable.
-              author:
-                (pkg.publisher?.trustedPublisher
-                  ? pkg.maintainers?.[0]?.username
-                  : pkg.publisher?.username) ?? null,
-              title: `${pkg.name} ${pkg.version}`,
-              ...bodyFields(
-                [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
-              ),
-              retrieved_at: response.observed_at,
-              entities: githubEntity(repository),
-            },
-          });
-        }
-        if (response.body.objects.length < PAGE || from + PAGE >= total) break;
+        if (response.body.objects.length < PAGE || from + PAGE >= state.total) state.done = true;
+      } catch (error) {
+        if (!(error instanceof SourceFailure)) throw error;
+        failures.push(`${query}: ${error.message}`);
+        state.done = true;
+        if (/budget|rate_limited/.test(error.message)) stopped = true;
       }
-    } catch (error) {
-      if (!(error instanceof SourceFailure)) throw error;
-      failures.push(error.message);
     }
-    counts.push(`${query} total=${total} received=${received}`);
   }
+  for (const [query, state] of progress)
+    counts.push(`${query} total=${state.total} received=${state.received}`);
   const kept = [...candidates.values()]
     .toSorted((a, b) => b.weekly - a.weekly || a.item.id.localeCompare(b.item.id))
     .slice(0, NPM_MAX_ITEMS);
