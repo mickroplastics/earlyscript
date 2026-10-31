@@ -1,11 +1,19 @@
 import type { RssFeed, SourceDescriptor, SourceId } from "@earlyscript/editorial-contracts/source";
 
-import type { SourceAdapter } from "./adapter.ts";
-import { createHttpClient, type HttpOptions } from "./http.ts";
+import type { DayResult, SourceAdapter } from "./adapter.ts";
+import {
+  createHttpClient,
+  MAX_RESPONSE_BYTES,
+  type GetResponse,
+  type HttpOptions,
+  type HttpSource,
+} from "./http.ts";
+import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from "./robots.ts";
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
+import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
+import { DEVTO_SELECTION, devtoCollector } from "./devto.ts";
 import { collectLobstersDay } from "./lobsters.ts";
-import { followRedirects, robotsGate, type RobotsRule } from "./robots.ts";
 import { collectRssDay, type CachedFeed } from "./rss.ts";
 import { RSS_FEEDS } from "./rss-feeds.ts";
 
@@ -38,6 +46,20 @@ export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
     coverage_policy: "census",
   },
   rss: rssDescriptor(RSS_FEEDS),
+  huggingface: {
+    id: "huggingface",
+    label: "Hugging Face",
+    selection: { huggingface: HF_SELECTION },
+    // Models are chosen by present-day likes: a declared sample, as GitHub.
+    coverage_policy: "sample",
+  },
+  devto: {
+    id: "devto",
+    label: "DEV Community",
+    selection: { devto: DEVTO_SELECTION },
+    // Up to 500 articles a day by present-day reactions: a declared sample.
+    coverage_policy: "sample",
+  },
 };
 
 /** The feed list is the selection: adding a feed changes the corpus hash. */
@@ -49,6 +71,22 @@ export function rssDescriptor(feeds: ReadonlyArray<RssFeed>): SourceDescriptor {
     coverage_policy: "census",
   };
 }
+
+type Collector = (
+  day: string,
+  get: GetResponse,
+  robots: RobotsGate,
+  getText: GetResponse,
+) => Promise<DayResult>;
+/** A fresh collector per adapter: listings walked once are kept between that adapter's days. */
+const COLLECTORS: Readonly<
+  Partial<Record<Exclude<SourceId, "lobsters" | "rss">, () => Collector>>
+> = {
+  hn: () => (day, get) => collectHnDay(day, get),
+  github: () => (day, get) => collectGithubDay(day, get),
+  huggingface: huggingfaceCollector,
+  devto: devtoCollector,
+};
 
 export function sourceDescriptor(id: SourceId): SourceDescriptor {
   const descriptor = SOURCES[id];
@@ -66,6 +104,8 @@ export type { DayResult, SourceAdapter } from "./adapter.ts";
 
 export { collectHnDay } from "./hn.ts";
 export { collectGithubDay } from "./github.ts";
+export { huggingfaceCollector } from "./huggingface.ts";
+export { devtoCollector } from "./devto.ts";
 
 export { collectLobstersDay } from "./lobsters.ts";
 export {
@@ -125,6 +165,8 @@ function rssAdapter(options: HttpOptions, feeds: ReadonlyArray<RssFeed>): Source
   };
 }
 
+const isHttpSource = (id: SourceId): id is HttpSource => id in MAX_RESPONSE_BYTES;
+
 export function liveSources(
   ids: ReadonlyArray<SourceId>,
   options: HttpOptions = {},
@@ -134,20 +176,26 @@ export function liveSources(
     if (id === "lobsters") return lobstersAdapter(options);
     if (id === "rss") return rssAdapter(options, config.rssFeeds ?? RSS_FEEDS);
     const descriptor = sourceDescriptor(id);
-    if (id !== "hn" && id !== "github") throw new Error(`No live adapter for source: ${id}`);
+    const makeCollector = COLLECTORS[id];
+    if (!makeCollector || !isHttpSource(id)) throw new Error(`No live adapter for source: ${id}`);
     const state = { nextStart: 0, blockedUntil: 0 };
     const rules = new Map<string, ReadonlyArray<RobotsRule>>();
+    const collect = makeCollector();
     return {
       descriptor,
       collectDay: (day) => {
-        // API URLs are not robots-gated, but a redirect away from them is.
-        const text = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
+        // Collectors gate their own URLs; a redirect away from them is gated per hop.
+        // robots.txt goes without credentials; model cards carry them on their own origin only.
+        const anonymous = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
+        const text = createHttpClient(id, { ...options, text: true }, state);
         const json = createHttpClient(id, options, state);
-        const get = followRedirects(
-          () => json,
-          robotsGate(() => text, rules),
+        const robots = robotsGate(() => anonymous, rules);
+        return collect(
+          day,
+          followRedirects(() => json, robots),
+          robots,
+          followRedirects(() => text, robots),
         );
-        return (id === "hn" ? collectHnDay : collectGithubDay)(day, get);
       },
     };
   });
