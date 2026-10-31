@@ -1093,7 +1093,7 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
-  TrendEngine.TREND_ENGINE_EXTRA_RESOURCE,
+  ...TrendEngine.TREND_ENGINE_EXTRA_RESOURCES,
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {

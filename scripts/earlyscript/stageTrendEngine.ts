@@ -14,10 +14,14 @@ import { build } from "vite-plus/pack";
 /** Directory under the app's resources; engineProcess.ts names the same one. */
 export const TREND_ENGINE_RESOURCE = "trend-engine";
 
-export const TREND_ENGINE_EXTRA_RESOURCE = {
-  from: `apps/desktop/prod-resources/${TREND_ENGINE_RESOURCE}`,
-  to: TREND_ENGINE_RESOURCE,
-} as const;
+// electron-builder always drops the node_modules at the root of a `from`; it gets its own entry.
+export const TREND_ENGINE_EXTRA_RESOURCES = [
+  { from: `apps/desktop/prod-resources/${TREND_ENGINE_RESOURCE}`, to: TREND_ENGINE_RESOURCE },
+  {
+    from: `apps/desktop/prod-resources/${TREND_ENGINE_RESOURCE}/node_modules`,
+    to: `${TREND_ENGINE_RESOURCE}/node_modules`,
+  },
+] as const;
 
 /** Keeps the engine out of app.asar: it runs as its own process from real paths. */
 export const TREND_ENGINE_FILE_EXCLUSIONS = [
