@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import { huggingfaceCollector, hfModelsUrl } from "./huggingface.ts";
 import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
-import { liveSources } from "./index.ts";
+import { liveSources, SOURCES } from "./index.ts";
 import type { RobotsGate } from "./robots.ts";
 import { markdownText } from "./shared.ts";
 
@@ -254,6 +254,12 @@ describe("Hugging Face source", () => {
     expect(calls.some((url) => url.includes("/ostris/"))).toBe(false);
     expect(result.items.map((item) => item.title)).toContain("ostris/primal_vae");
     expect(result.coverage?.note).toContain("model card: robots_disallowed: test");
+  });
+
+  it("declares the fallback body in its selection", () => {
+    expect(SOURCES.huggingface.selection.huggingface).toContain(
+      "without a usable card (absent, empty, refused by robots.txt, over 2 MiB) body = the model tags",
+    );
   });
 
   it("turns a model card into plain text", () => {

@@ -19,7 +19,10 @@ const HUB = "https://huggingface.co";
 
 export const HF_SELECTION =
   `models: createdAt in the UTC day, likes>=1, sort present-day likes then downloads, first ${HF_MODELS_PER_DAY}, ` +
-  "body = model card README; papers: every Daily Papers entry submitted that day (date=day)";
+  "body = model card README as plain text (front matter, code, images and table rules removed), " +
+  "cut to 4000 chars; without a usable card (absent, empty, refused by robots.txt, over 2 MiB) " +
+  "body = the model tags without a namespace; papers: every Daily Papers entry submitted that " +
+  "day (date=day)";
 
 // Public Hub responses validated at the adapter boundary; unknown keys are ignored.
 const HfModels = Schema.Array(
