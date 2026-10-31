@@ -34,6 +34,7 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import { EditorialRpcGroup } from "./editorial.ts";
+import { EditorialPresentationRpcGroup } from "./editorialPresentation.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -2140,4 +2141,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 )
   .merge(EditorialRpcGroup)
+  .merge(EditorialPresentationRpcGroup)
   .middleware(RpcScopeAuthorization);
