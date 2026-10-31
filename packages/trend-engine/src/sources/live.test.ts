@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - isolated filesystem tests for the plain engine.
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off - isolated filesystem tests and real-clock live checks for the plain engine.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
