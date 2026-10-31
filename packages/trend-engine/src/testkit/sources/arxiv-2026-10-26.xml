@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic entries in the shape of the arXiv export API Atom feed; the API refused live requests while the fixture was prepared. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title type="html">ArXiv Query</title>
+  <id>http://arxiv.org/api/fixture</id>
+  <updated>2026-10-31T00:00:00-04:00</updated>
+  <opensearch:totalResults xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">3</opensearch:totalResults>
+  <opensearch:startIndex xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">0</opensearch:startIndex>
+  <opensearch:itemsPerPage xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">200</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2610.90001v1</id>
+    <updated>2026-10-26T01:02:03Z</updated>
+    <published>2026-10-26T01:02:03Z</published>
+    <title>Tool-Using Agents Under
+  Budget Constraints</title>
+    <summary>  We study agents that call tools with a fixed budget &amp; report costs.
+Code: https://github.com/Example/Budget-Agents.
+</summary>
+    <author><name>Ada Example</name></author>
+    <author><name>Ben Sample</name></author>
+    <arxiv:comment xmlns:arxiv="http://arxiv.org/schemas/atom">12 pages</arxiv:comment>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.90002v2</id>
+    <updated>2026-10-28T09:00:00Z</updated>
+    <published>2026-10-26T23:59:00Z</published>
+    <title>Evaluating Code Review Bots</title>
+    <summary>A benchmark of review assistants on pull requests.</summary>
+    <author><name>Chen Placeholder</name></author>
+    <arxiv:comment xmlns:arxiv="http://arxiv.org/schemas/atom">Data at https://github.com/example/review-bench</arxiv:comment>
+    <category term="cs.SE" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.90003v1</id>
+    <updated>2026-10-27T00:00:00Z</updated>
+    <published>2026-10-27T00:00:00Z</published>
+    <title>Inclusive Upper Bound Paper</title>
+    <summary>Submitted at the next midnight, which the inclusive query range returns.</summary>
+    <author><name>Dee Instance</name></author>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>
