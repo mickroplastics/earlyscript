@@ -76,12 +76,15 @@ export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(func
     return yield* fail("baseline-source", `${source} is part of the engine baseline`);
   }
 
-  const text = yield* fs
-    .readFileString(path.resolve(input.backtestPath))
-    .pipe(Effect.mapError((cause) => new RecordSourceBacktestError({
-      reason: "unreadable-backtest",
-      detail: String(cause),
-    })));
+  const text = yield* fs.readFileString(path.resolve(input.backtestPath)).pipe(
+    Effect.mapError(
+      (cause) =>
+        new RecordSourceBacktestError({
+          reason: "unreadable-backtest",
+          detail: String(cause),
+        }),
+    ),
+  );
   const checked = yield* Effect.try({
     try: () => checkBacktestReport(JSON.parse(text)),
     catch: (cause) =>

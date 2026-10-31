@@ -140,7 +140,9 @@ export function checkBacktestReport(json: unknown): BacktestCheck {
   }
   const verdict = decideVerdict(report.logical.total);
   if (verdict.verdict !== report.logical.verdict.verdict) {
-    problems.push(`recorded verdict ${report.logical.verdict.verdict}, totals give ${verdict.verdict}`);
+    problems.push(
+      `recorded verdict ${report.logical.verdict.verdict}, totals give ${verdict.verdict}`,
+    );
   }
   return {
     ok: problems.length === 0,

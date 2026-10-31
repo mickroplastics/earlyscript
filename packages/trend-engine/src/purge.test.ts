@@ -9,7 +9,12 @@ import { collectCorpus } from "./collect.ts";
 import { hashCorpus, readCorpus } from "./corpus.ts";
 import { sha256 } from "./hash.ts";
 import { purgeCorpus } from "./purge.ts";
-import { fixtureSources, liveSources, sourceDescriptor, type SourceAdapter } from "./sources/index.ts";
+import {
+  fixtureSources,
+  liveSources,
+  sourceDescriptor,
+  type SourceAdapter,
+} from "./sources/index.ts";
 
 const day = "2026-10-30";
 const feeds: Array<RssFeed> = [

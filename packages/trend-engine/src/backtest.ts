@@ -95,9 +95,7 @@ export function assignStories(
     if (best) tails.get(best.id)!.push(story);
   }
   for (const tail of tails.values()) {
-    tail.sort(
-      (a, b) => a.publishedMs - b.publishedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    );
+    tail.sort((a, b) => a.publishedMs - b.publishedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
   return tails;
 }

@@ -113,7 +113,11 @@ describe("Earlywindow's retrospective label", () => {
       0.7,
     );
     // Tied cosines go to the smaller id; the other candidate gets nothing.
-    expect(labels.get("sig_a")).toMatchObject({ positive: true, lead_days: 1, followup_stories: 5 });
+    expect(labels.get("sig_a")).toMatchObject({
+      positive: true,
+      lead_days: 1,
+      followup_stories: 5,
+    });
     expect(labels.get("sig_b")).toMatchObject({ positive: false, followup_stories: 0 });
   });
 
