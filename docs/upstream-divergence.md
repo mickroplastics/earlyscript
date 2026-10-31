@@ -21,6 +21,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`, `01f65c0c49`, `21a7582128` y `e10a0ddf3e`; ningún archivo de upstream tocado.
 16. Hilo de video, interfaz (`es/video-thread`), base `0d84824fea`, con `main` fusionado en `01f65c0c49`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `client-runtime`, `ThreadDetailsPanel.tsx` y `ChatHeader.tsx`, y `flushFileSaveSession` en `fileSaveSessions.ts`.
 17. Lectura de corridas nativas del motor (`es/dossier-native`), base `ed5c3a2903`, con `main` fusionado en `0d84824fea` y `3e4c6c0741`; único archivo de upstream tocado: `packages/contracts/src/editorial.ts`.
+18. Catálogo de fuentes y Ajustes › Editorial › Fuentes (`es/source-catalog`), base `f75eebfae2`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `settingsSearch.ts`, `SettingsSidebarNav.tsx` y `SettingsScopeSentence.tsx`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1177,3 +1178,39 @@ Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
 
 Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).
+
+## 18. Catálogo de fuentes y Ajustes › Editorial › Fuentes (rama `es/source-catalog`, 31 de octubre de 2026)
+
+Base: `f75eebfae2`. Decisión de Miguel del 31 de octubre: las fuentes nuevas se capturan y muestran cobertura, pero solo pesan en el motor tras un backtest; cada fuente lleva su ficha de gobernanza visible en Ajustes, como anexo de la tesis. Ampliación del mismo día: el operador agrega y quita feeds RSS/Atom propios.
+
+Archivos de upstream modificados (enganches de una línea, salvo donde se dice):
+
+- `packages/contracts/src/index.ts` y `rpc.ts`: exportación y `.merge(EditorialSourcesRpcGroup)`.
+- `apps/server/src/ws.ts`, `server.ts`, `auth/RpcAuthorization.ts` y `observability/RpcInstrumentation.ts`: handlers, capa, ámbitos y agregados del grupo, como §13.
+- `apps/web/src/components/settings/settingsSearch.ts`: la ruta en `SettingsPath`, su etiqueta, el grupo «Editorial» de la navegación, sus entradas de búsqueda y su ámbito (cinco líneas y el import); los valores viven en `apps/web/src/editorial/settings/settingsEntry.ts`.
+- `apps/web/src/components/settings/SettingsSidebarNav.tsx`: el icono.
+- `apps/web/src/components/settings/SettingsScopeSentence.tsx`: `/settings/editorial` en `SETTINGS_DEVICE_ONLY_PATHS`, para no ofrecer el selector de proyecto y entorno: la página es del entorno principal, como «Sharing & access».
+- `apps/web/package.json` y `apps/server/package.json`: `@earlyscript/editorial-contracts` en la web y `@earlyscript/trend-engine` en el servidor, como dependencias de desarrollo; `pnpm-lock.yaml`.
+- `apps/web/src/routeTree.gen.ts`: regenerado con la ruta nueva.
+
+Archivos propios modificados: `packages/editorial-contracts/src/source.ts` (`SourceId` pasa a los 11 ids del catálogo) y su `package.json` (subruta `./sourceCatalog`); `packages/trend-engine/src/sources/index.ts` (`SOURCES` es `Partial` y `sourceDescriptor` falla con «No adapter for source» para un id sin adaptador; `liveSources` solo acepta `hn` y `github` hasta que lleguen los adaptadores) y su `package.json` (subrutas `./sources/xml`, `./sources/robots`, `./sources/rss-feeds`); migraciones del servidor (007).
+
+Archivos nuevos:
+
+- `packages/editorial-contracts/src/sourceCatalog.ts`: `SourceGovernance` y `SOURCE_CATALOG` para los 11 ids, con prueba (`sourceCatalog.test.ts`): cada id tiene ficha y cada ficha `ready` tiene fecha de términos, URL de términos y licencia. `packages/trend-engine/src/sources/catalog.test.ts` comprueba que cada adaptador declara la cobertura (censo o muestra) que muestra el catálogo.
+- `packages/trend-engine/src/sources/{xml,robots,rss-feeds}.ts`: copia idéntica, byte a byte, de los de `es/sources-lobsters-rss` (`a5ec1257fb`), para que el servidor valide feeds con el lector XML, la regla de `robots.txt` y la lista por defecto de S4. Al fusionar S4, Git ve el mismo archivo añadido en las dos ramas; si S4 los cambia antes, gana su versión.
+- `packages/contracts/src/editorialSources.ts`: grupo `editorial.sources.*` (`list` con `orchestration:read`; `update`, `validateFeed`, `addFeed`, `removeFeed` y `setDefaultFeedExcluded` con `orchestration:operate`). Los ids son cadenas: `@t3tools/contracts` no depende del catálogo y el servidor rechaza un id que no conoce (`unknown-source`).
+- `apps/server/src/editorial/EditorialSourcesService.ts`, `sourceCoverage.ts`, `feedCheck.ts`, `sourcesRpc.ts`, `persistence/Migrations/007_EditorialSourceSettings.ts` y `EditorialSourcesService.test.ts`.
+- `apps/web/src/editorial/settings/{settingsEntry.ts,sourcesState.ts,EditorialSettings.tsx,SourcesSettings.tsx,RssFeedsSettings.tsx,SourcesSettings.browser.test.tsx}` y `apps/web/src/routes/_chat.settings.editorial.tsx`.
+
+Decisiones reversibles:
+
+- Persistencia en `editorial.sqlite` (migración 007: `editorial_source_settings`, `editorial_rss_feeds`, `editorial_rss_default_exclusions`), no en `settings.json` de T3: los interruptores y el backtest que habilita una fuente son evidencia de la tesis y no deben tocar el esquema `ServerSettings` de upstream. Una fuente sin fila conserva el valor por defecto del catálogo.
+- Por defecto `hn` y `github` capturan y entran al motor; el resto, apagado. `rank` solo se enciende con `status: ready` y un backtest registrado (`backtest_run_id`), salvo la línea base del motor (`engineBaseline`: `hn` y `github`), contra la que se mide el backtest de las demás. Una fuente `blocked` (Bluesky, Lobsters) tampoco se captura. Los valores son efectivos: un `true` guardado que la fuente ya no permite se lee como `false`.
+- `recordBacktest` es un método del servicio sin RPC: lo llamará quien corra el backtest. Quitar el backtest apaga `rank`.
+- Fichas: solo arXiv (31 de octubre), HN y GitHub (26 de octubre, `early-window/docs/DATA.md`) tienen términos leídos de la fuente oficial y están `ready`. Lo demás dice «por confirmar» y queda `pending-review`. Lobsters queda `blocked` por su `robots.txt` (leído por S4 el 31 de octubre).
+- Última captura: el servidor lee `corpus-manifest.json` y `coverage.jsonl` del corpus configurado (`EARLYSCRIPT_EDITORIAL_CORPUS_DIR`, por defecto `~/earlyscript-data/live`, donde escriben las capturas), sin abrir los archivos por día. Por fuente: la fila del último día que tiene y los huecos de la última semana del corpus (`to_day` exclusivo) desde su primer día: día sin fila (`not_collected`), `unavailable`, `rate_limited` y `partial` solo en fuentes de censo; el parcial de una muestra declarada es su colección completa. Sin manifiesto: «sin capturas»; una línea ilegible deja el corpus como `unreadable` y ninguna fuente con captura.
+- Feeds RSS: la lista por defecto es `RSS_FEEDS` de S4, de solo lectura, con un interruptor para excluir cada feed. Los del operador guardan URL, nombre, URL del sitio (la del `<link>` del feed) y nota; su id es `user-` y 12 caracteres del SHA-256 de la URL, estable entre máquinas. Al agregar o probar, el servidor lee primero el `robots.txt` del origen (4xx: sin reglas; 5xx o sin respuesta: no se pide el feed), y solo si permite la ruta descarga el feed una vez con el `User-Agent` del motor (`Earlyscript/0.1 (+https://github.com/miwgel)`, el de S4), 10 s de límite y 4 MiB como máximo. El orden es el inverso del pedido (descargar y luego comprobar robots) a propósito: un feed prohibido nunca se descarga.
+- El resumen del feed (`summarizeFeed` en `feedCheck.ts`: formato, título, sitio, entradas y fecha más reciente) es un parseo mínimo sobre `xml.ts` de S4; se reemplaza por `parseFeed` de `rss.ts` cuando S4 esté en `main`.
+- `enabledSources()` devuelve `collect`, `rank` y `rssFeeds` (los por defecto no excluidos y luego los del operador, con la forma `RssFeed` del motor); `rssFeeds` también existe sola. El servidor aún no lanza capturas ni corridas: U7 las pasará al motor (`--sources` y `--rss-feeds`). El CLI del motor sigue aceptando `--sources`.
+- `CLIENT_GUARDED_RPC_SCOPES` no se toca, como en los demás grupos editoriales: el servidor autoriza cada método.

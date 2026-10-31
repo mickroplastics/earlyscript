@@ -7,7 +7,8 @@ import { collectGithubDay } from "./github.ts";
 
 import { fixtureAdapter } from "./fixture.ts";
 
-export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
+// Partial: the catalog lists sources whose adapter has not landed yet.
+export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
   hn: {
     id: "hn",
     label: "Hacker News",
@@ -26,10 +27,17 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
   },
 };
 
-export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
+export function sourceDescriptor(id: SourceId): SourceDescriptor {
+  const descriptor = SOURCES[id];
+  if (!descriptor) throw new Error(`No adapter for source: ${id}`);
+  return descriptor;
+}
+
+export const isSampleSource = (id: SourceId): boolean =>
+  sourceDescriptor(id).coverage_policy === "sample";
 
 export const fixtureSources = (corpusDir: string, ids: ReadonlyArray<SourceId>) =>
-  ids.map((id) => fixtureAdapter(corpusDir, SOURCES[id]));
+  ids.map((id) => fixtureAdapter(corpusDir, sourceDescriptor(id)));
 
 export type { DayResult, SourceAdapter } from "./adapter.ts";
 
@@ -41,9 +49,11 @@ export function liveSources(
   options: HttpOptions = {},
 ): Array<SourceAdapter> {
   return ids.map((id) => {
+    const descriptor = sourceDescriptor(id);
+    if (id !== "hn" && id !== "github") throw new Error(`No live adapter for source: ${id}`);
     const state = { nextStart: 0, blockedUntil: 0 };
     return {
-      descriptor: SOURCES[id],
+      descriptor,
       collectDay: (day) =>
         (id === "hn" ? collectHnDay : collectGithubDay)(day, createHttpClient(id, options, state)),
     };

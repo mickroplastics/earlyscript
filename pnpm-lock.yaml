@@ -946,6 +946,9 @@ importers:
       '@earlyscript/editorial-script':
         specifier: workspace:*
         version: link:../../packages/editorial-script
+      '@earlyscript/trend-engine':
+        specifier: workspace:*
+        version: link:../../packages/trend-engine
       '@effect/graphql-generator':
         specifier: 'catalog:'
         version: 4.0.5(@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.0.5)
@@ -1211,6 +1214,9 @@ importers:
         specifier: ^5.0.11
         version: 5.0.14(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.6.0(react@19.3.0))
     devDependencies:
+      '@earlyscript/editorial-contracts':
+        specifier: workspace:*
+        version: link:../../packages/editorial-contracts
       '@effect/platform-node':
         specifier: 4.0.5
         version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6)

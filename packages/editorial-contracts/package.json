@@ -7,6 +7,10 @@
       "types": "./src/source.ts",
       "import": "./src/source.ts"
     },
+    "./sourceCatalog": {
+      "types": "./src/sourceCatalog.ts",
+      "import": "./src/sourceCatalog.ts"
+    },
     "./item": {
       "types": "./src/item.ts",
       "import": "./src/item.ts"
