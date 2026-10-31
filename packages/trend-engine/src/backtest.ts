@@ -18,9 +18,12 @@ import {
   BACKTEST_SCHEMA_VERSION,
   backtestId,
   backtestLogicalHash,
+  BacktestRerunInputs,
   checkBacktestReport,
-  decideVerdict,
+  type CutoffGroupTotal,
+  decideBacktest,
   LABEL_RULE,
+  MIN_COMPLETE_CUTOFFS,
   P_AT_5_TOLERANCE,
   type VerdictResult,
 } from "./backtest-report.ts";
@@ -154,8 +157,9 @@ export interface BacktestResult {
     readonly backtest_id: string;
     readonly logical_hash: string;
   };
+  readonly status: "final" | "provisional";
   readonly verdict: VerdictResult;
-  readonly total: { readonly baseline: ArmTotal; readonly candidate: ArmTotal };
+  readonly total: { readonly complete: CutoffGroupTotal; readonly partial: CutoffGroupTotal };
 }
 
 export async function runBacktest(options: BacktestOptions): Promise<BacktestResult> {
@@ -303,19 +307,26 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
       dayOf(cutoffMs + k * DAY_MS),
     );
     const inCorpus = followup.filter((day) => day < truth.toDay);
+    // Days of the window every truth source collected: what the label could observe.
+    const followupDays = inCorpus.filter((day) =>
+      truthSources.every((source) => truth.covered.has(`${source}/${day}`)),
+    ).length;
     return {
       cutoff_at: entry.cutoff_at,
       followup_days_in_corpus: inCorpus.length,
-      followup_days_covered: inCorpus.filter((day) =>
-        truthSources.every((source) => truth.covered.has(`${source}/${day}`)),
-      ).length,
+      followup_days: followupDays,
+      /** The whole follow-up window was observed: a negative label is final, not pending. */
+      complete: followupDays >= LABEL_RULE.followup_days,
       paired: entry.baseline.candidates > 0 && entry.candidate.candidates > 0,
       baseline: entry.baseline,
       candidate: entry.candidate,
     };
   });
-  const paired = cutoffRows.filter((row) => row.paired);
-  const armTotal = (arm: Arm): ArmTotal & { items_7d_mean_p_at_5: number | null } => ({
+  type CutoffRow = (typeof cutoffRows)[number];
+  const armTotal = (
+    paired: ReadonlyArray<CutoffRow>,
+    arm: Arm,
+  ): ArmTotal & { items_7d_mean_p_at_5: number | null } => ({
     mean_p_at_5: mean(paired.map((row) => row[arm].weighted.p_at_5)),
     mean_p_at_10: mean(paired.map((row) => row[arm].weighted.p_at_10)),
     median_lead_days: median(paired.flatMap((row) => row[arm].lead_days)),
@@ -324,10 +335,25 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
     positives: paired.reduce((sum, row) => sum + row[arm].positives, 0),
     items_7d_mean_p_at_5: mean(paired.map((row) => row[arm].items_7d.p_at_5)),
   });
-  const total = { baseline: armTotal("baseline"), candidate: armTotal("candidate") };
-  const verdict = decideVerdict(total);
+  const group = (complete: boolean): CutoffGroupTotal & { cutoff_dates: Array<string> } => {
+    const paired = cutoffRows.filter((row) => row.paired && row.complete === complete);
+    return {
+      cutoffs: paired.length,
+      cutoff_dates: paired.map((row) => row.cutoff_at.slice(0, 10)),
+      baseline: armTotal(paired, "baseline"),
+      candidate: armTotal(paired, "candidate"),
+    };
+  };
+  const total = {
+    cutoffs: cutoffRows.length,
+    cutoffs_paired: cutoffRows.filter((row) => row.paired).length,
+    complete: group(true),
+    partial: group(false),
+  };
+  const { status, verdict } = decideBacktest(total.complete);
 
   const logical = {
+    status,
     inputs: {
       engine_version: ENGINE_VERSION,
       corpus_manifest_hash: truth.manifestHash,
@@ -352,12 +378,15 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
       candidates: "dossiers emitted at the cutoff",
       weighted_order: "rankings.weighted.position",
       items_7d_order: "items_7d desc, trend id asc",
-      precision: "P@k over min(k, candidates); mean over cutoffs where both arms have candidates",
+      precision:
+        "P@k over min(k, candidates); mean over the paired cutoffs (both arms have candidates) of each group",
       lead: "lead_days = event day - cutoff day; median pooled over every positive candidate",
-      verdict: `not-worse when candidate mean P@5 >= baseline - ${P_AT_5_TOLERANCE} and candidate median lead_days >= baseline`,
+      complete: `a cutoff is complete when its truth sources cover all ${LABEL_RULE.followup_days} follow-up days`,
+      verdict: `complete cutoffs only: not-worse when candidate mean P@5 >= baseline - ${P_AT_5_TOLERANCE} and candidate median lead_days >= baseline; worse with no complete cutoff`,
+      status: `provisional with fewer than ${MIN_COMPLETE_CUTOFFS} complete cutoffs`,
     },
     cutoffs: cutoffRows,
-    total: { cutoffs: cutoffRows.length, cutoffs_paired: paired.length, ...total },
+    total,
     verdict,
   };
   const logicalHash = backtestLogicalHash(logical);
@@ -377,7 +406,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
   const partial = `${path}.partial`;
   NodeFS.writeFileSync(partial, `${JSON.stringify(report, null, 2)}\n`);
   NodeFS.renameSync(partial, path);
-  return { path, report, verdict, total };
+  return { path, report, status, verdict, total };
 }
 
 function scoreArm(
@@ -448,7 +477,13 @@ export interface BacktestCheckResult {
   readonly rerun?: { readonly backtest_id: string; readonly logical_hash: string };
 }
 
-/** Recomputes the logical hash of a backtest.json; with `rerun`, runs it again and compares. */
+const decodeRerunInputs = Schema.decodeUnknownSync(BacktestRerunInputs);
+
+/**
+ * Recomputes the logical hash of a backtest.json; with `rerun`, runs it again from the inputs
+ * it recorded and compares. A report of an older schema fails the check, and its rerun writes
+ * the current schema: that is how an old report is regenerated.
+ */
 export async function checkBacktest(
   file: string,
   rerun?: {
@@ -459,33 +494,46 @@ export async function checkBacktest(
     >;
   },
 ): Promise<BacktestCheckResult> {
-  const json = JSON.parse(NodeFS.readFileSync(file, "utf8")) as {
-    corpus_dir: string;
-    profile_path: string;
-    logical: { inputs: { config: EngineConfig; cutoffs: Array<string> } };
+  const json: unknown = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+  const recorded = json as {
+    schema_version?: unknown;
+    backtest_id?: unknown;
+    logical_hash?: unknown;
+    logical?: unknown;
   };
-  const checked = checkBacktestReport(json);
-  const result = {
-    backtest_id: checked.backtest_id,
-    ok: checked.ok,
-    recorded: checked.recorded,
-    recomputed: checked.recomputed,
-    problems: checked.problems,
-  };
+  const current =
+    recorded.schema_version === BACKTEST_SCHEMA_VERSION ? checkBacktestReport(json) : null;
+  const result = current
+    ? {
+        backtest_id: current.backtest_id,
+        ok: current.ok,
+        recorded: current.recorded,
+        recomputed: current.recomputed,
+        problems: current.problems,
+      }
+    : {
+        backtest_id: String(recorded.backtest_id),
+        ok: false,
+        recorded: String(recorded.logical_hash),
+        recomputed: backtestLogicalHash(recorded.logical),
+        problems: [
+          `schema ${String(recorded.schema_version)} is not ${BACKTEST_SCHEMA_VERSION}; --rerun writes the current one`,
+        ],
+      };
   if (!rerun) return result;
-  const inputs = checked.report.logical.inputs;
+  const { corpus_dir, profile_path, logical } = decodeRerunInputs(json);
   const again = await runBacktest({
     ...rerun.options,
-    corpusDir: json.corpus_dir,
-    profilePath: json.profile_path,
+    corpusDir: corpus_dir,
+    profilePath: profile_path,
     outDir: rerun.outDir,
-    cutoffs: json.logical.inputs.cutoffs,
-    baselineSources: inputs.baseline_sources,
-    candidateSources: inputs.candidate_sources,
-    truthSources: inputs.truth_sources,
-    config: json.logical.inputs.config,
+    cutoffs: logical.inputs.cutoffs,
+    baselineSources: logical.inputs.baseline_sources,
+    candidateSources: logical.inputs.candidate_sources,
+    truthSources: logical.inputs.truth_sources,
+    config: logical.inputs.config as EngineConfig,
   });
-  const same = again.report.logical_hash === checked.recorded;
+  const same = again.report.logical_hash === result.recorded;
   return {
     ...result,
     ok: result.ok && same,

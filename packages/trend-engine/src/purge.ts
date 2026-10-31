@@ -223,6 +223,8 @@ export async function purgeCorpus(
       selection_bias: manifest.selection_bias,
       selection: manifest.selection,
       purges: [...(manifest.purges ?? []), purge],
+      ...(manifest.robots_overrides ? { robots_overrides: manifest.robots_overrides } : {}),
+      ...(manifest.repairs ? { repairs: manifest.repairs } : {}),
     };
     await NodeFSP.writeFile(
       NodePath.join(root, "corpus-manifest.json.tmp"),

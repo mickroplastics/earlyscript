@@ -19,7 +19,15 @@ const COVERAGE_FILE = "coverage.jsonl";
 
 type ManifestFields = Pick<
   EarlywindowCorpusManifest,
-  "schema_version" | "from_day" | "to_day" | "selection_bias" | "selection" | "files" | "purges"
+  | "schema_version"
+  | "from_day"
+  | "to_day"
+  | "selection_bias"
+  | "selection"
+  | "files"
+  | "purges"
+  | "robots_overrides"
+  | "repairs"
 >;
 type FileHash = EarlywindowCorpusManifest["files"][number];
 
@@ -34,6 +42,9 @@ export function hashCorpus(manifest: ManifestFields): string {
       selection: manifest.selection,
       files: manifest.files,
       ...(manifest.purges ? { purges: manifest.purges } : {}),
+      // Earlyscript additions; absent, the hash is Earlywindow's.
+      ...(manifest.robots_overrides ? { robots_overrides: manifest.robots_overrides } : {}),
+      ...(manifest.repairs ? { repairs: manifest.repairs } : {}),
     }),
   );
 }

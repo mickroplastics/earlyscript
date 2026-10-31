@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off nodeBuiltinImport:off - plain async library with native fetch and UTC timestamps.
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - corpus/1 filesystem boundary.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
@@ -12,6 +13,7 @@ import { daysBetween } from "./days.ts";
 import { sha256 } from "./hash.ts";
 import { readJsonLines } from "./sources/fixture.ts";
 import type { SourceAdapter } from "./sources/adapter.ts";
+import type { HttpTraceEntry } from "./sources/http.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(EarlywindowCorpusManifest);
 const decodeCoverage = Schema.decodeUnknownSync(CoverageRecord);
@@ -22,6 +24,37 @@ const missing = (error: unknown) =>
   error instanceof Error && "code" in error && error.code === "ENOENT";
 const jsonl = (rows: ReadonlyArray<unknown>) =>
   rows.map((row) => JSON.stringify(row) + "\n").join("");
+
+/**
+ * Appends each HTTP attempt of one `engine collect` run to `<corpus>/http-log/<start>.jsonl`.
+ * The log is evidence of how the corpus was fetched, not corpus data: no manifest entry.
+ */
+export function httpTraceWriter(
+  corpusDir: string,
+  startedAt: Date = new Date(),
+): { readonly file: string; readonly trace: (entry: HttpTraceEntry) => void } {
+  const dir = NodePath.join(NodePath.resolve(corpusDir), "http-log");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const file = NodePath.join(dir, `${startedAt.toISOString().replace(/[:.]/g, "-")}.jsonl`);
+  return { file, trace: (entry) => NodeFS.appendFileSync(file, `${JSON.stringify(entry)}\n`) };
+}
+
+/** The manifest's list of days collected under a robots.txt exception, from coverage rows. */
+export function robotsOverridesOf(coverage: ReadonlyArray<CoverageRecord>) {
+  const rows = coverage.flatMap((row) =>
+    row.robots_override
+      ? [
+          {
+            source: row.source,
+            day: row.day,
+            reason: row.robots_override.reason,
+            terms_url: row.robots_override.terms_url,
+          },
+        ]
+      : [],
+  );
+  return rows.length > 0 ? { robots_overrides: rows } : {};
+}
 
 export async function collectCorpus(options: {
   readonly dir: string;
@@ -146,6 +179,8 @@ export async function collectCorpus(options: {
         to_day: "exclusive",
       },
       ...(previous?.purges ? { purges: previous.purges } : {}),
+      ...robotsOverridesOf(coverage),
+      ...(previous?.repairs ? { repairs: previous.repairs } : {}),
     };
     await NodeFSP.writeFile(
       NodePath.join(root, "corpus-manifest.json.tmp"),

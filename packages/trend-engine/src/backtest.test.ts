@@ -14,44 +14,73 @@ import { daysBetween } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import {
   item,
-  syntheticItems,
   tempDir,
   testConfig,
   writeProfile,
   writeSyntheticCorpus,
 } from "./testkit/syntheticCorpus.ts";
 
-const CUTOFFS = ["2026-10-08", "2026-10-09"];
+const FROM = "2026-09-01";
+const TO = "2026-10-12";
+/** Seven cutoffs whose 14 follow-up days all fall before TO. */
+const COMPLETE_CUTOFFS = "2026-09-22..2026-09-28";
 const unit = (values: ReadonlyArray<number>) => {
   const v = Float32Array.from(values);
   const norm = Math.hypot(...v);
   return v.map((x) => x / norm);
 };
 
-/** npm items from 2026-10-03: either the growing Rust topic or a topic HN never follows. */
-function npmItems(topic: "rust" | "offtopic"): Array<Item> {
-  const title =
-    topic === "rust"
-      ? "Rust compiler agents incremental builds package"
-      : "developer tooling package manager release lockfile";
-  return daysBetween("2026-10-03", "2026-10-12").flatMap((day, d) =>
-    [0, 1, 2].map((k) => item("npm", day, 30 + k, title, `maintainer${d}_${k}`)),
-  );
+/** Items of a topic that grows about 2.5 times a week from 2026-09-15, one author each. */
+function growing(source: SourceId, title: string, slot: number): Array<Item> {
+  return daysBetween(FROM, TO).flatMap((day, d) => {
+    const count = d < 14 ? (d % 4 === 0 ? 1 : 0) : Math.round(2.5 ** ((d - 14) / 7));
+    return Array.from({ length: count }, (_, k) =>
+      item(source, day, slot + k, title, `${source}${slot}_${d}_${k}`),
+    );
+  });
 }
 
-async function setup(extra: Array<Item>, extraSources: ReadonlyArray<SourceId> = ["npm"]) {
+/** HN: the growing Rust topic and two steady ones. */
+function hnItems(): Array<Item> {
+  return [
+    ...growing("hn", "Rust compiler agents ship incremental builds", 1),
+    ...daysBetween(FROM, TO).flatMap((day, d) => [
+      item("hn", day, 60, "Tomato garden soil watering tips", `gardener${d % 4}`),
+      item("hn", day, 61, "Football league scores weekend results", `fan${d % 3}`),
+    ]),
+  ];
+}
+
+/** npm: either the Rust topic HN follows, or a topic HN never follows. */
+const npmItems = (topic: "rust" | "offtopic") =>
+  growing(
+    "npm",
+    topic === "rust"
+      ? "Rust compiler agents incremental builds package"
+      : "developer tooling package manager release lockfile",
+    30,
+  );
+
+async function setup(extra: Array<Item>) {
   const root = tempDir("trend-backtest");
   const corpusDir = NodePath.join(root, "corpus");
-  await writeSyntheticCorpus(corpusDir, { items: [...syntheticItems(), ...extra], extraSources });
+  await writeSyntheticCorpus(corpusDir, {
+    items: [...hnItems(), ...extra].toSorted(
+      (a, b) => a.published_at.localeCompare(b.published_at) || a.id.localeCompare(b.id),
+    ),
+    extraSources: ["npm"],
+    fromDay: FROM,
+    toDay: TO,
+  });
   return { root, corpusDir, profilePath: writeProfile(root) };
 }
 
-const backtest = (s: Awaited<ReturnType<typeof setup>>, out: string) =>
+const backtest = (s: Awaited<ReturnType<typeof setup>>, out: string, cutoffs: string) =>
   runBacktest({
     corpusDir: s.corpusDir,
     profilePath: s.profilePath,
     outDir: NodePath.join(s.root, out),
-    cutoffs: CUTOFFS,
+    cutoffs: parseCutoffList(cutoffs),
     baselineSources: ["hn", "github"],
     candidateSources: ["hn", "github", "npm"],
     config: testConfig(),
@@ -147,49 +176,75 @@ describe("decideVerdict", () => {
 });
 
 describe("runBacktest", () => {
-  it("is not worse when the candidate source follows a trend the baseline already confirms", async () => {
+  it("decides on complete cutoffs: not worse when the source follows a trend HN confirms", async () => {
     const s = await setup(npmItems("rust"));
-    const result = await backtest(s, "bt");
+    const result = await backtest(s, "bt", COMPLETE_CUTOFFS);
     const logical = result.report["logical"] as {
+      status: string;
       cutoffs: Array<{
-        followup_days_in_corpus: number;
-        paired: boolean;
-        baseline: { rows: Array<{ positive: boolean; lead_days: number | null }> };
-        candidate: { centroid_checks: number };
+        followup_days: number;
+        complete: boolean;
+        baseline: {
+          centroid_checks: number;
+          rows: Array<{ positive: boolean; lead_days: number | null }>;
+        };
       }>;
       inputs: { truth_sources: Array<string> };
     };
     expect(logical.inputs.truth_sources).toEqual(["hn", "github"]);
-    expect(logical.cutoffs.map((c) => c.followup_days_in_corpus)).toEqual([4, 3]);
-    expect(logical.cutoffs.every((c) => c.paired)).toBe(true);
-    // The Rust topic keeps three HN stories a day after the cutoff: positive on the next day.
-    const rust = logical.cutoffs[0]!.baseline.rows.find((row) => row.positive);
-    expect(rust?.lead_days).toBe(1);
-    expect(logical.cutoffs[0]!.candidate.centroid_checks).toBeGreaterThan(0);
-    expect(result.total.baseline.mean_p_at_5).toBe(1);
-    expect(result.total.candidate.mean_p_at_5).toBe(1);
+    expect(logical.cutoffs.map((c) => [c.followup_days, c.complete])).toEqual(
+      Array.from({ length: 7 }, () => [14, true]),
+    );
+    expect(logical.cutoffs[0]!.baseline.rows.some((row) => row.positive)).toBe(true);
+    // The frozen centroids reproduce the similarities the runs stored for HN evidence.
+    expect(logical.cutoffs[0]!.baseline.centroid_checks).toBeGreaterThan(0);
+    expect(result.total.complete.cutoffs).toBe(7);
+    expect(result.total.partial.cutoffs).toBe(0);
+    expect(result.status).toBe("final");
+    expect(result.total.complete.baseline.mean_p_at_5).toBe(1);
+    expect(result.total.complete.candidate.mean_p_at_5).toBe(1);
     expect(result.verdict.verdict).toBe("not-worse");
 
     const written = JSON.parse(NodeFS.readFileSync(result.path, "utf8"));
     expect(checkBacktestReport(written).ok).toBe(true);
-    // Every run of both arms is kept next to the report.
     for (const run of written.runs) expect(NodeFS.existsSync(run.run_dir)).toBe(true);
-    expect(written.runs).toHaveLength(4);
+    expect(written.runs).toHaveLength(14);
   });
 
   it("is worse when the candidate source brings trends the truth sources never follow", async () => {
     const s = await setup(npmItems("offtopic"));
-    const result = await backtest(s, "bt");
-    expect(result.total.baseline.mean_p_at_5).toBe(1);
-    expect(result.total.candidate.mean_p_at_5).toBeLessThan(0.98);
+    const result = await backtest(s, "bt", COMPLETE_CUTOFFS);
+    expect(result.total.complete.baseline.mean_p_at_5).toBe(1);
+    expect(result.total.complete.candidate.mean_p_at_5).toBeLessThan(0.98);
     expect(result.verdict.verdict).toBe("worse");
     expect(result.verdict.reasons.join(" ")).toMatch(/P@5 drops/);
   });
 
+  it("keeps cutoffs with a truncated follow-up out of the verdict and marks the report provisional", async () => {
+    const s = await setup(npmItems("rust"));
+    // 2026-10-05 sees 7 of its 14 follow-up days before the corpus ends.
+    const mixed = await backtest(s, "mixed", "2026-09-27,2026-10-05");
+    const rows = (mixed.report["logical"] as { cutoffs: Array<{ followup_days: number }> }).cutoffs;
+    expect(rows.map((row) => row.followup_days)).toEqual([14, 7]);
+    expect(mixed.total.complete.cutoffs).toBe(1);
+    expect(mixed.total.partial.cutoffs).toBe(1);
+    expect(mixed.status).toBe("provisional");
+    expect(mixed.verdict.verdict).toBe("not-worse");
+
+    // Without a complete cutoff nothing shows the source is not worse.
+    const partial = await backtest(s, "partial", "2026-10-05,2026-10-08");
+    expect(partial.total.complete.cutoffs).toBe(0);
+    expect(partial.status).toBe("provisional");
+    expect(partial.verdict).toMatchObject({
+      verdict: "worse",
+      reasons: ["no cutoff with a complete follow-up"],
+    });
+  });
+
   it("reproduces its logical hash, reruns to the same hash and refuses a tampered report", async () => {
     const s = await setup(npmItems("rust"));
-    const first = await backtest(s, "first");
-    const second = await backtest(s, "second");
+    const first = await backtest(s, "first", "2026-09-27,2026-09-28");
+    const second = await backtest(s, "second", "2026-09-27,2026-09-28");
     expect(second.report.logical_hash).toBe(first.report.logical_hash);
     expect(second.report.backtest_id).toBe(first.report.backtest_id);
 
@@ -201,11 +256,23 @@ describe("runBacktest", () => {
     expect(rerun.rerun?.logical_hash).toBe(first.report.logical_hash);
 
     const tampered = JSON.parse(NodeFS.readFileSync(first.path, "utf8"));
-    tampered.logical.total.candidate.mean_p_at_5 = 0.5;
+    tampered.logical.total.complete.candidate.mean_p_at_5 = 0.5;
     const file = NodePath.join(s.root, "tampered.json");
     NodeFS.writeFileSync(file, JSON.stringify(tampered));
     const checked = await checkBacktest(file);
     expect(checked.ok).toBe(false);
     expect(checked.problems).toContain("logical_hash does not recompute");
+
+    // A report of the first schema fails the check; its rerun writes the current schema.
+    const old = JSON.parse(NodeFS.readFileSync(first.path, "utf8"));
+    old.schema_version = "earlyscript.backtest/1";
+    const oldFile = NodePath.join(s.root, "old.json");
+    NodeFS.writeFileSync(oldFile, JSON.stringify(old));
+    expect((await checkBacktest(oldFile)).problems[0]).toMatch(/^schema earlyscript.backtest\/1/);
+    const regenerated = await checkBacktest(oldFile, {
+      outDir: NodePath.join(s.root, "regenerated"),
+      options: { embedder: fingerprintEmbedder() },
+    });
+    expect(regenerated.rerun?.logical_hash).toBe(first.report.logical_hash);
   });
 });

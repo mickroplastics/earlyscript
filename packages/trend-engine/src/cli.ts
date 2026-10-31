@@ -3,14 +3,16 @@
 //   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
 //   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>]
 //   node src/cli.ts check --backtest <backtest.json> [--rerun --out <dir>]
+//   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
 import { checkBacktest, parseCutoffList, runBacktest } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
-import { collectCorpus } from "./collect.ts";
+import { collectCorpus, httpTraceWriter } from "./collect.ts";
 import { purgeCorpus } from "./purge.ts";
+import { repairRobotsOverrideTerms } from "./repair.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
 import * as Schema from "effect/Schema";
 import { SourceId } from "@earlyscript/editorial-contracts/source";
@@ -30,6 +32,7 @@ const USAGE =
   "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir>]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
+  "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
@@ -70,18 +73,26 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   if (command === "collect" && values.corpus && values.from && values.to && values.sources) {
     const ids = [...new Set(values.sources.split(","))];
     if (!ids.every(isSourceId)) throw new Error("Unknown source");
+    const { file, trace } = httpTraceWriter(values.corpus);
+    console.error(`HTTP trace: ${file}`);
     const rows = await collectCorpus({
       dir: values.corpus,
       from: values.from,
       to: values.to,
       adapters: liveSources(
         ids,
-        {},
+        { trace },
         values["rss-feeds"] ? { rssFeeds: await readRssFeedList(values["rss-feeds"]) } : {},
       ),
       ...(values.force ? { force: true } : {}),
     });
     console.log(JSON.stringify(rows));
+    return 0;
+  }
+  if (command === "repair-robots-override" && values.corpus && values.source) {
+    if (!isSourceId(values.source)) throw new Error("Unknown source");
+    const repair = await repairRobotsOverrideTerms({ dir: values.corpus, source: values.source });
+    console.log(JSON.stringify(repair));
     return 0;
   }
   if (command === "purge" && values.corpus && values.source) {
@@ -155,6 +166,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
         path: result.path,
         backtest_id: result.report.backtest_id,
         logical_hash: result.report.logical_hash,
+        status: result.status,
         total: result.total,
         verdict: result.verdict,
       }),
