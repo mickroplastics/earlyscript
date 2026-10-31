@@ -19,6 +19,7 @@ import {
   type EditorialEventType,
   type ScriptVersion,
   SnoozeReturnCondition,
+  type WorkStage,
   type TrendInboxState,
   type UnsnoozeCause,
   type VideoResult,
@@ -29,6 +30,7 @@ import {
   EditorialNotFoundError,
   type EditorialPersistenceError,
   toPersistenceError,
+  WorkClockStateError,
 } from "./persistence/Errors.ts";
 import {
   makeNewId,
@@ -37,7 +39,14 @@ import {
   parseIso,
   requireVideoThread,
 } from "./persistence/support.ts";
-import { loadIntervals, stopClock, summarize } from "./persistence/workIntervals.ts";
+import {
+  clockStateOf,
+  closeInterval,
+  loadIntervals,
+  openInterval,
+  stopClock,
+  summarize,
+} from "./persistence/workIntervals.ts";
 
 const MAX_INBOX_KEYS_PER_READ = 500;
 const MAX_SCRIPT_SNAPSHOT_BYTES = 1024 * 1024;
@@ -95,6 +104,13 @@ export interface RecordDecisionInput extends ActorOption {
   readonly scriptVersionHash?: string | undefined;
   /** A retry with the same id returns the decision already recorded. */
   readonly operationId?: string | undefined;
+  /** Refuses while a segment recovered after a restart awaits resolution. */
+  readonly requireDefinitiveClock?: boolean | undefined;
+  /**
+   * Moves a running or paused clock to this stage first, in the same transaction. The stage
+   * then closes at once: it records the time it actually ran, zero when it opens here.
+   */
+  readonly openStage?: WorkStage | undefined;
 }
 
 export interface SaveScriptVersionInput extends ActorOption {
@@ -152,7 +168,7 @@ export class EditorialCommandService extends Context.Service<
     /** Stops the work clock and stores the stage durations with the decision. */
     readonly recordDecision: (
       input: RecordDecisionInput,
-    ) => Effect.Effect<Decision, ThreadCommandError | EditorialConflictError>;
+    ) => Effect.Effect<Decision, ThreadCommandError | EditorialConflictError | WorkClockStateError>;
     /**
      * Content-addressed: saving the same content twice returns the first
      * version. The saved version becomes the thread's head either way.
@@ -527,6 +543,55 @@ const make = Effect.gen(function* () {
                 : `the script version changed: the decision references ${hash ?? "no version"}, the latest saved is ${head}`,
           });
         }
+        const stageEvents: Array<EditorialEvent> = [];
+        if (input.requireDefinitiveClock === true || input.openStage !== undefined) {
+          const intervals = yield* loadIntervals(sql, input.threadId);
+          if (
+            input.requireDefinitiveClock === true &&
+            intervals.some((row) => row.status === "needs_resolution")
+          ) {
+            return yield* new WorkClockStateError({
+              threadId: input.threadId,
+              reason: "unresolved",
+              detail: "resolve the segment left open by a restart before deciding",
+            });
+          }
+          const state = clockStateOf(intervals);
+          if (
+            input.openStage !== undefined &&
+            state._tag !== "idle" &&
+            state.stage !== input.openStage
+          ) {
+            if (state._tag === "running") {
+              yield* closeInterval(sql, state.intervalId, at, "stage_changed");
+            }
+            const intervalId = yield* newId;
+            yield* openInterval(sql, {
+              intervalId,
+              threadId: input.threadId,
+              stage: input.openStage,
+              startedAt: at,
+              actor,
+            });
+            // No operation id: the decision's own event carries it, and replay looks it up.
+            stageEvents.push(
+              yield* appendEvent(sql, {
+                type: "work.stage-changed",
+                aggregateKind: "video_thread",
+                aggregateId: input.threadId,
+                actor,
+                payload: {
+                  from: state.stage,
+                  to: input.openStage,
+                  fromState: state._tag,
+                  intervalId,
+                  cause: "decision",
+                },
+                createdAt: at,
+              }),
+            );
+          }
+        }
         const clockEvents = yield* stopClock(sql, {
           threadId: input.threadId,
           at,
@@ -568,7 +633,10 @@ const make = Effect.gen(function* () {
         const rows = yield* sql<DecisionRow>`
             SELECT * FROM editorial_decisions WHERE decision_id = ${decisionId}
           `;
-        return { result: toDecision(rows[0]!), events: [...clockEvents, decisionEvent] };
+        return {
+          result: toDecision(rows[0]!),
+          events: [...stageEvents, ...clockEvents, decisionEvent],
+        };
       }),
     );
   });

@@ -42,6 +42,16 @@ export interface WorkClockCommandOptions {
   /** Persisted with the event; a retry with the same id returns the current summary. */
   readonly operationId?: string | undefined;
   readonly actor?: EditorialActor | undefined;
+  /**
+   * Fails with `decided` when the thread has a decision, checked in the command's own
+   * transaction, so a command admitted before a decision commits cannot reopen the clock.
+   */
+  readonly refuseWhenDecided?: boolean | undefined;
+}
+
+export interface WorkClockStageOptions extends WorkClockCommandOptions {
+  /** Applies only while `onlyFrom` is running; otherwise records nothing. */
+  readonly onlyFrom?: WorkStage | undefined;
 }
 
 export interface WorkClockPauseOptions extends WorkClockCommandOptions {
@@ -80,7 +90,7 @@ export class WorkClockService extends Context.Service<
     readonly changeStage: (
       threadId: string,
       stage: WorkStage,
-      options?: WorkClockCommandOptions,
+      options?: WorkClockStageOptions,
     ) => Effect.Effect<WorkClockSummary, WorkClockError>;
     /** Idempotent: stopping an idle clock records nothing. */
     readonly stop: (
@@ -99,11 +109,15 @@ export class WorkClockService extends Context.Service<
       ReadonlyArray<UnresolvedInterval>,
       EditorialPersistenceError
     >;
-    /** The operator says when a recovered segment actually ended. */
+    /**
+     * The operator says when a recovered segment actually ended. A retry with the same
+     * `operationId` returns the current summary without resolving or recording again.
+     */
     readonly resolveInterval: (input: {
       readonly intervalId: string;
       readonly endedAt: string;
       readonly actor?: EditorialActor | undefined;
+      readonly operationId?: string | undefined;
     }) => Effect.Effect<WorkClockSummary, WorkClockError | EditorialInvalidInputError>;
   }
 >()("t3/editorial/WorkClockService") {}
@@ -146,6 +160,14 @@ const make = Effect.gen(function* () {
           threadId,
           eventType,
         );
+        if (!replay && options?.refuseWhenDecided === true) {
+          const decided = yield* sql`
+            SELECT 1 FROM editorial_decisions WHERE thread_id = ${threadId} LIMIT 1
+          `;
+          if (decided.length > 0) {
+            return yield* stateError(threadId, "decided", "the thread was decided");
+          }
+        }
         const events = replay ? [] : yield* apply(yield* nowIso, options?.actor ?? "operator");
         return { result: yield* readSummary(threadId), events };
       }),
@@ -237,6 +259,10 @@ const make = Effect.gen(function* () {
     command("workClock.changeStage", "work.stage-changed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
         const state = clockStateOf(yield* loadIntervals(sql, threadId));
+        const onlyFrom = options?.onlyFrom;
+        if (onlyFrom !== undefined && (state._tag !== "running" || state.stage !== onlyFrom)) {
+          return [];
+        }
         if (state._tag === "idle") {
           return yield* stateError(threadId, "not-started", "start the clock first");
         }
@@ -347,6 +373,17 @@ const make = Effect.gen(function* () {
             id: input.intervalId,
           });
         }
+        if (
+          yield* operationAlreadyApplied(
+            sql,
+            "workClock.resolveInterval",
+            input.operationId,
+            row.thread_id,
+            "work.resolved",
+          )
+        ) {
+          return { result: yield* readSummary(row.thread_id), events: [] };
+        }
         if (row.status !== "needs_resolution") {
           return yield* stateError(
             row.thread_id,
@@ -373,6 +410,7 @@ const make = Effect.gen(function* () {
           type: "work.resolved",
           aggregateKind: "video_thread",
           aggregateId: row.thread_id,
+          operationId: input.operationId,
           actor,
           payload: { intervalId: input.intervalId, endedAt },
           createdAt: at,

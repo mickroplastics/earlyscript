@@ -41,6 +41,8 @@ interface FileSaveSession {
   leases: number;
   /** The last release flushed, and the session stays open until that settles. */
   flushingOnRelease: boolean;
+  /** Earlyscript: callers of `flush` waiting for the write pass to end. */
+  readonly settleWaiters: Array<() => void>;
 }
 
 /**
@@ -71,6 +73,7 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       persist: (contents) => deps.persist(target, contents),
       onConfirmed: (contents) => deps.confirm(target, contents),
       onSettled: () => {
+        for (const waiter of session.settleWaiters.splice(0)) waiter();
         if (!session.flushingOnRelease) return;
         session.flushingOnRelease = false;
         if (session.leases === 0) {
@@ -89,6 +92,7 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       unsubscribeWritable,
       leases: 0,
       flushingOnRelease: false,
+      settleWaiters: [],
     };
     return session;
   };
@@ -121,9 +125,26 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
     };
   };
 
+  /**
+   * Earlyscript: writes the file's pending draft now and resolves once nothing is left unwritten
+   * (true) or the write pass ended without writing it (false: failed or not allowed). With no
+   * session open, true only when no unsaved draft was kept for the file.
+   */
+  const flush = (target: FileSaveTarget): Promise<boolean> => {
+    const session = sessions.get(fileSaveKey(target));
+    if (session === undefined) return Promise.resolve(deps.readUnsaved(target) === null);
+    const { coordinator } = session;
+    if (coordinator.unconfirmedContents === null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      session.settleWaiters.push(() => resolve(coordinator.unconfirmedContents === null));
+      coordinator.flush();
+    });
+  };
+
   return {
     /** Holds the file's session open until the returned release runs. */
     acquire,
+    flush,
     /** Edits for a file nobody holds open are dropped, so retired editors stay inert. */
     change(target: FileSaveTarget, contents: string): void {
       const session = sessions.get(fileSaveKey(target));
@@ -175,4 +196,9 @@ export function useFileSaveSession(
 
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+}
+
+/** Earlyscript: the editorial decision waits for the script's pending write before deciding. */
+export function flushFileSaveSession(target: FileSaveTarget): Promise<boolean> {
+  return fileSaveSessions.flush(target);
 }
