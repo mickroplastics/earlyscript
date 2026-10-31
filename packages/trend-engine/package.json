@@ -11,6 +11,10 @@
       "types": "./src/check.ts",
       "import": "./src/check.ts"
     },
+    "./backtest-report": {
+      "types": "./src/backtest-report.ts",
+      "import": "./src/backtest-report.ts"
+    },
     "./corpus": {
       "types": "./src/corpus.ts",
       "import": "./src/corpus.ts"

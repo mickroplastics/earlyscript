@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
 //   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]
 //   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
+//   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>]
+//   node src/cli.ts check --backtest <backtest.json> [--rerun --out <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
+import { checkBacktest, parseCutoffList, runBacktest } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus } from "./collect.ts";
 import { purgeCorpus } from "./purge.ts";
@@ -15,9 +18,17 @@ import { runEngine } from "./run.ts";
 
 const isSourceId = Schema.is(SourceId);
 
+function sourceList(text: string): Array<SourceId> {
+  const ids = [...new Set(text.split(",").map((id) => id.trim()))];
+  if (!ids.every(isSourceId)) throw new Error(`Unknown source in ${text}`);
+  return ids;
+}
+
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
+  "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
+  "       engine check --backtest <backtest.json> [--rerun --out <dir>]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
 
@@ -47,6 +58,11 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       run: { type: "string" },
       rerun: { type: "boolean" },
       "allow-unverified-corpus": { type: "boolean" },
+      cutoffs: { type: "string" },
+      baseline: { type: "string" },
+      candidate: { type: "string" },
+      truth: { type: "string" },
+      backtest: { type: "string" },
     },
   });
   if (command === "collect" && values.corpus && values.from && values.to && values.sources) {
@@ -111,6 +127,49 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       }),
     );
     return status === "ok" ? 0 : 1;
+  }
+  if (
+    command === "backtest" &&
+    values.corpus &&
+    values.profile &&
+    values.out &&
+    values.cutoffs &&
+    values.baseline &&
+    values.candidate
+  ) {
+    const result = await runBacktest({
+      ...common,
+      corpusDir: values.corpus,
+      profilePath: values.profile,
+      outDir: values.out,
+      cutoffs: parseCutoffList(values.cutoffs),
+      baselineSources: sourceList(values.baseline),
+      candidateSources: sourceList(values.candidate),
+      ...(values.truth ? { truthSources: sourceList(values.truth) } : {}),
+      ...(values.config ? { configPath: values.config } : {}),
+    });
+    console.log(
+      JSON.stringify({
+        path: result.path,
+        backtest_id: result.report.backtest_id,
+        logical_hash: result.report.logical_hash,
+        total: result.total,
+        verdict: result.verdict,
+      }),
+    );
+    return 0;
+  }
+  if (command === "check" && values.backtest) {
+    if (values.rerun && !values.out) {
+      console.error(USAGE);
+      return 64;
+    }
+    const result = await checkBacktest(
+      values.backtest,
+      values.rerun && values.out ? { outDir: values.out, options: common } : undefined,
+    );
+    console.log(JSON.stringify(result));
+    return result.ok ? 0 : 1;
   }
   if (command === "check" && values.run) {
     if (values.rerun && !values.out) {

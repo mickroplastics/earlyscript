@@ -20,7 +20,7 @@ export const FUTURE_WORD = "futuretoken";
 
 const RETRIEVED = "2026-10-12T01:00:00.000Z";
 
-function item(
+export function item(
   source: SourceId,
   day: string,
   n: number,
@@ -85,6 +85,8 @@ export function syntheticItems(): Array<Item> {
 export interface CorpusOptions {
   readonly items?: ReadonlyArray<Item>;
   readonly coverage?: (row: CoverageRecord) => CoverageRecord | null;
+  /** Sources written besides github and hn; their days are `complete`. */
+  readonly extraSources?: ReadonlyArray<SourceId>;
 }
 
 export async function writeSyntheticCorpus(
@@ -93,7 +95,7 @@ export async function writeSyntheticCorpus(
 ): Promise<void> {
   const items = options.items ?? syntheticItems();
   const rows: Array<CoverageRecord> = [];
-  for (const source of ["github", "hn"] as const) {
+  for (const source of ["github", "hn", ...(options.extraSources ?? [])] as const) {
     NodeFS.mkdirSync(NodePath.join(root, source), { recursive: true });
     for (const day of daysBetween(FROM_DAY, TO_DAY)) {
       const dayItems = items.filter((i) => i.source === source && i.published_at.startsWith(day));
