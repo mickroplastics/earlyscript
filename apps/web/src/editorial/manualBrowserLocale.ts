@@ -11,6 +11,8 @@ export const MANUAL_BROWSER_TEXT: Readonly<Record<string, string>> = {
   Back: "Atrás",
   Forward: "Adelante",
   Refresh: "Recargar",
+  Stop: "Detener",
+  "Loading…": "Cargando…",
   Navigation: "Navegación",
   "Open in system browser": "Abrir en el navegador del sistema",
   "Float preview over chat": "Ventana flotante del navegador",
