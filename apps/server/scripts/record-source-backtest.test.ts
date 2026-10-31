@@ -11,6 +11,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as EditorialSourcesService from "../src/editorial/EditorialSourcesService.ts";
 import * as EditorialDatabase from "../src/editorial/persistence/EditorialDatabase.ts";
@@ -68,8 +69,9 @@ const entryOf = (dbPath: string, source: string) =>
     ),
   );
 
+const isRecordError = Schema.is(RecordSourceBacktestError);
 const reasonOfError = (error: { readonly _tag: string }) =>
-  error instanceof RecordSourceBacktestError ? error.reason : error._tag;
+  isRecordError(error) ? error.reason : error._tag;
 
 it.effect("records a not-worse backtest and refuses worse, tampered or mismatched ones", () => {
   const dir = makeTempDir();

@@ -141,4 +141,3 @@ export function rankingMetrics(ordered: ReadonlyArray<Label>): RankingMetrics {
     lead_days_at_5: leads(5),
   };
 }
-
