@@ -29,4 +29,17 @@ describe("createLocalEmbedder", () => {
     ).toThrow(new RegExp(`only runs ${field} `));
     expect(NodeFS.existsSync(cacheFile)).toBe(false);
   });
+
+  it("prepares the model once, in the parent, before it starts any worker", async () => {
+    const dir = tempDir("local-embedder-model");
+    const embedder = createLocalEmbedder(pinned, {
+      cacheFile: NodePath.join(dir, "embeddings.sqlite"),
+      modelDir: NodePath.join(dir, "models"),
+      workers: 4,
+    });
+    const texts = Array.from({ length: 64 }, (_, index) => `text ${index}`);
+    await expect(embedder.embed(texts)).rejects.toThrow(/Model file missing/);
+    expect(embedder.stats?.().workers).toBe(0);
+    await embedder.dispose();
+  });
 });

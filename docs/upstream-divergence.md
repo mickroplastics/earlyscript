@@ -30,9 +30,9 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 24. Modo manual (`es/manual-mode`), base `4384513ef9`, con `main` fusionado en `4849a10661` (`d0f38f927a`); un enganche de una línea en `apps/web/src/routes/_chat.tsx`; recepción del estado del preview sin tocar: suscripción al `PreviewManager` desde la capa propia.
 25. Home propio de la app instalada (`es/desktop-daily`), base `d0f38f927a`, con `main` fusionado en `d369318845`; único archivo de upstream tocado: `apps/desktop/src/main.ts`.
 
-El número 26 queda reservado para otra unidad.
+26. Motor dentro de la app instalada (`es/desktop-engine`), base `c8f15bedd1`, con `main` fusionado en `33a4255aa1`; ver su sección.
 
-27. Exportación de evidencia (`es/evidence-export`), base `c8f15bedd1`, con `main` fusionado en `33a4255aa1`; único archivo de upstream tocado: `apps/server/src/binCli.ts` (import y montaje del subcomando `evidence`).
+27. Exportación de evidencia (`es/evidence-export`), base `c8f15bedd1`, con `main` fusionado en `33a4255aa1` y `6487b0d7e0`; único archivo de upstream tocado: `apps/server/src/binCli.ts` (import y montaje del subcomando `evidence`).
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1497,7 +1497,7 @@ Decisiones reversibles:
 - Avisos (R2): el servidor guarda en `artifacts.notices` y `artifacts.failure` códigos con datos (`missed_days`, `presentations_pending`, `presentations_unavailable`, `config_changed`, `engine_failed`, `check_failed`, `stale_engine_waited`…) y la interfaz los redacta en español (`noticeText` en `jobsState.ts`). `error`, `notes` y las notas de fase quedan en inglés para diagnóstico y no se muestran.
 - Backfill: si el corpus termina antes de ayer, un solo job con el corte de hoy captura desde el último día; los días sin corrida quedan en `artifacts.collect.missedDays` y en una nota, y no se corren a posteriori.
 - Un `.collect.lock` de más de una hora se considera huérfano y se retira con una nota; uno más reciente hace fallar la fase para reintentar.
-- El motor corre con el Node del servidor (`HostProcess.ExecutablePath`, con `ELECTRON_RUN_AS_NODE=1` para la app de escritorio) desde sus fuentes TypeScript; `EARLYSCRIPT_ENGINE_CLI` permite apuntar a otro CLI.
+- El motor corre con el Node del servidor (`HostProcess.ExecutablePath`, con `ELECTRON_RUN_AS_NODE=1` para la app de escritorio): desde sus fuentes TypeScript en desarrollo y desde la copia empaquetada en la app instalada (§26). `EARLYSCRIPT_ENGINE_CLI` permite apuntar a otro CLI.
 
 ## 23. Backtest por fuente (rama `es/source-backtest`, 31 de octubre de 2026)
 
@@ -1665,6 +1665,29 @@ Arreglo: `apps/desktop/src/earlyscript/inheritedHome.ts` (`dropInheritedT3Home`)
 Archivos nuevos: `apps/desktop/src/earlyscript/inheritedHome.ts` y `inheritedHome.test.ts`. La prueba resuelve el entorno de escritorio empaquetado con `T3CODE_HOME=~/.t3` y comprueba que `baseDir` y `logDir` quedan bajo `~/.earlyscript`. Sin el arreglo falla. También comprueba que el desarrollo conserva la variable.
 
 Fuera de alcance: el lanzador CLI `~/.earlyscript/bin/earlyscript` (`DesktopCliShim.ts`) mantiene el `${T3CODE_HOME:-$home}` de upstream. Desde una terminal de T3 Code hay que ejecutarlo con `env -u T3CODE_HOME`, como indica `docs/earlyscript-macos.md`.
+
+## 26. Motor dentro de la app instalada (rama `es/desktop-engine`, 31 de octubre de 2026)
+
+Base: `c8f15bedd1`, con `main` fusionado en `33a4255aa1` (backtest por fuente). Hallazgo de U9c: el `.app` no llevaba `packages/trend-engine` ni `onnxruntime-node`, y el servidor embebido no podía lanzar `engine collect|run|check` sin un checkout.
+
+Decisión: copia empaquetada en los recursos de la app, no sidecar. El motor ya corre como proceso hijo con el Node de Electron (`ELECTRON_RUN_AS_NODE=1`), así que basta con darle archivos reales fuera de `app.asar`:
+
+- `scripts/earlyscript/stageTrendEngine.ts` empaqueta `src/cli.ts` y `src/embed/worker.ts` con `vite-plus/pack` (tsdown) en `trend-engine/dist/{cli,worker}.mjs`, con `effect` y `@earlyscript/editorial-contracts` dentro. Node no quita tipos de archivos bajo `node_modules`, así que las fuentes TypeScript del workspace no podían ir tal cual. Quedan fuera `@huggingface/transformers` y `onnxruntime-node`, que se copian con sus dependencias desde la instalación del workspace (mismas versiones que las pruebas y que fija `embed/spec.ts`) a `trend-engine/node_modules`. Se omite `onnxruntime-web` (140 MB; la build Node de transformers ya incluye lo que usa) y se dejan solo los binarios de onnxruntime de la plataforma y arquitectura destino. Copia `config/` para que `dist/cli.mjs` lea `../config/engine.v1.json` como `src/cli.ts`.
+- Solo se empaqueta si el destino coincide con la máquina que compila: los binarios nativos (onnxruntime, sharp) son los de esa instalación. Un cruce (Windows desde Linux, macOS x64 desde arm64) compila sin motor, con aviso en el log, y la corrida nocturna muestra `engine_missing`. onnxruntime-node 1.30.0 no trae binario darwin-x64.
+- `packages/trend-engine/src/embed/local.ts`: el worker es `./worker.ts` desde fuentes y `./worker.mjs` empaquetado. El proceso padre prepara el modelo una vez (`prepareModel`) antes de lanzar los workers; antes, cada worker descargaba los ~600 MB por su cuenta. Prueba: `local.test.ts` falla sin el cambio (4 workers lanzados contra un directorio de modelos vacío).
+
+Resolución del CLI, en un solo sitio (`apps/server/src/editorial/engineProcess.ts`, `locateEngine`): `EARLYSCRIPT_ENGINE_CLI` si está definida (y entonces solo esa ruta); si no, `<process.resourcesPath>/trend-engine/dist/cli.mjs` si existe; si no, `packages/trend-engine/src/cli.ts` del workspace. Electron en desarrollo también tiene `resourcesPath`, sin motor dentro, y cae al workspace. No se añade ninguna variable nueva. Sin candidato, el servidor arranca igual y cada job falla en su primera fase con el aviso estructurado `engine_missing` (contrato `EditorialJobNoticeCode`, texto en `jobsState.ts`) y las rutas probadas en `error`; reintenta como cualquier fallo de fase. Sin motor no hay configuración que hashear: la clave del job usa solo las fuentes, y cuando vuelve el motor el job queda reemplazado como `config_changed`. Pruebas: `engineProcess.test.ts` (empaquetada, desarrollo con y sin recursos de Electron, ruta configurada inexistente y servidor empaquetado sin motor) y un caso de `EditorialJobsService.test.ts`.
+
+| Archivo                             | Líneas | Cambio                                                                                                       | Motivo                                                           |
+| ----------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `scripts/build-desktop-artifact.ts` | 34     | Import de `./earlyscript/stageTrendEngine.ts`.                                                               | Enganche.                                                        |
+| `scripts/build-desktop-artifact.ts` | 999    | `...TREND_ENGINE_FILE_EXCLUSIONS` en `DESKTOP_FILE_EXCLUSIONS`.                                              | El motor no entra en `app.asar` (corre desde rutas reales).      |
+| `scripts/build-desktop-artifact.ts` | 1096   | `...TREND_ENGINE_EXTRA_RESOURCES` en `DESKTOP_EXTRA_RESOURCES`: `trend-engine` y, aparte, su `node_modules`. | electron-builder descarta el `node_modules` raíz de cada `from`. |
+| `scripts/build-desktop-artifact.ts` | 3947   | `stageTrendEngine` tras `stageCursorSdkPlatformPackages`, sobre `prod-resources`.                            | Prepara `Contents/Resources/trend-engine`.                       |
+
+Archivos propios: `scripts/earlyscript/stageTrendEngine.ts` (también ejecutable solo: `node scripts/earlyscript/stageTrendEngine.ts <dir>`), `apps/server/src/editorial/engineProcess.test.ts`.
+
+Medido en Gertrudis (M4): `trend-engine` ocupa 122 MB en `Contents/Resources` (85 MB son onnxruntime darwin-arm64); el `.dmg` pasa de 185,0 a 221,8 MB. El empaquetado del motor tarda menos de un segundo. Una corrida nocturna con HN y GitHub, caché llena y modelo ya descargado: captura 2 s, motor 25 s, comprobación 0,1 s, importación 6 ms, redacción 67 s (Claude Haiku); `engine check --run --rerun` con la copia empaquetada reproduce el `logical_hash`.
 
 ## 27. Exportación de evidencia (rama `es/evidence-export`, 31 de octubre de 2026)
 

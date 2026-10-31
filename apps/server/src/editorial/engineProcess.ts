@@ -15,31 +15,76 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const ENGINE_CLI_ENV = "EARLYSCRIPT_ENGINE_CLI";
 
+/** The desktop app's copy, staged under its resources by scripts/earlyscript/stageTrendEngine.ts. */
+const BUNDLED_ENGINE_CLI = ["trend-engine", "dist", "cli.mjs"] as const;
+
 /** Where the trend engine lives: its CLI and the configuration a run reads by default. */
 export interface EngineLocation {
   readonly cli: string;
   readonly defaultConfig: string;
 }
 
+/** No candidate CLI exists; the job reports `engine_missing`. */
+export class EngineNotFound extends Schema.TaggedError<EngineNotFound>()("EngineNotFound", {
+  message: Schema.String,
+}) {}
+
+export interface EngineSearch {
+  /** `EARLYSCRIPT_ENGINE_CLI`; when set, the only candidate. */
+  readonly configured: Option.Option<string>;
+  /** Electron's resources directory, also under `ELECTRON_RUN_AS_NODE`; absent under Node. */
+  readonly resourcesPath: string | undefined;
+  /** `packages/trend-engine/src/cli.ts`; absent where the package does not resolve (the bundle). */
+  readonly workspaceCli: string | undefined;
+}
+
 /**
- * `EARLYSCRIPT_ENGINE_CLI`, or `packages/trend-engine/src/cli.ts` of this workspace. The
- * engine runs from its TypeScript sources under the server's own Node, as `engine` does.
+ * The first CLI that exists: the configured one, else the app's bundled copy, else this
+ * workspace's sources. Development Electron has resources too, without the engine in them.
  */
-export const resolveEngineLocation = Effect.gen(function* () {
+export const locateEngine = Effect.fn("EditorialEngine.locate")(function* (search: EngineSearch) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configured = yield* Config.String(ENGINE_CLI_ENV).pipe(Config.option);
-  const cli = Option.match(configured, {
-    onNone: () =>
-      path.join(
-        path.dirname(NodeURL.fileURLToPath(import.meta.resolve("@earlyscript/trend-engine/run"))),
-        "cli.ts",
-      ),
-    onSome: (file) => path.resolve(file),
+  const candidates = Option.match(search.configured, {
+    onSome: (file) => [path.resolve(file)],
+    onNone: () => [
+      ...(search.resourcesPath === undefined
+        ? []
+        : [path.join(search.resourcesPath, ...BUNDLED_ENGINE_CLI)]),
+      ...(search.workspaceCli === undefined ? [] : [search.workspaceCli]),
+    ],
   });
-  return {
-    cli,
-    defaultConfig: path.join(path.dirname(path.dirname(cli)), "config", "engine.v1.json"),
-  } satisfies EngineLocation;
+  for (const cli of candidates) {
+    if (yield* fs.exists(cli).pipe(Effect.orElseSucceed(() => false))) {
+      return {
+        cli,
+        defaultConfig: path.join(path.dirname(path.dirname(cli)), "config", "engine.v1.json"),
+      } satisfies EngineLocation;
+    }
+  }
+  return yield* new EngineNotFound({
+    message: `No trend engine CLI at ${candidates.join(", ") || "any known path"}`,
+  });
+});
+
+const workspaceEngineCli = () => {
+  try {
+    const run = NodeURL.fileURLToPath(import.meta.resolve("@earlyscript/trend-engine/run"));
+    return run.replace(/run\.ts$/, "cli.ts");
+  } catch {
+    return undefined;
+  }
+};
+
+/** This process's engine: its environment, Electron's resources, then this workspace. */
+export const resolveEngineLocation = Effect.gen(function* () {
+  const configured = yield* Config.String(ENGINE_CLI_ENV).pipe(Config.option);
+  const resourcesPath: unknown = Reflect.get(NodeProcess, "resourcesPath");
+  return yield* locateEngine({
+    configured,
+    resourcesPath: typeof resourcesPath === "string" ? resourcesPath : undefined,
+    workspaceCli: workspaceEngineCli(),
+  });
 });
 
 export interface EngineInvocation {
