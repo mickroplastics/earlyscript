@@ -1665,8 +1665,6 @@ Arreglo: `apps/desktop/src/earlyscript/inheritedHome.ts` (`dropInheritedT3Home`)
 
 Archivos nuevos: `apps/desktop/src/earlyscript/inheritedHome.ts` y `inheritedHome.test.ts`. La prueba resuelve el entorno de escritorio empaquetado con `T3CODE_HOME=~/.t3` y comprueba que `baseDir` y `logDir` quedan bajo `~/.earlyscript`. Sin el arreglo falla. También comprueba que el desarrollo conserva la variable.
 
-Fuera de alcance: el lanzador CLI `~/.earlyscript/bin/earlyscript` (`DesktopCliShim.ts`) mantiene el `${T3CODE_HOME:-$home}` de upstream. Desde una terminal de T3 Code hay que ejecutarlo con `env -u T3CODE_HOME`, como indica `docs/earlyscript-macos.md`.
-
 ## 26. Motor dentro de la app instalada (rama `es/desktop-engine`, 31 de octubre de 2026)
 
 Base: `c8f15bedd1`, con `main` fusionado en `33a4255aa1` (backtest por fuente). Hallazgo de U9c: el `.app` no llevaba `packages/trend-engine` ni `onnxruntime-node`, y el servidor embebido no podía lanzar `engine collect|run|check` sin un checkout.
