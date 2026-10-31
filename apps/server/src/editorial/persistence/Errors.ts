@@ -74,6 +74,10 @@ export const WorkClockStateReason = Schema.Literals([
   "not-started",
   "same-stage",
   "not-unresolved",
+  /** The thread was decided; its clock is final. */
+  "decided",
+  /** A segment left open by a restart awaits the operator's resolution. */
+  "unresolved",
 ]);
 export type WorkClockStateReason = typeof WorkClockStateReason.Type;
 

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the review tests read the version copy.
+import * as NodeFS from "node:fs";
+
 import { checkScript } from "@earlyscript/editorial-script";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -11,6 +14,8 @@ import {
   type EditorialVideoError,
   type EditorialVideoView,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -20,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import * as ServerConfig from "../config.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -208,6 +214,8 @@ describe("editorial video RPC", () => {
         assert.notStrictEqual(head, read);
         assert.strictEqual(current.video?.decision, null);
         assert.strictEqual(current.video?.clock.state._tag, "running");
+        // The refusal keeps the snapshot it took: the new version is the head to review.
+        assert.strictEqual(current.video?.script.versionCount, 2);
 
         const decided = yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
           threadId: THREAD,
@@ -334,6 +342,235 @@ describe("editorial video RPC", () => {
         assert.isAbove(yield* log.latestSeq, 0);
         assert.strictEqual(yield* Queue.size(views), 0);
         yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+});
+
+describe("editorial video RPC, review of 76967e71c6", () => {
+  const handlersWith = (clockLayer?: Layer.Layer<WorkClockService>) =>
+    clockLayer === undefined
+      ? EditorialVideoRpc.layer
+      : EditorialVideoRpc.layer.pipe(Layer.provide(clockLayer));
+
+  // H2: Sol's reproduction. A start admitted by the RPC before the decision commits must not
+  // reopen the clock after it: the guard runs inside the clock's own transaction.
+  it.effect("refuses a clock command that reaches the service after the decision", () =>
+    withVideoWorkspace(() =>
+      Effect.gen(function* () {
+        const real = yield* WorkClockService;
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const delayed = WorkClockService.of({
+          ...real,
+          start: (...args) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              return yield* real.start(...args);
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const handlers = yield* EditorialVideoRpc.EditorialVideoRpcHandlers;
+          const racing = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.clock]({
+            threadId: THREAD,
+            command: { _tag: "start", stage: "read" },
+            operationId: "racing-start",
+          }).pipe(Effect.flip, Effect.forkScoped);
+          yield* Deferred.await(entered);
+          const decided = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.decide]({
+            threadId: THREAD,
+            action: "accept",
+            utility: 4,
+            scriptVersionHash: null,
+            operationId: "decision",
+          });
+          assert.strictEqual(decided.decision?.clockDefinitive, true);
+          yield* Deferred.succeed(release, undefined);
+          const refused = yield* Fiber.join(racing);
+          assert.strictEqual(reasonOf(refused), "decided");
+          const after = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: THREAD });
+          assert.strictEqual(after.video?.clock.state._tag, "idle");
+        }).pipe(
+          Effect.provide(handlersWith(Layer.succeed(WorkClockService, delayed))),
+          Effect.scoped,
+        );
+      }),
+    ),
+  );
+
+  // H2, the read to write change: a save after the decision snapshots but leaves the clock.
+  it.effect("keeps a decided clock stopped when the script is saved again", () =>
+    withVideoRpc(({ write }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: THREAD,
+          command: { _tag: "start", stage: "read" },
+        });
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: THREAD,
+          action: "reject",
+          utility: 2,
+          reason: "No angle",
+          scriptVersionHash: null,
+          operationId: "decision",
+        });
+        yield* write(SCRIPT_PATH, SCRIPT);
+        const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
+        assert.strictEqual(saved.script.versionCount, 1);
+        assert.strictEqual(saved.clock.state._tag, "idle");
+      }),
+    ),
+  );
+
+  // H3: a decision sent from Escribir still records Decidir, with the zero it actually ran,
+  // so Results counts the thread as complete.
+  it.effect("opens Decidir when the decision is sent from another stage", () =>
+    withVideoRpc(({ write }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: THREAD,
+          command: { _tag: "start", stage: "read" },
+        });
+        yield* TestClock.adjust(MINUTE);
+        yield* write(SCRIPT_PATH, SCRIPT);
+        const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
+        yield* TestClock.adjust(2 * MINUTE);
+        const decided = yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: THREAD,
+          action: "accept",
+          utility: 4,
+          scriptVersionHash: saved.script.head?.contentHash ?? null,
+          operationId: "decision",
+        });
+        assert.deepStrictEqual(decided.decision?.durations, {
+          exploreMs: null,
+          readMs: MINUTE,
+          writeMs: 2 * MINUTE,
+          decideMs: 0,
+          totalMs: 3 * MINUTE,
+        });
+        const summary = yield* EditorialResultsService.EditorialResultsService.use(
+          (service) => service.summary,
+        ).pipe(Effect.provide(EditorialResultsService.layer));
+        const assisted = summary.modes.find((mode) => mode.mode === "assisted");
+        assert.strictEqual(assisted?.partialCoverage, 0);
+        assert.strictEqual(
+          summary.comparisons.find((comparison) => comparison.key === "total")?.assisted.n,
+          1,
+        );
+      }),
+    ),
+  );
+
+  // H4: the decided version opens as a read-only copy outside the workspace.
+  it.effect("writes the decided version to a read-only file outside the workspace", () =>
+    withVideoWorkspace(({ write, workspace }) =>
+      Effect.gen(function* () {
+        const handlers = yield* EditorialVideoRpc.EditorialVideoRpcHandlers;
+        yield* write(SCRIPT_PATH, SCRIPT);
+        const saved = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
+        const hash = saved.script.head!.contentHash;
+        yield* write(SCRIPT_PATH, `${SCRIPT}\nEdited after.\n`);
+        const opened = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.openVersion]({
+          threadId: THREAD,
+          contentHash: hash,
+        });
+        assert.isTrue(opened.path.endsWith("quantum.md"));
+        assert.isFalse(opened.path.startsWith(workspace));
+        assert.strictEqual(NodeFS.readFileSync(opened.path, "utf8"), SCRIPT);
+        assert.strictEqual(NodeFS.statSync(opened.path).mode & 0o222, 0);
+        // Opening it again reuses the copy.
+        const again = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.openVersion]({
+          threadId: THREAD,
+          contentHash: hash,
+        });
+        assert.strictEqual(again.path, opened.path);
+        const unknown = yield* handlers[EDITORIAL_VIDEO_WS_METHODS.openVersion]({
+          threadId: THREAD,
+          contentHash: "missing",
+        }).pipe(Effect.flip);
+        assert.strictEqual(reasonOf(unknown), "not-found");
+      }).pipe(
+        Effect.provide(
+          EditorialVideoRpc.layer.pipe(
+            Layer.provide(
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
+                prefix: "editorial-video-version-",
+              }).pipe(Layer.provide(NodeServices.layer)),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
+    ),
+  );
+
+  // H5 and H6: resolving is idempotent per operation, and a decision waits for it.
+  it.effect("asks to resolve before deciding, and replays a repeated resolve", () =>
+    withVideoRpc(() =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          threadId: THREAD,
+          command: { _tag: "start", stage: "read" },
+        });
+        yield* TestClock.adjust(10 * MINUTE);
+        yield* WorkClockService.use((clock) => clock.recoverOpenIntervals());
+        const pending = yield* client[EDITORIAL_VIDEO_WS_METHODS.get]({ threadId: THREAD });
+        const intervalId = pending.video!.clock.unresolved[0]!.intervalId;
+
+        const early = yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: THREAD,
+          action: "accept",
+          utility: 4,
+          scriptVersionHash: null,
+          operationId: "decision-early",
+        }).pipe(Effect.flip);
+        assert.strictEqual(reasonOf(early), "clock-unresolved");
+        assert.strictEqual(
+          "message" in early ? early.message : "",
+          "Resuelve el tramo abierto antes de decidir.",
+        );
+
+        const resolve = {
+          threadId: THREAD,
+          command: {
+            _tag: "resolve" as const,
+            intervalId,
+            endedAt: "1970-01-01T00:05:00.000Z",
+          },
+          operationId: "resolve-1",
+        };
+        const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.clock](resolve);
+        const repeated = yield* client[EDITORIAL_VIDEO_WS_METHODS.clock](resolve);
+        assert.strictEqual(first.clock.activeMs, 5 * MINUTE);
+        assert.deepStrictEqual(repeated.clock, first.clock);
+        const resolvedEvents = (yield* (yield* EditorialEventLog).readSince(0)).filter(
+          (event) => event.type === "work.resolved",
+        );
+        assert.deepStrictEqual(
+          resolvedEvents.map((event) => event.operationId),
+          ["resolve-1"],
+        );
+        // Another operation on a resolved segment is still refused.
+        const other = yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
+          ...resolve,
+          operationId: "resolve-2",
+        }).pipe(Effect.flip);
+        assert.strictEqual(reasonOf(other), "clock-state");
+
+        const decided = yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+          threadId: THREAD,
+          action: "accept",
+          utility: 4,
+          scriptVersionHash: null,
+          operationId: "decision",
+        });
+        assert.strictEqual(decided.decision?.clockDefinitive, true);
+        assert.strictEqual(decided.decision?.durations.readMs, 5 * MINUTE);
       }),
     ),
   );

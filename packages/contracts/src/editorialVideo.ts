@@ -26,6 +26,7 @@ export const EDITORIAL_VIDEO_WS_METHODS = {
   saveScript: "editorial.video.saveScript",
   decide: "editorial.video.decide",
   saveResult: "editorial.video.saveResult",
+  openVersion: "editorial.video.openVersion",
 } as const;
 
 export const EditorialVideoClockState = Schema.Union([
@@ -192,6 +193,16 @@ export const EditorialVideoDecideInput = Schema.Struct({
 });
 export type EditorialVideoDecideInput = typeof EditorialVideoDecideInput.Type;
 
+export const EditorialVideoOpenVersionInput = Schema.Struct({
+  threadId: ThreadId,
+  contentHash: Schema.String,
+});
+export type EditorialVideoOpenVersionInput = typeof EditorialVideoOpenVersionInput.Type;
+
+/** An absolute host path holding the version's snapshot, read-only, outside the workspace. */
+export const EditorialVideoOpenVersionResult = Schema.Struct({ path: Schema.String });
+export type EditorialVideoOpenVersionResult = typeof EditorialVideoOpenVersionResult.Type;
+
 export const EditorialVideoSaveResultInput = Schema.Struct({
   threadId: ThreadId,
   views: Schema.optionalKey(NonNegativeInt),
@@ -213,6 +224,8 @@ export const EditorialVideoErrorReason = Schema.Literals([
   "clock-state",
   /** The thread was decided; its clock is final. */
   "decided",
+  /** A segment recovered after a restart must be resolved before deciding. */
+  "clock-unresolved",
   /** A result needs a decision first. */
   "not-decided",
   /** The script file is missing, outside the workspace or not text. */
@@ -258,6 +271,11 @@ const EditorialVideoSaveScriptRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.saveScri
   error: videoError,
 });
 
+/**
+ * Snapshots the script, then decides in one transaction that moves the clock to Decidir and
+ * stops it. A stale hash fails with `version-changed` yet keeps that snapshot and its event:
+ * the head becomes the version on disk, to review. `clock-unresolved` while a segment waits.
+ */
 const EditorialVideoDecideRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.decide, {
   payload: EditorialVideoDecideInput,
   success: EditorialVideoState,
@@ -270,6 +288,13 @@ const EditorialVideoSaveResultRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.saveResu
   error: videoError,
 });
 
+/** Writes the snapshot of a saved version to a read-only file the file surface can show. */
+const EditorialVideoOpenVersionRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.openVersion, {
+  payload: EditorialVideoOpenVersionInput,
+  success: EditorialVideoOpenVersionResult,
+  error: videoError,
+});
+
 /** Merged into `WsRpcGroup` next to the editorial and Results groups. */
 export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoGetRpc,
@@ -278,6 +303,7 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoSaveScriptRpc,
   EditorialVideoDecideRpc,
   EditorialVideoSaveResultRpc,
+  EditorialVideoOpenVersionRpc,
 );
 
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
@@ -287,4 +313,5 @@ export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_VIDEO_WS_METHODS.saveScript]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.decide]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.saveResult]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.openVersion]: AuthOrchestrationReadScope,
 } as const;

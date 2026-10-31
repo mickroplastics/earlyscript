@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - writes the read-only copy of a decided version.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import { checkScript } from "@earlyscript/editorial-script";
 import {
   EDITORIAL_VIDEO_WS_METHODS,
@@ -22,6 +26,7 @@ import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
@@ -39,6 +44,7 @@ export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
   [EDITORIAL_VIDEO_WS_METHODS.saveScript]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.decide]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.saveResult]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.openVersion]: "editorial",
 } as const;
 
 type VideoRpcs = RpcGroup.Rpcs<typeof EditorialVideoRpcGroup>;
@@ -75,6 +81,7 @@ export class EditorialVideoRpcHandlers extends Context.Reference<EditorialVideoH
       [EDITORIAL_VIDEO_WS_METHODS.saveScript]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.decide]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.saveResult]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.openVersion]: () => Effect.fail(unavailable),
     }),
   },
 ) {}
@@ -85,6 +92,7 @@ const isVideoError = Schema.is(EditorialVideoError);
 const toVideoError = (cause: {
   readonly _tag: string;
   readonly message: string;
+  readonly reason?: unknown;
 }): EditorialVideoError => {
   if (isVideoError(cause)) return cause;
   switch (cause._tag) {
@@ -94,8 +102,14 @@ const toVideoError = (cause: {
       return videoError("invalid-input", cause.message);
     case "EditorialConflictError":
       return videoError("invalid-input", cause.message);
-    case "WorkClockStateError":
-      return videoError("clock-state", cause.message);
+    case "WorkClockStateError": {
+      const reason = "reason" in cause ? cause.reason : undefined;
+      return reason === "decided"
+        ? videoError("decided", "The thread was decided; its clock is final.")
+        : reason === "unresolved"
+          ? videoError("clock-unresolved", "Resuelve el tramo abierto antes de decidir.")
+          : videoError("clock-state", cause.message);
+    }
     case "ScriptFileError":
       return videoError("script-file", cause.message);
     default:
@@ -187,6 +201,7 @@ const makeHandlers = Effect.gen(function* () {
   // The trend title comes from the run directory, mounted by `layer.ts`; without it the
   // thread still works and shows its dossier id.
   const reader = yield* Effect.serviceOption(EditorialReadService);
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
 
   const scriptCounts = boundedCache<{ claims: number; cited: number } | null>();
   const trendTitles = boundedCache<string>();
@@ -344,11 +359,14 @@ const makeHandlers = Effect.gen(function* () {
     onThread(input.threadId, (thread) =>
       Effect.gen(function* () {
         const { command } = input;
-        const options = { operationId: input.operationId, actor: "operator" as const };
-        // A decision stops the clock for good; resolving a recovered segment stays possible.
-        if (command._tag !== "resolve" && (yield* hasDecision(thread.threadId))) {
-          return yield* videoError("decided", "The thread was decided; its clock is final.");
-        }
+        // A decision stops the clock for good: the service checks it inside the same
+        // transaction as the change, so a command admitted before a decision commits is
+        // refused after it. Resolving a recovered segment stays possible.
+        const options = {
+          operationId: input.operationId,
+          actor: "operator" as const,
+          refuseWhenDecided: true,
+        };
         switch (command._tag) {
           case "start":
             return yield* clocks.start(thread.threadId, command.stage, options);
@@ -361,17 +379,22 @@ const makeHandlers = Effect.gen(function* () {
           case "stop":
             return yield* clocks.stop(thread.threadId, options);
           case "resolve": {
-            const summary = yield* clocks.summary(thread.threadId);
-            if (!summary.unresolved.some((entry) => entry.intervalId === command.intervalId)) {
+            const owner = yield* sql<{ readonly thread_id: string }>`
+              SELECT thread_id FROM editorial_work_intervals
+              WHERE interval_id = ${command.intervalId}
+            `;
+            if (owner[0]?.thread_id !== thread.threadId) {
               return yield* videoError(
                 "not-found",
-                `Interval ${command.intervalId} does not await resolution in this thread.`,
+                `Interval ${command.intervalId} is not a segment of this thread.`,
               );
             }
+            // A retry of the same operation returns the current state; see resolveInterval.
             return yield* clocks.resolveInterval({
               intervalId: command.intervalId,
               endedAt: command.endedAt,
               actor: "operator",
+              operationId: input.operationId,
             });
           }
         }
@@ -382,17 +405,70 @@ const makeHandlers = Effect.gen(function* () {
     onThread(threadId, (thread) =>
       Effect.gen(function* () {
         yield* scripts.snapshot(thread.threadId);
-        // Reading the dossier ends at the first saved script, unless the thread was decided.
-        const summary = yield* clocks.summary(thread.threadId);
-        if (
-          summary.state._tag === "running" &&
-          summary.state.stage === "read" &&
-          !(yield* hasDecision(thread.threadId))
-        ) {
-          yield* clocks.changeStage(thread.threadId, "write", { actor: "operator" });
-        }
+        // Reading the dossier ends at the first saved script. Both conditions, Leer running
+        // and no decision, are checked in the stage change's own transaction.
+        yield* clocks
+          .changeStage(thread.threadId, "write", {
+            actor: "operator",
+            onlyFrom: "read",
+            refuseWhenDecided: true,
+          })
+          .pipe(
+            Effect.catchIf(
+              (error) => error._tag === "WorkClockStateError" && error.reason === "decided",
+              () => Effect.void,
+            ),
+          );
       }),
     );
+
+  /**
+   * The snapshot of a saved version as a read-only file under the server's state directory.
+   * The file surface shows an absolute host path without editing, so the decided script reads
+   * as it was decided while editing in the workspace stays as it is. Content-addressed: the
+   * file is written once and never changes.
+   */
+  const openVersion = Effect.fn("EditorialVideoRpc.openVersion")(function* (
+    threadId: string,
+    contentHash: string,
+  ) {
+    if (Option.isNone(config)) {
+      return yield* videoError("unavailable", "The server has no state directory.");
+    }
+    const thread = yield* requireThread(threadId);
+    const rows = yield* sql<{ readonly snapshot: string; readonly script_path: string | null }>`
+        SELECT snapshot, script_path FROM editorial_script_versions
+        WHERE thread_id = ${thread.threadId} AND content_hash = ${contentHash}
+      `;
+    const row = rows[0];
+    if (row === undefined) {
+      return yield* videoError(
+        "not-found",
+        `Version ${contentHash} is not a version of this thread.`,
+      );
+    }
+    const name = NodePath.basename(row.script_path ?? "") || "guion.md";
+    const target = NodePath.join(
+      config.value.stateDir,
+      "editorial",
+      "versions",
+      contentHash.replace(/[^A-Za-z0-9]/g, "").slice(0, 64),
+      name,
+    );
+    yield* Effect.tryPromise({
+      try: async () => {
+        await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+        // `wx` leaves an existing copy alone: its content is the same by construction.
+        await NodeFSP.writeFile(target, row.snapshot, { flag: "wx", mode: 0o444 }).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== "EEXIST") throw error;
+          },
+        );
+      },
+      catch: () => videoError("storage", "Cannot write the version's read-only copy."),
+    });
+    return { path: target };
+  }, Effect.mapError(toVideoError));
 
   const handlers: EditorialVideoHandlers = {
     [EDITORIAL_VIDEO_WS_METHODS.get]: ({ threadId }) => view(threadId),
@@ -424,6 +500,10 @@ const makeHandlers = Effect.gen(function* () {
             scriptVersionHash: input.scriptVersionHash ?? undefined,
             operationId: input.operationId,
             actor: "operator",
+            // Resolve first: the decision freezes its durations and Results reads them.
+            requireDefinitiveClock: true,
+            // Deciding is the Decidir stage, even when nobody opened it before sending.
+            openStage: "decide",
           })
           .pipe(
             Effect.mapError((error) =>
@@ -435,6 +515,8 @@ const makeHandlers = Effect.gen(function* () {
             ),
           ),
       ),
+    [EDITORIAL_VIDEO_WS_METHODS.openVersion]: ({ threadId, contentHash }) =>
+      openVersion(threadId, contentHash),
     [EDITORIAL_VIDEO_WS_METHODS.saveResult]: ({ threadId, ...metrics }) =>
       onThread(threadId, (thread) =>
         Effect.gen(function* () {
