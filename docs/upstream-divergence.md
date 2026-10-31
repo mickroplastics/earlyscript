@@ -18,6 +18,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 12. Importador de corridas, bandeja con estado y escritura editorial (`es/editorial-write`), base `ed5c3a2903`; enganche en `apps/server/src/server.ts` junto a Resultados.
 13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
 14. Presentación de tendencias en la interfaz (`es/trend-presentation-ui`), base `638a6cf64e`, con `main` fusionado en `0d84824fea`.
+15. Hilo de video, interfaz (`es/video-thread`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación, `client-runtime`, `ThreadDetailsPanel.tsx` y `ChatHeader.tsx`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1071,3 +1072,41 @@ Decisiones reversibles:
 - Idioma: el predeterminado del prompt, `es`.
 - Scopes: `orchestration:operate` para redactar (gasta inferencia, como `pullRequestsGenerateReviewGuide`), `orchestration:read` para el progreso.
 - Refresco en el cliente: las órdenes de redacción llaman a `bumpInbox`, la señal de revisión de bandeja y ficha de `state.ts`. Durante una corrida, la progresión vuelve a llamarla cada vez que cambia el número de listas.
+
+## 16. Hilo de video: interfaz
+
+Base: `0d84824fea`, con `main` fusionado en `3e4c6c0741` (presentación de §14). Rama `es/video-thread`. La interfaz del hilo de video sobre los servicios de §10: reloj arriba a la derecha del hilo, secciones editoriales en los detalles del hilo (ficha enlazada, reloj, guion, decisión y resultado), guion abierto en la superficie `file` existente con una versión inmutable por cada pausa del autoguardado, decisión contra el hash de la versión en pantalla y métricas de video a mano en el hilo decidido. Decisiones 6 y 8 de la sesión de la tarde de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §3, §4 y §9 (U5).
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialVideo.ts` (`EditorialVideoRpcGroup` con `editorial.video.get`, `subscribe`, `clock`, `saveScript`, `decide` y `saveResult`; `EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES`; `EditorialVideoError` con `reason`). Reutiliza modo, etapa y acción de `editorialResults.ts`.
+- Servidor: `apps/server/src/editorial/videoRpc.ts` (handlers como `Context.Reference` con valor por defecto `unavailable`, agregados de trazas y capa) y `videoRpc.test.ts`.
+- Cliente, en `apps/web/src/editorial/`: `videoState.ts` (suscripción por hilo y comandos), `videoCommands.ts` (comandos con aviso, apertura del guion y versionado al guardar), `videoThread.logic.ts`, `WorkClock.tsx`, `VideoThreadSections.tsx`, `VideoDecisionPanel.tsx`, `VideoResultForm.tsx` y sus pruebas (`videoThread.logic.test.ts`, `VideoThreadSections.browser.test.tsx`, datos en `videoThread.fixture.ts`).
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                |
+| ----------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/rpc.ts`                       | 39, 2148  | Importa `EditorialVideoRpcGroup` y lo compone con `.merge` después del grupo de presentación.          |
+| `packages/contracts/src/index.ts`                     | 74        | Reexporta `editorialVideo.ts`.                                                                         |
+| `apps/server/src/ws.ts`                               | 246, 1877 | Esparce los handlers de video, leídos de su `Reference`, junto a los de Resultados y presentación.     |
+| `apps/server/src/server.ts`                           | 54, 639   | Monta `videoRpc.layer` junto a `resultsRpc.layer`, sobre `EditorialRuntime.aroundOrchestration` (§10). |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 6, 49     | Esparce `EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES`.                                                         |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 11, 21    | Esparce `EDITORIAL_VIDEO_RPC_AGGREGATES`.                                                              |
+| `packages/client-runtime/src/rpc/client.ts`           | 8, 77-78  | Añade `editorial.video.subscribe` a `EnvironmentSubscriptionRpcTag`, como `editorial.subscribe`.       |
+| `apps/web/src/components/chat/ThreadDetailsPanel.tsx` | 38, 162   | Monta `VideoThreadSections` una vez, al inicio de las secciones, salvo en borradores.                  |
+| `apps/web/src/components/chat/ChatHeader.tsx`         | 45, 432   | Monta `WorkClock` a la derecha de la cabecera del hilo, junto al indicador de invitado.                |
+
+Decisiones reversibles:
+
+- Reloj en `ChatHeader.tsx`, no en `ChatRightPanel.tsx`: el panel derecho solo existe con una pestaña abierta y la tarjeta de detalles se vuelve emergente cuando el panel la tapa, así que solo la cabecera queda montada y visible todo el tiempo. Por eso el versionado del guion al guardar vive en `WorkClock` y no en las secciones.
+- Una sola suscripción por hilo (`editorial.video.subscribe`): la vista completa y otra tras cada evento `video_thread` de ese hilo. La comparten reloj y secciones; al reconectar se suscribe de nuevo y empieza por una vista fresca. Para un hilo sin asociación la vista es `video: null` y los dos montajes no dibujan nada.
+- El cliente interpola el reloj con su propio reloj desde que recibió la vista, nunca con `asOf` del servidor, y nunca resta tiempo si su reloj va detrás.
+- Pausa con motivo opcional en un desplegable del botón; la etapa se cambia a mano desde el menú del reloj. Leer pasa a Escribir solo en el servidor, en `saveScript`, cuando el reloj corre en Leer y el hilo no está decidido. «Pasar a Decidir» abre la etapa Decidir, que Resultados exige para la cobertura completa.
+- Tras una decisión el servidor rechaza `start`, `pause`, `resume`, `stage` y `stop` con `decided`; `resolve` sigue permitido. `saveResult` exige una decisión (`not-decided`), aunque `EditorialCommandService.saveResult` no lo comprueba.
+- Tramo recuperado tras reinicio: aviso en la cabecera y formulario en las secciones; el operador indica la hora y el cliente la recorta al intervalo entre inicio y recuperación. Nada se resuelve solo.
+- Guion: «Abrir guion» usa `rightPanelStore.openFile`. Si el archivo no existe, el cliente vuelve a preguntar al servidor y lo crea con la plantilla de encabezados de `@earlyscript/editorial-script` mediante `projects.writeFile`, con el scope de escritura de archivos; nunca sobrescribe un archivo existente. El versionado escucha las confirmaciones de escritura del átomo `optimisticFile` y toma una versión tras 2 s sin guardados nuevos, o al salir del hilo. Un cambio que no pasa por el editor (el agente) se versiona al decidir: `ScriptVersionService.decide` toma la versión del disco y la decisión se rechaza si no es la que se leyó.
+- Decisión: acciones Aceptar, Editar y Rechazar (las de la maqueta y de `editorial_decisions`), utilidad 1 a 5 y motivo obligatorio para editar o rechazar. Si el servidor responde `version-changed`, el bloque nombra la versión leída y la nueva, y vuelve al formulario con el borrador intacto para decidir sobre la nueva tras revisarla.
+- Resultado: vistas, clics, suscripciones y comentarios a mano, con fecha de observación (mediodía UTC del día elegido) y el texto «Descriptivo, no atribuido al sistema».
+- Sin sesión en los handlers, como Resultados: los eventos guardan `actor: operator` sin `actorSessionId`, porque `WorkClockService` y `recordDecision` no reciben ese dato.
+- El título de la ficha sale de `EditorialReadService.getDossier` (título del asistente, si existe, o etiqueta del motor), en memoria por corrida y ficha; sin directorio de corridas el enlace muestra el id de la ficha.
