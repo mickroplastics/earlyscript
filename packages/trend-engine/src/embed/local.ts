@@ -4,6 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import type { EmbeddingSpec } from "@earlyscript/editorial-contracts/dossier";
 
 import { EmbeddingCache } from "./cache.ts";
+import { prepareModel } from "./model.ts";
 import {
   type Embedder,
   embeddingKey,
@@ -24,6 +25,11 @@ export interface LocalEmbedderOptions {
 }
 
 const CHUNK = 16;
+
+// The desktop app ships this package bundled: its worker is dist/worker.mjs beside the chunk.
+const WORKER_ENTRY = import.meta.url.endsWith(".ts")
+  ? new URL("./worker.ts", import.meta.url)
+  : new URL("./worker.mjs", import.meta.url);
 
 type Reply =
   | {
@@ -47,15 +53,11 @@ class Worker {
   peakRssBytes = 0;
 
   constructor(options: { modelDir: string; threads: number; allowDownload: boolean }) {
-    this.child = NodeChildProcess.fork(
-      new URL("./worker.ts", import.meta.url),
-      [JSON.stringify(options)],
-      {
-        stdio: ["ignore", "ignore", "pipe", "ipc"],
-        serialization: "advanced",
-        execArgv: [],
-      },
-    );
+    this.child = NodeChildProcess.fork(WORKER_ENTRY, [JSON.stringify(options)], {
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+      serialization: "advanced",
+      execArgv: [],
+    });
     this.child.stderr?.on("data", (data: Buffer) => {
       this.stderr = (this.stderr + data.toString()).slice(-4000);
     });
@@ -132,6 +134,7 @@ export function createLocalEmbedder(spec: EmbeddingSpec, options: LocalEmbedderO
   const key = embeddingKey(spec);
   const cache = new EmbeddingCache(options.cacheFile, key);
   const workers: Array<Worker> = [];
+  let model: Promise<string> | undefined;
   let cacheHits = 0;
   let inferred = 0;
 
@@ -150,6 +153,9 @@ export function createLocalEmbedder(spec: EmbeddingSpec, options: LocalEmbedderO
     const chunks: Array<Array<string>> = [];
     for (let start = 0; start < unique.length; start += CHUNK)
       chunks.push(unique.slice(start, start + CHUNK));
+    // One download for every worker: each would otherwise fetch the whole model in parallel.
+    if (chunks.length > 0)
+      await (model ??= prepareModel(options.modelDir, options.allowDownload ?? false));
     while (chunks.length > 0 && workers.length < Math.min(options.workers, chunks.length)) {
       workers.push(
         new Worker({

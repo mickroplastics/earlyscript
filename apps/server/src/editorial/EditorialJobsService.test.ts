@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
@@ -28,6 +29,7 @@ import {
   withEditorialDatabase,
 } from "./persistence/EditorialDatabase.testkit.ts";
 import * as RunDirectory from "./RunDirectory.ts";
+import { EngineNotFound } from "./engineProcess.ts";
 
 // Stands in for packages/trend-engine/src/cli.ts: writes the files the real commands write
 // and appends each command to trace.log. A `fail-<command>` file next to it makes it fail; a
@@ -245,6 +247,7 @@ const withJobs = <A, E>(
     readonly draftFails?: boolean;
     /** The real importer over the fixture's runs directory, instead of a double. */
     readonly realImport?: boolean;
+    readonly engine?: EditorialJobsService.EditorialJobsOptions["engine"];
   } = {},
 ) => {
   let draftsAwaited = 0;
@@ -268,7 +271,8 @@ const withJobs = <A, E>(
           Layer.mock(RunDirectory.EditorialRunDirectory)({ runsDir: fx.runsDir }),
         );
   const jobs = EditorialJobsService.layerWith({
-    engine: { cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH },
+    engine:
+      options.engine ?? Result.succeed({ cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH }),
     jobsDir: NodePath.join(fx.root, "jobs"),
     profilePath: NodePath.join(fx.root, "profile.json"),
     cacheFile: NodePath.join(fx.root, "embeddings.sqlite"),
@@ -626,6 +630,28 @@ describe("EditorialJobsService", () => {
         assert.deepStrictEqual(done.artifacts.notices, [{ code: "presentations_unavailable" }]);
       }),
       { draftFails: true },
+    );
+  });
+
+  it.live("records engine_missing on the job when no engine CLI was found", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const failed = yield* onlyJob;
+        assert.strictEqual(failed.status, "pending");
+        assert.deepStrictEqual(failed.artifacts.failure, { code: "engine_missing" });
+        assert.include(failed.error ?? "", "/missing/cli.mjs");
+        assert.deepStrictEqual(fx.trace(), []);
+      }),
+      {
+        engine: Result.fail(
+          new EngineNotFound({ message: "No trend engine CLI at /missing/cli.mjs" }),
+        ),
+      },
     );
   });
 

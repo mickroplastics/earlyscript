@@ -45,6 +45,7 @@ import {
   resolveEngineLocation,
   runEngineCommand,
   type EngineLocation,
+  type EngineNotFound,
 } from "./engineProcess.ts";
 import {
   canonicalJson,
@@ -70,7 +71,8 @@ const EMBEDDINGS_CACHE_ENV = "EARLYSCRIPT_EDITORIAL_EMBEDDINGS_CACHE";
 const MODELS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_MODELS_DIR";
 
 export interface EditorialJobsOptions {
-  readonly engine: EngineLocation;
+  /** Found once at startup; without it every job reports `engine_missing` in its first phase. */
+  readonly engine: Result.Result<EngineLocation, EngineNotFound>;
   /** One directory per job, with its logs and the files it hands the engine. */
   readonly jobsDir: string;
   /** The channel profile file the engine reads; written from `channelProfile.ts`. */
@@ -405,15 +407,18 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
 
   const plan: Effect.Effect<JobPlan, EditorialJobsError> = Effect.gen(function* () {
     const enabled = yield* sources.enabledSources.pipe(Effect.mapError(storage));
-    const text = yield* fs
-      .readFileString(options.engine.defaultConfig)
-      .pipe(Effect.mapError(storage));
-    const base = decodeConfigObject(text);
-    if (Option.isNone(base)) {
-      return yield* storage(`${options.engine.defaultConfig} is not a JSON object`);
+    // No engine, no configuration to hash: the job still gets its row and shows why it failed.
+    let base: Record<string, unknown> = {};
+    if (Result.isSuccess(options.engine)) {
+      const defaultConfig = options.engine.success.defaultConfig;
+      const decoded = decodeConfigObject(
+        yield* fs.readFileString(defaultConfig).pipe(Effect.mapError(storage)),
+      );
+      if (Option.isNone(decoded)) return yield* storage(`${defaultConfig} is not a JSON object`);
+      base = decoded.value;
     }
     // The engine reads its sources from the configuration, so the switches enter its hash.
-    const config = { ...base.value, sources: enabled.rank };
+    const config = { ...base, sources: enabled.rank };
     return { enabled, config, configHash: sha256(canonicalJson(config)), profileHash };
   });
 
@@ -933,12 +938,16 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   ) => {
     const logFile = jobFile(ctx, logName, "log");
     const tail: Array<string> = [];
-    return ctx.confirmLease.pipe(
+    return Effect.fromResult(options.engine).pipe(
+      Effect.mapError(
+        (cause) => new PhaseFailure({ message: cause.message, notice: { code: "engine_missing" } }),
+      ),
+      Effect.tap(() => ctx.confirmLease),
       // Published before the child exists: a claim that took the job after this point finds
       // the token in prev_engine_token and waits for the child.
-      Effect.andThen(ctx.publishEngine),
-      Effect.andThen(
-        runEngineCommand(options.engine, {
+      Effect.tap(() => ctx.publishEngine),
+      Effect.flatMap((engine) =>
+        runEngineCommand(engine, {
           args: [...args, LOCK_TOKEN_FLAG, ctx.token],
           logFile,
           onSpawn: (pid) =>
@@ -1359,7 +1368,11 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
 const resolveOptions = Effect.gen(function* () {
   const path = yield* Path.Path;
   const { stateDir } = yield* ServerConfig.ServerConfig;
-  const engine = yield* resolveEngineLocation;
+  const engine = yield* resolveEngineLocation.pipe(
+    Effect.map(Result.succeed),
+    Effect.catchTags({ EngineNotFound: (missing) => Effect.succeed(Result.fail(missing)) }),
+  );
+  if (Result.isFailure(engine)) yield* Effect.logWarning(engine.failure.message);
   const cache = yield* Config.String(EMBEDDINGS_CACHE_ENV).pipe(Config.option);
   const models = yield* Config.String(MODELS_DIR_ENV).pipe(Config.option);
   return {

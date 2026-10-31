@@ -76,6 +76,7 @@ export const EditorialJobNoticeCode = Schema.Literals([
   "presentations_unavailable",
   "config_changed",
   "no_sources",
+  "engine_missing",
   "engine_failed",
   "check_failed",
   "import_failed",
