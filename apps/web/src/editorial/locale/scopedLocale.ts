@@ -164,36 +164,44 @@ export function useScopedLocale(
     const skipped = (element: Element | null) =>
       skip !== undefined && element !== null && element.closest(skip) !== null;
 
+    /*
+     * Authorship by records, not values: our writes happen unobserved, so every characterData
+     * or attributes record is someone else's write, even one equal to ours, and sets what to
+     * restore. Without a record (first walk, added or moved nodes) a node is ours while it
+     * still holds our last write.
+     */
+    const translateText = (node: Text, external: boolean) => {
+      if (skipped(node.parentElement)) return;
+      const current = node.nodeValue ?? "";
+      if (!external && texts.get(node)?.written === current) return;
+      const next = translate(current);
+      if (next === undefined) texts.delete(node);
+      else {
+        texts.set(node, { original: current, written: next });
+        node.nodeValue = next;
+      }
+    };
+    const translateAttribute = (element: Element, name: string, external: boolean) => {
+      const value = element.getAttribute(name);
+      const byName = attributes.get(element);
+      if (!external && value !== null && byName?.get(name)?.written === value) return;
+      const next = translate(value);
+      if (next === undefined || value === null) {
+        byName?.delete(name);
+        return;
+      }
+      const rewrites = byName ?? new Map<string, Rewrite>();
+      rewrites.set(name, { original: value, written: next });
+      attributes.set(element, rewrites);
+      element.setAttribute(name, next);
+    };
     const translateTree = (node: Node) => {
       if (node instanceof Text) {
-        if (skipped(node.parentElement)) return;
-        const current = node.nodeValue ?? "";
-        // Still our last write: nothing new from upstream.
-        if (texts.get(node)?.written === current) return;
-        const next = translate(current);
-        // Anything else is upstream's latest value, the one to restore on unmount.
-        if (next === undefined) texts.delete(node);
-        else {
-          texts.set(node, { original: current, written: next });
-          node.nodeValue = next;
-        }
+        translateText(node, false);
         return;
       }
       if (!(node instanceof Element) || skipped(node)) return;
-      for (const name of attributeNames) {
-        const value = node.getAttribute(name);
-        const byName = attributes.get(node);
-        if (value === null || byName?.get(name)?.written === value) continue;
-        const next = translate(value);
-        if (next === undefined) {
-          byName?.delete(name);
-          continue;
-        }
-        const rewrites = byName ?? new Map<string, Rewrite>();
-        rewrites.set(name, { original: value, written: next });
-        attributes.set(node, rewrites);
-        node.setAttribute(name, next);
-      }
+      for (const name of attributeNames) translateAttribute(node, name, false);
       // Skipped descendants are pruned by the check at the top of each call.
       for (const child of node.childNodes) translateTree(child);
     };
@@ -208,6 +216,29 @@ export function useScopedLocale(
     const observer = new MutationObserver((records) => {
       // Off while writing, and whatever the writes queued is dropped: they are ours.
       observer.disconnect();
+      // Someone else's writes first, once per node or attribute however many records it got:
+      // a second pass would mistake the write just made here for another external one.
+      const externalTexts = new Set<Text>();
+      const externalAttributes = new Map<Element, Set<string>>();
+      for (const record of records) {
+        if (record.type === "characterData" && record.target instanceof Text) {
+          externalTexts.add(record.target);
+        } else if (
+          record.type === "attributes" &&
+          record.target instanceof Element &&
+          record.attributeName !== null
+        ) {
+          const names = externalAttributes.get(record.target) ?? new Set<string>();
+          names.add(record.attributeName);
+          externalAttributes.set(record.target, names);
+        }
+      }
+      for (const text of externalTexts) translateText(text, true);
+      externalAttributes.forEach((names, element) => {
+        if (skipped(element)) return;
+        for (const name of names) translateAttribute(element, name, true);
+      });
+      // Then what was added or moved, by value: a node still holding our write stays ours.
       for (const record of records) {
         if (record.target === document.body) {
           for (const added of record.addedNodes) {
@@ -232,8 +263,6 @@ export function useScopedLocale(
           }
         } else if (record.type === "childList") {
           for (const added of record.addedNodes) translateTree(added);
-        } else {
-          translateTree(record.target);
         }
       }
       observer.takeRecords();
@@ -268,6 +297,14 @@ export function useScopedLocale(
     for (const root of roots) translateTree(root);
     observe();
     return () => {
+      // Writes not yet delivered are someone else's too: they keep their value.
+      for (const record of observer.takeRecords()) {
+        if (record.type === "characterData" && record.target instanceof Text) {
+          texts.delete(record.target);
+        } else if (record.target instanceof Element && record.attributeName !== null) {
+          attributes.get(record.target)?.delete(record.attributeName);
+        }
+      }
       observer.disconnect();
       for (const type of interactions) {
         document.removeEventListener(type, onInteraction, { capture: true });

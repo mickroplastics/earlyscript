@@ -309,4 +309,108 @@ describe("shell locale scopes", () => {
       window.MutationObserver = Native;
     }
   });
+  describe("authorship by mutation records, not by value", () => {
+    const options: ScopedLocaleOptions = {
+      translate: makeTranslator([{ text: { Delete: "Borrar", Settings: "Ajustes" } }]),
+      roots: (anchor) => [anchor],
+    };
+    async function mountTarget() {
+      const target = document.body.appendChild(document.createElement("div"));
+      target.innerHTML = '<span>Delete</span><button title="Delete" aria-label="Delete"></button>';
+      function Harness() {
+        useScopedLocale(target, options);
+        return null;
+      }
+      const view = await render(<Harness />);
+      const text = target.querySelector("span")!.firstChild as Text;
+      const button = target.querySelector("button")!;
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      expect(button.title).toBe("Borrar");
+      expect(button.getAttribute("aria-label")).toBe("Borrar");
+      return { target, view, text, button };
+    }
+    const writeAll = (text: Text, button: HTMLButtonElement, value: string) => {
+      text.nodeValue = value;
+      button.title = value;
+      button.setAttribute("aria-label", value);
+    };
+
+    it("keeps an external write equal to its own translation (Sol's case c)", async () => {
+      const { target, view, text, button } = await mountTarget();
+      writeAll(text, button, "Borrar");
+      await endBatch();
+      await view.unmount();
+      expect(text.nodeValue).toBe("Borrar");
+      expect(button.title).toBe("Borrar");
+      expect(button.getAttribute("aria-label")).toBe("Borrar");
+      target.remove();
+    });
+
+    it("translates again after an external English write, and restores it", async () => {
+      const { target, view, text, button } = await mountTarget();
+      writeAll(text, button, "Borrar");
+      await endBatch();
+      writeAll(text, button, "Delete");
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      expect(button.title).toBe("Borrar");
+      expect(button.getAttribute("aria-label")).toBe("Borrar");
+      await view.unmount();
+      expect(text.nodeValue).toBe("Delete");
+      expect(button.title).toBe("Delete");
+      expect(button.getAttribute("aria-label")).toBe("Delete");
+      target.remove();
+    });
+
+    it("reads a batch once per node: several writes, a move and a re-add", async () => {
+      const { target, view, text, button } = await mountTarget();
+      const span = text.parentElement!;
+      // One batch: two external writes on the same text, then upstream moves the node.
+      text.nodeValue = "Settings";
+      text.nodeValue = "Borrar";
+      button.title = "Settings";
+      button.title = "Borrar";
+      target.appendChild(span);
+      await endBatch();
+      expect(text.nodeValue).toBe("Borrar");
+      expect(button.title).toBe("Borrar");
+      // A move alone is not a write: the node holding our translation stays ours.
+      text.nodeValue = "Delete";
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      target.insertBefore(span, button);
+      await endBatch();
+      await view.unmount();
+      expect(text.nodeValue).toBe("Delete");
+      expect(button.title).toBe("Borrar");
+      target.remove();
+    });
+
+    it("keeps a write made just before unmounting, still undelivered", async () => {
+      const { target, view, text, button } = await mountTarget();
+      writeAll(text, button, "Borrar");
+      await view.unmount();
+      expect(text.nodeValue).toBe("Borrar");
+      expect(button.title).toBe("Borrar");
+      target.remove();
+    });
+
+    it("stays bounded through 200 fast alternations", async () => {
+      let mounted: Awaited<ReturnType<typeof mountTarget>> | undefined;
+      const callbacks = await countObserverCallbacks(async () => {
+        mounted = await mountTarget();
+        for (let index = 0; index < 200; index += 1) {
+          writeAll(mounted.text, mounted.button, index % 2 === 0 ? "Settings" : "Delete");
+          await endBatch();
+        }
+      });
+      const { target, view, text, button } = mounted!;
+      // One callback per batch at most, never one per own write.
+      expect(callbacks).toBeLessThanOrEqual(202);
+      expect(text.nodeValue).toBe("Borrar");
+      expect(button.title).toBe("Borrar");
+      await view.unmount();
+      expect(text.nodeValue).toBe("Delete");
+      expect(button.getAttribute("aria-label")).toBe("Delete");
+      target.remove();
+    });
+  });
 });
