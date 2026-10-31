@@ -12,7 +12,7 @@ import {
   useSidebar,
 } from "../../components/ui/sidebar";
 import { editorialResultsEnvironment } from "../resultsState";
-import { RESULTS_SECTIONS, formatCount, hasDecisions } from "./results.logic";
+import { formatCount, visibleSections } from "./results.logic";
 
 function NavigationNotice({ children }: { readonly children: string }) {
   return <div className="px-2 py-6 text-center text-xs text-muted-foreground/60">{children}</div>;
@@ -24,11 +24,7 @@ export function ResultsNavigation({ environmentId }: { readonly environmentId: E
   const hash = useLocation({ select: (location) => location.hash });
   const result = useAtomValue(editorialResultsEnvironment.summary({ environmentId, input: {} }));
   const summary = AsyncResult.getOrElse(result, () => null);
-  // Without decisions the page only shows the inbox counters.
-  const sections =
-    summary !== null && !hasDecisions(summary)
-      ? RESULTS_SECTIONS.filter((section) => section.id === "bandeja")
-      : RESULTS_SECTIONS;
+  const sections = visibleSections(summary);
 
   return (
     <SidebarContent
@@ -48,6 +44,10 @@ export function ResultsNavigation({ environmentId }: { readonly environmentId: E
       <SidebarGroup>
         {summary === null && result._tag === "Failure" ? (
           <NavigationNotice>No se pudieron leer los resultados de este entorno.</NavigationNotice>
+        ) : sections.length === 0 ? (
+          <NavigationNotice>
+            Aquí verás tiempos, utilidad y citas cuando cierres el primer hilo de video.
+          </NavigationNotice>
         ) : (
           <SidebarMenu aria-label="Secciones de Resultados">
             {sections.map((section) => {

@@ -37,6 +37,7 @@ import {
   RESULTS_MODES,
   RESULTS_STAGES,
   actionLabel,
+  actionsText,
   decisionTotalText,
   citationDetail,
   decisionThreadFallback,
@@ -45,6 +46,7 @@ import {
   formatInteger,
   formatPercent,
   hasDecisions,
+  hasInboxActivity,
   iqrText,
   medianDifferenceText,
   modeLabel,
@@ -242,7 +244,7 @@ function StageBar({
 function StageChart({ summary }: { readonly summary: EditorialResultsSummary }) {
   const maxMs = stageChartMaxMs(summary);
   return (
-    <figure className="flex flex-col gap-3">
+    <figure className="flex max-w-3xl flex-col gap-3">
       <div
         role="img"
         aria-label="Mediana de tiempo activo por etapa, asistido frente a manual. Los mismos datos están en la tabla siguiente."
@@ -474,13 +476,15 @@ export function ResultsView({
     return (
       <>
         <NoDecisions />
-        <ResultsSection
-          id="bandeja"
-          title="Bandeja de tendencias"
-          note="Los conteos son independientes: una tendencia leída puede estar también en producción."
-        >
-          <InboxMetrics summary={summary} />
-        </ResultsSection>
+        {hasInboxActivity(summary) ? (
+          <ResultsSection
+            id="bandeja"
+            title="Bandeja de tendencias"
+            note="Los conteos son independientes: una tendencia leída puede estar también en producción."
+          >
+            <InboxMetrics summary={summary} />
+          </ResultsSection>
+        ) : null}
       </>
     );
   }
@@ -546,7 +550,7 @@ export function ResultsView({
                 key={`utility-${mode}`}
                 label={`Utilidad media, ${modeLabel(mode).toLowerCase()}`}
                 value={utilityText(entry)}
-                detail={`n = ${entry.utility.n} · ${entry.actions.accept} aceptadas, ${entry.actions.edit} editadas, ${entry.actions.reject} rechazadas`}
+                detail={`n = ${entry.utility.n} · ${actionsText(entry.actions)}`}
               />
             );
           })}

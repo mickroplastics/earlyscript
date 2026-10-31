@@ -2,14 +2,17 @@ import type { EditorialDurationStats, EditorialResultsSummary } from "@t3tools/c
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  actionsText,
   decisionThreadFallback,
   decisionTotalText,
   formatDuration,
+  iqrText,
   medianDifferenceText,
   pageRangeText,
   provisionalNote,
   stageChartMaxMs,
   statsText,
+  visibleSections,
 } from "./results.logic";
 
 const MINUTE = 60_000;
@@ -68,7 +71,7 @@ describe("statsText", () => {
   it("states the median, the interquartile range and n", () => {
     expect(
       statsText(stats({ n: 3, medianMs: 26 * MINUTE, q1Ms: 24 * MINUTE, q3Ms: 28 * MINUTE })),
-    ).toBe("26 min · RIC 24 min–28 min · n = 3");
+    ).toBe("26 min · RIC 24–28 min · n = 3");
     expect(statsText(EMPTY_STATS)).toBe("sin datos · n = 0");
   });
 });
@@ -140,5 +143,30 @@ describe("decision cells", () => {
   it("states the page range", () => {
     expect(pageRangeText(20, 6, 26)).toBe("21–26 de 26");
     expect(pageRangeText(0, 0, 0)).toBe("0 de 0");
+  });
+});
+
+describe("visibleSections", () => {
+  it("keeps only the inbox before the first decision, and nothing when it is quiet", () => {
+    const quiet = summary([]);
+    expect(visibleSections(quiet)).toEqual([]);
+    const read = { ...quiet, inbox: { ...quiet.inbox, read: 2 } };
+    expect(visibleSections(read).map((section) => section.id)).toEqual(["bandeja"]);
+    expect(visibleSections({ ...read, decisionCount: 1 })).toHaveLength(6);
+  });
+});
+
+describe("iqrText and actionsText", () => {
+  it("shortens a range within minutes and keeps units across an hour", () => {
+    const range = (q1: number, q3: number) =>
+      iqrText(stats({ n: 3, q1Ms: q1 * MINUTE, q3Ms: q3 * MINUTE }));
+    expect(range(42, 53)).toBe("RIC 42–53 min");
+    expect(range(58, 62)).toBe("RIC 58 min–1 h 2 min");
+  });
+
+  it("agrees in number", () => {
+    expect(actionsText({ accept: 1, edit: 2, reject: 0 })).toBe(
+      "1 aceptada, 2 editadas, 0 rechazadas",
+    );
   });
 });

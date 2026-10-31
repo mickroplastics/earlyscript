@@ -9,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 
 /** Sections of the Results page, in order; the sidebar links to them by id. */
-export const RESULTS_SECTIONS = [
+const RESULTS_SECTIONS = [
   { id: "tiempos", label: "Tiempo por ficha" },
   { id: "etapas", label: "Etapas" },
   { id: "utilidad", label: "Utilidad y citas" },
@@ -101,13 +101,27 @@ export function formatCount(n: number, singular: string, plural: string): string
   return `${n} ${n === 1 ? singular : plural}`;
 }
 
-/** "RIC 24 min–28 min": the interquartile range as its two ends. */
+/** "RIC 24–28 min" under an hour, "RIC 58 min–1 h 2 min" across units. */
 export function iqrText(stats: EditorialDurationStats): string | null {
   if (stats.q1Ms === null || stats.q3Ms === null) return null;
-  return `RIC ${formatDuration(stats.q1Ms)}–${formatDuration(stats.q3Ms)}`;
+  const low = formatDuration(stats.q1Ms);
+  const high = formatDuration(stats.q3Ms);
+  if (low.endsWith(" min") && high.endsWith(" min") && !low.includes("h") && !high.includes("h")) {
+    return `RIC ${low.slice(0, -4)}–${high}`;
+  }
+  return `RIC ${low}–${high}`;
 }
 
-/** "26 min · RIC 24 min–28 min · n = 3", or "sin datos · n = 0". */
+/** "1 aceptada, 1 editada, 1 rechazada". */
+export function actionsText(actions: EditorialResultsModeSummary["actions"]): string {
+  return [
+    formatCount(actions.accept, "aceptada", "aceptadas"),
+    formatCount(actions.edit, "editada", "editadas"),
+    formatCount(actions.reject, "rechazada", "rechazadas"),
+  ].join(", ");
+}
+
+/** "26 min · RIC 24–28 min · n = 3", or "sin datos · n = 0". */
 export function statsText(stats: EditorialDurationStats): string {
   if (stats.medianMs === null) return `sin datos · n = ${stats.n}`;
   const iqr = iqrText(stats);
@@ -167,6 +181,20 @@ export function citationDetail(summary: EditorialResultsModeSummary): string {
 
 export function hasDecisions(summary: EditorialResultsSummary): boolean {
   return summary.decisionCount > 0;
+}
+
+/** Trends get read and dismissed before any decision; the counters show once one moved. */
+export function hasInboxActivity(summary: EditorialResultsSummary): boolean {
+  const { read, observing, dismissed, production } = summary.inbox;
+  return read + observing + dismissed + production > 0;
+}
+
+/** The page sections present: without decisions, at most the inbox counters. */
+export function visibleSections(summary: EditorialResultsSummary | null) {
+  if (summary === null || hasDecisions(summary)) return RESULTS_SECTIONS;
+  return hasInboxActivity(summary)
+    ? RESULTS_SECTIONS.filter((section) => section.id === "bandeja")
+    : [];
 }
 
 export function modeSummary(
