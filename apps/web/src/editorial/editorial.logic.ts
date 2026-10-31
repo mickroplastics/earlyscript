@@ -185,7 +185,9 @@ export function runGroupLabel(run: EditorialRunSummary, nowMinute: string): stri
     finished.getFullYear() === now.getFullYear() &&
     finished.getMonth() === now.getMonth() &&
     finished.getDate() === now.getDate();
-  return `${today ? "Hoy" : "Más reciente"} · corrida ${formatDay(run.cutoffAt)}`;
+  // The inbox never shows an invalid run, the only kind without a cutoff.
+  const cutoff = run.cutoffAt === null ? "sin corte" : formatDay(run.cutoffAt);
+  return `${today ? "Hoy" : "Más reciente"} · corrida ${cutoff}`;
 }
 
 export type CoverageStatus = "complete" | "partial" | "unavailable";

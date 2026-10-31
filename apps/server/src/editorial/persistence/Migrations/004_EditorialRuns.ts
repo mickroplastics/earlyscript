@@ -7,10 +7,12 @@ export default Effect.gen(function* () {
 
   // One row per run directory the importer read. The files stay the source of the
   // dossier content; this table is the index the inbox and the event log refer to.
+  // A run whose run.json does not decode is 'invalid': cutoff_at and content_hash stay
+  // null when it was never indexed, and skipped_files_json says why.
   yield* sql`
     CREATE TABLE editorial_runs (
       run_id TEXT PRIMARY KEY,
-      cutoff_at TEXT NOT NULL,
+      cutoff_at TEXT,
       finished_at TEXT,
       engine_status TEXT NOT NULL,
       run_schema_version TEXT,
@@ -24,9 +26,9 @@ export default Effect.gen(function* () {
       coverage_json TEXT NOT NULL,
       artifact_path TEXT NOT NULL,
       artifact_version TEXT NOT NULL,
-      content_hash TEXT NOT NULL,
+      content_hash TEXT,
       dossier_count INTEGER NOT NULL CHECK (dossier_count >= 0),
-      import_state TEXT NOT NULL CHECK (import_state IN ('imported', 'partial')),
+      import_state TEXT NOT NULL CHECK (import_state IN ('imported', 'partial', 'invalid')),
       skipped_files_json TEXT NOT NULL,
       imported_at TEXT NOT NULL,
       updated_at TEXT NOT NULL

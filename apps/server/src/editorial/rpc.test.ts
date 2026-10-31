@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
 
@@ -259,6 +260,62 @@ describe("editorial.subscribe", () => {
         assert.ok(reopened?._tag === "trend");
         assert.strictEqual(reopened.state.dismissed, null);
         assert.strictEqual(reopened.state.isNew, true);
+      }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("sends a snapshot for each content change of a run, a revert to A included", () =>
+    withEditorial(({ runDir }) =>
+      Effect.gen(function* () {
+        const importer = yield* EditorialImportService;
+        const fs = yield* FileSystem.FileSystem;
+        const file = `${runDir}/dossiers/13-dos_bbb80d57481e.json`;
+        const original = yield* fs.readFileString(file);
+        const labelIn = (item: EditorialStreamItem | undefined) =>
+          item?._tag === "snapshot"
+            ? item.inbox.trends.find((trend) => trend.trendKey === QUANTUM_KEY)?.label
+            : undefined;
+
+        // Subscribed before the first import: an empty snapshot, then one per run event. Each
+        // snapshot carries the state when it is read, so take it before the next change.
+        const queue = yield* Stream.toQueue(yield* subscribeInbox({}), { capacity: 8 });
+        const items = [yield* Queue.take(queue)];
+        yield* importer.sync;
+        items.push(yield* Queue.take(queue));
+        const edited = JSON.parse(original);
+        edited.signal.label = "quantum B";
+        yield* fs.writeFileString(file, JSON.stringify(edited));
+        yield* fs.utimes(file, LATER, LATER);
+        yield* importer.sync;
+        items.push(yield* Queue.take(queue));
+        yield* fs.writeFileString(file, original);
+        yield* fs.utimes(file, LATER + 1, LATER + 1);
+        yield* importer.sync;
+        items.push(yield* Queue.take(queue));
+
+        assert.deepStrictEqual(
+          items.map((item) => [item._tag, item.seq]),
+          [
+            ["snapshot", 0],
+            ["snapshot", 1],
+            ["snapshot", 2],
+            ["snapshot", 3],
+          ],
+        );
+        const labelA = JSON.parse(original).signal.label;
+        assert.deepStrictEqual(items.slice(1).map(labelIn), [labelA, "quantum B", labelA]);
+        assert.deepStrictEqual(
+          (yield* events).map((event) => event.type),
+          ["run.imported", "run.updated", "run.updated"],
+        );
+
+        // A client that saw B (seq 2) and dropped gets the restored content, not a replay.
+        const reconnected = yield* take(yield* subscribeInbox({ since: 2 }), 1);
+        assert.deepStrictEqual(
+          reconnected.map((item) => [item._tag, item.seq]),
+          [["snapshot", 3]],
+        );
+        assert.strictEqual(labelIn(reconnected[0]), labelA);
       }).pipe(Effect.scoped),
     ),
   );

@@ -18,9 +18,9 @@ const unreadable = (cause: { readonly message: string }) =>
   new EditorialReadError({ reason: "unreadable", message: cause.message });
 
 /**
- * Snapshot with its sequence, then one item per trend event and a new snapshot per run
- * import. `since` replays the gap, or snapshots when it is too large, has a run import or is
- * ahead of the log. Subscribed before any read, so no commit is lost; items are idempotent.
+ * Snapshot with its sequence, then one item per trend event and a new snapshot per run event
+ * (imported, updated or invalidated). `since` replays the gap, or snapshots when it is too
+ * large, has a run event or is ahead of the log. Subscribed before any read, so no commit is lost; items are idempotent.
  */
 export const subscribeInbox = Effect.fn("EditorialInbox.subscribe")(function* (
   input: EditorialSubscribeInput,

@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import { EditorialCommandService } from "./EditorialCommandService.ts";
-import { EditorialRunDirectory, type LoadedRun } from "./RunDirectory.ts";
+import { EditorialRunDirectory, type InvalidRunDirectory, type LoadedRun } from "./RunDirectory.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import {
   appendEvent,
@@ -26,7 +26,7 @@ export const IMPORT_POLL_INTERVAL = Duration.seconds(30);
 
 const MAX_INBOX_KEYS_PER_READ = 500;
 
-export type ImportOutcome = "imported" | "updated" | "unchanged" | "skipped";
+export type ImportOutcome = "imported" | "updated" | "unchanged" | "skipped" | "invalid";
 
 export interface RunImport {
   readonly runId: string;
@@ -65,10 +65,15 @@ interface IndexedVersion {
   readonly run_id: string;
   readonly artifact_version: string;
   readonly artifact_path: string;
-  readonly content_hash: string;
+  readonly content_hash: string | null;
+  readonly import_state: "imported" | "partial" | "invalid";
+  readonly skipped_files_json: string;
 }
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const INDEXED_COLUMNS =
+  "run_id, artifact_version, artifact_path, content_hash, import_state, skipped_files_json";
 
 const coverageOf = (loaded: LoadedRun): unknown =>
   loaded.entry.run.coverage ?? loaded.dossiers[0]?.file.coverage ?? null;
@@ -98,11 +103,22 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const at = yield* nowIso;
         const existing = yield* sql<IndexedVersion>`
-          SELECT run_id, artifact_version, artifact_path, content_hash
-          FROM editorial_runs WHERE run_id = ${run.run_id}
+          SELECT ${sql.literal(INDEXED_COLUMNS)} FROM editorial_runs WHERE run_id = ${run.run_id}
         `.pipe(Effect.map((rows) => rows[0]));
+        // A placeholder left while this directory's run.json did not decode, under the folder
+        // name: the run now has its own row.
+        yield* sql`
+          DELETE FROM editorial_runs
+          WHERE artifact_path = ${loaded.entry.directory} AND import_state = 'invalid'
+            AND content_hash IS NULL AND run_id <> ${run.run_id}
+        `;
         // Same content under new mtimes (a copy, a touch): record where it is, nothing else.
-        if (existing !== undefined && existing.content_hash === loaded.contentHash) {
+        // The hash covers the skipped files, so a partial run that is fixed is not unchanged.
+        if (
+          existing !== undefined &&
+          existing.content_hash === loaded.contentHash &&
+          existing.import_state !== "invalid"
+        ) {
           yield* sql`
             UPDATE editorial_runs
             SET artifact_version = ${loaded.entry.version},
@@ -112,6 +128,16 @@ const make = Effect.gen(function* () {
           return { result: "unchanged" as const, events: [] };
         }
         const importState = loaded.skippedFiles.length === 0 ? "imported" : "partial";
+        const payload = {
+          cutoffAt: cutoffAt.value,
+          dossierCount: loaded.dossiers.length,
+          importState,
+          skippedFiles: loaded.skippedFiles,
+          contentHash: loaded.contentHash,
+          previousContentHash: existing?.content_hash ?? null,
+          previousImportState: existing?.import_state ?? null,
+          logicalHash: run.logical_hash ?? null,
+        };
         yield* sql`
           INSERT INTO editorial_runs (
             run_id, cutoff_at, finished_at, engine_status, run_schema_version, engine_version,
@@ -162,8 +188,22 @@ const make = Effect.gen(function* () {
             ON CONFLICT (run_id, dossier_id) DO NOTHING
           `;
         }
-        // One event per distinct content of a run: a reimport of content already announced,
-        // even after a change and a revert, appends nothing.
+        // A placeholder of an invalid directory was never announced as imported.
+        if (existing !== undefined && existing.content_hash !== null) {
+          // Every change of the content in force is announced, a return to an earlier hash
+          // included: clients holding the previous content need a new snapshot.
+          const updated = yield* appendEvent(sql, {
+            type: "run.updated",
+            aggregateKind: "run",
+            aggregateId: run.run_id,
+            actor: "system",
+            payload,
+            createdAt: at,
+          });
+          return { result: "updated" as const, events: [updated] };
+        }
+        // A run new to the index is announced once per content: an index rebuilt from the
+        // same files appends nothing.
         const operationId = `run.imported:${run.run_id}:${loaded.contentHash}`;
         const announced = yield* findOperationEvent(sql, operationId);
         const events = Option.isSome(announced)
@@ -175,21 +215,81 @@ const make = Effect.gen(function* () {
                 aggregateId: run.run_id,
                 operationId,
                 actor: "system",
-                payload: {
-                  cutoffAt: cutoffAt.value,
-                  dossierCount: loaded.dossiers.length,
-                  importState,
-                  contentHash: loaded.contentHash,
-                  previousContentHash: existing?.content_hash ?? null,
-                  logicalHash: run.logical_hash ?? null,
-                },
+                payload,
                 createdAt: at,
               }),
             ];
-        return {
-          result: existing === undefined ? ("imported" as const) : ("updated" as const),
-          events,
-        };
+        return { result: "imported" as const, events };
+      }),
+    );
+  });
+
+  // run.json does not decode. A run indexed from this directory keeps its metadata and is
+  // marked invalid; a directory never indexed gets a row under its folder name, with no
+  // cutoff and no hashes. Either way the inbox no longer offers it.
+  const importInvalid = Effect.fn("EditorialImportService.importInvalid")(function* (
+    invalid: InvalidRunDirectory,
+    known: IndexedVersion | undefined,
+  ) {
+    const skippedFiles = encodeJson([{ file: "run.json", reason: invalid.reason }]);
+    return yield* eventLog.transact(
+      "editorial.invalidRun",
+      Effect.gen(function* () {
+        const at = yield* nowIso;
+        // Still invalid for the same reason (a touch): record the version, nothing else.
+        if (known?.import_state === "invalid" && known.skipped_files_json === skippedFiles) {
+          yield* sql`
+            UPDATE editorial_runs SET artifact_version = ${invalid.version}, updated_at = ${at}
+            WHERE run_id = ${known.run_id}
+          `;
+          return { result: "unchanged" as const, events: [] };
+        }
+        let runId = known?.run_id;
+        if (runId === undefined) {
+          const inserted = yield* sql<{ readonly run_id: string }>`
+            INSERT INTO editorial_runs (
+              run_id, cutoff_at, finished_at, engine_status, sources_json, coverage_json,
+              artifact_path, artifact_version, content_hash, dossier_count, import_state,
+              skipped_files_json, imported_at, updated_at
+            )
+            VALUES (
+              ${invalid.name}, NULL, NULL, 'unknown', '[]', 'null', ${invalid.directory},
+              ${invalid.version}, NULL, 0, 'invalid', ${skippedFiles}, ${at}, ${at}
+            )
+            ON CONFLICT (run_id) DO NOTHING
+            RETURNING run_id
+          `;
+          if (inserted.length === 0) {
+            // Another directory holds a run with this id: do not touch its row.
+            yield* Effect.logWarning("editorial: invalid run directory shares a run id", {
+              directory: invalid.directory,
+              runId: invalid.name,
+            });
+            return { result: "skipped" as const, events: [] };
+          }
+          runId = invalid.name;
+        } else {
+          yield* sql`
+            UPDATE editorial_runs
+            SET import_state = 'invalid', skipped_files_json = ${skippedFiles},
+              artifact_version = ${invalid.version}, updated_at = ${at}
+            WHERE run_id = ${runId}
+          `;
+        }
+        const event = yield* appendEvent(sql, {
+          type: "run.invalidated",
+          aggregateKind: "run",
+          aggregateId: runId,
+          actor: "system",
+          payload: {
+            directory: invalid.name,
+            reason: invalid.reason,
+            previousImportState: known?.import_state ?? null,
+            contentHash: known?.content_hash ?? null,
+          },
+          createdAt: at,
+        });
+        return { result: "invalid" as const, events: [event] };
       }),
     );
   });
@@ -244,14 +344,18 @@ const make = Effect.gen(function* () {
   });
 
   const sync = Effect.gen(function* () {
-    const indexed = yield* sql<IndexedVersion>`
-      SELECT run_id, artifact_version, artifact_path, content_hash FROM editorial_runs
-    `.pipe(
-      Effect.map((rows) => new Map(rows.map((row) => [row.run_id, row]))),
-      Effect.mapError(toPersistenceError("editorial.indexedRuns")),
-    );
-    const entries = yield* directory.entries;
+    const rows = yield* sql<IndexedVersion>`
+      SELECT ${sql.literal(INDEXED_COLUMNS)} FROM editorial_runs
+    `.pipe(Effect.mapError(toPersistenceError("editorial.indexedRuns")));
+    const indexed = new Map(rows.map((row) => [row.run_id, row]));
+    const byPath = new Map(rows.map((row) => [row.artifact_path, row]));
+    const { entries, invalid } = yield* directory.scan;
     const runs: Array<RunImport> = [];
+    for (const item of invalid) {
+      const known = byPath.get(item.directory);
+      if (known?.import_state === "invalid" && known.artifact_version === item.version) continue;
+      runs.push({ runId: known?.run_id ?? item.name, outcome: yield* importInvalid(item, known) });
+    }
     // Oldest first, so run.imported events follow cutoff order.
     for (const entry of entries.toReversed()) {
       const known = indexed.get(entry.run.run_id);

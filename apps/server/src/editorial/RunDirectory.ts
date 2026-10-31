@@ -2,7 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
-import { EditorialReadError, type EditorialRunSummary } from "@t3tools/contracts";
+import {
+  EditorialReadError,
+  type EditorialRunSummary,
+  type EditorialSkippedFile,
+} from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -31,6 +35,21 @@ export interface RunEntry {
   readonly dossierPaths: ReadonlyArray<string>;
 }
 
+/** A directory whose run.json exists but does not read or decode. */
+export interface InvalidRunDirectory {
+  readonly directory: string;
+  /** The folder name: the index's run id when no indexed run lived in this directory. */
+  readonly name: string;
+  readonly reason: string;
+  /** The mtime of run.json; a change reads it again. */
+  readonly version: string;
+}
+
+export interface RunScan {
+  readonly entries: ReadonlyArray<RunEntry>;
+  readonly invalid: ReadonlyArray<InvalidRunDirectory>;
+}
+
 export interface IndexedDossier extends LoadedDossier {
   /** Relative to the run directory. */
   readonly filePath: string;
@@ -42,16 +61,21 @@ export interface LoadedRun {
   readonly entry: RunEntry;
   readonly summary: EditorialRunSummary;
   readonly dossiers: ReadonlyArray<IndexedDossier>;
-  /** sha256 over run.json and every dossier hash: changes only when the content does. */
+  /**
+   * sha256 over run.json, every dossier hash and every skipped file with its reason: changes
+   * only when the content or the inventory of unreadable files does.
+   */
   readonly contentHash: string;
-  /** Dossier files that did not decode; the rest of the run still loads. */
-  readonly skippedFiles: ReadonlyArray<string>;
+  /** Dossier files that did not decode, with the reason; the rest of the run still loads. */
+  readonly skippedFiles: ReadonlyArray<EditorialSkippedFile>;
 }
 
 export interface EditorialRunDirectoryShape {
   readonly runsDir: string;
   /** Newest cutoff first; a rerun of the same cutoff sorts by when it finished. */
   readonly entries: Effect.Effect<ReadonlyArray<RunEntry>, EditorialReadError>;
+  /** The entries and the directories whose run.json does not decode, for the importer. */
+  readonly scan: Effect.Effect<RunScan, EditorialReadError>;
   /** Reloads only when the entry's files changed since the last load. */
   readonly load: (entry: RunEntry) => Effect.Effect<LoadedRun>;
   /** The run directory with this id, read again from disk. */
@@ -76,6 +100,19 @@ const unreadable = (message: string) => new EditorialReadError({ reason: "unread
 const sha256 = (content: string) =>
   NodeCrypto.createHash("sha256").update(content, "utf8").digest("hex");
 
+/** Long enough to tell a syntax error from a schema mismatch, short enough for a list. */
+const MAX_REASON_LENGTH = 300;
+
+const reasonOf = (cause: unknown) => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const line = message.replace(/\s+/g, " ").trim();
+  return line.length > MAX_REASON_LENGTH ? `${line.slice(0, MAX_REASON_LENGTH - 1)}…` : line;
+};
+
+type DirectoryRead =
+  | { readonly _tag: "run"; readonly entry: RunEntry }
+  | { readonly _tag: "invalid"; readonly invalid: InvalidRunDirectory };
+
 const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -90,12 +127,26 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
         ),
       );
 
-  // A directory is a run when it holds a readable run.json; anything else is skipped.
+  // A directory is a run when it holds run.json. One that does not decode is reported, so
+  // the index can show it; a directory without run.json is not a run and is skipped.
   const readRunEntry = Effect.fn("EditorialRunDirectory.readRunEntry")(
     function* (name: string) {
       const directory = path.join(runsDir, name);
       const runJson = path.join(directory, "run.json");
-      const run = yield* fs.readFileString(runJson).pipe(Effect.flatMap(decodeRunFile));
+      const runMtime = yield* mtimeOf(runJson).pipe(Effect.option);
+      if (Option.isNone(runMtime)) return Option.none<DirectoryRead>();
+      const decoded = yield* Effect.result(
+        fs.readFileString(runJson).pipe(Effect.flatMap(decodeRunFile)),
+      );
+      if (decoded._tag === "Failure") {
+        const reason = reasonOf(decoded.failure);
+        yield* Effect.logWarning("editorial: run.json does not decode", { name, reason });
+        return Option.some<DirectoryRead>({
+          _tag: "invalid",
+          invalid: { directory, name, reason, version: `invalid|${runMtime.value}` },
+        });
+      }
+      const run = decoded.success;
       const dossierDir = path.join(directory, "dossiers");
       const dossierNames = yield* fs
         .readDirectory(dossierDir)
@@ -104,55 +155,70 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
         .filter((file) => file.endsWith(".json"))
         .toSorted()
         .map((file) => path.join(dossierDir, file));
-      const mtimes = yield* Effect.forEach([runJson, ...dossierPaths], mtimeOf, {
-        concurrency: 8,
-      });
+      const mtimes = yield* Effect.forEach(dossierPaths, mtimeOf, { concurrency: 8 });
       const entry: RunEntry = {
         directory,
         run,
-        version: [...dossierPaths, ...mtimes].join("|"),
+        version: [...dossierPaths, runMtime.value, ...mtimes].join("|"),
         dossierPaths,
       };
-      return Option.some(entry);
+      return Option.some<DirectoryRead>({ _tag: "run", entry });
     },
     (effect, name) =>
       effect.pipe(
         Effect.catch((cause) =>
           Effect.logDebug("editorial: skipping run directory", { name, cause }).pipe(
-            Effect.as(Option.none<RunEntry>()),
+            Effect.as(Option.none<DirectoryRead>()),
           ),
         ),
       ),
   );
 
-  const entries: EditorialRunDirectoryShape["entries"] = Effect.gen(function* () {
+  const scan: EditorialRunDirectoryShape["scan"] = Effect.gen(function* () {
     const exists = yield* fs.exists(runsDir).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) return [];
+    if (!exists) return { entries: [], invalid: [] };
     const names = yield* fs
       .readDirectory(runsDir)
       .pipe(Effect.mapError(() => unreadable(`Cannot list ${runsDir}.`)));
     const read = yield* Effect.forEach(names.toSorted(), readRunEntry, { concurrency: 4 });
-    return read
-      .flatMap((entry) => (Option.isSome(entry) ? [entry.value] : []))
-      .toSorted(
-        (a, b) =>
-          b.run.cutoff_at.localeCompare(a.run.cutoff_at) ||
-          (b.run.finished_at ?? "").localeCompare(a.run.finished_at ?? "") ||
-          b.run.run_id.localeCompare(a.run.run_id),
-      );
-  }).pipe(Effect.withSpan("EditorialRunDirectory.entries"));
-
-  const readDossier = (file: string) =>
-    fs.readFileString(file).pipe(
-      Effect.flatMap((text) =>
-        decodeDossierFile(text).pipe(Effect.map((dossier) => ({ dossier, hash: sha256(text) }))),
-      ),
-      Effect.asSome,
-      // One malformed dossier must not hide the rest of the run.
-      Effect.catch((cause) =>
-        Effect.logWarning("editorial: skipping unreadable dossier", { file, cause }).pipe(
-          Effect.as(Option.none<{ readonly dossier: DossierFile; readonly hash: string }>()),
+    const found = read.flatMap((item) => (Option.isSome(item) ? [item.value] : []));
+    return {
+      entries: found
+        .flatMap((item) => (item._tag === "run" ? [item.entry] : []))
+        .toSorted(
+          (a, b) =>
+            b.run.cutoff_at.localeCompare(a.run.cutoff_at) ||
+            (b.run.finished_at ?? "").localeCompare(a.run.finished_at ?? "") ||
+            b.run.run_id.localeCompare(a.run.run_id),
         ),
+      invalid: found.flatMap((item) => (item._tag === "invalid" ? [item.invalid] : [])),
+    };
+  }).pipe(Effect.withSpan("EditorialRunDirectory.scan"));
+
+  const entries: EditorialRunDirectoryShape["entries"] = scan.pipe(
+    Effect.map((result) => result.entries),
+  );
+
+  // One malformed dossier must not hide the rest of the run: it is listed with its reason.
+  const readDossier = (file: string) =>
+    Effect.result(
+      fs
+        .readFileString(file)
+        .pipe(
+          Effect.flatMap((text) =>
+            decodeDossierFile(text).pipe(
+              Effect.map((dossier) => ({ file, dossier, hash: sha256(text) })),
+            ),
+          ),
+        ),
+    ).pipe(
+      Effect.tap((result) =>
+        result._tag === "Failure"
+          ? Effect.logWarning("editorial: skipping unreadable dossier", {
+              file,
+              cause: result.failure,
+            })
+          : Effect.void,
       ),
     );
 
@@ -164,13 +230,17 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
         .readFileString(path.join(entry.directory, "run.json"))
         .pipe(Effect.orElseSucceed(() => entry.version));
       const files = yield* Effect.forEach(entry.dossierPaths, readDossier, { concurrency: 8 });
-      const read = entry.dossierPaths.flatMap((file, index) => {
-        const result = files[index];
-        return result !== undefined && Option.isSome(result) ? [{ file, ...result.value }] : [];
-      });
-      const skippedFiles = entry.dossierPaths
-        .filter((_file, index) => Option.isNone(files[index] ?? Option.none()))
-        .map((file) => path.relative(entry.directory, file));
+      const read = files.flatMap((result) => (result._tag === "Success" ? [result.success] : []));
+      const skippedFiles = files.flatMap((result, index) =>
+        result._tag === "Failure"
+          ? [
+              {
+                file: path.relative(entry.directory, entry.dossierPaths[index]!),
+                reason: reasonOf(result.failure),
+              },
+            ]
+          : [],
+      );
       const loaded = loadRunDossiers(
         entry.run.run_id,
         read.map((item) => item.dossier),
@@ -185,9 +255,11 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
         summary: runSummary(entry.run, dossiers.length),
         dossiers,
         contentHash: sha256(
-          [sha256(runJsonText), ...dossiers.map((d) => `${d.filePath}:${d.contentHash}`)].join(
-            "\n",
-          ),
+          [
+            sha256(runJsonText),
+            ...dossiers.map((d) => `${d.filePath}:${d.contentHash}`),
+            ...skippedFiles.map((skipped) => `skipped:${skipped.file}:${skipped.reason}`),
+          ].join("\n"),
         ),
         skippedFiles,
       };
@@ -201,7 +273,7 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
       Effect.map((all) => Option.fromNullishOr(all.find((entry) => entry.run.run_id === runId))),
     );
 
-  return EditorialRunDirectory.of({ runsDir, entries, load, find });
+  return EditorialRunDirectory.of({ runsDir, entries, scan, load, find });
 });
 
 /** `EARLYSCRIPT_EDITORIAL_RUNS_DIR`, or `~/earlyscript-data/runs`. */

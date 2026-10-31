@@ -47,6 +47,22 @@ const countRows = (table: "editorial_runs" | "editorial_dossiers") =>
     return rows[0]?.count ?? 0;
   });
 
+const runRow = (runId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* EditorialSql;
+    const rows = yield* sql<{
+      readonly import_state: string;
+      readonly skipped_files_json: string;
+      readonly cutoff_at: string | null;
+      readonly content_hash: string | null;
+      readonly artifact_path: string;
+    }>`
+      SELECT import_state, skipped_files_json, cutoff_at, content_hash, artifact_path
+      FROM editorial_runs WHERE run_id = ${runId}
+    `;
+    return rows[0];
+  });
+
 /**
  * A second run one day later: the fixture run copied with a new id and cutoff, and one more
  * curve day (18 to 19 October) for the quantum trend with `quantumItems` items.
@@ -137,7 +153,7 @@ describe("EditorialImportService", () => {
     ),
   );
 
-  it.effect("reimports changed content once and never announces the same content twice", () =>
+  it.effect("announces every change of the content in force, a revert included", () =>
     withEditorial(({ runDir }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -152,6 +168,7 @@ describe("EditorialImportService", () => {
         yield* fs.utimes(file, mtimeAt(5), mtimeAt(5));
         const touched = yield* importer.sync;
         assert.deepStrictEqual(touched.runs, [{ runId: FIXTURE_RUN_ID, outcome: "unchanged" }]);
+        assert.strictEqual((yield* events).length, 1);
 
         const edited = JSON.parse(original);
         edited.signal.label = "quantum computing ibm open edited";
@@ -165,8 +182,211 @@ describe("EditorialImportService", () => {
         yield* fs.utimes(file, mtimeAt(15), mtimeAt(15));
         const reverted = yield* importer.sync;
         assert.deepStrictEqual(reverted.runs, [{ runId: FIXTURE_RUN_ID, outcome: "updated" }]);
-        const imported = (yield* events).filter((event) => event.type === "run.imported");
-        assert.strictEqual(imported.length, 2);
+
+        const runEvents = (yield* events).filter((event) => event.aggregateKind === "run");
+        assert.deepStrictEqual(
+          runEvents.map((event) => [event.type, event.seq]),
+          [
+            ["run.imported", 1],
+            ["run.updated", 2],
+            ["run.updated", 3],
+          ],
+        );
+        const hashes = runEvents.map(
+          (event) => (event.payload as { readonly contentHash: string }).contentHash,
+        );
+        // A -> B -> A: the last event carries the first hash again, and B as the previous one.
+        assert.strictEqual(hashes[2], hashes[0]);
+        assert.notStrictEqual(hashes[1], hashes[0]);
+        const revert = runEvents[2]?.payload as { readonly previousContentHash: string };
+        assert.strictEqual(revert.previousContentHash, hashes[1]);
+        // Only the first announcement of new content carries an operation id.
+        assert.deepStrictEqual(
+          runEvents.map((event) => event.operationId !== null),
+          [true, false, false],
+        );
+      }),
+    ),
+  );
+
+  it.effect("lists a dossier that does not decode and clears it once the file is fixed", () =>
+    withEditorial(({ runDir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const importer = yield* EditorialImportService.EditorialImportService;
+        yield* importer.sync;
+        const runState = runRow(FIXTURE_RUN_ID);
+
+        // Only a corrupt file is added; the three dossiers do not change.
+        const bad = path.join(runDir, "dossiers", "99-bad.json");
+        yield* fs.writeFileString(bad, "{");
+        const added = yield* importer.sync;
+        assert.deepStrictEqual(added.runs, [{ runId: FIXTURE_RUN_ID, outcome: "updated" }]);
+        const partial = yield* runState;
+        assert.strictEqual(partial?.import_state, "partial");
+        assert.deepStrictEqual(JSON.parse(partial?.skipped_files_json ?? "[]"), [
+          { file: "dossiers/99-bad.json", reason: "Expected a valid JSON string" },
+        ]);
+        assert.strictEqual(yield* countRows("editorial_dossiers"), 3);
+
+        const quantum = yield* fs.readFileString(path.join(runDir, "dossiers", QUANTUM_FILE));
+        yield* fs.writeFileString(
+          bad,
+          JSON.stringify({ ...JSON.parse(quantum), dossier_id: "dos_fixed" }),
+        );
+        yield* fs.utimes(bad, mtimeAt(5), mtimeAt(5));
+        const fixed = yield* importer.sync;
+        assert.deepStrictEqual(fixed.runs, [{ runId: FIXTURE_RUN_ID, outcome: "updated" }]);
+        const repaired = yield* runState;
+        assert.strictEqual(repaired?.import_state, "imported");
+        assert.strictEqual(repaired?.skipped_files_json, "[]");
+        assert.strictEqual(yield* countRows("editorial_dossiers"), 4);
+        assert.deepStrictEqual(
+          (yield* events).map((event) => [
+            event.type,
+            (event.payload as { readonly importState: string }).importState,
+          ]),
+          [
+            ["run.imported", "imported"],
+            ["run.updated", "partial"],
+            ["run.updated", "imported"],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("records a new directory whose run.json does not decode as an invalid run", () =>
+    withEditorial(({ dir, runDir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const importer = yield* EditorialImportService.EditorialImportService;
+        const read = yield* EditorialReadService;
+        yield* importer.sync;
+
+        const corrupt = path.join(dir, "corrupt");
+        yield* fs.copy(runDir, corrupt);
+        yield* fs.writeFileString(path.join(corrupt, "run.json"), "{");
+        const report = yield* importer.sync;
+        assert.deepStrictEqual(report.runs, [{ runId: "corrupt", outcome: "invalid" }]);
+
+        const row = yield* runRow("corrupt");
+        assert.strictEqual(row?.import_state, "invalid");
+        assert.strictEqual(row?.cutoff_at, null);
+        assert.strictEqual(row?.content_hash, null);
+        assert.strictEqual(row?.artifact_path, corrupt);
+        assert.deepStrictEqual(JSON.parse(row?.skipped_files_json ?? "[]"), [
+          { file: "run.json", reason: "Expected a valid JSON string" },
+        ]);
+
+        const runs = yield* read.listRuns;
+        assert.deepStrictEqual(
+          runs.map((run) => [run.runId, run.importState, run.cutoffAt]),
+          [
+            [FIXTURE_RUN_ID, "imported", "2026-10-19T00:00:00.000Z"],
+            ["corrupt", "invalid", null],
+          ],
+        );
+        assert.strictEqual((yield* read.getInbox({})).run?.runId, FIXTURE_RUN_ID);
+        const error = yield* read
+          .getInbox({ runId: EditorialRunId.make("corrupt") })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "unreadable");
+
+        // Nothing changed: no new event on the next pass.
+        const seq = (yield* events).length;
+        assert.deepStrictEqual((yield* importer.sync).runs, []);
+        assert.strictEqual((yield* events).length, seq);
+        assert.deepStrictEqual(
+          (yield* events).map((event) => [event.type, event.aggregateId]),
+          [
+            ["run.imported", FIXTURE_RUN_ID],
+            ["run.invalidated", "corrupt"],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "marks an indexed run invalid when its run.json breaks and restores it when fixed",
+    () =>
+      withEditorial(({ runDir }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const importer = yield* EditorialImportService.EditorialImportService;
+          const read = yield* EditorialReadService;
+          yield* importer.sync;
+          const before = yield* runRow(FIXTURE_RUN_ID);
+          const runJson = path.join(runDir, "run.json");
+          const original = yield* fs.readFileString(runJson);
+
+          yield* fs.writeFileString(runJson, "{");
+          yield* fs.utimes(runJson, mtimeAt(5), mtimeAt(5));
+          const broken = yield* importer.sync;
+          assert.deepStrictEqual(broken.runs, [{ runId: FIXTURE_RUN_ID, outcome: "invalid" }]);
+          const invalid = yield* runRow(FIXTURE_RUN_ID);
+          // Its metadata stays; only the state, the inventory and the version change.
+          assert.strictEqual(invalid?.import_state, "invalid");
+          assert.strictEqual(invalid?.cutoff_at, before?.cutoff_at);
+          assert.strictEqual(invalid?.content_hash, before?.content_hash);
+          assert.deepStrictEqual(JSON.parse(invalid?.skipped_files_json ?? "[]"), [
+            { file: "run.json", reason: "Expected a valid JSON string" },
+          ]);
+          assert.strictEqual(yield* countRows("editorial_runs"), 1);
+          assert.deepStrictEqual(
+            (yield* read.listRuns).map((run) => [run.runId, run.importState] as const),
+            [[EditorialRunId.make(FIXTURE_RUN_ID), "invalid"]],
+          );
+          const inbox = yield* read.getInbox({});
+          assert.strictEqual(inbox.run, null);
+          assert.strictEqual(inbox.total, 0);
+
+          yield* fs.writeFileString(runJson, original);
+          yield* fs.utimes(runJson, mtimeAt(10), mtimeAt(10));
+          const fixed = yield* importer.sync;
+          assert.deepStrictEqual(fixed.runs, [{ runId: FIXTURE_RUN_ID, outcome: "updated" }]);
+          const restored = yield* runRow(FIXTURE_RUN_ID);
+          assert.strictEqual(restored?.import_state, "imported");
+          assert.strictEqual(restored?.skipped_files_json, "[]");
+          assert.strictEqual(restored?.content_hash, before?.content_hash);
+          assert.strictEqual((yield* read.getInbox({})).total, 3);
+          assert.deepStrictEqual(
+            (yield* events).map((event) => event.type),
+            ["run.imported", "run.invalidated", "run.updated"],
+          );
+        }),
+      ),
+  );
+
+  it.effect("replaces the placeholder of an invalid directory once its run.json decodes", () =>
+    withEditorial(({ dir }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const importer = yield* EditorialImportService.EditorialImportService;
+        yield* importer.sync;
+        yield* addNextRun(dir, 1);
+        const runJson = path.join(dir, RUN_2, "run.json");
+        const original = yield* fs.readFileString(runJson);
+        // The engine is still writing: run.json is cut short before the first import.
+        yield* fs.writeFileString(runJson, original.slice(0, 20));
+        yield* fs.rename(path.join(dir, RUN_2), path.join(dir, "pending-run"));
+        assert.deepStrictEqual((yield* importer.sync).runs, [
+          { runId: "pending-run", outcome: "invalid" },
+        ]);
+
+        const fixedJson = path.join(dir, "pending-run", "run.json");
+        yield* fs.writeFileString(fixedJson, original);
+        yield* fs.utimes(fixedJson, mtimeAt(5), mtimeAt(5));
+        assert.deepStrictEqual((yield* importer.sync).runs, [
+          { runId: RUN_2, outcome: "imported" },
+        ]);
+        assert.strictEqual(yield* runRow("pending-run"), undefined);
+        assert.strictEqual((yield* runRow(RUN_2))?.import_state, "imported");
       }),
     ),
   );

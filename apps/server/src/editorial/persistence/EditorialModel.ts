@@ -89,6 +89,8 @@ export const EditorialEventType = Schema.Literals([
   "capture.saved",
   "result.saved",
   "run.imported",
+  "run.updated",
+  "run.invalidated",
 ]);
 export type EditorialEventType = typeof EditorialEventType.Type;
 

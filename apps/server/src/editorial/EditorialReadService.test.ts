@@ -227,7 +227,7 @@ describe("EditorialReadService", () => {
         `;
         assert.strictEqual(row?.import_state, "partial");
         assert.deepStrictEqual(JSON.parse(row?.skipped_files_json ?? "[]"), [
-          "dossiers/99-dos_broken.json",
+          { file: "dossiers/99-dos_broken.json", reason: "Expected a valid JSON string" },
         ]);
       }),
     ),

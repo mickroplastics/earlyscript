@@ -70,15 +70,32 @@ export const EditorialTrendInboxState = Schema.Struct({
 });
 export type EditorialTrendInboxState = typeof EditorialTrendInboxState.Type;
 
+/** `partial`: some dossiers did not decode. `invalid`: run.json did not; the inbox skips it. */
+export const EditorialRunImportState = Schema.Literals(["imported", "partial", "invalid"]);
+export type EditorialRunImportState = typeof EditorialRunImportState.Type;
+
+/** A file of the run directory the importer could not read, and why. */
+export const EditorialSkippedFile = Schema.Struct({
+  file: Schema.String,
+  reason: Schema.String,
+});
+export type EditorialSkippedFile = typeof EditorialSkippedFile.Type;
+
 export const EditorialRunSummary = Schema.Struct({
   runId: EditorialRunId,
-  /** The engine only saw items published before this instant. */
-  cutoffAt: IsoDateTime,
+  /**
+   * The engine only saw items published before this instant. Null only for an invalid run
+   * first seen with an unreadable run.json: the cutoff is unknown, not invented.
+   */
+  cutoffAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
   status: Schema.String,
   configVersion: Schema.NullOr(Schema.String),
   sources: Schema.Array(Schema.String),
   dossierCount: NonNegativeInt,
+  /** Optional for summaries built before the index existed; the server always sends it. */
+  importState: Schema.optional(EditorialRunImportState),
+  skippedFiles: Schema.optional(Schema.Array(EditorialSkippedFile)),
 });
 export type EditorialRunSummary = typeof EditorialRunSummary.Type;
 

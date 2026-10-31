@@ -17,6 +17,7 @@ import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { SnoozeReturnCondition } from "./persistence/EditorialModel.ts";
 import {
+  isReadableRun,
   selectDossier,
   selectLatestRun,
   selectRun,
@@ -109,6 +110,9 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(run)) {
       return yield* commandError("not-found", `Run ${input.runId} has not been imported`)();
+    }
+    if (!isReadableRun(run.value)) {
+      return yield* commandError("not-found", `Run ${input.runId} is invalid`)();
     }
     const dossier = yield* selectDossier(sql, input.runId, input.dossierId).pipe(
       Effect.mapError(commandError("storage", "Cannot read the dossier index")),

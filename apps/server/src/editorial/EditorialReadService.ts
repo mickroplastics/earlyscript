@@ -26,7 +26,8 @@ import {
   selectRunDossiers,
   selectRuns,
   selectTrendDossier,
-  type RunRow,
+  isReadableRun,
+  type ReadableRunRow,
 } from "./runIndex.ts";
 
 const DEFAULT_INBOX_LIMIT = 100;
@@ -89,17 +90,24 @@ const make = Effect.gen(function* () {
     const row = yield* (runId === undefined ? selectLatestRun(sql) : selectRun(sql, runId)).pipe(
       Effect.mapError(unreadable("Cannot read the run index")),
     );
-    if (Option.isNone(row) && runId !== undefined) {
+    if (Option.isNone(row)) {
+      if (runId === undefined) return Option.none<ReadableRunRow>();
       return yield* new EditorialReadError({
         reason: "run-not-found",
         message: `Run ${runId} has not been imported.`,
       });
     }
-    return row;
+    if (!isReadableRun(row.value)) {
+      return yield* new EditorialReadError({
+        reason: "unreadable",
+        message: `Run ${row.value.run_id} is invalid: its run.json does not decode.`,
+      });
+    }
+    return Option.some(row.value);
   });
 
   // The files are the content; the index says which directory holds the run.
-  const loadRun = Effect.fn("EditorialReadService.loadRun")(function* (row: RunRow) {
+  const loadRun = Effect.fn("EditorialReadService.loadRun")(function* (row: ReadableRunRow) {
     const entry = yield* directory.find(row.run_id);
     if (Option.isNone(entry)) {
       return yield* new EditorialReadError({
@@ -112,7 +120,7 @@ const make = Effect.gen(function* () {
 
   /** The run's trends with their inbox state, in the order the run lists them. */
   const withInbox = Effect.fn("EditorialReadService.withInbox")(function* (
-    row: RunRow,
+    row: ReadableRunRow,
     loaded: LoadedRun,
   ) {
     const states = yield* statesFor(loaded.dossiers.map((dossier) => dossier.trendKey.key));
