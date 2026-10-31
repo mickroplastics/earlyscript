@@ -1,4 +1,7 @@
-import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+} from "@t3tools/client-runtime/state/runtime";
 import { EDITORIAL_RESULTS_WS_METHODS } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -17,5 +20,10 @@ export const editorialResultsEnvironment = {
     label: "environment-data:editorial:results-decisions",
     tag: EDITORIAL_RESULTS_WS_METHODS.decisions,
     staleTimeMs: 60_000,
+  }),
+  /** Evidence package: written by the server into a folder, or returned for a zip download. */
+  exportEvidence: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:results-export",
+    tag: EDITORIAL_RESULTS_WS_METHODS.export,
   }),
 };

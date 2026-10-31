@@ -2,8 +2,10 @@
 import * as NodeCrypto from "node:crypto";
 
 import type { EditorialEvidenceMode } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 
 import type { EditorialEventType } from "./persistence/EditorialModel.ts";
+import { parseIso } from "./persistence/support.ts";
 
 // Pure half of the evidence export: column lists, the share whitelist, pseudonyms, CSV and
 // hashing. `EditorialEvidenceExportService.ts` reads the database and writes the files.
@@ -13,11 +15,9 @@ export const MANIFEST_FILE = "manifest.json";
 export const SUMMARY_FILE = "resumen.md";
 
 /**
- * How a column is written. `text` is free text the operator typed or a page title or URL: it
- * never leaves in `share`. `thread` and `trend` become stable indices in `share`; `date`
- * becomes its UTC day; `value` is copied as is (enums, numbers, hashes, engine run ids).
- * `aggregate-id` follows the row's `agregado`: a thread or trend id becomes its index, a run id
- * stays. `event-data` holds the payload the service already projected for the mode.
+ * How `share` writes a column: `text` (typed text, titles, URLs) never; `thread`, `trend` and
+ * `aggregate-id` (by the row's `agregado`) as stable indices; `date` as its UTC day; `value`
+ * and `event-data` (already projected by the service) as they are.
  */
 export type ColumnKind =
   | "value"
@@ -65,7 +65,12 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("utilidad", "value", true, "Utilidad 1 a 5 que registró el operador."),
     column("motivo", "text", false, "Motivo escrito con la decisión."),
     column("vigente", "value", true, "1 si es la última decisión del hilo dentro del filtro."),
-    column("reloj_definitivo", "value", true, "0 si un tramo esperaba resolución: los tiempos son un piso."),
+    column(
+      "reloj_definitivo",
+      "value",
+      true,
+      "0 si un tramo esperaba resolución: los tiempos son un piso.",
+    ),
     column("cobertura", "value", true, "complete si el hilo registró todas las etapas de su modo."),
     column("explorar_ms", "value", true, "Milisegundos activos en Explorar; vacío si no corrió."),
     column("leer_ms", "value", true, "Milisegundos activos en Leer; vacío si no corrió."),
@@ -102,10 +107,20 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("tipo", "value", true, "Tipo de evento editorial."),
     column("fecha", "date", true, "Momento del evento."),
     column("agregado", "value", true, "trend, video_thread o run."),
-    column("id", "aggregate-id", true, "Tendencia, hilo o corrida; en share, índices para tendencia e hilo."),
+    column(
+      "id",
+      "aggregate-id",
+      true,
+      "Tendencia, hilo o corrida; en share, índices para tendencia e hilo.",
+    ),
     column("actor", "value", true, "operator o system."),
     column("operacion", "value", false, "Identificador de operación idempotente."),
-    column("datos", "event-data", true, "Carga del evento en JSON; en share, solo los campos de eventData."),
+    column(
+      "datos",
+      "event-data",
+      true,
+      "Carga del evento en JSON; en share, solo los campos de eventData.",
+    ),
   ],
   [RUNS_FILE]: [
     column("corrida", "value", true, "Identificador de la corrida del motor."),
@@ -118,11 +133,21 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("hash_logico", "value", true, "Hash lógico de la corrida (reproducibilidad)."),
     column("corpus_hash", "value", true, "Hash del corpus usado."),
     column("contenido_hash", "value", true, "sha256 de run.json y de los expedientes leídos."),
-    column("perfil_hash", "value", true, "Hash del perfil del canal usado por la corrida nocturna."),
+    column(
+      "perfil_hash",
+      "value",
+      true,
+      "Hash del perfil del canal usado por la corrida nocturna.",
+    ),
     column("fuentes", "value", true, "Fuentes de la corrida, separadas por punto y coma."),
     column("expedientes", "value", true, "Expedientes indexados (tendencias emitidas)."),
     column("vistas", "value", true, "Tendencias distintas abiertas en esta corrida (trend.read)."),
-    column("descartadas", "value", true, "Tendencias de la corrida descartadas en la bandeja actual."),
+    column(
+      "descartadas",
+      "value",
+      true,
+      "Tendencias de la corrida descartadas en la bandeja actual.",
+    ),
     column("producidas", "value", true, "Hilos de video registrados desde esta corrida."),
     column("omitidos", "value", true, "Archivos de la corrida que no se pudieron leer."),
     column("omitidos_motivos", "text", false, "Archivo y motivo de cada omitido, en JSON."),
@@ -165,7 +190,16 @@ export const shareWhitelist = (): Readonly<Record<string, ReadonlyArray<string>>
  * new event type does not compile until someone decides what of it may leave. Anything not
  * named is dropped; free text (reasons, notes, URLs, titles, paths) is never named.
  */
-type PayloadRule = "enum" | "number" | "boolean" | "date" | "thread" | "trend" | "id" | "hash" | "flat";
+type PayloadRule =
+  | "enum"
+  | "number"
+  | "boolean"
+  | "date"
+  | "thread"
+  | "trend"
+  | "id"
+  | "hash"
+  | "flat";
 
 const SLUG = /^[a-z][a-z0-9_-]{0,39}$/;
 const ENGINE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/;
@@ -269,11 +303,8 @@ export const makePseudonyms = (
 };
 
 /** The UTC day of an ISO date-time, or null when it does not parse. */
-export const utcDay = (value: string | null): string | null => {
-  if (value === null) return null;
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : new Date(ms).toISOString().slice(0, 10);
-};
+export const utcDay = (value: string | null): string | null =>
+  value === null ? null : Option.getOrNull(Option.map(parseIso(value), (iso) => iso.slice(0, 10)));
 
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -398,7 +429,9 @@ export const sha256Hex = (content: string) =>
   NodeCrypto.createHash("sha256").update(content, "utf8").digest("hex");
 
 /** Hash of the package: each data file's name and hash, in name order. */
-export const packageHashOf = (files: ReadonlyArray<{ readonly name: string; readonly sha256: string }>) =>
+export const packageHashOf = (
+  files: ReadonlyArray<{ readonly name: string; readonly sha256: string }>,
+) =>
   sha256Hex(
     files
       .map((file) => `${file.sha256}  ${file.name}\n`)
@@ -408,16 +441,17 @@ export const packageHashOf = (files: ReadonlyArray<{ readonly name: string; read
 
 /** Fixed formatting, independent of the host locale: `12,5 min`. */
 export const formatMinutes = (ms: number | null): string =>
-  ms === null ? "—" : `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
+  ms === null ? "sin datos" : `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
 
 export const formatDecimal = (value: number | null, digits = 2): string =>
-  value === null ? "—" : value.toFixed(digits).replace(".", ",");
+  value === null ? "sin datos" : value.toFixed(digits).replace(".", ",");
 
 export const markdownTable = (
   header: ReadonlyArray<string>,
   rows: ReadonlyArray<ReadonlyArray<string | number>>,
 ): string => {
-  const escape = (cell: string | number) => String(cell).replaceAll("|", "\\|").replaceAll("\n", " ");
+  const escape = (cell: string | number) =>
+    String(cell).replaceAll("|", "\\|").replaceAll("\n", " ");
   return [
     `| ${header.map(escape).join(" | ")} |`,
     `| ${header.map(() => "---").join(" | ")} |`,
