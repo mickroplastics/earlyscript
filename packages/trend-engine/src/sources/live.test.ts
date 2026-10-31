@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off nodeBuiltinImport:off - isolated filesystem tests and real-clock live checks for the plain engine.
+// @effect-diagnostics nodeBuiltinImport:off - isolated filesystem tests for the plain engine.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -12,7 +12,6 @@ import { hashCorpus, readCorpus } from "../corpus.ts";
 import { sha256 } from "../hash.ts";
 import * as Schema from "effect/Schema";
 import { Item } from "@earlyscript/editorial-contracts/item";
-import { DAY_MS, dayOf } from "../days.ts";
 
 const day = "2026-10-15";
 const until = "2026-10-16";
@@ -269,18 +268,22 @@ describe("live sources", () => {
 const decodeItem = Schema.decodeUnknownSync(Item);
 // Real requests: run with EARLYSCRIPT_LIVE_TESTS=1. Each source keeps its own pause and robots.txt.
 describe.skipIf(process.env.EARLYSCRIPT_LIVE_TESTS !== "1")("live providers", () => {
-  const recent = dayOf(Date.now() - 2 * DAY_MS);
-  for (const id of ["arxiv", "wikipedia", "npm", "stackexchange", "bluesky"] as const)
-    it(`${id} collects one recent UTC day`, async () => {
-      const [adapter] = liveSources([id]);
-      const { items, coverage } = await adapter!.collectDay(recent);
-      expect(coverage).toMatchObject({ source: id, day: recent, items: items.length });
+  // A fixed recent day keeps wall-clock reads out of tests; override for a fresh check.
+  const liveDay = process.env.EARLYSCRIPT_LIVE_DAY ?? "2026-10-29";
+  it.each(["arxiv", "wikipedia", "npm", "stackexchange", "bluesky"] as const)(
+    "%s collects one UTC day or records why it may not",
+    async (id) => {
+      // 50 s of the day budget keeps the test under the project's 60 s ceiling; a cut day is partial.
+      const [adapter] = liveSources([id], { dayTimeoutMs: 50_000 });
+      const { items, coverage } = await adapter!.collectDay(liveDay);
+      expect(coverage).toMatchObject({ source: id, day: liveDay, items: items.length });
       // An unavailable day must say why (robots.txt, quota, network); any other has items.
       if (coverage?.status === "unavailable") expect(coverage.note).toBeTruthy();
       else expect(items.length).toBeGreaterThan(0);
       for (const item of items) {
         expect(decodeItem(item).source).toBe(id);
-        expect(item.published_at.startsWith(`${recent}T`)).toBe(true);
+        expect(item.published_at.startsWith(`${liveDay}T`)).toBe(true);
       }
-    }, 330_000);
+    },
+  );
 });
