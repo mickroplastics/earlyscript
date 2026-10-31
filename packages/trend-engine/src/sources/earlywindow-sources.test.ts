@@ -90,11 +90,13 @@ describe("robots.txt exception (arXiv)", () => {
   it("collects past a Disallow and notes the documented exception in the day", async () => {
     const feed = await fixture("arxiv-2026-10-26.xml");
     let clock = Date.parse("2026-10-31T00:00:00Z");
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
-      new URL(String(url)).pathname === "/robots.txt"
-        ? new Response("User-agent: *\nDisallow: /\n")
-        : new Response(feed),
-    );
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async (url) =>
+        new URL(String(url)).pathname === "/robots.txt"
+          ? new Response("User-agent: *\nDisallow: /\n")
+          : new Response(feed),
+      );
     const [adapter] = liveSources(["arxiv"], {
       fetch: fetcher,
       now: () => clock,
@@ -197,7 +199,9 @@ describe("Wikipedia", () => {
       author: null,
       entities: ["wikipedia:Patrick_Stewart"],
     });
-    expect(result.items[0]?.body).toMatch(/^English Wikipedia page views on 2026-10-29: \d+\. Rank 2 of the 15 most viewed pages\.$/);
+    expect(result.items[0]?.body).toMatch(
+      /^English Wikipedia page views on 2026-10-29: \d+\. Rank 2 of the 15 most viewed pages\.$/,
+    );
     expect(result.coverage).toMatchObject({ status: "partial", items: 12 });
     expect(result.coverage?.note).toContain("Top list has 15 of 1000 rows");
     expect(result.coverage?.note).toContain("no summaries: robots.txt");

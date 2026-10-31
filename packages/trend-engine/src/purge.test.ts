@@ -9,7 +9,12 @@ import { collectCorpus } from "./collect.ts";
 import { hashCorpus, readCorpus } from "./corpus.ts";
 import { sha256 } from "./hash.ts";
 import { purgeCorpus } from "./purge.ts";
-import { fixtureSources, liveSources, SOURCES, type SourceAdapter } from "./sources/index.ts";
+import {
+  fixtureSources,
+  liveSources,
+  sourceDescriptor,
+  type SourceAdapter,
+} from "./sources/index.ts";
 
 const day = "2026-10-30";
 const feeds: Array<RssFeed> = [
@@ -213,7 +218,7 @@ function post(did: string, handle: string, rkey: string, at: string): Item {
 /** Serves fixed items per day, as a provider that never deletes anything would. */
 function served(source: SourceId, items: ReadonlyArray<Item>): SourceAdapter {
   return {
-    descriptor: SOURCES[source],
+    descriptor: sourceDescriptor(source),
     collectDay: async (day) => {
       const own = items.filter((item) => item.published_at.startsWith(`${day}T`));
       return {
