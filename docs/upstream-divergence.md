@@ -1231,13 +1231,13 @@ Procedimiento de borrado (`src/purge.ts`, el módulo de §21; esta rama solo le 
 
 Captura real (Beatriz, 31 de octubre de 2026, días 28 y 29 de octubre, corpus temporal `~/earlyscript-data/live/corpus-s2-prueba/`, sin embeddings ni `engine run`; código `b395f401cd`, ya fusionado con `main` `0c91f37f6a`; una captura anterior con `7525f197c` dio los mismos ítems y estados, salvo un 404 pasajero de Wikipedia el 28):
 
-| Fuente | 28 oct | 29 oct | Tiempo (2 días) | Observaciones |
-| --- | --- | --- | --- | --- |
-| `arxiv` | `unavailable`, 0 | `unavailable`, 0 | 0 s | `robots_disallowed`; ninguna petición de datos |
-| `wikipedia` | `complete`, 986 | `complete`, 986 | 2 s | 1000 del top menos 14 páginas no artículo; sin resúmenes (`robots_disallowed`) |
-| `npm` | `partial`, 100 | `partial`, 100 | 146 s | 259 y 338 lanzamientos con 500 o más descargas en el día; 13 y 8 por debajo; cinco consultas a 1250 resultados |
-| `stackexchange` | `complete`, 72 | `complete`, 64 | 39 s | stackoverflow 72 y 61 (el total del 28 coincide con `filter=total`), ai 0 y 3 |
-| `bluesky` | `partial`, 4143 | `partial`, 4201 | 329 s | 96 y 90 peticiones; solo `agent` desbordó ventanas; 957 y 975 publicaciones descartadas por no nombrar el término en su texto |
+| Fuente          | 28 oct           | 29 oct           | Tiempo (2 días) | Observaciones                                                                                                                 |
+| --------------- | ---------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `arxiv`         | `unavailable`, 0 | `unavailable`, 0 | 0 s             | `robots_disallowed`; ninguna petición de datos                                                                                |
+| `wikipedia`     | `complete`, 986  | `complete`, 986  | 2 s             | 1000 del top menos 14 páginas no artículo; sin resúmenes (`robots_disallowed`)                                                |
+| `npm`           | `partial`, 100   | `partial`, 100   | 146 s           | 259 y 338 lanzamientos con 500 o más descargas en el día; 13 y 8 por debajo; cinco consultas a 1250 resultados                |
+| `stackexchange` | `complete`, 72   | `complete`, 64   | 39 s            | stackoverflow 72 y 61 (el total del 28 coincide con `filter=total`), ai 0 y 3                                                 |
+| `bluesky`       | `partial`, 4143  | `partial`, 4201  | 329 s           | 96 y 90 peticiones; solo `agent` desbordó ventanas; 957 y 975 publicaciones descartadas por no nombrar el término en su texto |
 
 Sin errores de proceso. Las pruebas en vivo (`EARLYSCRIPT_LIVE_TESTS=1`, día 29) pasaron las cinco en 121 s. Una captura piloto previa, con npm a 5250 resultados por consulta, tardó 598 s en npm y dejó tres de sus cinco consultas sin leer; de ahí el cambio de npm descrito arriba.
 
