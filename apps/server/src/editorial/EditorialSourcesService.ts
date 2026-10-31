@@ -118,6 +118,28 @@ const collectBlockOf = (source: SourceId): EditorialSourceEntry["collectBlocked"
   return status === "ready" ? null : status;
 };
 
+export interface StoredSourceSetting {
+  readonly collect: boolean;
+  readonly rank: boolean;
+  readonly backtestRunId: string | null;
+}
+
+/**
+ * What a source does today: its stored switches (or the catalog default) under the catalog's
+ * blocks. `list` shows this; the evidence export reports it.
+ */
+export const effectiveSourceSetting = (source: SourceId, setting?: StoredSourceSetting) => {
+  const current = setting ?? defaultSetting(source);
+  const rankBlocked = rankBlockOf(source, current.backtestRunId);
+  const blocked = collectBlockOf(source);
+  return {
+    collect: current.collect && blocked === null,
+    rank: current.rank && rankBlocked === null,
+    rankBlocked,
+    collectBlocked: blocked,
+  };
+};
+
 const CorpusManifestHead = Schema.Struct({
   schema_version: Schema.Literal("corpus/1"),
   from_day: UtcDay,
@@ -238,16 +260,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   const settingOf = (stored: ReadonlyMap<SourceId, Stored>, source: SourceId) =>
     stored.get(source) ?? defaultSetting(source);
 
-  const effective = (source: SourceId, setting: Stored) => {
-    const rankBlocked = rankBlockOf(source, setting.backtestRunId);
-    const blocked = collectBlockOf(source);
-    return {
-      collect: setting.collect && blocked === null,
-      rank: setting.rank && rankBlocked === null,
-      rankBlocked,
-      collectBlocked: blocked,
-    };
-  };
+  const effective = effectiveSourceSetting;
 
   const readUserFeeds = sql<UserFeedRow>`
     SELECT feed_url, feed_id, name, site_url, note, added_at, acknowledged_at

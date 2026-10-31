@@ -30,6 +30,14 @@ export interface EditorialResultsServiceShape {
   readonly decisions: (
     input: EditorialResultsDecisionsInput,
   ) => Effect.Effect<EditorialResultsDecisionPage, EditorialResultsError>;
+  /**
+   * Every decision, superseded ones included, most recent first (`decided_at`, then insertion
+   * order). For the evidence export, which filters by date and re-derives `current`.
+   */
+  readonly allDecisions: Effect.Effect<
+    ReadonlyArray<EditorialResultsDecision>,
+    EditorialResultsError
+  >;
 }
 
 /**
@@ -284,7 +292,17 @@ const make = Effect.gen(function* () {
     Effect.catchTags({ SqlError: unreadable("decisions") }),
   );
 
-  return EditorialResultsService.of({ summary, decisions });
+  const allDecisions: EditorialResultsServiceShape["allDecisions"] = selectDecisions(sql, {
+    currentOnly: false,
+    limit: -1,
+    offset: 0,
+  }).pipe(
+    Effect.map((rows) => rows.map(toDecision)),
+    Effect.catchTags({ SqlError: unreadable("allDecisions") }),
+    Effect.withSpan("EditorialResultsService.allDecisions"),
+  );
+
+  return EditorialResultsService.of({ summary, decisions, allDecisions });
 });
 
 function stageDuration(
@@ -321,7 +339,7 @@ const collect = (
  * Aggregates over the current decision of each thread. Time statistics leave out threads
  * whose clock is not definitive, so an unresolved segment never shortens a median.
  */
-const summarizeDecisions = (
+export const summarizeDecisions = (
   decisions: ReadonlyArray<EditorialResultsDecision>,
 ): Pick<EditorialResultsSummary, "modes" | "comparisons"> => {
   const current = decisions.filter((decision) => decision.current);
