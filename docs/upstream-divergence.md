@@ -20,6 +20,8 @@ Cinco unidades del 30 de octubre de 2026, cada una con su propia sección y su p
 
 11. Espacio Tendencias, lectura (`es/trends-space`), base `d820a87685`.
 
+12. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
+
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
@@ -799,3 +801,43 @@ Puntos de extensión:
 
 - Bandeja con estado (U3): `EditorialTrendSummary.isNew` y `EditorialInbox.newCount` se calculan hoy como «todas las de la corrida más reciente» en `loadRunDossiers`; con `editorial_trend_inbox`, la revisión vista decide `isNew`. `resolveLandingTarget` es el sitio de la regla «corrida nueva abre Tendencias». Las acciones del expediente (`PendingAction`) esperan los comandos de escritura y su scope de operación.
 - Redacción por asistente (U7): `EditorialTrendSummary.presentation` es opcional; la fila y el expediente ya muestran su título y las tres partes del resumen, con «Redactado por el asistente» y los términos del motor a la vista.
+
+## 13. Espacio Resultados
+
+Base: `638a6cf64e`. Rama `es/results-space`. Tercer espacio del sidebar, solo lectura sobre `editorial.sqlite`: tiempo por ficha asistido frente a manual, utilidad media, afirmaciones con cita, bandeja de tendencias, métricas de video y registro de decisiones. Decisiones 7 y 9 de `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §12 y §14 (U8).
+
+Archivos nuevos:
+
+- Contrato: `packages/contracts/src/editorialResults.ts` (esquemas, `EditorialResultsRpcGroup` con `editorial.results.summary` y `editorial.results.decisions`, `EDITORIAL_RESULTS_WS_METHODS`, `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES` con `orchestration:read`, `EditorialResultsError`).
+- Servidor, en `apps/server/src/editorial/`: `EditorialResultsService.ts` (lecturas con `EditorialSql`, cuantiles y agregados), `resultsRpc.ts` (handlers como `Context.Reference` con valor por defecto `unavailable`, agregados de trazas y capa), `resultsFixture.testkit.ts` (seis hilos, tres asistidos y tres manuales, escritos con `EditorialThreadService`, `WorkClockService` y `EditorialCommandService` bajo `TestClock`) y `EditorialResultsService.test.ts`.
+- Cliente: `apps/web/src/editorial/resultsState.ts` y, en `apps/web/src/editorial/results/`, `ResultsPage.tsx`, `ResultsNavigation.tsx`, `results.logic.ts` y sus pruebas (`results.logic.test.ts`, `ResultsPage.browser.test.tsx`).
+
+Archivos de upstream tocados:
+
+| Archivo                                               | Líneas    | Alcance                                                                                                              |
+| ----------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/rpc.ts`                       | 37, 2144  | Importa `EditorialResultsRpcGroup` y lo compone con `.merge` después del grupo editorial.                            |
+| `packages/contracts/src/index.ts`                     | 72        | Reexporta `editorialResults.ts`.                                                                                     |
+| `apps/server/src/ws.ts`                               | 245, 1874 | Esparce los handlers de Resultados, leídos de su `Reference`, junto a `editorialHandlers`.                           |
+| `apps/server/src/server.ts`                           | 52, 632   | Monta `resultsRpc.layer` en `layerRuntimeCoreDependenciesBase`, sobre `EditorialPersistence.layer`.                  |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 4, 45     | Esparce `EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES`.                                                                     |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 9, 17     | Esparce `EDITORIAL_RESULTS_RPC_AGGREGATES`.                                                                          |
+| `apps/server/package.json`                            | 77        | `@earlyscript/editorial-script` como dependencia de desarrollo del workspace, igual que en `es/video-thread-server`. |
+| `pnpm-lock.yaml`                                      | 943-945   | Importer de esa dependencia, idéntico al de `es/video-thread-server`.                                                |
+
+Archivo propio tocado: `apps/web/src/editorial/EditorialSidebar.tsx`, que monta `ResultsNavigation` en lugar del aviso fijo. La ruta `_chat.editorial.$environmentId.results.tsx` ya existía y ahora monta `ResultsPage`; `routeTree.gen.ts` no cambia.
+
+Decisiones reversibles:
+
+- Montaje: los handlers viven en una `Context.Reference` (`EditorialResultsRpcHandlers`) construida una vez en `server.ts`; `ws.ts` solo los esparce. `layerWsRpc` conserva su firma y las pruebas de upstream que lo montan con dobles reciben `unavailable`. Es el mismo patrón que `es/editorial-write` usa para `EditorialRpcHandlers`; si ambos se fusionan, los dos grupos pueden compartir una sola `Reference`.
+- Unidad de análisis: la decisión vigente de cada hilo de video, que es la más reciente por `decided_at`. Las anteriores siguen en el registro, marcadas «reemplazada», y no entran en los agregados.
+- Tiempos: las duraciones que `recordDecision` guarda con la decisión, ya sin pausas. Un hilo cuya decisión tiene `clock_definitive = 0` queda fuera de todas las estadísticas de tiempo y se cuenta aparte; su total aparece en la tabla con «≥». Una etapa que no corrió en un hilo no aporta un cero: ese hilo no entra en el n de la etapa.
+- Estadísticos: mediana y cuartiles por interpolación lineal entre estadísticos de orden (tipo 7 de R), con n, mínimo y máximo. Ningún porcentaje de reducción ni «ahorro»: la página muestra las dos medianas y su diferencia con los dos n, y una nota de que la comparación de la tesis es por pares, sobre el mismo tema y con revisores externos.
+- Comparaciones de la decisión 9: explorar (manual `explore` frente a asistido `explore` más `read`, porque leer el expediente reemplaza la exploración a mano; nulo si ninguna corrió), escribir (`write` frente a `write`) y proceso completo (total frente a total). Escribir y proceso completo se muestran por separado y nunca se suman.
+- Afirmaciones con cita: `checkScript` de `@earlyscript/editorial-script` sobre el `snapshot` de `editorial_script_versions` cuyo hash nombra la decisión, sin expediente. Cuenta oraciones con un marcador de cita propio o heredado del párrafo; no mide respaldo semántico ni el 90 % de la tesis. La proporción por modo suma afirmaciones de todos los guiones (no promedia proporciones). Una decisión sin versión no aporta. El conteo se guarda en memoria por hash, hasta 500 entradas.
+- Utilidad: la que registra el operador con la decisión (1 a 5), con media, n y distribución. Las valoraciones de revisores externos y las versiones de rúbrica no están en esta base y no se mezclan aquí.
+- Bandeja: cuatro conteos independientes sobre `editorial_trend_inbox`: leídas (`seen_at`), en observación (`snoozed_at` sin descarte), descartadas (`dismissed_at`) y en producción (`production_thread_id`).
+- Métricas de video: la observación más reciente por `observed_at`, solo descriptiva, sin atribución al sistema ni al modo.
+- Página: tarjetas de las tres comparaciones; gráfico de barras SVG por etapa (barra = mediana, trazo = RIC, línea discontinua = etapa sin registro), con escala común y sin librería; la misma información en una tabla; tabla de decisiones paginada de 20 en 20 con filtro por modo. Los colores de serie son `primary` (asistido) y `muted-foreground` (manual): el repositorio no define tokens `--chart-*`. El nombre del hilo sale del shell de T3 si existe (con enlace al hilo); si no, de la tendencia o de los primeros ocho caracteres del id.
+- Estado vacío: «Aún no hay decisiones registradas. Resultados se llena con cada hilo de video que cierres.» La bandeja aparece antes de la primera decisión solo si algún conteo es mayor que cero.
+- `ResultsNavigation` lista las secciones de la página como anclas (`Link` con `hash` y `hashScrollIntoView`), no ítems; la sección activa sale del hash.
