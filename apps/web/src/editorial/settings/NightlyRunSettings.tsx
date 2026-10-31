@@ -36,6 +36,7 @@ import {
   PHASE_LABEL,
   durationText,
   editorialJobsEnvironment,
+  jobMessages,
   jobProgressText,
 } from "../jobsState";
 import { useEditorialJobActivity } from "../TrendJobIndicator";
@@ -99,10 +100,9 @@ function JobRow({
   const duration = durationText(job.startedAt, job.finishedAt);
   const phases = job.artifacts.phases.map(phaseText).join(" · ");
   const details = [
-    job.status === "running" ? `Corriendo: ${jobProgressText(job)}.` : null,
-    job.error,
-    ...job.artifacts.notes,
-  ].filter((line): line is string => line !== null && line.length > 0);
+    ...(job.status === "running" ? [`Corriendo: ${jobProgressText(job)}.`] : []),
+    ...jobMessages(job),
+  ];
   return (
     <SettingsRow
       title={

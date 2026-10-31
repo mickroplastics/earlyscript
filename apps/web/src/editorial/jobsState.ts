@@ -7,6 +7,7 @@ import {
   EDITORIAL_JOB_PHASES,
   EDITORIAL_JOBS_WS_METHODS,
   type EditorialJob,
+  type EditorialJobNotice,
   type EditorialJobPhaseName,
   type EditorialJobStatus,
   type EnvironmentId,
@@ -94,4 +95,54 @@ export function durationText(startedAt: string | null, finishedAt: string | null
   if (seconds < 90) return `${seconds} s`;
   const minutes = Math.round(seconds / 60);
   return minutes < 90 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+const dayFormat = new Intl.DateTimeFormat("es", {
+  timeZone: "UTC",
+  day: "numeric",
+  month: "short",
+});
+const formatDays = (days: ReadonlyArray<string>) =>
+  days.map((day) => dayFormat.format(new Date(`${day}T00:00:00Z`))).join(", ");
+
+/** The operator's wording of a notice; the technical detail stays on the server. */
+function noticeText(notice: EditorialJobNotice): string {
+  switch (notice.code) {
+    case "missed_days":
+      return `Sin corrida ${notice.days?.length === 1 ? "el día" : "los días"} ${formatDays(notice.days ?? [])}: se capturaron ahora y cuentan desde este corte.`;
+    case "stale_lock_removed":
+      return "Se retiró un candado de captura abandonado.";
+    case "stale_engine_waited":
+      return "Se esperó a que terminara un motor anterior de esta corrida antes de seguir.";
+    case "presentations_pending":
+      return `Redacción pendiente: ${notice.ready ?? 0} de ${notice.total ?? 0} tendencias redactadas. Revisa el modelo de texto en Ajustes.`;
+    case "presentations_unavailable":
+      return "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.";
+    case "config_changed":
+      return "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.";
+    case "no_sources":
+      return "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).";
+    case "engine_failed":
+      return `Falló el motor en la fase de ${PHASE_LABEL[notice.phase ?? "run"]}.`;
+    case "check_failed":
+      return "La comprobación no reprodujo la corrida.";
+    case "import_failed":
+      return "La importación rechazó la corrida.";
+    case "collect_locked":
+      return "Otra captura estaba usando el corpus.";
+    case "storage":
+      return "La base editorial no respondió.";
+    case "too_many_attempts":
+      return "Se agotaron los intentos.";
+  }
+}
+
+/** What a job row says beyond its phases: the failure first, then the notices. */
+export function jobMessages(job: EditorialJob): ReadonlyArray<string> {
+  const failure = job.artifacts.failure;
+  const retry = failure !== null && job.status === "pending" ? " Se reintentará más tarde." : "";
+  return [
+    ...(failure === null ? [] : [`${noticeText(failure)}${retry}`]),
+    ...job.artifacts.notices.map(noticeText),
+  ];
 }

@@ -145,6 +145,8 @@ const embeddingJob = (): EditorialJob => ({
     dossiers: null,
     presentations: null,
     notes: [],
+    notices: [],
+    failure: null,
     progress: { phase: "run", done: 3072, total: 11913 },
   },
 });

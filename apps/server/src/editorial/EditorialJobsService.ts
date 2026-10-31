@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import {
   EDITORIAL_JOB_PHASES,
   EditorialJobArtifacts,
+  EditorialJobNotice,
   EditorialJobsError,
   type EditorialJob,
   type EditorialJobActivity,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -34,7 +36,9 @@ import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
+import { acquireEngineLock, recordEnginePid, releaseEngineLock } from "./engineLock.ts";
 import {
+  EngineSpawnRejected,
   lastJsonLine,
   resolveEngineLocation,
   runEngineCommand,
@@ -73,9 +77,14 @@ export interface EditorialJobsOptions {
   /** Null leaves the engine's default model directory. */
   readonly modelsDir: string | null;
   readonly leaseMs: number;
+  /** Renewal period; a renewal that cannot happen before the lease lapses stops the job. */
   readonly heartbeatMs: number;
   readonly retryDelayMs: number;
   readonly maxAttempts: number;
+  /** See `engineLock.ts`. */
+  readonly pollMs: number;
+  readonly startingGraceMs: number;
+  readonly staleEngineTimeoutMs: number;
 }
 
 export const DEFAULT_JOB_TIMING = {
@@ -83,6 +92,9 @@ export const DEFAULT_JOB_TIMING = {
   heartbeatMs: 30_000,
   retryDelayMs: 15 * 60_000,
   maxAttempts: 3,
+  pollMs: 1_000,
+  startingGraceMs: 30_000,
+  staleEngineTimeoutMs: 2 * 60 * 60_000,
 } as const;
 
 export interface EditorialJobsServiceShape {
@@ -119,6 +131,8 @@ interface JobRow {
   readonly finished_at: string | null;
   readonly attempt: number;
   readonly lease_until: string | null;
+  readonly lease_owner: string | null;
+  readonly lease_generation: number;
   readonly status: EditorialJobStatus;
   readonly error: string | null;
   readonly artifacts_json: string;
@@ -126,7 +140,7 @@ interface JobRow {
 
 const JOB_COLUMNS =
   "job_id, kind, profile_hash, cutoff_at, config_hash, timezone, scheduled_for, started_at, " +
-  "finished_at, attempt, lease_until, status, error, artifacts_json";
+  "finished_at, attempt, lease_until, lease_owner, lease_generation, status, error, artifacts_json";
 
 interface SettingsRow {
   readonly enabled: number;
@@ -206,15 +220,33 @@ const storage = (cause: unknown) =>
 /** A phase that could not finish; the job retries from it. */
 class PhaseFailure extends Schema.TaggedError<PhaseFailure>()("PhaseFailure", {
   message: Schema.String,
+  notice: EditorialJobNotice,
 }) {}
 
-const fail = (message: string) => Effect.fail(new PhaseFailure({ message }));
+/** Another claim took the job: this executor stops and writes nothing more. */
+class LeaseLost extends Schema.TaggedError<LeaseLost>()("LeaseLost", {
+  message: Schema.String,
+}) {}
+
+const fail = (message: string, notice: EditorialJobNotice) =>
+  Effect.fail(new PhaseFailure({ message, notice }));
+
+/** This executor's claim: every write of the job requires both fields. */
+interface Lease {
+  readonly owner: string;
+  readonly generation: number;
+  /** Until when the last claim or renewal holds, in epoch milliseconds. */
+  validUntilMs: number;
+}
 
 interface PhaseOutcome {
   readonly status: "done" | "skipped";
   readonly note: string | null;
   readonly log?: string;
 }
+
+const phaseOfCommand = (command: string | undefined): EditorialJobPhaseName =>
+  command === "collect" ? "collect" : command === "check" ? "check" : "run";
 
 const systemTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
@@ -283,6 +315,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     dossiers: null,
     presentations: null,
     notes: [],
+    notices: [],
+    failure: null,
     progress: null,
   });
   const jobDirOf = (jobId: string) => path.join(options.jobsDir, jobId);
@@ -398,10 +432,14 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     readonly plan: JobPlan;
     readonly status?: EditorialJobStatus;
     readonly error?: string;
+    readonly failure?: EditorialJobNotice;
   }) {
     const jobId = yield* newId;
     const createdAt = isoOf(yield* Clock.currentTimeMillis);
-    const artifacts = fallbackArtifacts(jobDirOf(jobId), input.plan.enabled);
+    const artifacts = {
+      ...fallbackArtifacts(jobDirOf(jobId), input.plan.enabled),
+      failure: input.failure ?? null,
+    };
     yield* sql`
       INSERT INTO editorial_jobs (
         job_id, kind, profile_hash, cutoff_at, config_hash, timezone, scheduled_for,
@@ -486,21 +524,30 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       timezone: settings.timezone,
       plan: current,
       ...(noSources
-        ? { status: "skipped" as const, error: "No source is enabled for the engine." }
+        ? {
+            status: "skipped" as const,
+            error: "No source is enabled for the engine.",
+            failure: { code: "no_sources" as const },
+          }
         : {}),
     });
   });
 
-  /** Takes the lease of the oldest due job: pending, or running with a lease that lapsed. */
+  /**
+   * Takes the lease of the oldest due job, pending or running with a lapsed lease, under a
+   * new owner and generation. A former owner still running loses every write from here on.
+   */
   const claimDue = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     const now = isoOf(nowMs);
-    const leaseUntil = isoOf(nowMs + options.leaseMs);
+    const owner = yield* newId;
     const rows = yield* sql<JobRow>`
       UPDATE editorial_jobs SET
         status = 'running',
         attempt = attempt + 1,
-        lease_until = ${leaseUntil},
+        lease_until = ${isoOf(nowMs + options.leaseMs)},
+        lease_owner = ${owner},
+        lease_generation = lease_generation + 1,
         started_at = COALESCE(started_at, ${now})
       WHERE job_id = (
         SELECT job_id FROM editorial_jobs
@@ -512,13 +559,33 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         AND (lease_until IS NULL OR lease_until < ${now})
       RETURNING ${sql.literal(JOB_COLUMNS)}
     `.pipe(Effect.mapError(storage));
-    return Option.fromNullishOr(rows[0]);
+    return Option.map(Option.fromNullishOr(rows[0]), (row) => ({
+      row,
+      lease: {
+        owner,
+        generation: row.lease_generation,
+        validUntilMs: nowMs + options.leaseMs,
+      } satisfies Lease,
+    }));
   });
 
-  const execute = Effect.fn("EditorialJobsService.execute")(function* (claimed: JobRow) {
-    const jobDir = jobDirOf(claimed.job_id);
+  const execute = Effect.fn("EditorialJobsService.execute")(function* (
+    claimed: JobRow,
+    lease: Lease,
+  ) {
+    const jobId = claimed.job_id;
+    const jobDir = jobDirOf(jobId);
     let artifacts = rowToJob(claimed).artifacts;
     let row = claimed;
+
+    const owned = (rows: ReadonlyArray<unknown>, what: string) =>
+      rows.length > 0
+        ? Effect.void
+        : Effect.fail(
+            new LeaseLost({
+              message: `${what}: generation ${lease.generation} no longer holds job ${jobId}`,
+            }),
+          );
 
     const publish = (next: JobRow) =>
       SubscriptionRef.set(active, next.status === "running" ? rowToJob(next) : null);
@@ -526,11 +593,16 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     const save = Effect.fn("EditorialJobsService.save")(function* (
       patch: Partial<EditorialJobArtifacts>,
     ) {
-      artifacts = { ...artifacts, ...patch };
-      const encoded = encodeArtifacts(artifacts);
-      yield* sql`
-        UPDATE editorial_jobs SET artifacts_json = ${encoded} WHERE job_id = ${row.job_id}
+      const next = { ...artifacts, ...patch };
+      const encoded = encodeArtifacts(next);
+      const rows = yield* sql<{ readonly job_id: string }>`
+        UPDATE editorial_jobs SET artifacts_json = ${encoded}
+        WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+          AND lease_generation = ${lease.generation}
+        RETURNING job_id
       `.pipe(Effect.mapError(storage));
+      yield* owned(rows, "save");
+      artifacts = next;
       row = { ...row, artifacts_json: encoded };
       yield* publish(row);
     });
@@ -544,137 +616,247 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
 
     const finish = Effect.fn("EditorialJobsService.finish")(function* (
       status: EditorialJobStatus,
-      error: string | null,
+      failure: { readonly message: string; readonly notice: EditorialJobNotice } | null,
       retryAtMs: number | null,
     ) {
       const nowMs = yield* Clock.currentTimeMillis;
-      yield* sql`
+      const next = { ...artifacts, progress: null, failure: failure?.notice ?? null };
+      const encoded = encodeArtifacts(next);
+      const rows = yield* sql<{ readonly job_id: string }>`
         UPDATE editorial_jobs SET
           status = ${status},
-          error = ${error},
+          error = ${failure?.message ?? null},
           lease_until = NULL,
           finished_at = ${retryAtMs === null ? isoOf(nowMs) : null},
-          scheduled_for = ${retryAtMs === null ? row.scheduled_for : isoOf(retryAtMs)}
-        WHERE job_id = ${row.job_id}
+          scheduled_for = ${retryAtMs === null ? row.scheduled_for : isoOf(retryAtMs)},
+          artifacts_json = ${encoded}
+        WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+          AND lease_generation = ${lease.generation}
+        RETURNING job_id
       `.pipe(Effect.mapError(storage));
-      row = { ...row, status, error, lease_until: null };
-      yield* save({ progress: null });
+      yield* owned(rows, "finish");
+      artifacts = next;
+      row = { ...row, status, error: failure?.message ?? null, lease_until: null };
       yield* SubscriptionRef.set(active, null);
     });
 
-    yield* fs.makeDirectory(jobDir, { recursive: true }).pipe(Effect.mapError(storage));
-    yield* publish(row);
-
-    if (row.attempt > options.maxAttempts) {
-      return yield* finish("failed", row.error ?? "Too many attempts.", null);
-    }
-
-    const current = yield* plan;
-    if (current.configHash !== row.config_hash || current.profileHash !== row.profile_hash) {
-      // The switches changed since the job was created: a job of the new key takes its place.
-      yield* save({ notes: [...artifacts.notes, "The engine configuration changed; replaced."] });
-      yield* finish("skipped", null, null);
-      if (current.enabled.rank.length > 0) {
-        yield* ensureJob({
-          cutoffAt: row.cutoff_at,
-          scheduledFor: isoOf(yield* Clock.currentTimeMillis),
-          timezone: row.timezone,
-          plan: current,
+    /** Renews the lease; fails when another claim took it or when it may lapse unrenewed. */
+    const heartbeat = Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep(`${options.heartbeatMs} millis`);
+        const nowMs = yield* Clock.currentTimeMillis;
+        const renewed = yield* sql<{ readonly job_id: string }>`
+          UPDATE editorial_jobs SET lease_until = ${isoOf(nowMs + options.leaseMs)}
+          WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+            AND lease_generation = ${lease.generation} AND status = 'running'
+          RETURNING job_id
+        `.pipe(Effect.result);
+        if (Result.isSuccess(renewed)) {
+          yield* owned(renewed.success, "renew");
+          lease.validUntilMs = nowMs + options.leaseMs;
+          continue;
+        }
+        yield* Effect.logWarning("editorial: job lease renewal failed", {
+          jobId,
+          cause: renewed.failure,
         });
+        if (nowMs + options.heartbeatMs >= lease.validUntilMs) {
+          return yield* new LeaseLost({
+            message: `renew: the lease of job ${jobId} would lapse before the next renewal`,
+          });
+        }
       }
-      return;
-    }
-    yield* save({
-      jobDir,
-      corpusDir,
-      runsDir,
-      sources: { collect: current.enabled.collect, rank: current.enabled.rank },
     });
 
-    const heartbeat = Effect.gen(function* () {
-      const leaseUntil = isoOf((yield* Clock.currentTimeMillis) + options.leaseMs);
-      yield* sql`
-        UPDATE editorial_jobs SET lease_until = ${leaseUntil}
-        WHERE job_id = ${row.job_id} AND status = 'running'
-      `;
-    }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced(`${options.heartbeatMs} millis`)));
+    /** Fails unless this executor still holds the job, right before it launches a child. */
+    const confirmLease = Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (nowMs >= lease.validUntilMs) {
+        return yield* new LeaseLost({ message: `launch: the lease of job ${jobId} lapsed` });
+      }
+      const rows = yield* sql<{ readonly job_id: string }>`
+        SELECT job_id FROM editorial_jobs
+        WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+          AND lease_generation = ${lease.generation} AND status = 'running'
+      `.pipe(Effect.mapError(storage));
+      yield* owned(rows, "launch");
+    });
 
-    const settings = yield* readSettings;
-    const ctx: PhaseContext = {
-      job: row,
-      jobDir,
-      plan: current,
-      workers: settings.workers,
-      artifacts: () => artifacts,
-      save,
-    };
+    const work = Effect.gen(function* () {
+      yield* fs.makeDirectory(jobDir, { recursive: true }).pipe(Effect.mapError(storage));
+      yield* publish(row);
 
-    const phases = Effect.gen(function* () {
-      for (const phase of EDITORIAL_JOB_PHASES) {
-        const entry = artifacts.phases.find((candidate) => candidate.phase === phase);
-        if (entry?.status === "done" || entry?.status === "skipped") continue;
-        const startedAt = isoOf(yield* Clock.currentTimeMillis);
-        yield* setPhase(phase, { status: "running", startedAt, finishedAt: null, note: null });
-        yield* save({ progress: { phase, done: null, total: null } });
-        const outcome = yield* runPhase(phase, ctx).pipe(
-          Effect.tapError((failure) =>
-            Clock.currentTimeMillis.pipe(
-              Effect.flatMap((ms) =>
-                setPhase(phase, {
-                  status: "failed",
-                  finishedAt: isoOf(ms),
-                  note: failure.message,
-                }),
-              ),
+      if (row.attempt > options.maxAttempts) {
+        return yield* finish(
+          "failed",
+          { message: row.error ?? "Too many attempts.", notice: { code: "too_many_attempts" } },
+          null,
+        );
+      }
+
+      const current = yield* plan;
+      if (current.configHash !== row.config_hash || current.profileHash !== row.profile_hash) {
+        // The switches changed since the job was created: a job of the new key takes its place.
+        yield* save({
+          notes: [...artifacts.notes, "The engine configuration changed; replaced."],
+          notices: [...artifacts.notices, { code: "config_changed" }],
+        });
+        yield* finish("skipped", null, null);
+        if (current.enabled.rank.length > 0) {
+          yield* ensureJob({
+            cutoffAt: row.cutoff_at,
+            scheduledFor: isoOf(yield* Clock.currentTimeMillis),
+            timezone: row.timezone,
+            plan: current,
+          });
+        }
+        return;
+      }
+      yield* save({
+        jobDir,
+        corpusDir,
+        runsDir,
+        sources: { collect: current.enabled.collect, rank: current.enabled.rank },
+      });
+
+      const settings = yield* readSettings;
+      const ctx: PhaseContext = {
+        job: row,
+        jobDir,
+        lease,
+        plan: current,
+        workers: settings.workers,
+        artifacts: () => artifacts,
+        save,
+        confirmLease,
+      };
+
+      const phases = Effect.gen(function* () {
+        for (const phase of EDITORIAL_JOB_PHASES) {
+          const entry = artifacts.phases.find((candidate) => candidate.phase === phase);
+          if (entry?.status === "done" || entry?.status === "skipped") continue;
+          const startedAt = isoOf(yield* Clock.currentTimeMillis);
+          yield* setPhase(phase, { status: "running", startedAt, finishedAt: null, note: null });
+          yield* save({ progress: { phase, done: null, total: null } });
+          const outcome = yield* runPhase(phase, ctx).pipe(
+            Effect.tapError((failure) =>
+              failure._tag === "PhaseFailure"
+                ? Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((ms) =>
+                      setPhase(phase, {
+                        status: "failed",
+                        finishedAt: isoOf(ms),
+                        note: failure.message,
+                      }),
+                    ),
+                  )
+                : Effect.void,
+            ),
+          );
+          yield* setPhase(phase, {
+            status: outcome.status,
+            finishedAt: isoOf(yield* Clock.currentTimeMillis),
+            note: outcome.note,
+            ...(outcome.log === undefined ? {} : { log: outcome.log }),
+          });
+        }
+      });
+
+      // Losing the lease interrupts the phases, and with them the engine child.
+      yield* Effect.raceFirst(phases, heartbeat).pipe(
+        Effect.matchEffect({
+          onSuccess: () => finish("done", null, null),
+          onFailure: Effect.fn("EditorialJobsService.retryOrFail")(function* (failure) {
+            if (failure._tag === "LeaseLost") return yield* failure;
+            const notice: EditorialJobNotice =
+              failure._tag === "PhaseFailure" ? failure.notice : { code: "storage" };
+            if (row.attempt < options.maxAttempts) {
+              const nowMs = yield* Clock.currentTimeMillis;
+              return yield* finish(
+                "pending",
+                { message: failure.message, notice },
+                nowMs + options.retryDelayMs,
+              );
+            }
+            return yield* finish("failed", { message: failure.message, notice }, null);
+          }),
+        }),
+        // A shutdown hands the job back at once instead of waiting for the lease to lapse.
+        Effect.onInterrupt(() =>
+          sql`
+            UPDATE editorial_jobs SET
+              status = 'pending', lease_until = NULL, attempt = MAX(attempt - 1, 0)
+            WHERE job_id = ${jobId} AND lease_owner = ${lease.owner}
+              AND lease_generation = ${lease.generation} AND status = 'running'
+          `.pipe(Effect.ignore),
+        ),
+      );
+    });
+
+    yield* work.pipe(
+      Effect.catchTags({
+        LeaseLost: (lost) =>
+          Effect.logWarning("editorial: job taken over; this executor stopped", {
+            jobId,
+            generation: lease.generation,
+            reason: lost.message,
+          }).pipe(
+            Effect.andThen(
+              SubscriptionRef.update(active, (job) => (job?.jobId === jobId ? null : job)),
             ),
           ),
-        );
-        yield* setPhase(phase, {
-          status: outcome.status,
-          finishedAt: isoOf(yield* Clock.currentTimeMillis),
-          note: outcome.note,
-          ...(outcome.log === undefined ? {} : { log: outcome.log }),
-        });
-      }
-    });
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        yield* Effect.forkScoped(heartbeat);
-        return yield* phases;
       }),
-    ).pipe(
-      Effect.matchEffect({
-        onSuccess: () => finish("done", null, null),
-        onFailure: Effect.fn("EditorialJobsService.retryOrFail")(function* (failure) {
-          if (row.attempt < options.maxAttempts) {
-            const nowMs = yield* Clock.currentTimeMillis;
-            return yield* finish("pending", failure.message, nowMs + options.retryDelayMs);
-          }
-          return yield* finish("failed", failure.message, null);
-        }),
-      }),
-      // A shutdown hands the job back at once instead of waiting for the lease to lapse.
-      Effect.onInterrupt(() =>
-        sql`
-          UPDATE editorial_jobs SET
-            status = 'pending', lease_until = NULL, attempt = MAX(attempt - 1, 0)
-          WHERE job_id = ${row.job_id} AND status = 'running'
-        `.pipe(Effect.ignore),
-      ),
     );
   });
 
   interface PhaseContext {
     readonly job: JobRow;
     readonly jobDir: string;
+    readonly lease: Lease;
     readonly plan: JobPlan;
     readonly workers: number;
     readonly artifacts: () => EditorialJobArtifacts;
     readonly save: (
       patch: Partial<EditorialJobArtifacts>,
-    ) => Effect.Effect<void, EditorialJobsError>;
+    ) => Effect.Effect<void, EditorialJobsError | LeaseLost>;
+    readonly confirmLease: Effect.Effect<void, EditorialJobsError | LeaseLost>;
   }
+
+  /** Files of one claim: a former owner still running cannot overwrite the current one's. */
+  const jobFile = (ctx: PhaseContext, name: string, extension: string) =>
+    path.join(ctx.jobDir, `${name}.g${ctx.lease.generation}.${extension}`);
+
+  /**
+   * Holds the job's engine lock around `body`: waits while a former owner's child lives, then
+   * lets `body` decide, with the disk as it is now, whether to launch the engine.
+   */
+  const withEngineLock = <A, E, R>(
+    ctx: PhaseContext,
+    body: (waited: boolean) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const outcome = yield* acquireEngineLock(ctx.jobDir, ctx.lease, options.engine.cli, {
+          pollMs: options.pollMs,
+          startingGraceMs: options.startingGraceMs,
+          staleEngineTimeoutMs: options.staleEngineTimeoutMs,
+        }).pipe(Effect.provide(context), Effect.mapError(storage));
+        yield* Effect.addFinalizer(() =>
+          releaseEngineLock(ctx.jobDir, ctx.lease).pipe(Effect.provide(context), Effect.ignore),
+        );
+        if (outcome.waitedFor !== null) {
+          const { pid, generation, killed } = outcome.waitedFor;
+          yield* ctx.save({
+            notes: [
+              ...ctx.artifacts().notes,
+              `Waited for the engine (pid ${pid}) of generation ${generation}${killed ? "; killed after the timeout" : ""}.`,
+            ],
+            notices: [...ctx.artifacts().notices, { code: "stale_engine_waited" }],
+          });
+        }
+        return yield* body(outcome.waitedFor !== null);
+      }),
+    );
 
   const engineRun = (
     ctx: PhaseContext,
@@ -682,23 +864,42 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     args: ReadonlyArray<string>,
     onStderrLine?: (line: string) => Effect.Effect<void>,
   ) => {
-    const logFile = path.join(ctx.jobDir, logName);
+    const logFile = jobFile(ctx, logName, "log");
     const tail: Array<string> = [];
-    return runEngineCommand(options.engine, {
-      args,
-      logFile,
-      onStderrLine: (line) =>
-        Effect.suspend(() => {
-          if (line.trim().length > 0) {
-            tail.push(line);
-            if (tail.length > 5) tail.shift();
-          }
-          return onStderrLine?.(line) ?? Effect.void;
-        }),
-    }).pipe(
-      Effect.provide(context),
-      Effect.mapError(
-        (cause) => new PhaseFailure({ message: `engine ${args[0]}: ${cause.message}` }),
+    return ctx.confirmLease.pipe(
+      Effect.andThen(
+        runEngineCommand(options.engine, {
+          args,
+          logFile,
+          onSpawn: (pid) =>
+            recordEnginePid(ctx.jobDir, ctx.lease, pid).pipe(
+              Effect.provide(context),
+              Effect.orElseSucceed(() => false),
+              Effect.flatMap((recorded) =>
+                recorded
+                  ? Effect.void
+                  : Effect.fail(new EngineSpawnRejected({ message: "the engine lock moved" })),
+              ),
+            ),
+          onStderrLine: (line) =>
+            Effect.suspend(() => {
+              if (line.trim().length > 0) {
+                tail.push(line);
+                if (tail.length > 5) tail.shift();
+              }
+              return onStderrLine?.(line) ?? Effect.void;
+            }),
+        }).pipe(
+          Effect.provide(context),
+          Effect.mapError((cause) =>
+            cause._tag === "EngineSpawnRejected"
+              ? new LeaseLost({ message: `launch: ${cause.message}` })
+              : new PhaseFailure({
+                  message: `engine ${args[0]}: ${cause.message}`,
+                  notice: { code: "engine_failed", phase: phaseOfCommand(args[0]) },
+                }),
+          ),
+        ),
       ),
       Effect.map((output) => ({ ...output, logFile, tail: tail.join("\n") })),
     );
@@ -725,7 +926,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       onSome: (d) => d.getTime(),
     });
     if (nowMs - mtime < STALE_COLLECT_LOCK_MS) {
-      return yield* fail(`Another capture holds ${lockPath}.`);
+      return yield* fail(`Another capture holds ${lockPath}.`, { code: "collect_locked" });
     }
     yield* fs.remove(lockPath).pipe(Effect.ignore);
     return `Removed a stale capture lock from ${isoOf(mtime)}.`;
@@ -748,6 +949,14 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         note: "The corpus already reaches yesterday.",
       } satisfies PhaseOutcome;
     }
+    return yield* withEngineLock(ctx, () => collectWithLock(ctx, window));
+  });
+
+  const collectWithLock = Effect.fn("EditorialJobsService.collectWithLock")(function* (
+    ctx: PhaseContext,
+    window: NonNullable<ReturnType<typeof collectWindow>>,
+  ) {
+    const collectSources = ctx.plan.enabled.collect;
     const lockNote = yield* clearStaleLock;
     const args = [
       "collect",
@@ -761,15 +970,18 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       window.toDay,
     ];
     if (collectSources.includes("rss")) {
-      const feedsFile = path.join(ctx.jobDir, "rss-feeds.json");
+      const feedsFile = jobFile(ctx, "rss-feeds", "json");
       yield* fs
         .writeFileString(feedsFile, `${encodeJson(ctx.plan.enabled.rssFeeds)}\n`)
         .pipe(Effect.mapError(storage));
       args.push("--rss-feeds", feedsFile);
     }
-    const output = yield* engineRun(ctx, "collect.log", args);
+    const output = yield* engineRun(ctx, "collect", args);
     if (output.exitCode !== 0) {
-      return yield* fail(`engine collect exited with ${output.exitCode}: ${output.tail}`);
+      return yield* fail(`engine collect exited with ${output.exitCode}: ${output.tail}`, {
+        code: "engine_failed",
+        phase: "collect",
+      });
     }
     const rows = Option.getOrElse(decodeCollectRows(lastJsonLine(output.stdout)), () => []);
     const collect = {
@@ -781,13 +993,18 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       missedDays: [...window.missedDays],
     };
     const notes = [...ctx.artifacts().notes];
-    if (lockNote !== null) notes.push(lockNote);
+    const notices = [...ctx.artifacts().notices];
+    if (lockNote !== null) {
+      notes.push(lockNote);
+      notices.push({ code: "stale_lock_removed" });
+    }
     if (window.missedDays.length > 0) {
       notes.push(
         `Backfill: ${window.missedDays.join(", ")} had no run; captured now, ranked only from this cutoff.`,
       );
+      notices.push({ code: "missed_days", days: [...window.missedDays] });
     }
-    yield* ctx.save({ collect, notes });
+    yield* ctx.save({ collect, notes, notices });
     return {
       status: "done",
       note: `${rows.length} source-days, ${collect.items} items, ${collect.incomplete} not complete.`,
@@ -826,10 +1043,15 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     const existing = yield* fs.readFileString(options.profilePath).pipe(Effect.option);
     if (Option.isSome(existing) && existing.value === SINGULARIDEV_PROFILE_V1) return;
     yield* fs.makeDirectory(path.dirname(options.profilePath), { recursive: true });
-    yield* fs.writeFileString(options.profilePath, SINGULARIDEV_PROFILE_V1);
+    const tmp = `${options.profilePath}.${yield* newId}.tmp`;
+    yield* fs.writeFileString(tmp, SINGULARIDEV_PROFILE_V1);
+    yield* fs.rename(tmp, options.profilePath);
   }).pipe(Effect.mapError(storage));
 
-  const runPhaseEngine = Effect.fn("EditorialJobsService.run")(function* (ctx: PhaseContext) {
+  const runPhaseEngine = (ctx: PhaseContext) => withEngineLock(ctx, () => runWithLock(ctx));
+
+  const runWithLock = Effect.fn("EditorialJobsService.run")(function* (ctx: PhaseContext) {
+    // Read after taking the lock: a former owner's child may have just written the run.
     const onDisk = yield* findRunOnDisk(ctx.job);
     if (onDisk !== null) {
       yield* ctx.save({ runId: onDisk, runDir: path.join(runsDir, onDisk) });
@@ -838,10 +1060,11 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         note: `Found ${onDisk} on disk; not run again.`,
       } satisfies PhaseOutcome;
     }
-    if (ctx.plan.enabled.rank.length === 0)
-      return yield* fail("No source is enabled for the engine.");
+    if (ctx.plan.enabled.rank.length === 0) {
+      return yield* fail("No source is enabled for the engine.", { code: "no_sources" });
+    }
     yield* ensureProfileFile;
-    const configFile = path.join(ctx.jobDir, "engine-config.json");
+    const configFile = jobFile(ctx, "engine-config", "json");
     yield* fs
       .writeFileString(configFile, `${encodeJson(ctx.plan.config)}\n`)
       .pipe(Effect.mapError(storage));
@@ -863,22 +1086,25 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       options.cacheFile,
       ...(options.modelsDir === null ? [] : ["--models", options.modelsDir]),
     ];
-    const output = yield* engineRun(ctx, "run.log", args, (line) =>
+    const output = yield* engineRun(ctx, "run", args, (line) =>
       Option.match(Option.flatMap(decodeJsonOption(line), decodeEmbedProgress), {
         onNone: () => Effect.void,
         onSome: (progress) =>
           ctx
             .save({ progress: { phase: "run", done: progress.inferred, total: progress.total } })
+            // Progress only; a lost lease surfaces at the next renewal or guarded write.
             .pipe(Effect.ignore),
       }),
     );
     const result = decodeRunResult(lastJsonLine(output.stdout));
+    const engineFailed = { code: "engine_failed", phase: "run" } as const;
     if (Option.isNone(result)) {
-      return yield* fail(`engine run exited with ${output.exitCode}: ${output.tail}`);
+      return yield* fail(`engine run exited with ${output.exitCode}: ${output.tail}`, engineFailed);
     }
     if (output.exitCode !== 0 || result.value.status !== "ok") {
       return yield* fail(
         `engine run ${result.value.run_id} failed: ${result.value.error ?? output.tail}`,
+        engineFailed,
       );
     }
     yield* ctx.save({
@@ -895,20 +1121,21 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
 
   const runIdOf = (ctx: PhaseContext) => {
     const runId = ctx.artifacts().runId;
-    return runId === null ? fail("The job has no run.") : Effect.succeed(runId);
+    return runId === null
+      ? fail("The job has no run.", { code: "engine_failed", phase: "run" })
+      : Effect.succeed(runId);
   };
 
   const checkPhase = Effect.fn("EditorialJobsService.check")(function* (ctx: PhaseContext) {
     const runId = yield* runIdOf(ctx);
-    const output = yield* engineRun(ctx, "check.log", [
-      "check",
-      "--run",
-      path.join(runsDir, runId),
-    ]);
+    const output = yield* withEngineLock(ctx, () =>
+      engineRun(ctx, "check", ["check", "--run", path.join(runsDir, runId)]),
+    );
     const result = decodeCheckResult(lastJsonLine(output.stdout));
     if (output.exitCode !== 0 || Option.isNone(result) || !result.value.ok) {
       return yield* fail(
         `engine check did not reproduce ${runId}: ${output.tail || output.stdout.trim()}`,
+        { code: "check_failed" },
       );
     }
     return {
@@ -921,10 +1148,18 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   const importPhase = Effect.fn("EditorialJobsService.import")(function* (ctx: PhaseContext) {
     const runId = yield* runIdOf(ctx);
     const report = yield* importer.sync.pipe(
-      Effect.mapError((cause) => new PhaseFailure({ message: `import: ${cause.message}` })),
+      Effect.mapError(
+        (cause) =>
+          new PhaseFailure({
+            message: `import: ${cause.message}`,
+            notice: { code: "import_failed" },
+          }),
+      ),
     );
     const outcome = report.runs.find((entry) => entry.runId === runId)?.outcome ?? "unchanged";
-    if (outcome === "invalid") return yield* fail(`The importer rejected ${runId}.`);
+    if (outcome === "invalid") {
+      return yield* fail(`The importer rejected ${runId}.`, { code: "import_failed" });
+    }
     return { status: "done", note: `Run ${outcome}.` } satisfies PhaseOutcome;
   });
 
@@ -934,8 +1169,12 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     const runId = yield* runIdOf(ctx);
     const pending = Effect.fn("EditorialJobsService.presentationsPending")(function* (
       reason: string,
+      notice: EditorialJobNotice,
     ) {
-      yield* ctx.save({ notes: [...ctx.artifacts().notes, `Presentations pending: ${reason}`] });
+      yield* ctx.save({
+        notes: [...ctx.artifacts().notes, `Presentations pending: ${reason}`],
+        notices: [...ctx.artifacts().notices, notice],
+      });
       return { status: "done", note: `Presentations pending: ${reason}` } satisfies PhaseOutcome;
     });
     const report = (progress: { ready: number; failed: number; total: number }) =>
@@ -947,28 +1186,35 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       Effect.gen(function* () {
         yield* presentations.startRun(runId);
         yield* Effect.forkScoped(
-          presentations
-            .runProgress(runId)
-            .pipe(
-              Effect.flatMap(report),
-              Effect.ignore,
-              Effect.repeat(Schedule.spaced("5 seconds")),
-            ),
+          presentations.runProgress(runId).pipe(
+            Effect.flatMap(report),
+            // Progress only; a lost lease surfaces at the next renewal or guarded write.
+            Effect.ignore,
+            Effect.repeat(Schedule.spaced("5 seconds")),
+          ),
         );
         return yield* presentations.awaitRun(runId);
       }),
-    ).pipe(Effect.option);
-    if (Option.isNone(progress)) return yield* pending("the run could not be drafted.");
-    yield* report(progress.value);
-    const { ready, total } = progress.value;
-    if (ready < total) return yield* pending(`${ready} of ${total} drafted.`);
+    ).pipe(Effect.catchTags({ EditorialPresentationError: () => Effect.succeed(null) }));
+    if (progress === null) {
+      return yield* pending("the run could not be drafted.", { code: "presentations_unavailable" });
+    }
+    yield* report(progress);
+    const { ready, total } = progress;
+    if (ready < total) {
+      return yield* pending(`${ready} of ${total} drafted.`, {
+        code: "presentations_pending",
+        ready,
+        total,
+      });
+    }
     return { status: "done", note: `${total} drafted.` } satisfies PhaseOutcome;
   });
 
   function runPhase(
     phase: EditorialJobPhaseName,
     ctx: PhaseContext,
-  ): Effect.Effect<PhaseOutcome, PhaseFailure | EditorialJobsError> {
+  ): Effect.Effect<PhaseOutcome, PhaseFailure | EditorialJobsError | LeaseLost> {
     switch (phase) {
       case "collect":
         return collectPhase(ctx);
@@ -987,7 +1233,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     yield* scheduleDue;
     const claimed = yield* claimDue;
     if (Option.isNone(claimed)) return;
-    yield* execute(claimed.value);
+    yield* execute(claimed.value.row, claimed.value.lease);
   }).pipe(Effect.withSpan("EditorialJobsService.runDue"));
 
   const watch = SubscriptionRef.changes(active).pipe(

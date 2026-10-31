@@ -64,6 +64,36 @@ export const EditorialJobPhase = Schema.Struct({
 });
 export type EditorialJobPhase = typeof EditorialJobPhase.Type;
 
+/**
+ * Something the operator should know about a job, as a code with its data; the client words
+ * it. The technical detail stays in `notes`, `error` and the phase logs.
+ */
+export const EditorialJobNoticeCode = Schema.Literals([
+  "missed_days",
+  "stale_lock_removed",
+  "stale_engine_waited",
+  "presentations_pending",
+  "presentations_unavailable",
+  "config_changed",
+  "no_sources",
+  "engine_failed",
+  "check_failed",
+  "import_failed",
+  "collect_locked",
+  "storage",
+  "too_many_attempts",
+]);
+export type EditorialJobNoticeCode = typeof EditorialJobNoticeCode.Type;
+
+export const EditorialJobNotice = Schema.Struct({
+  code: EditorialJobNoticeCode,
+  phase: Schema.optionalKey(EditorialJobPhaseName),
+  days: Schema.optionalKey(Schema.Array(Day)),
+  ready: Schema.optionalKey(NonNegativeInt),
+  total: Schema.optionalKey(NonNegativeInt),
+});
+export type EditorialJobNotice = typeof EditorialJobNotice.Type;
+
 /** Days the capture reached; `missedDays` had no run and are not run after the fact. */
 export const EditorialJobCollect = Schema.Struct({
   sources: Schema.Array(Schema.String),
@@ -100,7 +130,12 @@ export const EditorialJobArtifacts = Schema.Struct({
   presentations: Schema.NullOr(
     Schema.Struct({ ready: NonNegativeInt, failed: NonNegativeInt, total: NonNegativeInt }),
   ),
+  /** Technical notes in English, for logs and diagnosis; not shown as they are. */
   notes: Schema.Array(Schema.String),
+  /** What the operator reads, in order. */
+  notices: Schema.Array(EditorialJobNotice),
+  /** Why the last attempt failed; null after a success. */
+  failure: Schema.NullOr(EditorialJobNotice),
   progress: Schema.NullOr(EditorialJobProgress),
 });
 export type EditorialJobArtifacts = typeof EditorialJobArtifacts.Type;
@@ -117,6 +152,7 @@ export const EditorialJob = Schema.Struct({
   finishedAt: Schema.NullOr(IsoDateTime),
   attempt: NonNegativeInt,
   status: EditorialJobStatus,
+  /** Technical error of the last failed attempt; the client shows `artifacts.failure`. */
   error: Schema.NullOr(Schema.String),
   artifacts: EditorialJobArtifacts,
 });

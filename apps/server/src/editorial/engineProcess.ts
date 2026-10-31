@@ -47,7 +47,15 @@ export interface EngineInvocation {
   readonly logFile: string;
   /** Called for each stderr line, where the engine reports progress as JSON. */
   readonly onStderrLine?: (line: string) => Effect.Effect<void>;
+  /** Runs once the child exists; a failure here kills it. */
+  readonly onSpawn?: (pid: number) => Effect.Effect<void, EngineSpawnRejected>;
 }
+
+/** `onSpawn` refused the child it was given, which is killed. */
+export class EngineSpawnRejected extends Schema.TaggedError<EngineSpawnRejected>()(
+  "EngineSpawnRejected",
+  { message: Schema.String },
+) {}
 
 export interface EngineOutput {
   readonly exitCode: number;
@@ -78,8 +86,10 @@ export const runEngineCommand = Effect.fn("EditorialEngine.run")(function* (
           // The desktop app's executable is Electron; this makes it behave as Node.
           env: { ELECTRON_RUN_AS_NODE: "1" },
           extendEnv: true,
+          forceKillAfter: "5 seconds",
         }),
       );
+      if (invocation.onSpawn !== undefined) yield* invocation.onSpawn(Number(child.pid));
       const [stdout] = yield* Effect.all(
         [
           child.stdout.pipe(Stream.tap(append), Stream.decodeText, Stream.mkString),

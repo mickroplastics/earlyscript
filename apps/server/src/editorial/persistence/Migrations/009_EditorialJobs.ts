@@ -2,7 +2,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 // The nightly run's durable calendar: one job per profile, cutoff and engine configuration,
-// with its lease, attempts, error and artifacts. The settings row holds the operator's time
+// with its lease, attempts, error and artifacts. Each claim takes a new owner and generation;
+// every write of the executor requires both, so a former owner can no longer write. The settings row holds the operator's time
 // of day; a database without it keeps the nightly run disabled.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -20,6 +21,8 @@ export default Effect.gen(function* () {
       finished_at TEXT,
       attempt INTEGER NOT NULL DEFAULT 0,
       lease_until TEXT,
+      lease_owner TEXT,
+      lease_generation INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL
         CHECK (status IN ('pending', 'running', 'done', 'failed', 'skipped')),
       error TEXT,

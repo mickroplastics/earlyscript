@@ -1,14 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests run a stand-in engine script and lay out its files.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { DEFAULT_CONFIG_PATH } from "@earlyscript/trend-engine/run";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { EditorialRunId, type EditorialJob } from "@t3tools/contracts";
+import { EditorialPresentationError, EditorialRunId, type EditorialJob } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
+import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import * as EditorialJobsService from "./EditorialJobsService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
@@ -23,7 +26,9 @@ import {
 import { EditorialRunDirectory } from "./RunDirectory.ts";
 
 // Stands in for packages/trend-engine/src/cli.ts: writes the files the real commands write
-// and appends each command to trace.log. A `fail-<command>` file next to it makes it fail.
+// and appends each command to trace.log. A `fail-<command>` file next to it makes it fail; a
+// `slow-run` file holds how many milliseconds `run` takes. `run` records in events.log when it
+// finishes, when it is killed and when it starts while another `run` is still alive.
 const FAKE_ENGINE = String.raw`
 import fs from "node:fs";
 import path from "node:path";
@@ -69,6 +74,21 @@ if (command === "collect") {
   console.log(JSON.stringify(rows));
 } else if (command === "run") {
   trace("run");
+  const event = (line) => fs.appendFileSync(path.join(here, "events.log"), line + "\n");
+  const running = path.join(here, "engine-running");
+  try {
+    fs.closeSync(fs.openSync(running, "wx"));
+  } catch {
+    event("OVERLAP");
+  }
+  process.on("SIGTERM", () => {
+    fs.rmSync(running, { force: true });
+    event("run killed");
+    process.exit(143);
+  });
+  const slow = path.join(here, "slow-run");
+  if (fs.existsSync(slow)) await new Promise((resolve) => setTimeout(resolve, Number(fs.readFileSync(slow, "utf8"))));
+  fs.rmSync(running, { force: true });
   console.error(JSON.stringify({ phase: "embed", inferred: 1, total: 2 }));
   if (failing("run")) {
     console.error("run broke");
@@ -90,6 +110,7 @@ if (command === "collect") {
     }),
   );
   console.log(JSON.stringify({ run_id: runId, status: "ok", error: null, dossiers: 3 }));
+  event("run done");
 } else if (command === "check") {
   trace("check");
   console.log(JSON.stringify({ ok: !failing("check") }));
@@ -119,6 +140,20 @@ const makeFixture = () => {
       if (on) NodeFS.writeFileSync(file, "");
       else NodeFS.rmSync(file, { force: true });
     },
+    slowRun: (ms: number | null) => {
+      const file = NodePath.join(root, "slow-run");
+      if (ms === null) NodeFS.rmSync(file, { force: true });
+      else NodeFS.writeFileSync(file, String(ms));
+    },
+    events: () => {
+      const file = NodePath.join(root, "events.log");
+      return NodeFS.existsSync(file)
+        ? NodeFS.readFileSync(file, "utf8").split("\n").filter(Boolean)
+        : [];
+    },
+    runDirs: () => NodeFS.readdirSync(runsDir).filter((name) => name.startsWith("run_")),
+    /** Presentations: the first `awaitRun` waits for this before answering. */
+    holdFirstDraft: null as Promise<void> | null,
   };
 };
 
@@ -138,7 +173,12 @@ const progressOf = (runId: string) => ({
 const withJobs = <A, E>(
   fx: Fixture,
   body: Effect.Effect<A, E, EditorialJobsService.EditorialJobsService | EditorialSql>,
+  options: {
+    readonly timing?: Partial<EditorialJobsService.EditorialJobsOptions>;
+    readonly draftFails?: boolean;
+  } = {},
 ) => {
+  let draftsAwaited = 0;
   const jobs = EditorialJobsService.layerWith({
     engine: { cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH },
     jobsDir: NodePath.join(fx.root, "jobs"),
@@ -146,6 +186,8 @@ const withJobs = <A, E>(
     cacheFile: NodePath.join(fx.root, "embeddings.sqlite"),
     modelsDir: null,
     ...EditorialJobsService.DEFAULT_JOB_TIMING,
+    pollMs: 50,
+    ...options.timing,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -158,12 +200,25 @@ const withJobs = <A, E>(
         }),
         Layer.mock(EditorialPresentationService)({
           startRun: (runId) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               fx.mark("presentations");
-              return progressOf(runId);
+              return options.draftFails === true
+                ? Effect.fail(
+                    new EditorialPresentationError({
+                      reason: "generation-failed",
+                      message: "no provider",
+                    }),
+                  )
+                : Effect.succeed(progressOf(runId));
             }),
           runProgress: (runId) => Effect.succeed(progressOf(runId)),
-          awaitRun: (runId) => Effect.succeed(progressOf(runId)),
+          awaitRun: (runId) => {
+            draftsAwaited += 1;
+            const hold = draftsAwaited === 1 ? fx.holdFirstDraft : null;
+            return hold === null
+              ? Effect.succeed(progressOf(runId))
+              : Effect.promise(() => hold).pipe(Effect.as(progressOf(runId)));
+          },
         }),
         Layer.mock(EditorialRunDirectory)({ runsDir: fx.runsDir }),
       ),
@@ -174,6 +229,28 @@ const withJobs = <A, E>(
     Effect.ensuring(removeDir(fx.root)),
   );
 };
+
+/** Resolves once trace.log holds `count` lines equal to `line`; watches, never polls. */
+const traceReaches = (fx: Fixture, line: string, count = 1) =>
+  Effect.callback<void>((resume) => {
+    const reached = () => fx.trace().filter((entry) => entry === line).length >= count;
+    const watcher = NodeFS.watch(fx.root, () => {
+      if (reached()) resume(Effect.void);
+    });
+    if (reached()) resume(Effect.void);
+    return Effect.sync(() => watcher.close());
+  });
+
+const leaseOf = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  const rows = yield* sql<{
+    readonly lease_owner: string | null;
+    readonly lease_generation: number;
+  }>`
+    SELECT lease_owner, lease_generation FROM editorial_jobs
+  `;
+  return rows[0];
+});
 
 const onlyJob = Effect.gen(function* () {
   const jobs = yield* EditorialJobsService.EditorialJobsService;
@@ -334,6 +411,9 @@ describe("EditorialJobsService", () => {
           addDays(today, -2),
         ]);
         assert.isTrue(done.artifacts.notes.some((note) => note.startsWith("Backfill:")));
+        assert.deepStrictEqual(done.artifacts.notices, [
+          { code: "missed_days", days: [addDays(today, -3), addDays(today, -2)] },
+        ]);
       }),
     );
   });
@@ -352,6 +432,7 @@ describe("EditorialJobsService", () => {
         const failed = yield* onlyJob;
         assert.strictEqual(failed.status, "pending");
         assert.include(failed.error ?? "", "run broke");
+        assert.deepStrictEqual(failed.artifacts.failure, { code: "engine_failed", phase: "run" });
         assert.isTrue(failed.scheduledFor > job.scheduledFor);
         assert.deepStrictEqual(phaseStatuses(failed), [
           "done",
@@ -369,6 +450,7 @@ describe("EditorialJobsService", () => {
         const done = yield* onlyJob;
         assert.strictEqual(done.status, "done");
         assert.isNull(done.error);
+        assert.isNull(done.artifacts.failure);
         assert.deepStrictEqual(fx.trace().slice(1), [
           "run",
           "run",
@@ -376,6 +458,217 @@ describe("EditorialJobsService", () => {
           "import",
           "presentations",
         ]);
+      }),
+    );
+  });
+
+  it.live("finishes with presentations pending when no provider can draft", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.strictEqual(done.attempt, 1);
+        assert.deepStrictEqual(done.artifacts.notices, [{ code: "presentations_unavailable" }]);
+      }),
+      { draftFails: true },
+    );
+  });
+
+  it.live("replaces a job whose engine sources changed before it ran", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        const first = yield* jobs.runNow;
+        yield* sql`
+          INSERT INTO editorial_source_settings (source, collect, rank, backtest_run_id, updated_at)
+          VALUES ('github', 1, 0, NULL, ${PAST})
+        `;
+        yield* jobs.runDue;
+        yield* jobs.runDue;
+        const { jobs: list } = yield* jobs.list;
+        const replaced = list.find((job) => job.jobId === first.jobId);
+        const replacement = list.find((job) => job.jobId !== first.jobId);
+        assert.strictEqual(replaced?.status, "skipped");
+        assert.deepStrictEqual(replaced?.artifacts.notices, [{ code: "config_changed" }]);
+        assert.strictEqual(replacement?.status, "done");
+        assert.deepStrictEqual(replacement?.artifacts.sources.rank, ["hn"]);
+      }),
+    );
+  });
+});
+
+describe("EditorialJobsService with two owners of one job", () => {
+  it.live("a former owner past its lease launches no second engine and writes nothing", () => {
+    const fx = makeFixture();
+    fx.slowRun(1500);
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        yield* jobs.runNow;
+        const former = yield* Effect.forkChild(jobs.runDue);
+        yield* traceReaches(fx, "run");
+        // The former owner stalls past its lease while its engine child keeps running.
+        yield* sql`UPDATE editorial_jobs SET lease_until = ${PAST}`;
+        const current = yield* Effect.forkChild(jobs.runDue);
+        yield* Fiber.join(current);
+        yield* Fiber.join(former);
+
+        assert.deepStrictEqual(fx.trace().slice(1), ["run", "check", "import", "presentations"]);
+        assert.notInclude(fx.events(), "OVERLAP");
+        assert.strictEqual((yield* leaseOf)?.lease_generation, 2);
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.strictEqual(done.attempt, 2);
+        assert.deepStrictEqual(fx.runDirs(), [done.artifacts.runId]);
+        assert.deepStrictEqual(done.artifacts.notices, [{ code: "stale_engine_waited" }]);
+      }),
+    );
+  });
+
+  it.live("a renewal that keeps failing stops the phases and kills the engine in time", () => {
+    const fx = makeFixture();
+    fx.slowRun(3000);
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        // Only renewals fail: a claim changes the owner, a release clears the lease.
+        yield* sql`
+          CREATE TRIGGER block_renewal BEFORE UPDATE OF lease_until ON editorial_jobs
+          WHEN OLD.status = 'running' AND NEW.lease_owner = OLD.lease_owner
+            AND NEW.lease_until > OLD.lease_until
+          BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END
+        `;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        assert.deepStrictEqual(fx.events(), ["run killed"]);
+        assert.deepStrictEqual(fx.runDirs(), []);
+        const stalled = yield* onlyJob;
+        assert.strictEqual(stalled.status, "running");
+        assert.strictEqual(
+          stalled.artifacts.phases.find((phase) => phase.phase === "run")?.status,
+          "running",
+        );
+
+        yield* sql`DROP TRIGGER block_renewal`;
+        fx.slowRun(null);
+        yield* sql`UPDATE editorial_jobs SET lease_until = ${PAST}`;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.notInclude(fx.events(), "OVERLAP");
+        assert.strictEqual(fx.runDirs().length, 1);
+      }),
+      { timing: { leaseMs: 600, heartbeatMs: 100 } },
+    );
+  });
+
+  it.live("a late finish from the former owner leaves the current owner's result", () => {
+    const fx = makeFixture();
+    let releaseDraft = () => {};
+    fx.holdFirstDraft = new Promise<void>((resolve) => {
+      releaseDraft = resolve;
+    });
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        yield* jobs.runNow;
+        const former = yield* Effect.forkChild(jobs.runDue);
+        yield* traceReaches(fx, "presentations");
+        yield* sql`UPDATE editorial_jobs SET lease_until = ${PAST}`;
+        yield* jobs.runDue;
+        const current = yield* onlyJob;
+        assert.strictEqual(current.status, "done");
+
+        releaseDraft();
+        yield* Fiber.join(former);
+        assert.deepStrictEqual(yield* onlyJob, current);
+        assert.strictEqual((yield* leaseOf)?.lease_generation, 2);
+        assert.strictEqual(fx.trace().filter((line) => line === "run").length, 1);
+      }),
+    );
+  });
+
+  it.live("after a crash, the recovery waits for the orphaned engine and adopts its run", () => {
+    const fx = makeFixture();
+    fx.slowRun(1200);
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        const job = yield* jobs.runNow;
+        const jobDir = job.artifacts.jobDir;
+        NodeFS.mkdirSync(jobDir, { recursive: true });
+        // What a server killed mid-run leaves: its claim, its lock and its engine child.
+        const config = JSON.parse(NodeFS.readFileSync(DEFAULT_CONFIG_PATH, "utf8")) as object;
+        const configFile = NodePath.join(jobDir, "engine-config.g1.json");
+        NodeFS.writeFileSync(configFile, JSON.stringify({ ...config, sources: ["hn", "github"] }));
+        const profileFile = NodePath.join(fx.root, "profile.json");
+        NodeFS.writeFileSync(profileFile, SINGULARIDEV_PROFILE_V1);
+        const orphan = NodeChildProcess.spawn(
+          process.execPath,
+          [
+            fx.engine,
+            "run",
+            "--corpus",
+            fx.corpusDir,
+            "--cutoff",
+            job.cutoffAt,
+            "--profile",
+            profileFile,
+            "--out",
+            fx.runsDir,
+            "--config",
+            configFile,
+          ],
+          { stdio: "ignore" },
+        );
+        const exited = new Promise<void>((resolve) => orphan.once("exit", () => resolve()));
+        NodeFS.writeFileSync(
+          NodePath.join(jobDir, "engine.lock"),
+          JSON.stringify({ owner: "dead-server", generation: 1, pid: orphan.pid, at: 0 }),
+        );
+        const artifacts = {
+          ...job.artifacts,
+          phases: job.artifacts.phases.map((phase) =>
+            phase.phase === "collect"
+              ? { ...phase, status: "done", startedAt: PAST, finishedAt: PAST }
+              : phase.phase === "run"
+                ? { ...phase, status: "running", startedAt: PAST }
+                : phase,
+          ),
+        };
+        yield* sql`
+          UPDATE editorial_jobs SET
+            status = 'running', attempt = 1, started_at = ${PAST}, lease_until = ${PAST},
+            lease_owner = 'dead-server', lease_generation = 1,
+            artifacts_json = ${JSON.stringify(artifacts)}
+          WHERE job_id = ${job.jobId}
+        `;
+        yield* traceReaches(fx, "run");
+
+        yield* jobs.runDue;
+        yield* Effect.promise(() => exited);
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.deepStrictEqual(fx.trace(), ["run", "check", "import", "presentations"]);
+        assert.deepStrictEqual(fx.events(), ["run done"]);
+        assert.deepStrictEqual(fx.runDirs(), [done.artifacts.runId]);
+        assert.deepStrictEqual(done.artifacts.notices, [{ code: "stale_engine_waited" }]);
       }),
     );
   });

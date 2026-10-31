@@ -60,6 +60,8 @@ const job = (overrides: Partial<EditorialJob>): EditorialJob => ({
     dossiers: 15,
     presentations: { ready: 15, failed: 0, total: 15 },
     notes: [],
+    notices: [],
+    failure: null,
     progress: null,
     ...overrides.artifacts,
   },
@@ -113,6 +115,7 @@ describe("NightlyRunSettings", () => {
       artifacts: {
         ...job({}).artifacts,
         phases: phases((index) => (index < 2 ? "done" : index === 2 ? "failed" : "pending")),
+        failure: { code: "check_failed" },
       },
     });
     const { screen, onRunNow } = await renderView({
@@ -126,10 +129,64 @@ describe("NightlyRunSettings", () => {
     await expect
       .element(screen.getByText("Corriendo: motor 2/5 · 1024 de 11.913 textos.").first())
       .toBeVisible();
-    await expect.element(screen.getByText("engine check did not reproduce run_x")).toBeVisible();
+    await expect
+      .element(screen.getByText("La comprobación no reprodujo la corrida."))
+      .toBeVisible();
     // Only the finished job links to its run in Tendencias.
     const links = screen.getByRole("link", { name: "Ver en Tendencias" });
     await expect.element(links).toHaveAttribute("href", "/editorial/env-1/trends");
     expect(links.elements()).toHaveLength(1);
+  });
+
+  it("words failures and notices in Spanish and never shows the engine's own error", async () => {
+    const engineError =
+      "engine run exited with 1: ENOENT /home/mick/.t3/userdata/editorial-jobs/x/run.g2.log";
+    const { screen } = await renderView({
+      jobs: [
+        job({
+          jobId: "job-failed",
+          status: "pending",
+          error: engineError,
+          artifacts: {
+            ...job({}).artifacts,
+            runId: null,
+            notes: ["Backfill: 2026-10-28, 2026-10-29 had no run; captured now."],
+            notices: [{ code: "missed_days", days: ["2026-10-28", "2026-10-29"] }],
+            failure: { code: "engine_failed", phase: "run" },
+          },
+        }),
+        job({
+          jobId: "job-replaced",
+          status: "skipped",
+          artifacts: {
+            ...job({}).artifacts,
+            runId: null,
+            notes: ["The engine configuration changed; replaced."],
+            notices: [{ code: "config_changed" }],
+          },
+        }),
+        job({
+          jobId: "job-undrafted",
+          artifacts: {
+            ...job({}).artifacts,
+            notes: ["Presentations pending: the run could not be drafted."],
+            notices: [{ code: "presentations_unavailable" }],
+          },
+        }),
+      ],
+    });
+    await using _screen = screen;
+    for (const text of [
+      "Falló el motor en la fase de motor. Se reintentará más tarde.",
+      "Sin corrida los días 28 oct, 29 oct: se capturaron ahora y cuentan desde este corte.",
+      "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.",
+      "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.",
+    ]) {
+      await expect.element(screen.getByText(text)).toBeVisible();
+    }
+    const shown = screen.container.textContent ?? "";
+    for (const raw of [engineError, "Backfill:", "replaced.", "Presentations pending", "/home/"]) {
+      expect(shown).not.toContain(raw);
+    }
   });
 });
