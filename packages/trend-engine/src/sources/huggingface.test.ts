@@ -181,7 +181,10 @@ describe("Hugging Face source", () => {
           })
         : new Response("", { status: response.status });
     });
-    const [adapter] = liveSources(["huggingface"], { fetch: fetcher, sleep: async () => undefined });
+    const [adapter] = liveSources(["huggingface"], {
+      fetch: fetcher,
+      sleep: async () => undefined,
+    });
     const day = await adapter!.collectDay("2026-10-30");
     expect(day.items.find((item) => item.title === "ostris/primal_vae")?.body).toContain(
       "Primal VAE",

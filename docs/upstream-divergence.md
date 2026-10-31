@@ -26,7 +26,6 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), base `f75eebfae2`, con `es/sources-lobsters-rss` fusionada en `6ea56e3d4c` y `main` en la fusión siguiente; cero archivos de upstream tocados; dev.to acotado a 500 artículos por día y con páginas puente contra la caché del CDN.
 21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
 
-
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
