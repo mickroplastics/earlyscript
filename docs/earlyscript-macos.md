@@ -4,7 +4,10 @@ Cómo compilar, instalar y abrir Earlyscript como app nativa en un Mac con Apple
 
 ## Compilar
 
+Requisitos: Xcode Command Line Tools (`xcode-select --install`) y Rust instalado con [rustup](https://rustup.rs) con el target `aarch64-apple-darwin` (`rustup target add aarch64-apple-darwin`). El empaquetado busca `cargo` y `rustc` en el `PATH`; rustup los deja en `~/.cargo/bin`, que una terminal de T3 Code no incluye. Sin él, falla con `MacDesktopBuildPrerequisitesMissingError: Rust/Cargo and the requested Rust target`. Desde la raíz del checkout:
+
 ```sh
+export PATH="$HOME/.cargo/bin:$PATH"
 mise exec node@26.12.1 pnpm@12.14.0 -- pnpm es:build
 env -u T3CODE_HOME CSC_IDENTITY_AUTO_DISCOVERY=false T3CODE_DESKTOP_SIGNED=false \
   mise exec node@26.12.1 pnpm@12.14.0 -- pnpm dist:desktop:artifact \
@@ -31,7 +34,7 @@ Abrir cada día (Dock, Spotlight o esta línea):
 env -u T3CODE_HOME open -a ~/Applications/"Earlyscript (Beta).app"
 ```
 
-`env -u T3CODE_HOME` importa solo si se lanza desde una terminal de T3 Code: esas terminales exportan `T3CODE_HOME=~/.t3`. `open` pasa el entorno a la app, y la app trataría de usar el directorio del T3 Code real. El guardia de upstream lo detecta, muestra «This T3 home is unavailable» y no escribe nada. Desde el Dock o Finder no pasa.
+Las terminales de T3 Code exportan `T3CODE_HOME=~/.t3` y `open` pasa ese entorno a la app. La app instalada lo descarta al arrancar (`apps/desktop/src/earlyscript/inheritedHome.ts`) y usa siempre `~/.earlyscript`, así que no lee ni escribe en el directorio del T3 Code real aunque se lance desde una de esas terminales. `env -u T3CODE_HOME` queda como precaución para compilaciones anteriores a ese cambio, que sí escribían `~/.t3/userdata/logs/server-child.log` antes de mostrar «This T3 home is unavailable». Desde el Dock o Finder no se hereda nada.
 
 ## Dónde quedan los datos
 
@@ -46,18 +49,22 @@ env -u T3CODE_HOME open -a ~/Applications/"Earlyscript (Beta).app"
 | Modelo de embeddings (Qwen3 0,6B ONNX q8, unos 600 MB)                              | `~/earlyscript-data/models/<revisión>/`                         |
 | Caché de embeddings                                                                 | `~/earlyscript-data/embeddings/embeddings.sqlite`               |
 
+El CLI `earlyscript` respeta un `T3CODE_HOME` heredado, como el `t3` de upstream. Desde una terminal de T3 Code, ejecútalo con `env -u T3CODE_HOME earlyscript …`.
+
 T3 Code real usa `~/.t3` y el puerto 3773 (en Gertrudis corre como servicio `t3`). Las dos apps pueden estar abiertas a la vez sin compartir estado.
 
 ## Motor
 
-El `.app` no incluye el motor (`packages/trend-engine`) ni `onnxruntime-node`. Se ejecuta desde el checkout, con el `node` del sistema (26.12.1 por mise) o con el de Electron (`ELECTRON_RUN_AS_NODE=1`, Node 24.22.1 en Electron 44). Con los dos, `engine check` y `engine check --rerun` dan el mismo `logical_hash`.
+El `.app` no incluye el motor (`packages/trend-engine`) ni `onnxruntime-node`. Se ejecuta desde un checkout de Earlyscript en `main` desde `d0f38f927a` o posterior, con dependencias instaladas, con Node 26.12.1 por mise o con el Node de Electron (`ELECTRON_RUN_AS_NODE=1`, Node 24.22.1 en Electron 44). Con los dos, `engine check` y `engine check --rerun` dan el mismo `logical_hash`.
+
+El checkout tiene que ser el de la versión instalada. En Gertrudis, `~/earlyscript` está en la rama `es/brand-native`, con un motor anterior al catálogo de fuentes, y `collect` falla allí con `Unknown option '--sources'`. El checkout bueno es `~/earlyscript-wt-es-desktop-daily`. Para comprobar otro checkout: `git -C <checkout> merge-base --is-ancestor d0f38f927a HEAD && echo ok`.
 
 ```sh
-cd ~/earlyscript/packages/trend-engine
-node src/cli.ts collect --corpus ~/earlyscript-data/live --sources hn,github --from 2026-10-03 --to 2026-10-31
-node src/cli.ts run --corpus ~/earlyscript-data/live --cutoff 2026-10-31T00:00:00Z \
+cd ~/earlyscript-wt-es-desktop-daily/packages/trend-engine
+mise exec node@26.12.1 -- node src/cli.ts collect --corpus ~/earlyscript-data/live --sources hn,github --from 2026-10-03 --to 2026-10-31
+mise exec node@26.12.1 -- node src/cli.ts run --corpus ~/earlyscript-data/live --cutoff 2026-10-31T00:00:00Z \
   --profile ~/earlyscript-data/profiles/singularidev.v1.json --out ~/earlyscript-data/runs --workers 4
-node src/cli.ts check --run ~/earlyscript-data/runs/<run_id>
+mise exec node@26.12.1 -- node src/cli.ts check --run ~/earlyscript-data/runs/<run_id>
 ```
 
 En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tardan unos 15 minutos con 4 procesos y como mucho 2,2 GB de RSS por proceso. Con la caché llena, la reejecución tarda unos 20 segundos. La primera corrida descarga el modelo desde Hugging Face. Cada proceso lo descarga por su cuenta, así que conviene una primera corrida con `--workers 1` o descargar el modelo antes.
