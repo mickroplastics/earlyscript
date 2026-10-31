@@ -49,22 +49,36 @@ const MANUAL_BROWSER_TEXT: Readonly<Record<string, string>> = {
     "Escribe una dirección arriba. Los servidores locales activos aparecen aquí solos.",
 };
 
+/** Strings with a value inside: the recent-pages list of the empty browser. */
+const MANUAL_BROWSER_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^Remove (.+) from history$/, "Quitar $1 del historial"],
+];
+
 const ATTRIBUTES = ["aria-label", "placeholder", "title"] as const;
 
 /** Text as React rendered it, whitespace folded, so a wrapped JSX string still matches. */
 const fold = (value: string) => value.replace(/\s+/g, " ").trim();
 
+function translate(value: string | null, text: Readonly<Record<string, string>>) {
+  if (value === null) return undefined;
+  const folded = fold(value);
+  const exact = text[folded];
+  if (exact !== undefined) return exact;
+  for (const [pattern, replacement] of MANUAL_BROWSER_PATTERNS) {
+    if (pattern.test(folded)) return folded.replace(pattern, replacement);
+  }
+  return undefined;
+}
+
 function translateNode(node: Node, text: Readonly<Record<string, string>>): void {
   if (node.nodeType === Node.TEXT_NODE) {
-    const value = node.nodeValue;
-    const translated = value === null ? undefined : text[fold(value)];
+    const translated = translate(node.nodeValue, text);
     if (translated !== undefined) node.nodeValue = translated;
     return;
   }
   if (!(node instanceof Element)) return;
   for (const attribute of ATTRIBUTES) {
-    const value = node.getAttribute(attribute);
-    const translated = value === null ? undefined : text[fold(value)];
+    const translated = translate(node.getAttribute(attribute), text);
     if (translated !== undefined) node.setAttribute(attribute, translated);
   }
   for (const child of node.childNodes) translateNode(child, text);

@@ -162,6 +162,7 @@ function LocalizedBrowserDouble() {
       </button>
       <input aria-label="Search or enter URL" placeholder="Search or enter URL" />
       <span>Hacker News</span>
+      <button type="button" aria-label="Remove github.com/trending from history" />
     </div>
   );
 }
@@ -176,6 +177,9 @@ describe("useManualBrowserLocale", () => {
       .element(screen.getByRole("textbox", { name: "Busca o escribe una dirección" }))
       .toHaveAttribute("placeholder", "Busca o escribe una dirección");
     await expect.element(screen.getByText("Hacker News")).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Quitar github.com/trending del historial" }))
+      .toBeInTheDocument();
     expect(screen.container.textContent).not.toContain("chat");
   });
 });
