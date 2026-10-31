@@ -65,6 +65,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ManualThreadPolicy from "../editorial/ManualThreadPolicy.ts";
 
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -1503,6 +1504,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         }),
       );
       const layerWorker = EffectWorker.layerWithOptions({ workerId: "recovery-worker" }).pipe(
+        Layer.provide(ManualThreadPolicy.allowAll),
         Layer.provide(
           Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
         ),
@@ -1912,6 +1914,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const layerWorker = EffectWorker.layerWithOptions({
         workerId: "cancellation-worker",
       }).pipe(
+        Layer.provide(ManualThreadPolicy.allowAll),
         Layer.provide(
           Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
         ),
@@ -1979,7 +1982,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       );
       const layerWorker = EffectWorker.layerWithOptions({
         workerId: "claim-cancellation-worker",
-      }).pipe(Layer.provide(Layer.merge(layerOutbox, layerExecutor)));
+      }).pipe(
+        Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+        Layer.provide(ManualThreadPolicy.allowAll),
+      );
 
       assert.isTrue(
         yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
@@ -2434,6 +2440,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const layerWorker = EffectWorker.layerWithOptions({
         workerId: "concurrency-worker",
       }).pipe(
+        Layer.provide(ManualThreadPolicy.allowAll),
         Layer.provide(
           Layer.merge(
             Layer.succeed(EffectOutbox.EffectOutboxV2, {
@@ -2552,6 +2559,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const layerWorker = EffectWorker.layerWithOptions({
         workerId: "no-live-reclaim-worker",
       }).pipe(
+        Layer.provide(ManualThreadPolicy.allowAll),
         Layer.provide(
           Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
         ),
@@ -2613,6 +2621,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         const layerWorker = EffectWorker.layerWithOptions({
           workerId: "hung-delegated-stop-worker",
         }).pipe(
+          Layer.provide(ManualThreadPolicy.allowAll),
           Layer.provide(
             Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
           ),
