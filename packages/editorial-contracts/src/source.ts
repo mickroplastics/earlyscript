@@ -7,7 +7,6 @@ export const SourceId = Schema.Literals([
   "lobsters",
   "rss",
   "huggingface",
-  "devto",
 ]);
 export type SourceId = typeof SourceId.Type;
 

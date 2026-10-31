@@ -6,7 +6,6 @@ import { followRedirects, robotsGate, type RobotsGate, type RobotsRule } from ".
 import { collectHnDay } from "./hn.ts";
 import { collectGithubDay } from "./github.ts";
 import { HF_SELECTION, huggingfaceCollector } from "./huggingface.ts";
-import { DEVTO_SELECTION, devtoCollector } from "./devto.ts";
 import { collectLobstersDay } from "./lobsters.ts";
 import { collectRssDay, type CachedFeed } from "./rss.ts";
 import { RSS_FEEDS } from "./rss-feeds.ts";
@@ -46,13 +45,6 @@ export const SOURCES: Readonly<Record<SourceId, SourceDescriptor>> = {
     // Models are chosen by present-day likes: a declared sample, as GitHub.
     coverage_policy: "sample",
   },
-  devto: {
-    id: "devto",
-    label: "DEV Community",
-    selection: { devto: DEVTO_SELECTION },
-    // Up to 500 articles a day by present-day reactions: a declared sample.
-    coverage_policy: "sample",
-  },
 };
 
 /** The feed list is the selection: adding a feed changes the corpus hash. */
@@ -76,7 +68,6 @@ const COLLECTORS: Readonly<Record<Exclude<SourceId, "lobsters" | "rss">, () => C
   hn: () => (day, get) => collectHnDay(day, get),
   github: () => (day, get) => collectGithubDay(day, get),
   huggingface: huggingfaceCollector,
-  devto: devtoCollector,
 };
 
 export const isSampleSource = (id: SourceId): boolean => SOURCES[id].coverage_policy === "sample";
@@ -89,7 +80,6 @@ export type { DayResult, SourceAdapter } from "./adapter.ts";
 export { collectHnDay } from "./hn.ts";
 export { collectGithubDay } from "./github.ts";
 export { huggingfaceCollector } from "./huggingface.ts";
-export { devtoCollector } from "./devto.ts";
 
 export { collectLobstersDay } from "./lobsters.ts";
 export {
