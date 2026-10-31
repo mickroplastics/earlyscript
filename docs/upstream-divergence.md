@@ -17,6 +17,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 11. Fuentes en vivo del motor (`es/live-sources`).
 12. Importador de corridas, bandeja con estado y escritura editorial (`es/editorial-write`), base `ed5c3a2903`; enganche en `apps/server/src/server.ts` junto a Resultados.
 13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
+14. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`; ningún archivo de upstream tocado.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -996,3 +997,30 @@ Decisiones reversibles:
 - `ResultsNavigation` lista las secciones de la página como anclas (`useLinkProps` con `hash` y `hashScrollIntoView`), no ítems. Todas apuntan a la misma ruta y el router marca activas a todas con `aria-current="page"`, que `Link` aplica después de cualquier prop y que `activeOptions` no puede apagar sin `includeHash` (que dejaría `page` en la seleccionada). `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active` de las props del enlace; solo la sección que nombra el hash recibe `aria-current="location"` (`sectionAriaCurrent`).
 - Decisiones tiene tres estados (`ResultsDecisionsState`): «Cargando decisiones…» mientras la página no llegó, un aviso de error con el motivo (`decisionsFailureText`: base no disponible, base ilegible, entorno sin autorización o entorno sin respuesta) y el botón «Reintentar», que refresca el átomo de esa página con `useAtomRefresh`, o la tabla. Tendencias trata el fallo con un aviso y la carga sin contenido; aquí el resumen ya está en pantalla, así que la sección explica lo que falta en lugar de desaparecer.
 - Texto del aviso descriptivo: «Estas diferencias son descriptivas», sin la palabra «ahorro».
+
+## 15. Bandeja con estado y salidas activas
+
+Base: `0d84824fea`, 31 de octubre de 2026. Rama `es/inbox-actions`. Puntos 3, 4 y 5 de la sesión de la tarde en `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §2.
+
+Archivos nuevos, todos en `apps/web/src/editorial/`:
+
+- `trendActions.ts`: `useTrendActions`, las salidas de una tendencia y su regreso sobre los comandos de `state.ts`, con `useOrchestrationCommand` (la guarda de `orchestration:operate` de upstream) y toasts de `toastManager`.
+- `videoThreadTarget.ts`: proyecto, modelo y modo de ejecución del hilo de video, con la misma cadena que un borrador nuevo (`resolveProjectSettings`, `resolveProjectDefaultProviderModelSelection`, `resolveNewThreadModelSelection`).
+- `TrendDismissDialog.tsx`: diálogo de descarte con `Dialog`, `Textarea` y `Label` de `components/ui`.
+
+Archivos propios tocados: `packages/contracts/src/editorial.ts` (método `editorial.createVideo`, `EditorialCreateVideoInput`, `EditorialCreateVideoResult`, motivo `launch-failed` de `EditorialCommandError`, ámbito `orchestration:operate` y alta en `EDITORIAL_WRITE_METHODS`); en `apps/server/src/editorial/`, `EditorialInboxCommands.ts` (`createVideo`), `rpc.ts`, `runIndex.ts` (`content_hash` del expediente), `layer.ts` (comentario de dependencias) y `editorialLayer.testkit.ts` (servicio de hilos con doble de lanzamiento); en `apps/web/src/editorial/`, `state.ts`, `editorial.logic.ts`, `TrendInbox.tsx`, `TrendInboxRow.tsx`, `TrendDossierPage.tsx` y `EditorialSidebar.tsx` (comentario).
+
+Enganches de upstream: ninguno nuevo. `editorial.createVideo` entra por los enganches de §12: el grupo editorial ya está compuesto en `packages/contracts/src/rpc.ts`, sus handlers ya se esparcen en `apps/server/src/ws.ts`, sus ámbitos en `auth/RpcAuthorization.ts` y sus agregados en `observability/RpcInstrumentation.ts`. `EditorialThreadService` ya lo monta `runtimeLayer.ts` debajo de `EditorialLayer.layer` en `server.ts`; esta unidad no toca `server.ts`. El cliente reutiliza sin cambios `Sidebar.snooze.ts`, `CustomSnoozeDialog.tsx` (`requestCustomSnooze`, ya montado en `__root.tsx`), `localApi.ts` (`contextMenu.show`), `CollapsibleSectionHeader`, `Group`, `Menu`, `Badge` y `Tooltip`.
+
+Decisiones reversibles:
+
+- Un hilo de video por tendencia. Si la tendencia ya está en producción, `createVideo` responde con su hilo y `created: false` sin lanzar nada. Si no, el id de operación se deriva del expediente (`editorial:trend-video:<runId>:<dossierId>`), así que un doble clic o un reintento repite la operación registrada de `EditorialThreadService` en lugar de crear otro hilo. El servidor lee del índice el título (`presentation.title` o la etiqueta del motor) y el hash del expediente; el cliente no los envía.
+- Proyecto del hilo: el proyecto del entorno usado más recientemente, la misma regla con la que la raíz abre un borrador. El cliente envía `projectId`, `modelSelection` y `runtimeMode` porque son preferencias del composer que solo él resuelve. Sin proyecto o sin modelo, la salida avisa y no llama al servidor. Un ajuste «proyecto del canal» puede reemplazar esta regla.
+- La creación se registra como `operator` sin el id de sesión: `EditorialThreadService.createVideo` no lo recibe. Las demás salidas sí lo graban.
+- La bandeja y el contador de la pestaña Tendencias leen `editorial.subscribe` (`liveInbox`), no la consulta: el enlace de producción, la vuelta de una tendencia en observación y una corrida importada llegan sin recarga, también desde otro cliente. La ficha sigue en su consulta, que cada comando refresca.
+- Secciones: la lista activa conserva el orden del servidor (nuevas primero, luego crecimiento, o el orden elegido) con diez filas visibles y el resto tras «Ver N más»; debajo, «En observación (N)» con «Volver a la bandeja» y «Descartadas (N)» con el motivo en tooltip y «Reabrir». Una tendencia descartada y en observación cuenta como descartada. Una tendencia en producción sigue en la lista activa con el `Badge` «en producción», un enlace hermano de la fila al hilo (un enlace no puede contener otro).
+- Nueva: punto, peso medio y «Nueva.» para lectores de pantalla; leída: peso normal y texto atenuado, como un hilo visto.
+- Menú contextual por fila con `contextMenu.show`, como las filas de hilos: crear o abrir el hilo de video, seguir observando (hasta que crezca, los plazos de los hilos o personalizado), volver a la bandeja, descartar o reabrir. No hay «Marcar como no leída»: el servidor no tiene un comando que olvide una lectura.
+- Seguir observando sin plazo deja que el servidor aplique su umbral de crecimiento y avisa «Vuelve si crece.»; los plazos son los de los hilos (`resolveSnoozePresets`), con sus etiquetas de upstream en inglés.
+- Descartar exige un motivo de 3 a 300 caracteres. El contrato admite hasta 500; el límite menor es del diálogo.
+- Abrir la ficha de una tendencia nueva llama a `markRead` una vez por expediente abierto.
