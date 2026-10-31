@@ -86,6 +86,37 @@ describe("arXiv", () => {
   });
 });
 
+describe("robots.txt exception (arXiv)", () => {
+  it("collects past a Disallow and notes the documented exception in the day", async () => {
+    const feed = await fixture("arxiv-2026-10-26.xml");
+    let clock = Date.parse("2026-10-31T00:00:00Z");
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
+      new URL(String(url)).pathname === "/robots.txt"
+        ? new Response("User-agent: *\nDisallow: /\n")
+        : new Response(feed),
+    );
+    const [adapter] = liveSources(["arxiv"], {
+      fetch: fetcher,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    });
+    const result = await adapter!.collectDay("2026-10-26");
+    expect(result.coverage).toMatchObject({ status: "complete", items: 2 });
+    expect(result.coverage?.note).toMatch(/^robots_override: arXiv API Terms of Use/);
+  });
+  it("still blocks the same rules without the exception", async () => {
+    const getFor = () => async () => ok("User-agent: *\nDisallow: /\n");
+    const url = "https://export.arxiv.org/api/query";
+    expect(await robotsGate(getFor, new Map())(url)).toMatch(/^robots_disallowed: /);
+    const onOverride = vi.fn();
+    const override = { reason: "terms", terms_url: "https://info.arxiv.org/help/api/tou.html" };
+    expect(await robotsGate(getFor, new Map(), { override, onOverride })(url)).toBeNull();
+    expect(onOverride).toHaveBeenCalledWith(url);
+  });
+});
+
 describe("arXiv feed validation", () => {
   it("never reads a truncated feed as a complete day", async () => {
     const feed = await fixture("arxiv-2026-10-26.xml");

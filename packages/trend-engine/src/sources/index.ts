@@ -66,6 +66,12 @@ export const SOURCES: Readonly<Partial<Record<SourceId, SourceDescriptor>>> = {
         "cs.AI, cs.CL, cs.SE and cs.LG submissions per UTC day by submittedDate; first 1000; complete only 4 days after the day",
     },
     coverage_policy: "census",
+    // export.arxiv.org/robots.txt disallows every path; the API terms authorise this use.
+    robots_override: {
+      reason:
+        "arXiv API Terms of Use allow the legacy API at one request every three seconds on a single connection, though export.arxiv.org/robots.txt disallows /",
+      terms_url: "https://info.arxiv.org/help/api/tou.html",
+    },
   },
   wikipedia: {
     id: "wikipedia",
@@ -245,19 +251,38 @@ export function liveSources(
     const collect = makeCollector();
     return {
       descriptor,
-      collectDay: (day) => {
+      collectDay: async (day) => {
         // Collectors gate their own URLs; a redirect away from them is gated per hop.
         // robots.txt goes without credentials; model cards carry them on their own origin only.
         const anonymous = createHttpClient(id, { ...options, text: true, anonymous: true }, state);
         const text = createHttpClient(id, { ...options, text: true }, state);
         const json = createHttpClient(id, options, state);
-        const robots = robotsGate(() => anonymous, rules);
-        return collect(
+        const override = descriptor.robots_override;
+        let overridden = false;
+        const robots = robotsGate(
+          () => anonymous,
+          rules,
+          override
+            ? {
+                override,
+                onOverride: () => {
+                  overridden = true;
+                },
+              }
+            : undefined,
+        );
+        const result = await collect(
           day,
           followRedirects(() => json, robots),
           robots,
           followRedirects(() => text, robots),
         );
+        // A day collected past a robots.txt Disallow records the documented exception.
+        if (!overridden || !override || !result.coverage) return result;
+        const note = [`robots_override: ${override.reason}`, result.coverage.note]
+          .filter(Boolean)
+          .join("; ");
+        return { ...result, coverage: { ...result.coverage, note } };
       },
     };
   });
