@@ -21,6 +21,7 @@ import {
   EditorialNotFoundError,
   type EditorialPersistenceError,
   toPersistenceError,
+  type WorkClockStateError,
 } from "./persistence/Errors.ts";
 
 export const ScriptFileFailure = Schema.Literals([
@@ -100,7 +101,7 @@ export class ScriptVersionService extends Context.Service<
      */
     readonly decide: (
       input: RecordDecisionInput,
-    ) => Effect.Effect<Decision, ReadError | EditorialConflictError>;
+    ) => Effect.Effect<Decision, ReadError | EditorialConflictError | WorkClockStateError>;
   }
 >()("t3/editorial/ScriptVersionService") {}
 

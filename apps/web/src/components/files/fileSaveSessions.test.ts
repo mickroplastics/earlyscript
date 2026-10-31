@@ -258,4 +258,42 @@ describe("file save sessions", () => {
     await vi.runAllTimersAsync();
     expect(h.persist).not.toHaveBeenCalled();
   });
+
+  it("flush waits for a held write and reports it written (Earlyscript)", async () => {
+    using h = setup();
+    let release: () => void = () => {};
+    h.persist.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(AsyncResult.success(undefined));
+        }),
+    );
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "latest sentence");
+    let settled: boolean | undefined;
+    void h.sessions.flush(target).then((written) => (settled = written));
+    // The flush writes at once, without waiting for the debounce, and holds until it lands.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.writes()).toEqual([[target, "latest sentence"]]);
+    expect(settled).toBeUndefined();
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+    await expect(h.sessions.flush(target)).resolves.toBe(true);
+  });
+
+  it("flush reports a failed or forbidden write, and an unsaved draft with no editor (Earlyscript)", async () => {
+    using h = setup();
+    h.persist.mockImplementationOnce(async () => AsyncResult.failure(Cause.fail("offline")));
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "draft");
+    await expect(h.sessions.flush(target)).resolves.toBe(false);
+    h.state.writable = false;
+    await expect(h.sessions.flush(target)).resolves.toBe(false);
+
+    const other = { ...target, relativePath: "closed.txt" };
+    await expect(h.sessions.flush(other)).resolves.toBe(true);
+    h.state.unsaved = "kept draft";
+    await expect(h.sessions.flush(other)).resolves.toBe(false);
+  });
 });
