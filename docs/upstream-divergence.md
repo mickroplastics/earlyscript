@@ -1570,13 +1570,13 @@ Operación (Beatriz, 31 de octubre de 2026; nada se registró en la base editori
 
 - Relleno: copia `~/earlyscript-data/live/corpus-backtest/` del corpus de 28 días de HN y GitHub (`corpus-2026-10-31`, intacto), capturas del 3 al 30 de octubre una fuente a la vez. Hugging Face con `16ed5593cc` (su colector no cambia en `main`); las demás con `53afe315c4`, ya con el `robots_override` de arXiv.
 
-| Fuente          | Días                                                          | Ítems  | Tiempo | Fallos                                                                                                                                               |
-| --------------- | ------------------------------------------------------------- | ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `huggingface`   | 28 `partial` (muestra declarada)                              | 2642   | 2002 s | Ninguno. Daily papers en 0 los primeros días (la nota de cada día los cuenta)                                                                          |
-| `stackexchange` | 20 `complete`, 4 `partial`, 4 `unavailable`                   | 825    | 1689 s | HTTP 429 de la cuota anónima los días 10, 17, 20 y 27; el día siguiente de cada uno agotó su presupuesto de 5 minutos (11, 18, 21 y 28). No se reintentó |
-| `npm`           | 28 `partial` (siempre, por diseño)                            | 1424   | 146 s  | Ninguno. Los primeros días solo tienen 12 o 13 paquetes: la búsqueda guarda la versión más reciente, y la de casi todos ya pasó de ese día               |
-| `wikipedia`     | 25 `complete`, 3 `unavailable`                                | 24 654 | 12 s   | HTTP 404 de Wikimedia para el top de los días 12, 13 y 26; un reintento dio lo mismo                                                                  |
-| `arxiv`         | 23 `complete`, 3 `partial`, 2 `unavailable`                   | 10 737 | 569 s  | 15 de octubre: HTTP 429; 27 a 29: `partial` por el retraso de 4 días de los anuncios; 30: aún sin envíos                                                 |
+| Fuente          | Días                                        | Ítems  | Tiempo | Fallos                                                                                                                                                   |
+| --------------- | ------------------------------------------- | ------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `huggingface`   | 28 `partial` (muestra declarada)            | 2642   | 2002 s | Ninguno. Daily papers en 0 los primeros días (la nota de cada día los cuenta)                                                                            |
+| `stackexchange` | 20 `complete`, 4 `partial`, 4 `unavailable` | 825    | 1689 s | HTTP 429 de la cuota anónima los días 10, 17, 20 y 27; el día siguiente de cada uno agotó su presupuesto de 5 minutos (11, 18, 21 y 28). No se reintentó |
+| `npm`           | 28 `partial` (siempre, por diseño)          | 1424   | 146 s  | Ninguno. Los primeros días solo tienen 12 o 13 paquetes: la búsqueda guarda la versión más reciente, y la de casi todos ya pasó de ese día               |
+| `wikipedia`     | 25 `complete`, 3 `unavailable`              | 24 654 | 12 s   | HTTP 404 de Wikimedia para el top de los días 12, 13 y 26; un reintento dio lo mismo                                                                     |
+| `arxiv`         | 23 `complete`, 3 `partial`, 2 `unavailable` | 10 737 | 569 s  | 15 de octubre: HTTP 429; 27 a 29: `partial` por el retraso de 4 días de los anuncios; 30: aún sin envíos                                                 |
 
 Bluesky y RSS no admiten relleno hacia atrás y quedan fuera del backtest. Lobsters está bloqueada.
 
