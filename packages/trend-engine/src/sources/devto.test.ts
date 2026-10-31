@@ -306,6 +306,138 @@ describe("robots.txt of Hugging Face and dev.to", () => {
   });
 });
 
+/** A synthetic dev.to article of 2026-10-30 tagged `ai`. */
+const synthetic = (n: number, reactions: number, published: string, comments = 0) => ({
+  id: 9_000_000 + n,
+  title: `Article ${n}`,
+  description: "",
+  url: `https://dev.to/a/article-${n}`,
+  published_at: published,
+  tag_list: ["ai"],
+  positive_reactions_count: reactions,
+  comments_count: comments,
+  user: { username: `u${n}` },
+});
+
+describe("dev.to days without eligible articles", () => {
+  // Sol's empty-day.mjs: one article of the day with no response, one of the day before.
+  const listing = [
+    synthetic(1, 0, "2026-10-30T00:01:00Z"),
+    synthetic(2, 1, "2026-10-29T23:50:00Z"),
+  ];
+  const answer =
+    (observedAt: string): GetResponse =>
+    async (url) => ({
+      observed_at: observedAt,
+      status: 200,
+      body: new URL(url).searchParams.get("page") === "1" ? listing : [],
+    });
+
+  it("calls a reachable day in progress partial, not unavailable", async () => {
+    const day = await devtoCollector()("2026-10-30", answer("2026-10-30T00:02:00.000Z"), allow);
+    expect(day.items).toEqual([]);
+    expect(day.coverage).toMatchObject({ status: "partial", items: 0 });
+    expect(day.coverage?.note).toMatch(/^day not over; eligible=0, kept=0; /);
+  });
+
+  it("calls a finished, fully walked day with no eligible article complete", async () => {
+    const day = await devtoCollector()("2026-10-30", answer(observed), allow);
+    expect(day.coverage).toMatchObject({ status: "complete", items: 0 });
+  });
+
+  it("keeps a day unavailable when the API answers HTML", async () => {
+    const day = await devtoCollector()(
+      "2026-10-30",
+      createHttpClient("devto", {
+        fetch: async () => new Response("<!doctype html><title>DEV</title>"),
+        sleep: async () => undefined,
+      }),
+      allow,
+    );
+    expect(day.coverage).toMatchObject({ status: "unavailable", items: 0 });
+    expect(day.coverage?.note).toMatch(/^Network, timeout or invalid JSON response; /);
+  });
+});
+
+describe("a recaptured sample day", () => {
+  // Sol's probe.mjs: 600 eligible articles; the second capture inverts the reactions, so the
+  // top 500 changes. The day must hold the current 500; the 100 that left live in history/.
+  const articles = (inverted: boolean) => [
+    ...Array.from({ length: 600 }, (_, n) =>
+      synthetic(
+        n,
+        inverted ? 600 - n : n + 1,
+        new Date(Date.parse("2026-10-30T23:59:00Z") - n * 60_000).toISOString(),
+      ),
+    ),
+    synthetic(9999, 1, "2026-10-29T12:00:00Z"),
+  ];
+  const adapters = (body: unknown[] | null) =>
+    liveSources(["devto"], {
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/robots.txt") return new Response("", { status: 404 });
+        if (body === null) return new Response("<html>down</html>");
+        return Response.json(url.searchParams.get("page") === "1" ? body : []);
+      },
+      sleep: async () => undefined,
+    });
+  const ids = (text: string) =>
+    new Set(
+      text
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { id?: string })
+        // history/ also keeps earlier coverage.jsonl versions, whose rows have no id.
+        .flatMap(({ id }) => (id ? [Number(id.slice(10)) - 9_000_000] : [])),
+    );
+
+  it("replaces the selection instead of joining it, and keeps the old one in history", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devto-sample-"));
+    const window = { dir: root, from: "2026-10-30", to: "2026-10-31" };
+    const dayFile = NodePath.join(root, "devto/2026-10-30.jsonl");
+    try {
+      const [first] = await collectCorpus({ ...window, adapters: adapters(articles(false)) });
+      expect(first).toMatchObject({ status: "partial", items: 500 });
+      const before = ids(await NodeFSP.readFile(dayFile, "utf8"));
+      expect(before.has(599) && !before.has(0)).toBe(true);
+
+      // A partial day is collected again without --force.
+      const [second] = await collectCorpus({ ...window, adapters: adapters(articles(true)) });
+      expect(second).toMatchObject({ status: "partial", items: 500 });
+      const after = ids(await NodeFSP.readFile(dayFile, "utf8"));
+      expect(after.size).toBe(DEVTO_PER_DAY);
+      expect(after.has(0) && !after.has(599)).toBe(true);
+
+      const history = await NodeFSP.readdir(NodePath.join(root, "history"));
+      const archived = await Promise.all(
+        history.map((file) => NodeFSP.readFile(NodePath.join(root, "history", file), "utf8")),
+      );
+      const previous = archived.map(ids).find((set) => set.size === DEVTO_PER_DAY)!;
+      const outgoing = [...previous].filter((id) => !after.has(id));
+      expect(outgoing).toHaveLength(100);
+      expect(outgoing.every((id) => id >= 500)).toBe(true);
+
+      // A capture that reached nothing does not wipe the selection.
+      const [down] = await collectCorpus({ ...window, adapters: adapters(null) });
+      expect(down).toMatchObject({ status: "partial", items: 500 });
+      expect(ids(await NodeFSP.readFile(dayFile, "utf8"))).toEqual(after);
+      expect(
+        (
+          await readCorpus({
+            dir: root,
+            untilDay: "2026-10-31",
+            adapters: fixtureSources(root, ["devto"]),
+          })
+        ).verified,
+      ).toBe(true);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Hugging Face and dev.to in a corpus/1 collection", () => {
   it("registers both sources and writes a verified corpus", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hf-devto-"));

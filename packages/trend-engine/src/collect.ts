@@ -101,7 +101,13 @@ export async function collectCorpus(options: {
         } catch (error) {
           if (!missing(error)) throw error;
         }
-        const merged = new Map(old.map((item) => [item.id, item]));
+        // Census sources add each capture to the day. A sample (`coverage_policy: "sample"`) is
+        // re-ranked on every capture, so the day holds only the current selection; the previous
+        // file goes to history/ by hash. A sample capture that reached nothing keeps the old one.
+        const replace =
+          adapter.descriptor.coverage_policy === "sample" &&
+          result.coverage?.status !== "unavailable";
+        const merged = new Map(replace ? [] : old.map((item) => [item.id, item]));
         for (const raw of result.items) {
           const item = decodeTypedItem(raw);
           if (item.source !== adapter.descriptor.id || !item.published_at.startsWith(`${day}T`))
