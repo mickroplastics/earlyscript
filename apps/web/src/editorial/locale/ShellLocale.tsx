@@ -17,14 +17,18 @@ const USER_TEXT = ["[dir]:not(html):not(body)", "[contenteditable]", "pre", "cod
 
 export const SIDEBAR_LOCALE: ScopedLocaleOptions = {
   translate: makeTranslator([SHELL_COMMON_TABLE, SIDEBAR_TABLE, RELATIVE_TIME_TABLE]),
-  // The whole upstream sidebar, resize rail included, and the floating toggle beside it.
+  // The whole upstream sidebar, resize rail included, the floating toggle beside it, and the
+  // app's toast viewport for the titles of what thread actions report.
   roots: (anchor) =>
     [
       anchor.closest("[data-app-sidebar]") ?? anchor,
       document.querySelector("[data-sidebar-control]"),
     ].filter((root): root is Element => root !== null),
+  lateRoots: '[data-slot="toast-viewport"]',
   skip: [
     USER_TEXT,
+    // Descriptions can carry the server's messages, which stay as sent.
+    '[data-slot="toast-description"]',
     '[data-editorial-space="trends"]',
     '[data-editorial-space="results"]',
     "[data-thread-item] .sr-only",

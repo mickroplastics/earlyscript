@@ -110,6 +110,24 @@ const SIDEBAR_TEXT: Readonly<Record<string, string>> = {
     "Este hilo no tiene una ruta de trabajo que copiar.",
   "Thread title cannot be empty": "El título del hilo no puede quedar vacío",
   "Project created": "Proyecto creado",
+  "Failed to copy path": "No se copió la ruta",
+  "Failed to copy branch": "No se copió la rama",
+  "Failed to copy thread ID": "No se copió el ID del hilo",
+  "Failed to rename thread": "No se renombró el hilo",
+  "Failed to settle thread": "No se marcó el hilo como resuelto",
+  "Failed to un-settle thread": "No se quitó el hilo de resueltos",
+  "Failed to wake thread": "No se reactivó el hilo",
+  "Failed to pin thread": "No se fijó el hilo",
+  "Failed to unpin thread": "No se desfijó el hilo",
+  "Failed to snooze thread": "No se pospuso el hilo",
+  "Failed to delete thread": "No se borró el hilo",
+  "Failed to delete threads": "No se borraron los hilos",
+  "Failed to regenerate thread title": "No se regeneró el título",
+  "Failed to regenerate thread titles": "No se regeneraron los títulos",
+  "Failed to update auto-settle": "No se cambió la resolución automática",
+  "Thread action unavailable": "Acción no disponible",
+  "Could not create thread": "No se pudo crear el hilo",
+  "Thread deleted, but navigation failed": "El hilo se borró, pero no se pudo navegar",
   // Add-project palette frame. Its items keep upstream's English: their titles share the
   // element (`dir`) that shows thread titles, which is user text.
   Sources: "Orígenes",
@@ -341,8 +359,6 @@ const SETTINGS_TEXT: Readonly<Record<string, string>> = {
   "Word wrap": "Ajuste de línea",
   "Wrap long lines in code blocks, diffs, and file previews by default.":
     "Ajusta por defecto las líneas largas en bloques de código, diffs y vistas previas.",
-  of: "de",
-  on: "activos",
   "Terminal input": "Entrada de la terminal",
   "Terminal scrollback": "Historial de la terminal",
   "Wrap code, diffs, and file previews by default":
@@ -445,5 +461,10 @@ export const SIDEBAR_TABLE: LocaleTable = {
   functions: [snoozeMenuLabel],
 };
 export const THREAD_TABLE: LocaleTable = { text: THREAD_TEXT, patterns: THREAD_PATTERNS };
-export const SETTINGS_TABLE: LocaleTable = { text: SETTINGS_TEXT, patterns: SETTINGS_PATTERNS };
+export const SETTINGS_TABLE: LocaleTable = {
+  // «Applying settings for <project> on|across <environment>», and «9 of 10 on» in Appearance.
+  raw: { on: "en", across: "en", " of ": " de ", " on": " activos" },
+  text: SETTINGS_TEXT,
+  patterns: SETTINGS_PATTERNS,
+};
 export const SHELL_COMMON_TABLE: LocaleTable = { text: SHELL_COMMON_TEXT };

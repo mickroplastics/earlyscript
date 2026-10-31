@@ -129,10 +129,21 @@ describe("shell locale scopes", () => {
       marker.textContent = "Working";
       await vi.waitFor(() => expect(marker.textContent).toBe("En curso"));
       expect(other.textContent).toBe("Delete");
-      for (const node of [...added, marker, menu, other]) node.remove();
+      // The app's toast viewport mounts after the sidebar: titles in Spanish, descriptions
+      // (which can carry the server's words) as sent.
+      const portal = document.body.appendChild(document.createElement("div"));
+      portal.innerHTML =
+        '<div data-slot="toast-viewport"><h2 data-slot="toast-title">Path copied</h2>' +
+        '<p data-slot="toast-description">Path copied</p></div>';
+      await vi.waitFor(() => expect(portal.querySelector("h2")!.textContent).toBe("Ruta copiada"));
+      expect(portal.querySelector("p")!.textContent).toBe("Path copied");
+      const later = portal.firstElementChild!.appendChild(document.createElement("h2"));
+      later.textContent = "Failed to copy path";
+      await vi.waitFor(() => expect(later.textContent).toBe("No se copió la ruta"));
+      for (const node of [...added, marker, menu, other, portal]) node.remove();
     });
     // A handful of batches, not a loop.
-    expect(callbacks).toBeLessThanOrEqual(12);
+    expect(callbacks).toBeLessThanOrEqual(14);
 
     const view = screen!;
     const row = view.getByTestId("row-0").element();

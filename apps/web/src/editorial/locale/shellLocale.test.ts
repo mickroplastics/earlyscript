@@ -118,6 +118,16 @@ describe("shell locale tables", () => {
     expect(makeTranslator([])("Settled")).toBeUndefined();
   });
 
+  it("tell a word apart by its spacing where upstream splits a sentence", () => {
+    const settings = SETTINGS_LOCALE.translate;
+    expect(settings("on")).toBe("en");
+    expect(settings("across")).toBe("en");
+    expect(settings(" of ")).toBe(" de ");
+    expect(settings(" on")).toBe(" activos");
+    expect(settings("en")).toBeUndefined();
+    expect(settings(" activos")).toBeUndefined();
+  });
+
   it("reuse the fork's snooze labels in the row menu", () => {
     expect(snoozeMenuLabel("In 3 hours (8:15 p. m.)")).toBe("En 3 horas (8:15 p. m.)");
     expect(snoozeMenuLabel("Next week")).toBe("La próxima semana");

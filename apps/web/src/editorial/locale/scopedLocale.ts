@@ -14,6 +14,8 @@ export type LocalePattern = readonly [
 ];
 
 export interface LocaleTable {
+  /** Matched before whitespace folding, for a word whose spacing tells its use apart. */
+  readonly raw?: Readonly<Record<string, string>>;
   readonly text?: Readonly<Record<string, string>>;
   readonly patterns?: ReadonlyArray<LocalePattern>;
   /** Last resort: returns the Spanish or the same string when it does not know it. */
@@ -59,6 +61,10 @@ export type Translator = (value: string | null) => string | undefined;
 export function makeTranslator(tables: ReadonlyArray<LocaleTable>): Translator {
   return (value) => {
     if (value === null) return undefined;
+    for (const table of tables) {
+      const raw = table.raw?.[value];
+      if (raw !== undefined) return raw === value ? undefined : raw;
+    }
     const folded = value.replace(/\s+/g, " ").trim();
     if (folded.length === 0) return undefined;
     const translated = translateFolded(tables, folded, 0);
@@ -74,6 +80,8 @@ export interface ScopedLocaleOptions {
   readonly translate: Translator;
   /** The containers to translate, resolved from the anchor when the effect starts. */
   readonly roots: (anchor: Element) => ReadonlyArray<Element>;
+  /** Containers mounted in `body` (a toast viewport) that may appear after the anchor. */
+  readonly lateRoots?: string;
   /** Content never rewritten: user data, messages, editors, code. Matched with `closest`. */
   readonly skip?: string;
   readonly attributes?: ReadonlyArray<string>;
@@ -102,7 +110,17 @@ export function useScopedLocale(
   useEffect(() => {
     const element = anchor instanceof Element || anchor === null ? anchor : anchor.current;
     if (element === null) return;
-    const roots = options.roots(element);
+    const roots = [...options.roots(element)];
+    const { lateRoots } = options;
+    const findLateRoots = (node: Element) =>
+      lateRoots === undefined
+        ? []
+        : [...(node.matches(lateRoots) ? [node] : []), ...node.querySelectorAll(lateRoots)];
+    if (lateRoots !== undefined) {
+      for (const late of document.querySelectorAll(lateRoots)) {
+        if (!roots.includes(late)) roots.push(late);
+      }
+    }
     if (roots.length === 0) return;
     const { translate, skip } = options;
     const attributeNames = options.attributes ?? DEFAULT_ATTRIBUTES;
@@ -158,8 +176,14 @@ export function useScopedLocale(
       for (const record of records) {
         if (record.target === document.body) {
           for (const added of record.addedNodes) {
+            if (!(added instanceof Element)) continue;
+            const late = findLateRoots(added).filter((root) => !roots.includes(root));
+            if (late.length > 0) {
+              roots.push(...late);
+              for (const root of late) translateTree(root);
+              continue;
+            }
             if (
-              added instanceof Element &&
               !roots.some((root) => added.contains(root)) &&
               lastWasInside &&
               performance.now() - lastInsideAt < PORTAL_WINDOW_MS
