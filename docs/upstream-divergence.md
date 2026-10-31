@@ -34,6 +34,8 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 
 27. Exportación de evidencia (`es/evidence-export`), base `c8f15bedd1`, con `main` fusionado en `33a4255aa1` y `6487b0d7e0`, fusionada en `main` en `289198b456`; R8 después; único archivo de upstream tocado: `apps/server/src/binCli.ts` (import y montaje del subcomando `evidence`).
 
+28. Carcasa en español (`es/shell-es`), base `33a4255aa1`, con `main` fusionado en `e940d27666` (`7e6e7f3092`); único archivo de upstream tocado: `apps/web/src/components/settings/SettingsSidebarNav.tsx` (import y montaje del ancla de Ajustes).
+
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
@@ -1728,3 +1730,41 @@ Privacidad y retención del paquete:
 - Pruebas que lo sostienen: columnas y rutas de campos de evento congeladas en la prueba (añadir algo a `share` exige cambiarla a propósito); las columnas de texto libre sin regla; toda enumeración con valores explícitos; un tipo de evento sin declarar no compila (`@ts-expect-error`) y la lista coincide con `EditorialEventType`; una fixture con marcadores de texto, URL, ids, sesión y guion que no aparecen en `share` y sí en `full`; una carga adversarial escrita directo en la base (corrida con id, versión, hash, estado y fuentes de texto; claves y valores falsos en `returnWhen`, `observed` y en el primer nivel; enums falsos; tipo de evento inventado; backtest con días de texto) cuyos marcadores no aparecen ni en valores ni en nombres de claves, y cada ruta de `datos` es una declarada; enlaces simbólicos (destino, enlace colgante, archivo del paquete sustituido por un enlace, carpeta final del RPC); filtros con hora redondeados al día en `share`; cobertura por introspección (R5): para cada columna de cada tabla de `editorial.sqlite` con filas (`PRAGMA table_info`, sin `CHECK` ni claves foráneas, dentro de una transacción que se revierte), un marcador de texto distinto y una exportación `share`: ninguno aparece en ningún archivo y ninguna exportación falla; una tabla o columna nueva queda cubierta sin cambiar la prueba. Solo `editorial_events.seq` (alias de `rowid`) no admite texto. Raíz del RPC con `/tmp`, enlace en un ancestro y `..`; neutralización de fórmulas en `share` y `full` sin tocar.
 
 Fuera de alcance: el diálogo nativo no se dirige a una distribución WSL (sin `targetEnvironmentId`); el CLI abre la base con sus migraciones, como el servidor.
+
+## 28. Carcasa en español (rama `es/shell-es`, 31 de octubre de 2026)
+
+Base: `33a4255aa1`, con `main` fusionado en `e940d27666` (`7e6e7f3092`). Lo que el operador ve a diario de T3 Code pasa al español sin editar componentes de upstream: barra lateral, área del hilo (cabecera, estados vacíos, composer, menús y paneles), avisos de las acciones de hilo y las secciones de Ajustes en uso (navegación, General, Apariencia, Proveedores, Chat). Inventario completo, con fuente y clase de cada texto, en `~/earlyscript-data/shell-es/inventario.md`; capturas antes y después, claro y oscuro, en `antes/` y `despues/`.
+
+Archivos de upstream tocados:
+
+| Archivo                                                   | Líneas  | Alcance                                                                                                                |
+| --------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/components/settings/SettingsSidebarNav.tsx` | 66, 450 | Importa `SettingsLocale` y lo monta al final del `<nav>`: un `<span hidden>` que ancla el ámbito del modal de Ajustes. |
+
+Archivos propios, en `apps/web/src/editorial/`:
+
+- `locale/scopedLocale.ts`: `makeTranslator` (tablas de cadenas exactas, patrones de cadena completa con traducción anidada de partes, funciones y una tabla `raw` sin plegar espacios) y `useScopedLocale`, el mecanismo de `manualBrowserLocale` generalizado. Garantías: solo contenedores nombrados, nunca `document.body` (de `body` solo observa sus hijos directos, para adoptar portales); ninguna entrada es identidad ni su valor es clave de otra tabla; no escribe si el valor no cambia; se desconecta al escribir y descarta sus propios registros (`takeRecords`); revierte al desmontar lo que sigue siendo suyo. Portales: los que aparecen hasta 2 s después de una interacción dentro del ámbito; solo `pointerdown` o `keydown` fuera cuentan como salida, porque el menú contextual de upstream mueve el foco al menú nuevo antes de que el observador lo adopte. `lateRoots` adopta contenedores persistentes de `body` que aparecen tarde (el visor de avisos).
+- `locale/shellText.ts`: tablas de la barra lateral, del área del hilo, de Ajustes y comunes, y `snoozeMenuLabel`, que reutiliza `snoozePresetLabel` de `editorial.logic.ts`.
+- `locale/shellRelativeTime.ts`: fechas relativas.
+- `locale/ShellLocale.tsx`: los tres ámbitos (`SIDEBAR_LOCALE`, `THREAD_LOCALE`, `SETTINGS_LOCALE`), sus exclusiones y `SettingsLocale`.
+- Montajes en archivos propios: `EditorialSidebar.tsx` (ref en su envoltorio; el ámbito es `[data-app-sidebar]`, el botón flotante `[data-sidebar-control]` y el visor `[data-slot="toast-viewport"]`) y `EditorialThreadRouteView.tsx` (ref en el `div.contents` que envuelve `ThreadRouteView`; el hilo manual sigue con su propio traductor).
+- `manualBrowserLocale.ts` conserva su diccionario y su API y pasa a usar `useScopedLocale`; el área del hilo incluye su tabla, así que el navegador del panel derecho de un hilo asistido también sale en español.
+- Pruebas: `locale/shellLocale.test.ts` (invariantes de todas las tablas, patrones que no se traducen dos veces, nombres que nunca son claves, espaciado de `raw`, fechas contra el formateador real) y `locale/ShellLocale.browser.test.tsx` (nodos dinámicos y reloj por minuto, menú construido a mano con foco inmediato, portal ajeno intacto, avisos tardíos con descripción intacta, títulos con `dir`, `.sr-only` de fila, espacio Tendencias y texto fuera del ámbito intactos, reversión al desmontar, ≤ 14 callbacks; mensajes y editor intactos con 120 lotes de streaming; un callback por lote como máximo; 500 filas con ≤ 2 callbacks al montar).
+
+Lo que nunca se reescribe: texto con `dir` (upstream lo pone en títulos de hilo, nombres y entradas de la paleta), `[contenteditable]` (el editor del composer, con su `aria-label`), `pre`, `code`, `kbd`, filas del historial (`[data-timeline-row-id]`), la ruta de la cabecera (`workspace-breadcrumb-text`), la terminal, los espacios Tendencias y Resultados de la barra lateral y las descripciones de avisos, que pueden traer mensajes del servidor. Los nombres de modelos, proveedores, temas, proyectos, ramas y rutas no son claves; dentro de un patrón se conservan tal cual («Acciones del hilo New thread», «Mostrar GPT-6-Astra en el selector de modelos»). Los valores de los campos no se tocan, solo `placeholder`, `aria-label` y `title`.
+
+Fechas relativas: `timestampFormat.ts` es upstream puro y sus llamadores dependen del inglés (`compactSidebarTimeLabel` recorta « ago» y cambia «just now» por «now»). Se envuelve su salida donde se muestra: «hace 42 min», «ahora mismo», y en la barra lateral «42 min», «ahora». La prueba ejecuta el formateador real, así que un cambio de formato de upstream la rompe a ella y no a la pantalla. En Proveedores, «Checked 5m ago» queda «Comprobado: 5 min atrás».
+
+Queda en inglés, por ser upstream sin punto limpio y de uso ocasional o por ser un nombre:
+
+- Ajustes › Hilos, Atajos de teclado (nombres de órdenes y cláusulas `when`), Uso y las demás secciones no listadas arriba.
+- Las entradas de la paleta de comandos (comparten el elemento con `dir` que muestra títulos de hilo); su marco sí se traduce donde no es `kbd`.
+- Acciones de Git («Commit & push», «Pull»), «Worktrees», «SnapShots», «Labs», nombres de planes de cuenta, niveles «Max» y «Ultra».
+- La vista previa tipográfica de Apariencia (un mensaje de ejemplo).
+- El `aria-label` de la región de notificaciones, fuera de todo ámbito.
+- Mensajes de error del servidor y descripciones de avisos.
+- «Perfil: Default» del navegador pasa a «Perfil: Predeterminado» porque «Default» es entrada común; es el perfil por defecto, no un nombre elegido por el operador.
+
+Medición (`~/earlyscript-data/shell-es/medicion/` y `bin/measure.mjs`, `bin/assisted.mjs`): en la app, con cinco cargas alternadas contra una instancia de la base `33a4255aa1`, la barra lateral apareció en 5,4–6,8 s en la rama y 5,5–6,8 s en la base (servidor de desarrollo, carga media 3,8): sin diferencia distinguible del ruido. El costo propio de los observadores fue de 0,3 ms por sesión. En un hilo asistido creado desde una tendencia, con el panel del navegador abierto, una navegación y su menú, los observadores de esta capa sumaron 34 callbacks y 6,6–6,8 ms (máximo 1 ms por callback) frente a 15 callbacks y ~17 ms de los de upstream; sin errores de página. En la prueba de navegador, montar 500 filas tardó 53,7 ms con el ámbito y 51,1 ms sin él (mediana de 5; medición puntual, retirada de la prueba porque la regla `no-wall-clock-in-tests` no admite relojes en pruebas).
+
+Decisiones reversibles: los términos («Resolver» y «Resueltos» por _settle_, «Posponer» por _snooze_, «Fijar» por _pin_, «Nuevo hilo»); la ventana de 2 s para portales; incluir el visor de avisos en el ámbito de la barra lateral.
