@@ -30,6 +30,10 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 24. Modo manual (`es/manual-mode`), base `4384513ef9`, con `main` fusionado en `4849a10661` (`d0f38f927a`); un enganche de una línea en `apps/web/src/routes/_chat.tsx`; recepción del estado del preview sin tocar: suscripción al `PreviewManager` desde la capa propia.
 25. Home propio de la app instalada (`es/desktop-daily`), base `d0f38f927a`, con `main` fusionado en `d369318845`; único archivo de upstream tocado: `apps/desktop/src/main.ts`.
 
+El número 26 queda reservado para otra unidad.
+
+27. Exportación de evidencia (`es/evidence-export`), base `c8f15bedd1`, con `main` fusionado en `33a4255aa1`; único archivo de upstream tocado: `apps/server/src/binCli.ts` (import y montaje del subcomando `evidence`).
+
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
 Base de upstream: `aa11ef6783` (30 de octubre de 2026).
@@ -1661,3 +1665,40 @@ Arreglo: `apps/desktop/src/earlyscript/inheritedHome.ts` (`dropInheritedT3Home`)
 Archivos nuevos: `apps/desktop/src/earlyscript/inheritedHome.ts` y `inheritedHome.test.ts`. La prueba resuelve el entorno de escritorio empaquetado con `T3CODE_HOME=~/.t3` y comprueba que `baseDir` y `logDir` quedan bajo `~/.earlyscript`. Sin el arreglo falla. También comprueba que el desarrollo conserva la variable.
 
 Fuera de alcance: el lanzador CLI `~/.earlyscript/bin/earlyscript` (`DesktopCliShim.ts`) mantiene el `${T3CODE_HOME:-$home}` de upstream. Desde una terminal de T3 Code hay que ejecutarlo con `env -u T3CODE_HOME`, como indica `docs/earlyscript-macos.md`.
+
+## 27. Exportación de evidencia (rama `es/evidence-export`, 31 de octubre de 2026)
+
+Base: `c8f15bedd1`, con `main` fusionado en `33a4255aa1` (trae `es/source-backtest` y la migración 011). Sin migración nueva. Produce desde `editorial.sqlite` el paquete de evidencia para el informe de la tesis y los revisores: `resumen.md`, `decisiones.csv`, `tiempos.csv`, `eventos.csv`, `corridas.csv`, `capturas.csv` (solo completo) y `manifest.json` (esquema `earlyscript.evidence/1`). La idea de alcance viene del `export --share` y `--blind` de Earlywindow; el código es nuevo.
+
+Archivos nuevos:
+
+- `apps/server/src/editorial/evidenceFormat.ts`: columnas de cada archivo con su clase (`value`, `date`, `thread`, `trend`, `aggregate-id`, `text`, `event-data`) y su paso a `share`, lista blanca de la carga de cada tipo de evento (`SHARE_EVENT_DATA`, exhaustiva sobre `EditorialEventType`: un tipo nuevo no compila hasta decidir qué sale), seudónimos, CSV, hash y formato fijo de cifras.
+- `apps/server/src/editorial/EditorialEvidenceExportService.ts`: lectura, filtros, agregados y escritura en carpeta.
+- `apps/server/src/editorial/evidenceCli.ts`: `earlyscript evidence export --out <dir> --full|--share [--since] [--until] [--base-dir]`.
+- `apps/server/src/editorial/EditorialEvidenceExportService.test.ts`, `apps/web/src/editorial/results/EvidenceExportButton.tsx`, `evidenceExport.logic.ts` y su prueba.
+
+Archivos propios cambiados: `packages/contracts/src/editorialResults.ts` (RPC `editorial.results.export`, scope `orchestration:operate`; esquemas de entrada, resultado y error), `resultsRpc.ts` (handler y capa), `EditorialResultsService.ts` (`allDecisions` y `summarizeDecisions` exportado, para que el resumen use los mismos agregados que Resultados), `apps/web/src/editorial/resultsState.ts` (comando) y `results/ResultsPage.tsx` (botón en la cabecera). `RpcAuthorization.ts` y `RpcInstrumentation.ts` no cambian: ya esparcen las tablas de Resultados.
+
+| Archivo                     | Líneas | Cambio                                                  | Motivo                           |
+| --------------------------- | ------ | ------------------------------------------------------- | -------------------------------- |
+| `apps/server/src/binCli.ts` | 35, 97 | Import de `evidenceCommand` y montaje junto a `triage`. | Subcomando `evidence` en el CLI. |
+
+Decisiones reversibles:
+
+- Determinismo: los archivos de datos no llevan fecha de exportación; filas ordenadas (decisiones por `decided_at` e inserción, tramos por hilo y orden, eventos por `seq`, corridas por corte e id, capturas por fecha e id); JSON con claves ordenadas; cifras sin depender del idioma del sistema. `packageHash` es el sha256 de las líneas `<sha256>  <archivo>` ordenadas. La fecha de exportación y el SHA del fork solo están en `manifest.json`. La misma base da la misma huella en el CLI y en el `.zip` de la web (comprobado byte a byte).
+- Filtros: `--since` y `--until` aceptan `AAAA-MM-DD` (día UTC, ambos inclusivos) o una fecha ISO. Se aplican a `decidida`, `inicio` del tramo, `fecha` del evento, `corte` de la corrida y `capturada`. La decisión vigente de cada hilo se recalcula dentro del filtro. Una corrida sin corte solo entra sin filtro.
+- Seudónimos de `share`: `h001`… para hilos y `t001`… para tendencias, por orden de aparición en toda la base (no solo en el filtro), así que un filtro no renumera. Una purga sí puede renumerar los hilos posteriores. Las corridas conservan su id del motor y sus hashes, que son los que permiten reproducirlas.
+- `vistas` de una corrida cuenta tendencias distintas con `trend.read` de esa corrida; `descartadas`, tendencias de la corrida descartadas en la bandeja actual; `producidas`, hilos registrados con ese `run_id`.
+- Fuentes: el resumen usa `EditorialSourcesService.list` (estado efectivo y backtest de la 011).
+- SHA del fork: `EARLYSCRIPT_BUILD_SHA` si la compilación lo define; si no, `git rev-parse HEAD` junto al módulo; si no, `null`.
+- Pantalla: «Exportar evidencia» en la cabecera de Resultados, diálogo con «Para compartir» (por defecto) y «Completa». En la app de escritorio sobre su servidor local, diálogo nativo de carpeta y el servidor escribe `<carpeta>/earlyscript-evidencia-<compartir|completa>-<día>`. En cualquier otro caso el RPC devuelve los archivos y el navegador descarga un `.zip` (jszip, fecha fija dentro del archivo).
+- Escritura: ruta absoluta; una carpeta que no está vacía debe contener un paquete anterior (`manifest.json` con el esquema). Se borran solo los nombres del paquete antes de escribir, el manifiesto al final. Una carpeta ajena se rechaza sin tocarla.
+
+Privacidad y retención del paquete:
+
+- `--share` (para el informe y los revisores): solo las columnas de `manifest.json › whitelist` y los campos de evento de `eventData`; sin texto libre (motivos de decisión, descarte y pausa, notas, motivos de archivos omitidos), sin URL ni títulos de capturas o visitas, sin rutas, sin guiones (solo su sha256), sin entorno, operación ni sesión; fechas al día UTC. `capturas.csv` no existe en este modo.
+- `--full` (local, para Miguel): texto libre y carga íntegra de cada evento. Nunca lleva sesiones ni el texto del guion. No se publica ni se sube a repositorios; el manifiesto lo repite en `rules`.
+- El paquete es una copia: borrar un hilo o purgar sus datos en la app no borra exportaciones anteriores. Quien exporta decide su retención; lo que viva en el repo de la tesis debe ser `share`.
+- Pruebas que lo sostienen: lista blanca congelada en la prueba (añadir una columna a `share` exige cambiarla a propósito), ninguna columna `text` en `share`, ningún campo de evento con nombre de texto salvo el enum `work.stopped.reason`, y una fixture con marcadores de texto, URL, ids, sesión y guion que no aparecen en `share` y sí en `full`.
+
+Fuera de alcance: el diálogo nativo no se dirige a una distribución WSL (sin `targetEnvironmentId`); el CLI abre la base con sus migraciones, como el servidor.

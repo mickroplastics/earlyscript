@@ -95,7 +95,7 @@ const exportCommand = Command.make("export", {
       yield* Console.log(`Package hash: ${result.packageHash}`);
       for (const file of result.files) {
         yield* Console.log(
-          `  ${file.name}  ${file.sha256.slice(0, 12)}  ${file.rows === null ? "" : `${file.rows} rows`}`,
+          `  ${file.name}  ${file.sha256.slice(0, 12)}  ${file.rows === null ? "" : `${file.rows} ${file.rows === 1 ? "row" : "rows"}`}`,
         );
       }
     }),
