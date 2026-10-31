@@ -59,16 +59,27 @@ export function applyEditorialStreamItem(
   };
 }
 
+/** Refetches the environment's inbox and dossier reads, as a command does after it succeeds. */
+export function refreshEditorialInbox(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+): void {
+  Effect.runSync(bumpInbox({ environmentId }, registry));
+}
+
 /**
  * The inbox read with each trend's state as the subscription last left it. The read keeps
- * what the subscription does not carry (titles drafted after it started); the subscription
- * keeps the states current. A view of another run leaves the read as it is.
+ * its order and what the subscription does not carry (titles drafted after it started); the
+ * subscription keeps the states current. When the subscription already shows another run, an
+ * import the read has not seen, the subscription's inbox replaces the read until it refetches.
  */
 export function withLiveInboxState(
   inbox: EditorialInbox,
   live: EditorialInbox | null,
 ): EditorialInbox {
-  if (live === null || live.run?.runId !== inbox.run?.runId) return inbox;
+  if (live === null) return inbox;
+  if (live.run !== null && live.run.runId !== inbox.run?.runId) return live;
+  if (live.run?.runId !== inbox.run?.runId) return inbox;
   const liveByKey = new Map(live.trends.map((trend) => [trend.trendKey, trend]));
   return {
     ...inbox,

@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   ThreadId,
   type EditorialDossierId,
@@ -11,7 +11,7 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
 import { ArrowDownUpIcon, InboxIcon, RotateCcwIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
@@ -31,7 +31,12 @@ import {
 } from "../components/ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenu } from "../components/ui/sidebar";
 import { inboxSections, runGroupLabel, trendMenuItems } from "./editorial.logic";
-import { EMPTY_INBOX_VIEW, editorialEnvironment, withLiveInboxState } from "./state";
+import {
+  EMPTY_INBOX_VIEW,
+  editorialEnvironment,
+  refreshEditorialInbox,
+  withLiveInboxState,
+} from "./state";
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
@@ -47,19 +52,32 @@ const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly
 const isInboxSort = (value: unknown): value is EditorialInboxSort =>
   SORT_OPTIONS.some((option) => option.value === value);
 
+/** Runs whose arrival through the subscription already refetched the read, per environment. */
+const refetchedForRun = new Map<EnvironmentId, string>();
+
 /**
  * The inbox query, which commands and drafted titles refresh, with each trend's state from
- * the live subscription, so a change from any client shows without a refetch.
+ * the live subscription, so a change from any client shows without a refetch. A run the
+ * subscription announces replaces the read at once and refetches it.
  */
 export function useTrendInbox(environmentId: EnvironmentId, sort: EditorialInboxSort) {
+  const registry = useContext(RegistryContext);
   const target = { environmentId, input: { sort } };
   const live = AsyncResult.getOrElse(
     useAtomValue(editorialEnvironment.liveInbox(target)),
     () => EMPTY_INBOX_VIEW,
-  );
-  return AsyncResult.map(useAtomValue(editorialEnvironment.inbox(target)), (inbox) =>
-    withLiveInboxState(inbox, live.inbox),
-  );
+  ).inbox;
+  const query = useAtomValue(editorialEnvironment.inbox(target));
+  const readRunId = AsyncResult.getOrElse(query, () => null)?.run?.runId;
+  const newerRunId =
+    readRunId !== undefined && live?.run && live.run.runId !== readRunId ? live.run.runId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a run imported on the server reaches the read only by refetching it
+  useEffect(() => {
+    if (newerRunId === null || refetchedForRun.get(environmentId) === newerRunId) return;
+    refetchedForRun.set(environmentId, newerRunId);
+    refreshEditorialInbox(registry, environmentId);
+  }, [environmentId, newerRunId, registry]);
+  return AsyncResult.map(query, (inbox) => withLiveInboxState(inbox, live));
 }
 
 function InboxNotice({ children }: { readonly children: string }) {
@@ -99,10 +117,11 @@ export function TrendInbox({
 }) {
   const navigate = useNavigate();
   const [sort, setSort] = useState<EditorialInboxSort>("new-first-growth");
-  // `null` follows the open dossier: a folded part unfolds when it holds the open trend.
+  // `null` follows the open dossier: the tail unfolds when it holds the open trend.
   const [foldedChoice, setFoldedChoice] = useState<boolean | null>(null);
-  const [snoozedChoice, setSnoozedChoice] = useState<boolean | null>(null);
-  const [dismissedChoice, setDismissedChoice] = useState<boolean | null>(null);
+  // Snoozed and dismissed stay folded until opened, even with the open dossier inside.
+  const [showSnoozed, setShowSnoozed] = useState(false);
+  const [showDismissed, setShowDismissed] = useState(false);
   const [dismissing, setDismissing] = useState<{
     readonly trendKey: EditorialTrendKey;
     readonly title: string;
@@ -112,11 +131,8 @@ export function TrendInbox({
   const result = useTrendInbox(environmentId, sort);
   const inbox = AsyncResult.getOrElse(result, () => null);
   const sections = inboxSections(inbox?.trends ?? []);
-  const holdsActive = (trends: ReadonlyArray<EditorialTrendSummary>) =>
-    trends.some((trend) => trend.dossierId === activeDossierId);
-  const showFolded = foldedChoice ?? holdsActive(sections.folded);
-  const showSnoozed = snoozedChoice ?? holdsActive(sections.snoozed);
-  const showDismissed = dismissedChoice ?? holdsActive(sections.dismissed);
+  const showFolded =
+    foldedChoice ?? sections.folded.some((trend) => trend.dossierId === activeDossierId);
 
   const openMenu = async (
     trend: EditorialTrendSummary,
@@ -261,7 +277,7 @@ export function TrendInbox({
               <InboxSection
                 label={`En observación (${sections.snoozed.length})`}
                 expanded={showSnoozed}
-                onToggle={() => setSnoozedChoice(!showSnoozed)}
+                onToggle={() => setShowSnoozed(!showSnoozed)}
               >
                 {sections.snoozed.map((trend) =>
                   renderRow(
@@ -275,7 +291,7 @@ export function TrendInbox({
               <InboxSection
                 label={`Descartadas (${sections.dismissed.length})`}
                 expanded={showDismissed}
-                onToggle={() => setDismissedChoice(!showDismissed)}
+                onToggle={() => setShowDismissed(!showDismissed)}
               >
                 {sections.dismissed.map((trend) =>
                   renderRow(trend, wayBack(trend, "Reabrir", RotateCcwIcon, actions.reopen)),

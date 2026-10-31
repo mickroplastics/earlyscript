@@ -131,9 +131,9 @@ describe("withLiveInboxState", () => {
     expect(merged.trends[0]?.isNew).toBe(false);
     expect(merged.newCount).toBe(1);
 
-    // A subscription still on another run leaves the read alone.
-    const otherRun = { ...live, run: { ...run, runId: EditorialRunId.make("run-0") } };
-    expect(withLiveInboxState(read, otherRun)).toBe(read);
+    // A run the read has not seen yet replaces it; without a subscription the read stands.
+    const newerRun = { ...live, run: { ...run, runId: EditorialRunId.make("run-2") } };
+    expect(withLiveInboxState(read, newerRun)).toBe(newerRun);
     expect(withLiveInboxState(read, null)).toBe(read);
   });
 });
