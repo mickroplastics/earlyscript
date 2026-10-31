@@ -25,6 +25,7 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 19. Fuentes de Earlywindow: arXiv, Wikipedia, npm, Stack Exchange, Bluesky (`es/sources-earlywindow`), pendiente de fusión.
 20. Fuentes Hugging Face Hub y dev.to (`es/sources-hf-devto`), base `f75eebfae2`; cero archivos de upstream tocados. dev.to se retiró el 1 de noviembre de 2026 (`es/retire-devto`); queda Hugging Face.
 21. Fuentes Lobste.rs (bloqueada por robots) y RSS/Atom con feeds del usuario (`es/sources-lobsters-rss`), base `f75eebfae2`; cero archivos de upstream tocados; añade comprobación de `robots.txt`, redirecciones con credenciales por origen y `engine purge` al motor.
+22. Corrida nocturna (`es/nightly-run`), base `4384513ef9`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización, instrumentación y `client-runtime`; ningún cambio en el motor.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1378,3 +1379,32 @@ Corrección tras la reverificación de Sol (31 de octubre de 2026, NO APTO sobre
 - R2, purgas idempotentes. Una purga ya registrada (misma fuente, tipo y hash) no se vuelve a escribir. Un objetivo sin coincidencias no deja registro ni reescribe archivos. En ambos casos el resultado lleva `unchanged: true` y `message` («Already purged; corpus unchanged» o «No matches; corpus unchanged») y el corpus queda igual byte a byte, `corpus_hash` incluido. Las ediciones se planifican antes de escribir nada. Bloquear de antemano un objetivo que todavía no está en el corpus sería otra decisión; no se hace.
 - R3, profundidad. El límite de 64 niveles se comprueba antes de añadir cualquier elemento, también las hojas autocerradas: `<b/>` dentro de 64 `<a>` se rechaza.
 - R4, `body_kind`. Describe el origen del texto: `summary` si vino de `description`/`summary`, `content` si vino de `content:encoded`/`content`. `truncated` indica si se cortó a 500 caracteres.
+
+## 22. Corrida nocturna (rama `es/nightly-run`, 31 de octubre de 2026)
+
+Base: `4384513ef9`. Sigue el §10 del mapa de integración: un job durable por perfil, corte y configuración, ejecutado por el `Scheduler` de T3, sin cron, sin launchd y sin prompts ni agentes.
+
+Archivos de upstream modificados (enganches de una línea):
+
+- `packages/contracts/src/index.ts` y `rpc.ts`: exportación y `.merge(EditorialJobsRpcGroup)`.
+- `apps/server/src/server.ts`: `EditorialJobsRpc.layer` en el `Layer.mergeAll` de `layerRuntimeCoreDependenciesBase`, junto a `EditorialPresentation.layer`. Esa capa registra `Scheduler.register("editorial.daily", jobs.runDue)` (`editorial/EditorialScheduler.ts`) y publica los handlers. Provee de nuevo `Scheduler.layer` y `EditorialPresentationService.layer`; como las capas se memorizan por referencia, comparte la instancia del `Scheduler` que construye `orchestration-v2/runtimeLayer.ts` y la del servicio de presentaciones del mismo `mergeAll`.
+- `apps/server/src/ws.ts`, `auth/RpcAuthorization.ts` y `observability/RpcInstrumentation.ts`: handlers, ámbitos y agregados del grupo, como §18.
+- `packages/client-runtime/src/rpc/client.ts`: `editorial.jobs.watch` en `EnvironmentSubscriptionRpcTag`, como `editorial.subscribe`.
+
+Archivos nuevos:
+
+- `packages/contracts/src/editorialJobs.ts`: grupo `editorial.jobs.*`. `list`, `getSettings` y `watch` (stream del job en curso) con `orchestration:read`; `runNow` y `updateSettings` con `orchestration:operate`.
+- `apps/server/src/editorial/EditorialJobsService.ts` (jobs, lease, fases, ajustes), `EditorialScheduler.ts` (registro), `engineProcess.ts` (el CLI del motor como proceso hijo con `ChildProcessSpawner` de Effect y log por fase), `nightlySchedule.ts` (horario sobre `nextScheduledRunAt` de `scheduledTasks/Schedule.ts`, ventana de captura y hash de configuración), `jobsRpc.ts`, la migración 009 y sus pruebas.
+- `apps/web/src/editorial/{jobsState.ts,TrendJobIndicator.tsx}` y `settings/NightlyRunSettings.tsx`, con pruebas de navegador. `TrendInbox.tsx`, `EditorialSettings.tsx` y `settingsEntry.ts` son propios.
+
+Decisiones reversibles:
+
+- Migración 009: `editorial_jobs` (clave única `kind, profile_hash, cutoff_at, config_hash`; zona, hora programada, intento, lease, estado, error y `artifacts_json` con fases, logs, conteos y notas) y `editorial_nightly_settings` (una fila: activada, hora, zona, procesos y desde cuándo está activada).
+- Desactivada por defecto: una base copiada a un worktree no captura ni corre el motor sola. Al activarla, la primera corrida es la siguiente hora programada, no la de hoy si ya pasó; «Ejecutar ahora» cubre lo inmediato.
+- Una corrida por hora programada: el corte es las 00:00 UTC del día de esa hora, así una zona con desfase negativo no corre dos veces al cruzar la medianoche UTC. Si existe cualquier job con ese corte, no se crea otro.
+- El motor no tiene `--sources` en `run`: lee `config.sources`. El servidor escribe en el directorio del job una copia de `config/engine.v1.json` con `sources` = las fuentes con `rank` y la pasa con `--config`, así las fuentes entran en el `config_hash` del motor y de la clave. `nightlySchedule.test.ts` comprueba que el hash del servidor es el del motor y que el perfil escrito tiene el hash de `profiles/singularidev.v1.json`.
+- Fases en orden, cada una reanudable: captura (`collect` desde el último día del corpus, que se vuelve a pedir porque una muestra o un día parcial puede crecer, hasta ayer; `--rss-feeds` en un JSON del job si `rss` captura), motor (`run` con `--out` en `EARLYSCRIPT_EDITORIAL_RUNS_DIR`, `--cache` compartida, `--workers` del ajuste y `--models` solo si se fija `EARLYSCRIPT_EDITORIAL_MODELS_DIR`), comprobación (`check`), importación (`importer.sync`) y redacción (`startRun` y `awaitRun` de presentaciones). Sin proveedor o con fallos, el job termina `done` con la nota «Presentations pending».
+- Lease de 2 minutos renovado cada 30 s. Una caída deja el job `running` con el lease vencido y el siguiente tick lo retoma desde la primera fase sin terminar; la corrida que el motor ya escribió se detecta en disco por corte, `config_hash`, hash de perfil y `started_at` posterior al inicio del job. Un apagado ordenado devuelve el job a `pending` sin esperar al lease y mata el proceso hijo. Un fallo reintenta a los 15 minutos, hasta tres intentos.
+- Backfill: si el corpus termina antes de ayer, un solo job con el corte de hoy captura desde el último día; los días sin corrida quedan en `artifacts.collect.missedDays` y en una nota, y no se corren a posteriori.
+- Un `.collect.lock` de más de una hora se considera huérfano y se retira con una nota; uno más reciente hace fallar la fase para reintentar.
+- El motor corre con el Node del servidor (`HostProcess.ExecutablePath`, con `ELECTRON_RUN_AS_NODE=1` para la app de escritorio) desde sus fuentes TypeScript; `EARLYSCRIPT_ENGINE_CLI` permite apuntar a otro CLI.

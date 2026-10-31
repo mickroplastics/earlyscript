@@ -5,6 +5,8 @@ import {
   EditorialTrendKey,
   EnvironmentId,
   type EditorialInbox,
+  type EditorialJob,
+  type EditorialJobActivity,
   type EditorialTrendSummary,
 } from "@t3tools/contracts";
 import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
@@ -20,6 +22,9 @@ const state = vi.hoisted(() => ({ refetches: [] as Array<string> }));
 // The read and the subscription as plain atoms, so the test drives what each one holds.
 const readAtom = Atom.make<AsyncResult.AsyncResult<EditorialInbox>>(AsyncResult.initial());
 const liveAtom = Atom.make<AsyncResult.AsyncResult<EditorialInboxView>>(AsyncResult.initial());
+const activityAtom = Atom.make<AsyncResult.AsyncResult<EditorialJobActivity>>(
+  AsyncResult.success({ active: null }),
+);
 
 vi.mock("./state", async () => {
   const actual = await vi.importActual<typeof import("./state")>("./state");
@@ -33,6 +38,15 @@ vi.mock("./state", async () => {
     refreshEditorialInbox: (_registry: unknown, environmentId: string) => {
       state.refetches.push(environmentId);
     },
+  };
+});
+vi.mock("./jobsState", async () => {
+  const actual = await vi.importActual<typeof import("./jobsState")>("./jobsState");
+  const Effect = await vi.importActual<typeof import("effect/Effect")>("effect/Effect");
+  return {
+    ...actual,
+    editorialJobsEnvironment: { ...actual.editorialJobsEnvironment, activity: () => activityAtom },
+    refreshJobsList: () => Effect.void,
   };
 });
 vi.mock("./TrendPresentationRunButton", () => ({ TrendPresentationRunButton: () => null }));
@@ -95,6 +109,45 @@ const inboxOf = (day: string, keys: ReadonlyArray<string>): EditorialInbox => {
     dismissedCount: 0,
   };
 };
+
+const PHASES = ["collect", "run", "check", "import", "presentations"] as const;
+
+/** A nightly job past its capture and embedding its third thousand texts. */
+const embeddingJob = (): EditorialJob => ({
+  jobId: "job-1",
+  kind: "daily",
+  profileHash: "sha256:profile",
+  cutoffAt: "2026-10-31T00:00:00.000Z",
+  configHash: "sha256:config",
+  timezone: "America/Guayaquil",
+  scheduledFor: "2026-10-31T08:00:00.000Z",
+  startedAt: "2026-10-31T08:00:00.000Z",
+  finishedAt: null,
+  attempt: 1,
+  status: "running",
+  error: null,
+  artifacts: {
+    jobDir: "/state/editorial-jobs/job-1",
+    corpusDir: "/data/live",
+    runsDir: "/data/runs",
+    sources: { collect: ["hn", "github"], rank: ["hn", "github"] },
+    phases: PHASES.map((phase, index) => ({
+      phase,
+      status: index === 0 ? "done" : index === 1 ? "running" : "pending",
+      startedAt: index < 2 ? "2026-10-31T08:00:00.000Z" : null,
+      finishedAt: index === 0 ? "2026-10-31T08:00:40.000Z" : null,
+      note: null,
+      log: null,
+    })),
+    collect: null,
+    runId: null,
+    runDir: null,
+    dossiers: null,
+    presentations: null,
+    notes: [],
+    progress: { phase: "run", done: 3072, total: 11913 },
+  },
+});
 
 describe("TrendInbox", () => {
   it("adopts a run the subscription imports and keeps the order when a trend is read", async () => {
@@ -187,5 +240,29 @@ describe("TrendInbox", () => {
         .toHaveAttribute("aria-expanded", "false");
       expect(screen.container.querySelectorAll('a[data-sidebar="menu-button"]')).toHaveLength(1);
     }
+  });
+
+  it("shows the nightly job in the header while it runs and refetches the inbox when it ends", async () => {
+    setup();
+    const registry = AtomRegistry.make();
+    const run19 = inboxOf("19", ["alpha"]);
+    registry.set(readAtom, AsyncResult.success(run19));
+    registry.set(liveAtom, AsyncResult.success({ seq: 1, inbox: run19 }));
+    registry.set(activityAtom, AsyncResult.success({ active: embeddingJob() }));
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <SidebarProvider defaultOpen>
+          <TrendInbox environmentId={ENVIRONMENT_ID} activeDossierId={null} />
+        </SidebarProvider>
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("status"))
+      .toHaveTextContent("Corriendo: motor 2/5 · 3072 de 11.913 textos…");
+    expect(state.refetches).toEqual([]);
+
+    await act(() => registry.set(activityAtom, AsyncResult.success({ active: null })));
+    await expect.element(screen.getByRole("status")).not.toBeInTheDocument();
+    expect(state.refetches).toEqual([ENVIRONMENT_ID]);
   });
 });

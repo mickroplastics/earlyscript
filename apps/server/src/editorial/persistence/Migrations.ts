@@ -12,6 +12,7 @@ import Migration0005 from "./Migrations/005_EditorialPresentations.ts";
 import Migration0006 from "./Migrations/006_EditorialImportInterpretation.ts";
 import Migration0007 from "./Migrations/007_EditorialSourceSettings.ts";
 import Migration0008 from "./Migrations/008_EditorialRssFeedAcknowledgement.ts";
+import Migration0009 from "./Migrations/009_EditorialJobs.ts";
 
 // Own numbering in editorial.sqlite, never colliding with T3's. Never renumber an
 // applied migration. Ids are 1..n: the Migrator skips ids at or below the latest
@@ -25,6 +26,7 @@ const migrationEntries = [
   [6, "EditorialImportInterpretation", Migration0006],
   [7, "EditorialSourceSettings", Migration0007],
   [8, "EditorialRssFeedAcknowledgement", Migration0008],
+  [9, "EditorialJobs", Migration0009],
 ] as const;
 
 export const editorialMigrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
