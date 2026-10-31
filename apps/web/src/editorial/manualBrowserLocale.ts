@@ -192,14 +192,16 @@ export function useManualBrowserLocale(container: RefObject<HTMLElement | null>)
         document.removeEventListener(type, onInteraction, { capture: true });
       }
       // Back to upstream's strings where they are still ours; React may have replaced some.
-      for (const [node, { original, written }] of texts) {
-        if (node.nodeValue === written) node.nodeValue = original;
-      }
-      for (const [element, byName] of attributes) {
-        for (const [name, { original, written }] of byName) {
-          if (element.getAttribute(name) === written) element.setAttribute(name, original);
-        }
-      }
+      texts.forEach((rewrite, node) => {
+        if (node.nodeValue === rewrite.written) node.nodeValue = rewrite.original;
+      });
+      attributes.forEach((byName, element) => {
+        byName.forEach((rewrite, name) => {
+          if (element.getAttribute(name) === rewrite.written) {
+            element.setAttribute(name, rewrite.original);
+          }
+        });
+      });
     };
   }, [container]);
 }
