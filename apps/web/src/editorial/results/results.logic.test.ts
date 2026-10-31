@@ -18,6 +18,7 @@ import {
   stageChartMaxMs,
   statsText,
   visibleSections,
+  domainNote,
 } from "./results.logic";
 
 const MINUTE = 60_000;
@@ -58,6 +59,7 @@ const summary = (modes: EditorialResultsSummary["modes"]): EditorialResultsSumma
   modes,
   comparisons: [],
   inbox: { read: 0, observing: 0, dismissed: 0, production: 0 },
+  excludedByDomain: 0,
   decisionCount: 0,
   firstDecidedAt: null,
   lastDecidedAt: null,
@@ -233,5 +235,12 @@ describe("decisionsFailureText", () => {
       "Este entorno no autoriza la lectura de resultados.",
     );
     expect(decisionsFailureText(undefined)).toBe("No hubo respuesta del entorno.");
+  });
+
+  it("explains decisions left out by domain", () => {
+    expect(domainNote(summary([]))).toBeNull();
+    expect(domainNote({ ...summary([]), excludedByDomain: 2 })).toBe(
+      "2 decisiones quedan fuera de los agregados: un valor guardado está fuera de su dominio (utilidad de 1 a 5, tiempos y conteos no negativos, fechas plausibles).",
+    );
   });
 });

@@ -298,6 +298,12 @@ export function provisionalNote(summary: EditorialResultsSummary): string | null
   return `${formatCount(count, "hilo queda", "hilos quedan")} fuera de los tiempos: su reloj tiene un tramo sin resolver tras un cierre inesperado.`;
 }
 
+/** Decisions whose stored values are out of their domain stay out of every statistic. */
+export function domainNote(summary: EditorialResultsSummary): string | null {
+  if (summary.excludedByDomain === 0) return null;
+  return `${formatCount(summary.excludedByDomain, "decisión queda", "decisiones quedan")} fuera de los agregados: un valor guardado está fuera de su dominio (utilidad de 1 a 5, tiempos y conteos no negativos, fechas plausibles).`;
+}
+
 /** The common horizontal scale of the stage chart: the largest third quartile or median. */
 export function stageChartMaxMs(summary: EditorialResultsSummary): number {
   const ends = summary.modes.flatMap((mode) =>

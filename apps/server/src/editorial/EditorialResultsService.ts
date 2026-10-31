@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
+import { decisionInDomain } from "./decisionDomain.ts";
 import { WORK_STAGES } from "./persistence/EditorialModel.ts";
 import { nowIso } from "./persistence/support.ts";
 
@@ -344,8 +345,13 @@ const collect = (
  */
 export const summarizeDecisions = (
   decisions: ReadonlyArray<EditorialResultsDecision>,
-): Pick<EditorialResultsSummary, "modes" | "comparisons"> => {
-  const current = decisions.filter((decision) => decision.current);
+): Pick<EditorialResultsSummary, "modes" | "comparisons" | "excludedByDomain"> => {
+  // A current decision with a value out of its domain (a utility of 999, a negative time) is
+  // counted apart and never enters a statistic.
+  const current = decisions.filter((decision) => decision.current && decisionInDomain(decision));
+  const excludedByDomain = decisions.filter(
+    (decision) => decision.current && !decisionInDomain(decision),
+  ).length;
   const byMode = (mode: EditorialResultsMode) => current.filter((entry) => entry.mode === mode);
   const timed = (mode: EditorialResultsMode) =>
     byMode(mode).filter((decision) => decision.clockDefinitive);
@@ -427,7 +433,7 @@ export const summarizeDecisions = (
     // Every timed thread, whatever it recorded; the page warns about partial coverage.
     compare("recorded", timed, totalMs),
   ];
-  return { modes, comparisons };
+  return { modes, comparisons, excludedByDomain };
 };
 
 export const layer = Layer.effect(EditorialResultsService, make);
