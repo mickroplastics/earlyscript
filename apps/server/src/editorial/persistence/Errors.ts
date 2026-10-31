@@ -20,12 +20,19 @@ export class EditorialPersistenceError extends Schema.TaggedError<EditorialPersi
 export class EditorialMigrationGapError extends Schema.TaggedError<EditorialMigrationGapError>()(
   "EditorialMigrationGapError",
   {
-    reason: Schema.Literals(["manifest-gap", "unapplied-below-latest", "not-replayable"]),
+    reason: Schema.Literals([
+      "manifest-gap",
+      "unapplied-below-latest",
+      "not-replayable",
+      /** An applied marker's name is not the one the manifest gives its id. */
+      "name-mismatch",
+    ]),
     ids: Schema.Array(Schema.Number),
     detail: Schema.String,
   },
 ) {
   override get message(): string {
+    if (this.reason === "name-mismatch") return `Migraciones editoriales: ${this.detail}`;
     return `Editorial migrations are not continuous (${this.reason}: ${this.ids.join(", ")}). ${this.detail}`;
   }
 }
