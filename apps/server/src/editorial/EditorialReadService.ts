@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialRunDirectory, type IndexedDossier, type LoadedRun } from "./RunDirectory.ts";
-import { AFFINITY_THRESHOLD, compareTrends, evidenceRange } from "./dossierFormat.ts";
+import { compareTrends, evidenceRange } from "./dossierFormat.ts";
 import { toTrendInboxState } from "./inboxState.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import {
@@ -203,9 +203,9 @@ const make = Effect.gen(function* () {
     return {
       trend: dossier!.summary,
       run: { ...runSummaryOf(row.value), dossierCount: loaded.dossiers.length },
-      rankMethod: found.file.rank.method ?? "unknown",
-      rankComponents: found.file.rank.components ?? [],
-      affinityThreshold: AFFINITY_THRESHOLD,
+      rankMethod: found.file.rankings.weighted.method,
+      rankComponents: found.file.rankings.weighted.components,
+      affinityThreshold: loaded.entry.run.include_min,
       curve: found.curve,
       coverage: found.coverage,
       evidence: found.evidence.slice(

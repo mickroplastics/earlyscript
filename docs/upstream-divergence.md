@@ -18,7 +18,8 @@ Unidades del 30 y 31 de octubre de 2026, cada una con su propia sección y su pr
 12. Importador de corridas, bandeja con estado y escritura editorial (`es/editorial-write`), base `ed5c3a2903`; enganche en `apps/server/src/server.ts` junto a Resultados.
 13. Espacio Resultados (`es/results-space`), base `638a6cf64e`; enganches de una línea en contratos, `ws.ts`, `server.ts`, autorización e instrumentación.
 14. Presentación de tendencias en la interfaz (`es/trend-presentation-ui`), base `638a6cf64e`, con `main` fusionado en `0d84824fea`.
-15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`; ningún archivo de upstream tocado.
+15. Bandeja con estado y salidas activas (`es/inbox-actions`), base `0d84824fea`, con `main` fusionado en `3e4c6c0741`, `01f65c0c49` y `21a7582128`; ningún archivo de upstream tocado.
+16. Lectura de corridas nativas del motor (`es/dossier-native`), base `ed5c3a2903`, con `main` fusionado en `0d84824fea` y `3e4c6c0741`; único archivo de upstream tocado: `packages/contracts/src/editorial.ts`.
 
 ## Capa de marca (rama `es/rebrand`, 30 de octubre de 2026)
 
@@ -1075,7 +1076,7 @@ Decisiones reversibles:
 
 ## 15. Bandeja con estado y salidas activas
 
-Base: `0d84824fea`, 31 de octubre de 2026, con `main` fusionado en `3e4c6c0741` (presentación de §14) y en `01f65c0c49`. Incluye las correcciones de la revisión de Astra (H1 a H3). Rama `es/inbox-actions`. Puntos 3, 4 y 5 de la sesión de la tarde en `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §2.
+Base: `0d84824fea`, 31 de octubre de 2026, con `main` fusionado en `3e4c6c0741` (presentación de §14), `01f65c0c49` y `21a7582128` (corridas nativas de §17). Incluye las correcciones de la revisión de Astra (H1 a H3). Rama `es/inbox-actions`. Puntos 3, 4 y 5 de la sesión de la tarde en `planificacion/2026-10-30-earlyscript-motor/04-maqueta-y-decisiones.md`; mapa de integración §2.
 
 Archivos nuevos, todos en `apps/web/src/editorial/`:
 
@@ -1099,3 +1100,32 @@ Decisiones reversibles:
 - Seguir observando sin plazo deja que el servidor aplique su umbral de crecimiento y avisa «Vuelve si crece.»; los plazos son los de los hilos (`resolveSnoozePresets`), con sus etiquetas traducidas por la tabla `snoozePresetLabel` de `editorial.logic.ts`; una etiqueta que la tabla no conoce queda como la escribe T3. El diálogo de plazo personalizado (`CustomSnoozeDialog.tsx`) y el aviso de plazo vencido de `Sidebar.snooze.ts` siguen en inglés: son de upstream y no se tocan.
 - Descartar exige un motivo de 3 a 500 caracteres; el máximo es `EDITORIAL_REASON_MAX_CHARS` del contrato.
 - Abrir la ficha de una tendencia nueva llama a `markRead` una vez por expediente abierto, sin refrescar la consulta: la suscripción cambia la fila en su sitio y la tendencia recién abierta no salta de lugar, como un hilo visitado. Las demás salidas sí refrescan, porque la fila cambia de sección o de estado.
+
+## 17. Lectura de corridas nativas (rama `es/dossier-native`, 31 de octubre de 2026)
+
+Base: `ed5c3a2903`, fusionada con `0d84824fea` (§12) y `3e4c6c0741` (§14). Archivo de upstream modificado: `packages/contracts/src/editorial.ts`: `EditorialRankComponent.value` pasa a `NullOr(Finite)` porque el contrato `RankComponent` del motor admite `null` (componente sin valor, que suma 0) y ningún cliente lee el campo; `EditorialEvidenceItem` gana `excerpt`; el resto son comentarios. Archivos propios: `apps/server/src/editorial/{dossierFormat,RunDirectory,EditorialReadService,EditorialImportService,presentationDossierSource}.ts` con sus pruebas, la migración `persistence/Migrations/006_EditorialImportInterpretation.ts`, `apps/web/src/editorial/TrendDossierPage.tsx`, el fixture `fixtures/native-runs/run_20261031_20261031T003855_5e57bf` (run.json y dos expedientes con tres evidencias cada uno, una con extracto; fuera de `fixtures/runs` para no cambiar las pruebas que copian ese directorio) y `@earlyscript/editorial-contracts` como dependencia de desarrollo del servidor.
+
+Un solo decodificador para el lector y el importador, en `dossierFormat.ts`, que `RunDirectory` usa:
+
+- `decodeRunJson`: `Schema.Union([RunRecord, EarlywindowRunFile])` y conversión a `RunInfo`, la forma única que leen `RunDirectory`, el importador y el lector (claves de run.json; `config_version`, `sources` e `include_min` salen de `config` en las corridas nativas). `EarlywindowRunFile` exige que no haya `schema_version`, así que un run.json nativo roto queda `invalid` en vez de leerse como Earlywindow.
+- `decodeDossierJson`: `Schema.Union([Dossier, EarlywindowDossier])`, discriminada por `schema_version`. `toDossiers` convierte los `dossier/1` de una corrida juntos con `fromEarlywindowRun`, porque sus posiciones dependen de la corrida entera, y conserva el orden de los archivos (el importador empareja cada expediente con su ruta y su hash por posición). `loadRunDossiers` solo recibe `Dossier`.
+
+Reemplaza la viñeta «Posición por volumen» de §8 y la limitación de §12 sobre `earlyscript.dossier/1`:
+
+- `volumeRank` y `scoreRank` son las posiciones del motor (`rankings.baseline` y `rankings.weighted`) entre los temas elegibles de la corrida, no puestos de competencia entre los expedientes emitidos. Los empates se resuelven por id de señal, la regla del motor y del backtest de Earlywindow. Se elimina `competitionRanks`.
+- `items7d`, `authors7d`, `growth`, `affinity` y `sources` salen de `trend` y `profile_fit`. En corridas nativas `sources` cubre todos los ítems del tema; en las de Earlywindow, la evidencia. La clave de tendencia sigue la regla `signal-id` con `trend.id`, que en las corridas de Earlywindow es su `signal.id`: las claves ya indexadas no cambian.
+- El umbral de afinidad del expediente es `include_min` de la corrida: `config.profile.include_min` en las nativas, 0,60 en las de Earlywindow.
+- `editorial_runs` de una corrida nativa guarda ahora `config_version` y `sources_json` de su `config`; antes quedaban nulos porque el run.json se leía con el esquema de Earlywindow.
+- Los fixtures de Earlywindow recuperan `retrieved_at`, que el esquema estricto exige.
+
+Versión de interpretación del índice:
+
+- `IMPORT_INTERPRETATION_VERSION` (`EditorialImportService.ts`) numera cómo el importador lee los archivos: 1 es §12 (solo `dossier/1`, puestos de competencia) y 2 es esta sección. Se guarda por corrida en `editorial_runs.interpretation_version`; la migración 006 añade la columna con 1 para las filas existentes y comprueba antes si ya existe. Si otra rama trae su propia 006, una de las dos se renumera al fusionar.
+- Una corrida indexada con otra versión se lee de nuevo aunque coincidan ruta, inventario de mtimes y hash de contenido: la versión entra en los dos saltos de `sync` y en el de `importLoaded`, también en el de las corridas `invalid`. La reindexación reemplaza sus filas de `editorial_dossiers` y los metadatos de la corrida y publica `run.updated` con `interpretationVersion` y `previousInterpretationVersion`. No toca `editorial_trend_inbox` ni `editorial_presentations`: leída, snooze, descarte y producción siguen bajo la misma clave de tendencia.
+- Hay que subir la constante cuando un cambio en `dossierFormat.ts` o en la proyección haría que los mismos archivos se indexaran distinto.
+
+Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en publicaciones de enlace), la entrada del asistente (`presentationDossierSource.ts`) lo toma de ahí en lugar de recorrer otra vez el archivo y la ficha lo muestra bajo el título, en tres líneas como máximo.
+
+Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
+
+Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).

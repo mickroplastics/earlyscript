@@ -39,9 +39,6 @@ function presentationDossierOf(
   dossier: IndexedDossier,
   profile: TrendPresentationPromptInput["profile"],
 ): PresentationDossier {
-  const excerpts = new Map(
-    (dossier.file.evidence ?? []).map((item) => [item.item_id, item.excerpt ?? ""]),
-  );
   const { summary } = dossier;
   const input: TrendPresentationPromptInput = {
     profile,
@@ -67,7 +64,7 @@ function presentationDossierOf(
       itemId: item.itemId,
       source: item.source,
       title: item.title,
-      excerpt: excerpts.get(item.itemId) ?? "",
+      excerpt: item.excerpt,
       publishedAt: item.publishedAt,
       url: item.externalUrl ?? item.permalink ?? "",
     })),

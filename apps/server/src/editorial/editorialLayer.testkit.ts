@@ -21,6 +21,19 @@ export const FIXTURE_RUN_ID = "run_20261019_20261027T003754_2263f7";
 
 const fixtureRunsDir = NodePath.join(import.meta.dirname, "fixtures", "runs");
 
+/** Two of the 15 dossiers of the trend engine's run of 31 October 2026, in its native format. */
+export const NATIVE_FIXTURE_RUN_ID = "run_20261031_20261031T003855_5e57bf";
+
+/** Adds the native fixture run to a runs directory; kept apart so `withEditorial` starts with one run. */
+export const addNativeFixtureRun = (runsDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.copy(
+      NodePath.join(import.meta.dirname, "fixtures", "native-runs", NATIVE_FIXTURE_RUN_ID),
+      NodePath.join(runsDir, NATIVE_FIXTURE_RUN_ID),
+    );
+  });
+
 interface EditorialTestOptions {
   readonly watch?: boolean;
   readonly fs?: Layer.Layer<FileSystem.FileSystem>;

@@ -74,6 +74,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@earlyscript/editorial-contracts": "workspace:*",
     "@earlyscript/editorial-script": "workspace:*",
     "@effect/graphql-generator": "catalog:",
     "@effect/vitest": "catalog:",

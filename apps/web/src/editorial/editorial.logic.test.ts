@@ -393,6 +393,7 @@ describe("citationSegments", () => {
     itemId,
     source: "hn",
     title: `Title ${itemId}`,
+    excerpt: "",
     author: null,
     publishedAt: "2026-10-15T18:26:30.000Z",
     permalink: null,

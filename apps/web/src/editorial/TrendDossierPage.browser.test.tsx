@@ -61,6 +61,8 @@ const evidence = (index: number) => ({
   itemId: `itm_hn_${index}`,
   source: "hn",
   title: `Quantum item ${index}`,
+  // Link posts have no body: only the second item carries an excerpt.
+  excerpt: index === 2 ? "IBM opened its quantum stack to outside researchers." : "",
   author: "xnx",
   publishedAt: "2026-10-15T18:26:30.000Z",
   permalink: `https://news.ycombinator.com/item?id=${index}`,
@@ -154,6 +156,9 @@ describe("TrendDossierView", () => {
       )
       .toBeVisible();
     await expect.element(screen.getByText("1–6 de 10")).toBeVisible();
+    await expect
+      .element(screen.getByText("IBM opened its quantum stack to outside researchers."))
+      .toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Siguientes" }));
     expect(onEvidencePage).toHaveBeenCalledWith(6);
 

@@ -1,0 +1,159 @@
+{
+  "schema_version": "earlyscript.run/1",
+  "run_id": "run_20261031_20261031T003855_5e57bf",
+  "cutoff_at": "2026-10-31T00:00:00.000Z",
+  "started_at": "2026-10-31T00:38:55.019Z",
+  "engine_version": "0.1.0",
+  "config": {
+    "config_version": "earlyscript.engine.v1",
+    "sources": ["hn", "github"],
+    "embedder": {
+      "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      "revision": "c25a394dd583836952667c12f008335071b3f43d",
+      "dtype": "q8",
+      "pooling": "last_token",
+      "batch_size": 1,
+      "intra_op_threads": 2
+    },
+    "profile": {
+      "include_min": 0.6,
+      "exclude_max": 0.6
+    },
+    "text": {
+      "max_body_chars": 1000,
+      "min_ascii_letter_ratio": 0.9,
+      "excerpt_chars": 500
+    },
+    "cluster": {
+      "threshold": 0.7,
+      "active_days": 30
+    },
+    "stage": {
+      "context_days": 14,
+      "growth_min": 0.69,
+      "growing_min_items_7d": 3,
+      "fading_max": -0.69,
+      "coverage_rule": "per_source"
+    },
+    "rank": {
+      "baseline": {
+        "method": "baseline.items_7d",
+        "weights": {
+          "items_7d": 1
+        }
+      },
+      "weighted": {
+        "method": "weighted_sum.v0.01",
+        "weights": {
+          "growth": 0.5,
+          "log_authors_7d": 0.2,
+          "include_score": 0.3
+        }
+      }
+    },
+    "emit": {
+      "max_dossiers": 20,
+      "max_evidence": 10,
+      "thin_below": 5,
+      "label_terms": 4,
+      "top_terms": 10,
+      "curve_days": 28
+    }
+  },
+  "config_hash": "sha256:290b9ddeec9bf5bc4e0512972d047c106623a3d050789fe0a8c145504d2e9095",
+  "profile": {
+    "path": "/home/mick/earlyscript-data/profiles/singularidev.v1.json",
+    "name": "SingulariDev",
+    "version": null,
+    "hash": "sha256:db510e303cb7f3cff7099230a00d36b1918f28a0e6aa6b8be01727649b8bb80d"
+  },
+  "embedding": {
+    "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+    "revision": "c25a394dd583836952667c12f008335071b3f43d",
+    "dtype": "q8",
+    "pooling": "last_token",
+    "batch_size": 1,
+    "runtime": "transformers.js@4.3.1+onnxruntime-node@1.30.0+cpu+intra_op_threads=2",
+    "platform": "linux",
+    "arch": "x64",
+    "config_hash": "sha256:ef70659813935fe45fc1b0bb486cfb80d309a30d9a447f8374ab86fba705710b"
+  },
+  "platform": {
+    "os": "linux",
+    "arch": "x64",
+    "node": "v26.12.1",
+    "cpus": 22
+  },
+  "status": "ok",
+  "error": null,
+  "corpus": {
+    "dir": "/home/mick/earlyscript-data/live/corpus-2026-10-31",
+    "corpus_used_hash": "sha256:25ceab85123577f8be59aada621f14b0ca2893bdd7424e741c876e98740e1a1d",
+    "corpus_manifest_hash": "sha256:7e1f2828fdbef47710307a28ca2c6eb39f813366c7c46056bfd165b7530c022b",
+    "verified": true,
+    "from_day": "2026-10-03",
+    "to_day": "2026-10-31"
+  },
+  "coverage": {
+    "window_days": 28,
+    "by_source": [
+      {
+        "source": "hn",
+        "days_complete": 28,
+        "days_partial": 0,
+        "days_unavailable": 0
+      },
+      {
+        "source": "github",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      }
+    ],
+    "data_gaps": []
+  },
+  "stats": {
+    "items": {
+      "read": 28593,
+      "before_cutoff": 28593,
+      "excluded": {
+        "not_english": 55,
+        "duplicate_url": 2501
+      },
+      "embedded": 26037
+    },
+    "missing_days": [],
+    "signals": {
+      "total": 8776,
+      "by_stage": {
+        "growing": 99,
+        "steady": 6576,
+        "fading": 2101,
+        "unclassified": 0
+      },
+      "passing_profile": 251,
+      "eligible": 15
+    },
+    "comparisons": 125918953,
+    "signals_hash": "sha256:d990c2ae55a3b35f0d4fa69d9b5673ef125380a2264356aff1b6a743eac9e924",
+    "embedding": {
+      "cache_hits": 14070,
+      "inferred": 11913,
+      "workers": 6,
+      "worker_peak_rss_bytes": 1658253312
+    }
+  },
+  "dossiers": 2,
+  "files": ["dossiers/01-dos_47ea4d4f2ccc.json", "dossiers/03-dos_38ceab3f670f.json"],
+  "logical_hash": "sha256:4be4331a2ce6ef0b87ab32e8c174062b34a82c809f377293e871aad704c93d75",
+  "finished_at": "2026-10-31T00:45:08.780Z",
+  "timings_ms": {
+    "load": 241,
+    "embed": 346935,
+    "stack": 26249,
+    "series_stage_profile_rank": 318,
+    "emit": 4
+  },
+  "duration_ms": 373761,
+  "peak_rss_bytes": 425725952
+}

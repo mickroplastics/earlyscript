@@ -244,6 +244,9 @@ function EvidenceList({
               ) : (
                 <span className="text-sm font-medium text-foreground">{item.title}</span>
               )}
+              {item.excerpt ? (
+                <p className="line-clamp-3 text-xs text-foreground/80">{item.excerpt}</p>
+              ) : null}
               <span className="text-xs text-muted-foreground">
                 <span className="tabular-nums">{dossier.evidenceOffset + index + 1}</span>
                 {" · "}

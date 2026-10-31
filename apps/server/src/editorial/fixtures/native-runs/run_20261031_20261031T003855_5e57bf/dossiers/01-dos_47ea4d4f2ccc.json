@@ -1,0 +1,344 @@
+{
+  "schema_version": "earlyscript.dossier/1",
+  "origin": "earlyscript",
+  "dossier_id": "dos_47ea4d4f2ccc",
+  "run_id": "run_20261031_20261031T003855_5e57bf",
+  "created_at": "2026-10-31T00:45:08.765Z",
+  "cutoff_at": "2026-10-31T00:00:00.000Z",
+  "engine": {
+    "version": "0.1.0",
+    "config_hash": "sha256:290b9ddeec9bf5bc4e0512972d047c106623a3d050789fe0a8c145504d2e9095",
+    "corpus_hash": "sha256:25ceab85123577f8be59aada621f14b0ca2893bdd7424e741c876e98740e1a1d",
+    "embedding": {
+      "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      "revision": "c25a394dd583836952667c12f008335071b3f43d",
+      "dtype": "q8",
+      "pooling": "last_token",
+      "batch_size": 1,
+      "runtime": "transformers.js@4.3.1+onnxruntime-node@1.30.0+cpu+intra_op_threads=2",
+      "platform": "linux",
+      "arch": "x64"
+    }
+  },
+  "profile": {
+    "name": "SingulariDev",
+    "version": null,
+    "hash": "sha256:db510e303cb7f3cff7099230a00d36b1918f28a0e6aa6b8be01727649b8bb80d"
+  },
+  "trend": {
+    "id": "sig_67f2a4ea9b88",
+    "label": "markets money street wall",
+    "label_source": "terms",
+    "top_terms": [
+      "markets",
+      "money",
+      "street",
+      "wall",
+      "outside",
+      "payoff",
+      "startups",
+      "tech",
+      "trade",
+      "bets"
+    ],
+    "stage": "growing",
+    "corroboration": "single_source",
+    "first_seen_at": "2026-10-05T13:22:31.000Z",
+    "last_seen_at": "2026-10-30T21:44:54.000Z",
+    "sources": ["hn"],
+    "items_total": 36,
+    "items_7d": 25,
+    "items_prev_7d": 9,
+    "authors_7d": 24,
+    "growth": 0.955511
+  },
+  "profile_fit": {
+    "include_score": 0.755509,
+    "exclude_score": 0.59881,
+    "passes": true,
+    "nearest_include": "developer tooling, SDKs and protocols for building AI products"
+  },
+  "rankings": {
+    "eligible": 15,
+    "baseline": {
+      "method": "baseline.items_7d",
+      "score": 25,
+      "components": [
+        {
+          "name": "items_7d",
+          "value": 25,
+          "weight": 1,
+          "contribution": 25
+        }
+      ],
+      "position": 1
+    },
+    "weighted": {
+      "method": "weighted_sum.v0.01",
+      "score": 1.348184,
+      "components": [
+        {
+          "name": "growth",
+          "value": 0.955511,
+          "weight": 0.5,
+          "contribution": 0.477756
+        },
+        {
+          "name": "log_authors_7d",
+          "value": 3.218876,
+          "weight": 0.2,
+          "contribution": 0.643775
+        },
+        {
+          "name": "include_score",
+          "value": 0.755509,
+          "weight": 0.3,
+          "contribution": 0.226653
+        }
+      ],
+      "position": 4
+    }
+  },
+  "curve": [
+    {
+      "day": "2026-10-05",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-06",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-07",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-08",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-09",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-10",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-11",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-12",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-13",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-14",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-15",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-16",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-17",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-18",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-19",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-20",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-10-21",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-22",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-23",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-10-24",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-25",
+      "items": 4,
+      "sources": 1,
+      "authors": 4,
+      "known": true
+    },
+    {
+      "day": "2026-10-26",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-27",
+      "items": 5,
+      "sources": 1,
+      "authors": 5,
+      "known": true
+    },
+    {
+      "day": "2026-10-28",
+      "items": 3,
+      "sources": 1,
+      "authors": 3,
+      "known": true
+    },
+    {
+      "day": "2026-10-29",
+      "items": 6,
+      "sources": 1,
+      "authors": 6,
+      "known": true
+    },
+    {
+      "day": "2026-10-30",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    }
+  ],
+  "coverage": {
+    "window_days": 28,
+    "by_source": [
+      {
+        "source": "hn",
+        "days_complete": 28,
+        "days_partial": 0,
+        "days_unavailable": 0
+      },
+      {
+        "source": "github",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      }
+    ],
+    "uncertain": false
+  },
+  "data_gaps": [],
+  "evidence": [
+    {
+      "item_id": "itm_hn_50209163",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50209163",
+      "external_url": "https://jacobin.com/2026/10/artificial-intelligence-investors-finance-bubble",
+      "published_at": "2026-10-23T14:01:41.000Z",
+      "author": "jrepinc",
+      "title": "Wall Street Is Getting Nervous About AI",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:34:19.710Z",
+      "similarity": 0.861113
+    },
+    {
+      "item_id": "itm_hn_50287431",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50287431",
+      "external_url": "https://www.theregister.com/ai-and-ml/2026/10/29/google-struggling-to-make-ai-mode-searches-pay/5306181",
+      "published_at": "2026-10-29T11:38:56.000Z",
+      "author": "giamma",
+      "title": "Google struggling to make money from AI Mode",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:34:30.730Z",
+      "similarity": 0.845504
+    },
+    {
+      "item_id": "itm_hn_50251518",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50251518",
+      "external_url": "https://codingplans.dev/briefs/us-model-labs-part-1/",
+      "published_at": "2026-10-26T21:48:19.000Z",
+      "author": "nedsma",
+      "title": "The US AI Labs, Mapped: Founders, Revenue and the Money Behind Them",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:34:24.828Z",
+      "similarity": 0.845103
+    }
+  ],
+  "evidence_status": "sufficient"
+}

@@ -160,15 +160,15 @@ export const EditorialTrendSummary = Schema.Struct({
   items7d: NonNegativeInt,
   items28d: NonNegativeInt,
   authors7d: NonNegativeInt,
-  /** Competition rank by `items7d` (the engine's baseline); ties share a rank. */
+  /** Position in the engine's baseline ranking (`items_7d` desc, then trend id) among the run's eligible trends. */
   volumeRank: PositiveInt,
-  /** Rank by the engine's weighted score. */
+  /** Position in the engine's weighted ranking among the run's eligible trends. */
   scoreRank: PositiveInt,
   score: Schema.Finite,
   growth: Schema.NullOr(Schema.Finite),
   affinity: Schema.NullOr(Schema.Finite),
   sourceCount: NonNegativeInt,
-  /** Sources named by the evidence; `sourceCount` can be higher when the curve saw more. */
+  /** Sources of the trend's items (of its evidence for Earlywindow runs); `sourceCount` can be higher when the curve saw more. */
   sources: Schema.Array(Schema.String),
   /** Last 14 days of `items`; `null` for a day that was not captured. */
   sparkline: Schema.Array(Schema.NullOr(NonNegativeInt)),
@@ -182,7 +182,8 @@ export type EditorialTrendSummary = typeof EditorialTrendSummary.Type;
 
 export const EditorialRankComponent = Schema.Struct({
   name: Schema.String,
-  value: Schema.Finite,
+  /** `null`: the engine had no value for the component, which then adds 0. */
+  value: Schema.NullOr(Schema.Finite),
   weight: Schema.Finite,
   contribution: Schema.Finite,
 });
@@ -192,6 +193,8 @@ export const EditorialEvidenceItem = Schema.Struct({
   itemId: Schema.String,
   source: Schema.String,
   title: Schema.String,
+  /** The engine's excerpt of the item's body; empty when the item has none (a link post). */
+  excerpt: Schema.String,
   author: Schema.NullOr(Schema.String),
   publishedAt: IsoDateTime,
   permalink: Schema.NullOr(Schema.String),
