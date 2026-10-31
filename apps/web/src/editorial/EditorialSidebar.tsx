@@ -2,7 +2,7 @@ import { EditorialDossierId, EditorialRunId, type EnvironmentId } from "@t3tools
 import { useMatches, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
 import { ChartColumnIcon, MessagesSquareIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
-import { useEffect, type ComponentProps } from "react";
+import { useEffect, useRef, type ComponentProps } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../components/sidebar/SidebarChrome";
@@ -14,6 +14,7 @@ import { cn } from "../lib/utils";
 import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../state/environments";
 import { compactCount, isThreadRouteId, resolveRouteSpace, spaceTabName } from "./editorial.logic";
 import { selectEnvironmentSpace, useSpaceStore, type EditorialSpace } from "./spaceStore";
+import { useSidebarLocale } from "./locale/ShellLocale";
 import { NewManualThreadButton } from "./NewManualThreadButton";
 import { ResultsNavigation } from "./results/ResultsNavigation";
 import { TrendInbox, useTrendInbox } from "./TrendInbox";
@@ -170,6 +171,9 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
   const environmentId = routeEnvironmentId ?? primaryEnvironmentId;
   const storedSpace = useSpaceStore((state) => selectEnvironmentSpace(state, environmentId).space);
   const space = resolveRouteSpace(routeId) ?? storedSpace;
+  // Upstream's sidebar in Spanish: the scope is `[data-app-sidebar]`, found from this wrapper.
+  const localeAnchor = useRef<HTMLDivElement>(null);
+  useSidebarLocale(localeAnchor);
 
   return (
     <>
@@ -177,7 +181,11 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
       {environmentId && space === "threads" ? (
         <NewManualThreadButton environmentId={environmentId} />
       ) : null}
-      <div className="contents *:order-2 [&>*:first-child]:order-0" data-editorial-space={space}>
+      <div
+        ref={localeAnchor}
+        className="contents *:order-2 [&>*:first-child]:order-0"
+        data-editorial-space={space}
+      >
         {space === "threads" || environmentId === null ? (
           <ThreadSidebar {...props} />
         ) : (

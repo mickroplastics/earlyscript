@@ -63,6 +63,7 @@ import {
   EDITORIAL_SETTINGS_PATH,
   EditorialSettingsIcon,
 } from "../../editorial/settings/settingsEntry";
+import { SettingsLocale } from "../../editorial/locale/ShellLocale";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -446,6 +447,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <T3ConnectSidebarAvatar />
         </Suspense>
       </SidebarFooter>
+      <SettingsLocale />
     </nav>
   );
 }

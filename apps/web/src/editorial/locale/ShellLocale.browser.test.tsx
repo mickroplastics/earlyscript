@@ -1,0 +1,229 @@
+import { useRef, useState } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { render } from "../../../test/render";
+import { useSidebarLocale, useThreadAreaLocale } from "./ShellLocale";
+
+/** Counts every MutationObserver callback the page runs while `body` executes. */
+async function countObserverCallbacks(body: () => Promise<void>): Promise<number> {
+  const Native = window.MutationObserver;
+  let callbacks = 0;
+  window.MutationObserver = class extends Native {
+    constructor(callback: MutationCallback) {
+      super((records, observer) => {
+        callbacks += 1;
+        if (callbacks > 500) {
+          observer.disconnect();
+          return;
+        }
+        callback(records, observer);
+      });
+    }
+  };
+  try {
+    await body();
+  } finally {
+    window.MutationObserver = Native;
+  }
+  return callbacks;
+}
+
+/** The shape of upstream's sidebar: the editorial wrapper inside `[data-app-sidebar]`. */
+const NO_ANCHOR = { current: null };
+
+function SidebarDouble({
+  rows = 1,
+  localized = true,
+}: {
+  readonly rows?: number;
+  readonly localized?: boolean;
+}) {
+  const anchor = useRef<HTMLDivElement>(null);
+  useSidebarLocale(localized ? anchor : NO_ANCHOR);
+  return (
+    <>
+      <nav data-app-sidebar="" aria-label="Threads" data-testid="sidebar">
+        <div ref={anchor} className="contents">
+          <input aria-label="Search threads" placeholder="Search" defaultValue="Settled" />
+          {Array.from({ length: rows }, (_, index) => (
+            <div key={index} data-thread-item="" data-testid={`row-${index}`}>
+              {/* Thread titles are user text: upstream marks them with `dir`. */}
+              <span dir="auto">Settled</span>
+              <span className="sr-only">Settled</span>
+              <span data-testid={`time-${index}`}>42m</span>
+              <button type="button" aria-label="Snooze thread">
+                Settle
+              </button>
+            </div>
+          ))}
+          <span data-testid="section">Settled</span>
+          <div data-editorial-space="trends">
+            <span data-testid="trend">Settled</span>
+          </div>
+        </div>
+      </nav>
+      <div data-sidebar-control="">
+        <button type="button" aria-label="Toggle main sidebar" />
+      </div>
+      <p data-testid="outside">Settled</p>
+    </>
+  );
+}
+
+function ThreadDouble() {
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  useThreadAreaLocale(area);
+  return (
+    <div ref={setArea} className="contents" data-testid="thread">
+      <p>Send a message to start the conversation.</p>
+      <div data-timeline-row-id="message-1">
+        <p data-testid="message">Settled</p>
+      </div>
+      <div contentEditable suppressContentEditableWarning aria-label="Message New thread">
+        Settled
+      </div>
+      <div>Ask anything. @ files, $ skills, / commands</div>
+    </div>
+  );
+}
+
+/** Ends a batch: the observer's microtask was queued by the first mutation, so it runs first. */
+const endBatch = () => Promise.resolve();
+
+describe("shell locale scopes", () => {
+  it("translates the sidebar and its toggle, keeps user text, and restores on unmount", async () => {
+    let screen: Awaited<ReturnType<typeof render>> | undefined;
+    const callbacks = await countObserverCallbacks(async () => {
+      screen = await render(<SidebarDouble />);
+      const root = screen.getByTestId("sidebar").element();
+      await vi.waitFor(() =>
+        expect(screen!.getByTestId("section").element().textContent).toBe("Resueltos"),
+      );
+      // Nodes React adds later, and a minute tick rewriting the time in place.
+      const added = ["Pinned", "Unknown upstream text", "Snoozed"].map((label) => {
+        const span = root.appendChild(document.createElement("span"));
+        span.textContent = label;
+        return span;
+      });
+      await vi.waitFor(() => expect(added[2]!.textContent).toBe("Pospuestos"));
+      expect(added[0]!.textContent).toBe("Fijados");
+      expect(added[1]!.textContent).toBe("Unknown upstream text");
+      screen.getByTestId("time-0").element().firstChild!.nodeValue = "43m";
+      await vi.waitFor(() =>
+        expect(screen!.getByTestId("time-0").element().textContent).toBe("43 min"),
+      );
+      // Upstream's context menu: built by hand, appended to body, focus moved into it at once.
+      root
+        .querySelector("[data-thread-item]")!
+        .dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      const menu = document.body.appendChild(document.createElement("div"));
+      menu.tabIndex = -1;
+      menu.innerHTML = "<button>Pin thread</button><button>Delete</button>";
+      menu.focus();
+      await vi.waitFor(() => expect(menu.textContent).toBe("Fijar el hiloBorrar"));
+      // A portal opened after a press elsewhere is not the sidebar's.
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      const other = document.body.appendChild(document.createElement("div"));
+      other.textContent = "Delete";
+      const marker = root.appendChild(document.createElement("span"));
+      marker.textContent = "Working";
+      await vi.waitFor(() => expect(marker.textContent).toBe("En curso"));
+      expect(other.textContent).toBe("Delete");
+      for (const node of [...added, marker, menu, other]) node.remove();
+    });
+    // A handful of batches, not a loop.
+    expect(callbacks).toBeLessThanOrEqual(12);
+
+    const view = screen!;
+    const row = view.getByTestId("row-0").element();
+    expect(row.querySelector("[dir]")!.textContent).toBe("Settled");
+    expect(row.querySelector(".sr-only")!.textContent).toBe("Settled");
+    expect(row.querySelector("button")!.textContent).toBe("Resolver");
+    expect(row.querySelector("button")!.getAttribute("aria-label")).toBe("Posponer el hilo");
+    expect(view.getByTestId("trend").element().textContent).toBe("Settled");
+    expect(view.getByTestId("outside").element().textContent).toBe("Settled");
+    const input = view.getByTestId("sidebar").element().querySelector("input")!;
+    expect(input.placeholder).toBe("Buscar");
+    expect(input.value).toBe("Settled");
+    const toggle = document.querySelector("[data-sidebar-control] button")!;
+    expect(toggle.getAttribute("aria-label")).toBe("Mostrar u ocultar la barra lateral");
+    const nav = view.getByTestId("sidebar").element();
+    expect(nav.getAttribute("aria-label")).toBe("Hilos");
+
+    const section = view.getByTestId("section").element();
+    await view.unmount();
+    expect(section.textContent).toBe("Settled");
+    expect(input.placeholder).toBe("Search");
+    expect(toggle.getAttribute("aria-label")).toBe("Toggle main sidebar");
+  });
+
+  it("leaves messages and the editor alone while an agent streams", async () => {
+    await using screen = await render(<ThreadDouble />);
+    const thread = screen.getByTestId("thread").element();
+    await vi.waitFor(() =>
+      expect(thread.firstElementChild!.textContent).toBe(
+        "Escribe un mensaje para empezar la conversación.",
+      ),
+    );
+    expect(thread.lastElementChild!.textContent).toBe(
+      "Pregunta lo que quieras. @ archivos, $ habilidades, / órdenes",
+    );
+    const message = screen.getByTestId("message").element();
+    const editor = thread.querySelector("[contenteditable]")!;
+    expect(message.textContent).toBe("Settled");
+    expect(editor.textContent?.trim()).toBe("Settled");
+    expect(editor.getAttribute("aria-label")).toBe("Message New thread");
+
+    // An agent streaming 120 batches into a message, ten nodes each.
+    const text = message.appendChild(document.createTextNode(""));
+    for (let batch = 0; batch < 120; batch += 1) {
+      for (let token = 0; token < 10; token += 1) {
+        text.nodeValue = `${text.nodeValue ?? ""} Settled`;
+        message.appendChild(document.createElement("span")).textContent = "Delete";
+      }
+      await endBatch();
+    }
+    expect(
+      [...message.querySelectorAll("span")].every((span) => span.textContent === "Delete"),
+    ).toBe(true);
+    expect(text.nodeValue?.startsWith(" Settled Settled")).toBe(true);
+  });
+
+  it("runs at most once per batch while content streams into a scope", async () => {
+    let fresh: Awaited<ReturnType<typeof render>> | undefined;
+    let callbacks = 0;
+    callbacks = await countObserverCallbacks(async () => {
+      fresh = await render(<ThreadDouble />);
+      const message = fresh.getByTestId("message").element();
+      await endBatch();
+      for (let frame = 0; frame < 60; frame += 1) {
+        for (let token = 0; token < 10; token += 1) {
+          message.appendChild(document.createElement("span")).textContent = "Settled";
+        }
+        await endBatch();
+      }
+      expect(message.lastElementChild!.textContent).toBe("Settled");
+    });
+    // One per frame at most (plus mount), never one per mutation.
+    expect(callbacks).toBeLessThanOrEqual(62);
+    await fresh!.unmount();
+  });
+
+  it("walks a 500-row sidebar once on mount and writes only what it knows", async () => {
+    let view: Awaited<ReturnType<typeof render>> | undefined;
+    const callbacks = await countObserverCallbacks(async () => {
+      view = await render(<SidebarDouble rows={500} />);
+      await vi.waitFor(() =>
+        expect(view!.getByTestId("time-499").element().textContent).toBe("42 min"),
+      );
+      await endBatch();
+    });
+    // The mount translates synchronously in the effect; React's own commits are the only batches.
+    expect(callbacks).toBeLessThanOrEqual(2);
+    const rows = view!.getByTestId("sidebar").element().querySelectorAll("[data-thread-item]");
+    expect([...rows].every((row) => row.querySelector("[dir]")!.textContent === "Settled")).toBe(
+      true,
+    );
+    await view!.unmount();
+  });
+});

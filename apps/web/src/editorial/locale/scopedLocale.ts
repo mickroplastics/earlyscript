@@ -1,0 +1,229 @@
+import { useEffect, type RefObject } from "react";
+
+/**
+ * Spanish for upstream text that has no translation layer, by exact whole strings: a text node
+ * or an attribute is rewritten only when its whole (whitespace-folded) value is a known string.
+ * Used by the manual browser and by the shell (sidebar, thread area, settings), each scoped to
+ * containers it names; never the whole document.
+ */
+
+/** A whole-string pattern; the replacement may translate captured parts with the same table. */
+export type LocalePattern = readonly [
+  RegExp,
+  string | ((match: RegExpExecArray, translate: (value: string) => string) => string),
+];
+
+export interface LocaleTable {
+  readonly text?: Readonly<Record<string, string>>;
+  readonly patterns?: ReadonlyArray<LocalePattern>;
+  /** Last resort: returns the Spanish or the same string when it does not know it. */
+  readonly functions?: ReadonlyArray<(value: string) => string>;
+}
+
+/** Translates a folded string, or undefined when no table knows it. */
+function translateFolded(
+  tables: ReadonlyArray<LocaleTable>,
+  folded: string,
+  depth: number,
+): string | undefined {
+  for (const table of tables) {
+    const exact = table.text?.[folded];
+    if (exact !== undefined) return exact;
+  }
+  if (depth > 1) return undefined;
+  const nested = (value: string) => translateFolded(tables, value, depth + 1) ?? value;
+  for (const table of tables) {
+    for (const [regex, replacement] of table.patterns ?? []) {
+      const match = regex.exec(folded);
+      if (match === null) continue;
+      return typeof replacement === "string"
+        ? folded.replace(regex, replacement)
+        : replacement(match, nested);
+    }
+  }
+  for (const table of tables) {
+    for (const fn of table.functions ?? []) {
+      const next = fn(folded);
+      if (next !== folded) return next;
+    }
+  }
+  return undefined;
+}
+
+export type Translator = (value: string | null) => string | undefined;
+
+/**
+ * The Spanish for a string, its surrounding whitespace kept (`Profile: ` then the name), or
+ * undefined when no table knows it or it would not change.
+ */
+export function makeTranslator(tables: ReadonlyArray<LocaleTable>): Translator {
+  return (value) => {
+    if (value === null) return undefined;
+    const folded = value.replace(/\s+/g, " ").trim();
+    if (folded.length === 0) return undefined;
+    const translated = translateFolded(tables, folded, 0);
+    if (translated === undefined) return undefined;
+    const lead = /^\s*/.exec(value)?.[0] ?? "";
+    const trail = /\s*$/.exec(value)?.[0] ?? "";
+    const next = `${lead}${translated}${trail}`;
+    return next === value ? undefined : next;
+  };
+}
+
+export interface ScopedLocaleOptions {
+  readonly translate: Translator;
+  /** The containers to translate, resolved from the anchor when the effect starts. */
+  readonly roots: (anchor: Element) => ReadonlyArray<Element>;
+  /** Content never rewritten: user data, messages, editors, code. Matched with `closest`. */
+  readonly skip?: string;
+  readonly attributes?: ReadonlyArray<string>;
+}
+
+interface Rewrite {
+  readonly original: string;
+  readonly written: string;
+}
+
+const DEFAULT_ATTRIBUTES = ["aria-label", "placeholder", "title"] as const;
+
+/** A portal opened this long after an interaction inside a container belongs to it. */
+const PORTAL_WINDOW_MS = 2_000;
+
+/**
+ * Translates `options.roots(anchor)` and the portals opened from them while mounted, and puts
+ * every rewritten string back on unmount. Writes only on change, observer disconnected, and
+ * drops the records its writes queued, so it never sees its own writes. Stable `options`.
+ */
+export function useScopedLocale(
+  anchor: RefObject<Element | null> | Element | null,
+  options: ScopedLocaleOptions,
+): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes DOM that upstream components render, including portals outside this component's tree, and rewrites its text in place
+  useEffect(() => {
+    const element = anchor instanceof Element || anchor === null ? anchor : anchor.current;
+    if (element === null) return;
+    const roots = options.roots(element);
+    if (roots.length === 0) return;
+    const { translate, skip } = options;
+    const attributeNames = options.attributes ?? DEFAULT_ATTRIBUTES;
+    const texts = new Map<Text, Rewrite>();
+    const attributes = new Map<Element, Map<string, Rewrite>>();
+    const portals = new Set<Element>();
+    let lastInsideAt = Number.NEGATIVE_INFINITY;
+    let lastWasInside = false;
+
+    const isInside = (node: Node | null) =>
+      node !== null &&
+      (roots.some((root) => root.contains(node)) ||
+        [...portals].some((portal) => portal.contains(node)));
+    const skipped = (element: Element | null) =>
+      skip !== undefined && element !== null && element.closest(skip) !== null;
+
+    const translateTree = (node: Node) => {
+      if (node instanceof Text) {
+        if (skipped(node.parentElement)) return;
+        const next = translate(node.nodeValue);
+        if (next === undefined) return;
+        texts.set(node, {
+          original: texts.get(node)?.original ?? node.nodeValue ?? "",
+          written: next,
+        });
+        node.nodeValue = next;
+        return;
+      }
+      if (!(node instanceof Element) || skipped(node)) return;
+      for (const name of attributeNames) {
+        const value = node.getAttribute(name);
+        const next = translate(value);
+        if (next === undefined || value === null) continue;
+        const byName = attributes.get(node) ?? new Map<string, Rewrite>();
+        byName.set(name, { original: byName.get(name)?.original ?? value, written: next });
+        attributes.set(node, byName);
+        node.setAttribute(name, next);
+      }
+      // Skipped descendants are pruned by the check at the top of each call.
+      for (const child of node.childNodes) translateTree(child);
+    };
+
+    const observeOptions: MutationObserverInit = {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: [...attributeNames],
+    };
+    const observer = new MutationObserver((records) => {
+      // Off while writing, and whatever the writes queued is dropped: they are ours.
+      observer.disconnect();
+      for (const record of records) {
+        if (record.target === document.body) {
+          for (const added of record.addedNodes) {
+            if (
+              added instanceof Element &&
+              !roots.some((root) => added.contains(root)) &&
+              lastWasInside &&
+              performance.now() - lastInsideAt < PORTAL_WINDOW_MS
+            ) {
+              portals.add(added);
+              translateTree(added);
+            }
+          }
+          for (const removed of record.removedNodes) {
+            if (removed instanceof Element) portals.delete(removed);
+          }
+        } else if (record.type === "childList") {
+          for (const added of record.addedNodes) translateTree(added);
+        } else {
+          translateTree(record.target);
+        }
+      }
+      observer.takeRecords();
+      observe();
+    });
+    const observe = () => {
+      for (const root of roots) observer.observe(root, observeOptions);
+      for (const portal of portals) observer.observe(portal, observeOptions);
+      // New portals only: body's own children, not its subtree.
+      observer.observe(document.body, { childList: true });
+    };
+
+    /**
+     * Whether the latest interaction landed in a container or one of its portals. Only a press
+     * or a key outside counts as leaving: opening a menu can move focus (and the pointer) into
+     * the new portal before the observer has adopted it, and that must not disown it.
+     */
+    const onInteraction = (event: Event) => {
+      const inside = isInside(event.target instanceof Node ? event.target : null);
+      if (inside) {
+        lastWasInside = true;
+        lastInsideAt = performance.now();
+      } else if (event.type === "pointerdown" || event.type === "keydown") {
+        lastWasInside = false;
+      }
+    };
+    const interactions = ["pointerdown", "pointerover", "focusin", "keydown"] as const;
+    for (const type of interactions) {
+      document.addEventListener(type, onInteraction, { capture: true, passive: true });
+    }
+
+    for (const root of roots) translateTree(root);
+    observe();
+    return () => {
+      observer.disconnect();
+      for (const type of interactions) {
+        document.removeEventListener(type, onInteraction, { capture: true });
+      }
+      // Back to upstream's strings where they are still ours; React may have replaced some.
+      texts.forEach((rewrite, node) => {
+        if (node.nodeValue === rewrite.written) node.nodeValue = rewrite.original;
+      });
+      attributes.forEach((byName, element) => {
+        byName.forEach((rewrite, name) => {
+          if (element.getAttribute(name) === rewrite.written) {
+            element.setAttribute(name, rewrite.original);
+          }
+        });
+      });
+    };
+  }, [anchor, options]);
+}

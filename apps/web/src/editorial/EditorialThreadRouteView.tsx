@@ -1,6 +1,9 @@
+import { useState } from "react";
+
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { SidebarInset } from "../components/ui/sidebar";
 import type { ThreadRouteTarget } from "../threadRoutes";
+import { useThreadAreaLocale } from "./locale/ShellLocale";
 import { DeletedManualThread } from "./ManualThreadData";
 import { ManualVideoWorkspace } from "./ManualVideoWorkspace";
 import { useVideoThreadMode } from "./videoState";
@@ -20,6 +23,9 @@ export function EditorialThreadRouteView({
 }) {
   const threadRef = target.kind === "server" ? target.threadRef : null;
   const mode = useVideoThreadMode(threadRef);
+  // Upstream's thread area in Spanish while it is mounted (not the manual workspace's).
+  const [threadArea, setThreadArea] = useState<HTMLDivElement | null>(null);
+  useThreadAreaLocale(threadArea);
   if ((mode === "manual" || mode === "manual-deleted") && threadRef !== null) {
     return (
       <SidebarInset
@@ -37,6 +43,7 @@ export function EditorialThreadRouteView({
   const pending = mode === "unknown";
   return (
     <div
+      ref={setThreadArea}
       className="contents"
       // Inline, not a utility class: hidden even before the stylesheet applies.
       style={pending ? { visibility: "hidden" } : undefined}

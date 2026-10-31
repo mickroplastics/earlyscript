@@ -1,4 +1,12 @@
-import { useEffect, type RefObject } from "react";
+import type { RefObject } from "react";
+
+import {
+  makeTranslator,
+  useScopedLocale,
+  type LocalePattern,
+  type LocaleTable,
+  type ScopedLocaleOptions,
+} from "./locale/scopedLocale";
 
 /**
  * Spanish for the visible text of upstream's embedded browser, which has no translation layer.
@@ -55,155 +63,31 @@ export const MANUAL_BROWSER_TEXT: Readonly<Record<string, string>> = {
 };
 
 /** Strings with a value inside: the recent-pages list of the empty browser. */
-const MANUAL_BROWSER_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+const MANUAL_BROWSER_PATTERNS: ReadonlyArray<LocalePattern> = [
   [/^Remove (.+) from history$/, "Quitar $1 del historial"],
 ];
 
-const ATTRIBUTES = ["aria-label", "placeholder", "title"] as const;
-
-/** A portal opened this long after an interaction inside the workspace belongs to it. */
-const PORTAL_WINDOW_MS = 2_000;
+export const MANUAL_BROWSER_TABLE: LocaleTable = {
+  text: MANUAL_BROWSER_TEXT,
+  patterns: MANUAL_BROWSER_PATTERNS,
+};
 
 /**
  * The Spanish for a string, its surrounding whitespace kept (`Profile: ` then the name), or
  * undefined when it has none or it would not change.
  */
-export function translateBrowserText(value: string | null): string | undefined {
-  if (value === null) return undefined;
-  const folded = value.replace(/\s+/g, " ").trim();
-  if (folded.length === 0) return undefined;
-  let translated: string | undefined = MANUAL_BROWSER_TEXT[folded];
-  if (translated === undefined) {
-    const pattern = MANUAL_BROWSER_PATTERNS.find(([regex]) => regex.test(folded));
-    translated = pattern === undefined ? undefined : folded.replace(pattern[0], pattern[1]);
-  }
-  if (translated === undefined) return undefined;
-  const lead = /^\s*/.exec(value)?.[0] ?? "";
-  const trail = /\s*$/.exec(value)?.[0] ?? "";
-  const next = `${lead}${translated}${trail}`;
-  return next === value ? undefined : next;
-}
+export const translateBrowserText = makeTranslator([MANUAL_BROWSER_TABLE]);
 
-interface Rewrite {
-  readonly original: string;
-  readonly written: string;
-}
+const MANUAL_BROWSER_LOCALE: ScopedLocaleOptions = {
+  translate: translateBrowserText,
+  roots: (container) => [container],
+};
 
 /**
  * Translates the embedded browser while the manual workspace is mounted, inside the workspace
  * and in the portals (menus, tooltips) it opens, and puts every rewritten string back when it
- * unmounts. Writes only when a value changes, with the observer disconnected, so a mutation it
- * makes never reaches it.
+ * unmounts (`useScopedLocale`).
  */
 export function useManualBrowserLocale(container: RefObject<HTMLElement | null>): void {
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes DOM the upstream preview renders, including portals outside this component's tree, and rewrites its text in place
-  useEffect(() => {
-    const root = container.current;
-    if (root === null) return;
-    const texts = new Map<Text, Rewrite>();
-    const attributes = new Map<Element, Map<string, Rewrite>>();
-    const portals = new Set<Element>();
-    let lastInsideAt = Number.NEGATIVE_INFINITY;
-    let lastWasInside = false;
-
-    const isInside = (node: Node | null) =>
-      node !== null &&
-      (root.contains(node) || [...portals].some((portal) => portal.contains(node)));
-
-    const translateTree = (node: Node) => {
-      if (node instanceof Text) {
-        const next = translateBrowserText(node.nodeValue);
-        if (next === undefined) return;
-        texts.set(node, {
-          original: texts.get(node)?.original ?? node.nodeValue ?? "",
-          written: next,
-        });
-        node.nodeValue = next;
-        return;
-      }
-      if (!(node instanceof Element)) return;
-      for (const name of ATTRIBUTES) {
-        const value = node.getAttribute(name);
-        const next = translateBrowserText(value);
-        if (next === undefined || value === null) continue;
-        const byName = attributes.get(node) ?? new Map<string, Rewrite>();
-        byName.set(name, { original: byName.get(name)?.original ?? value, written: next });
-        attributes.set(node, byName);
-        node.setAttribute(name, next);
-      }
-      for (const child of node.childNodes) translateTree(child);
-    };
-
-    const options: MutationObserverInit = {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: [...ATTRIBUTES],
-    };
-    const observer = new MutationObserver((records) => {
-      // Off while writing, and whatever the writes queued is dropped: they are ours.
-      observer.disconnect();
-      for (const record of records) {
-        if (record.target === document.body) {
-          for (const added of record.addedNodes) {
-            if (
-              added instanceof Element &&
-              !added.contains(root) &&
-              lastWasInside &&
-              performance.now() - lastInsideAt < PORTAL_WINDOW_MS
-            ) {
-              portals.add(added);
-              translateTree(added);
-            }
-          }
-          for (const removed of record.removedNodes) {
-            if (removed instanceof Element) portals.delete(removed);
-          }
-        } else if (record.type === "childList") {
-          for (const added of record.addedNodes) translateTree(added);
-        } else {
-          translateTree(record.target);
-        }
-      }
-      observer.takeRecords();
-      observe();
-    });
-    const observe = () => {
-      observer.observe(root, options);
-      for (const portal of portals) observer.observe(portal, options);
-      // New portals only: body's own children, not its subtree.
-      observer.observe(document.body, { childList: true });
-    };
-
-    /** Whether the latest pointer or focus landed in the workspace or one of its portals. */
-    const onInteraction = (event: Event) => {
-      lastWasInside = isInside(event.target instanceof Node ? event.target : null);
-      if (lastWasInside) lastInsideAt = performance.now();
-    };
-    const interactions = ["pointerdown", "pointerover", "focusin", "keydown"] as const;
-    for (const type of interactions) {
-      document.addEventListener(type, onInteraction, { capture: true, passive: true });
-    }
-
-    translateTree(root);
-    observe();
-    return () => {
-      observer.disconnect();
-      for (const type of interactions) {
-        document.removeEventListener(type, onInteraction, { capture: true });
-      }
-      // Back to upstream's strings where they are still ours; React may have replaced some.
-      texts.forEach((rewrite, node) => {
-        if (node.nodeValue === rewrite.written) node.nodeValue = rewrite.original;
-      });
-      attributes.forEach((byName, element) => {
-        byName.forEach((rewrite, name) => {
-          if (element.getAttribute(name) === rewrite.written) {
-            element.setAttribute(name, rewrite.original);
-          }
-        });
-      });
-    };
-  }, [container]);
+  useScopedLocale(container, MANUAL_BROWSER_LOCALE);
 }
