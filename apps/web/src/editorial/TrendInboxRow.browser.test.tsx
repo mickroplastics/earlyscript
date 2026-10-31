@@ -76,7 +76,7 @@ describe("TrendInboxRow", () => {
                 citedItemIds: [],
                 provider: "claudeAgent",
                 model: "claude-haiku-5-5",
-                promptVersion: "trend-presentation.v2",
+                promptVersion: "trend-presentation.v3",
                 generatedAt: "2026-10-31T12:00:00.000Z",
               },
             }}
@@ -98,5 +98,35 @@ describe("TrendInboxRow", () => {
         ),
       )
       .toBeVisible();
+  });
+
+  it("dims an outdated title and says so", async () => {
+    await using screen = await render(
+      <SidebarProvider defaultOpen>
+        <SidebarMenu>
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{
+              ...QUANTUM,
+              presentation: {
+                title: "IBM abre su pila de computación cuántica",
+                summary: { whatHappened: "a", whyItMatters: "b", videoAngle: "c" },
+                citedItemIds: [],
+                provider: "claudeAgent",
+                model: "claude-haiku-5-5",
+                promptVersion: "trend-presentation.v2",
+                generatedAt: "2026-10-31T12:00:00.000Z",
+                status: "stale",
+              },
+            }}
+            isActive={false}
+          />
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    const title = screen.container.querySelector("[data-presentation-title]");
+    expect(title?.hasAttribute("data-stale")).toBe(true);
+    const link = screen.getByRole("link", { name: /IBM abre su pila/ });
+    expect(link.element().textContent).toContain("Redacción desactualizada.");
   });
 });

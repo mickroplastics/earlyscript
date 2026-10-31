@@ -183,7 +183,7 @@ describe("TrendDossierView", () => {
           citedItemIds: ["itm_hn_2", "itm_hn_8", "itm_hn_1"],
           provider: "claudeAgent",
           model: "claude-haiku-5-5",
-          promptVersion: "trend-presentation.v2",
+          promptVersion: "trend-presentation.v3",
           generatedAt: "2026-10-31T12:00:00.000Z",
         },
       },
@@ -265,5 +265,46 @@ describe("TrendDossierView", () => {
       />,
     );
     await expect.element(screen.getByRole("button", { name: /Redactando/ })).toBeDisabled();
+  });
+
+  it("marks a presentation written for an earlier input as outdated and offers to regenerate", async () => {
+    setup();
+    const onRegenerate = vi.fn();
+    const stale: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        presentation: {
+          title: "IBM abre su pila de computación cuántica",
+          summary: {
+            whatHappened: "Pasó algo.",
+            whyItMatters: "Importa.",
+            videoAngle: "Un video.",
+          },
+          citedItemIds: [],
+          provider: "claudeAgent",
+          model: "claude-haiku-5-5",
+          promptVersion: "trend-presentation.v2",
+          generatedAt: "2026-10-31T12:00:00.000Z",
+          status: "stale",
+        },
+      },
+    };
+    await using screen = await render(
+      <TrendDossierView
+        dossier={stale}
+        evidence={stale}
+        onEvidencePage={() => {}}
+        presentationActions={{ busy: null, error: null, onDraft: vi.fn(), onRegenerate }}
+      />,
+    );
+    await expect.element(screen.getByText("Desactualizado", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("Redacción desactualizada")).toBeVisible();
+    // The previous text stays readable until it is regenerated.
+    await expect
+      .element(screen.getByRole("heading", { level: 1 }))
+      .toHaveTextContent("IBM abre su pila de computación cuántica");
+    await userEvent.click(screen.getByRole("button", { name: "Regenerar" }));
+    expect(onRegenerate).toHaveBeenCalledOnce();
   });
 });

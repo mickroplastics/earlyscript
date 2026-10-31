@@ -385,6 +385,16 @@ function TrendPresentationSummary({
 }) {
   return (
     <section aria-label="Resumen del asistente" className="flex flex-col gap-3">
+      {presentation.status === "stale" ? (
+        <Alert variant="warning">
+          <TriangleAlertIcon />
+          <AlertTitle>Redacción desactualizada</AlertTitle>
+          <AlertDescription>
+            Se escribió con una evidencia, un perfil del canal o una versión del prompt anteriores.
+            Regenera para leer una redacción sobre la ficha actual.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <dl className="flex flex-col gap-2.5 text-sm text-foreground">
         {SUMMARY_PARTS.map((part) => (
           <div key={part.key} className="flex flex-col gap-0.5">
@@ -403,7 +413,7 @@ function TrendPresentationSummary({
         {actions ? (
           <Button
             size="xs"
-            variant="ghost-muted"
+            variant={presentation.status === "stale" ? "outline" : "ghost-muted"}
             disabled={actions.busy !== null}
             onClick={actions.onRegenerate}
           >
@@ -489,9 +499,14 @@ export function TrendDossierView({
     <>
       <header className="flex min-w-0 flex-col gap-2">
         {presentation ? (
-          <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <SparklesIcon aria-hidden className="size-3.5" />
             Redactado por el asistente
+            {presentation.status === "stale" ? (
+              <Badge variant="warning" size="sm">
+                Desactualizado
+              </Badge>
+            ) : null}
           </p>
         ) : null}
         <h1 className="text-xl font-semibold text-foreground">
