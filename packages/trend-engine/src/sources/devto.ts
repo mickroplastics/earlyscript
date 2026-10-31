@@ -167,7 +167,12 @@ export function devtoCollector(): (
       const first = Date.parse(response.body[0]?.published_at ?? "");
       // Only an older next page without a repeat of this one can hide articles between them.
       const overlaps = response.body.some((article) => seen.has(article.id));
-      if (snapshot < previousSnapshot && !overlaps && Number.isFinite(first) && oldest !== Infinity) {
+      if (
+        snapshot < previousSnapshot &&
+        !overlaps &&
+        Number.isFinite(first) &&
+        oldest !== Infinity
+      ) {
         const gap = { from: Math.min(first, oldest), to: Math.max(first, oldest) };
         if (!(await bridge(page - 1, gap, get).catch(passFailure))) gaps.push(gap);
       }
@@ -214,7 +219,9 @@ export function devtoCollector(): (
     const inDay = eligible
       .toSorted(
         (a, b) =>
-          b.reactions - a.reactions || b.comments - a.comments || a.item.id.localeCompare(b.item.id),
+          b.reactions - a.reactions ||
+          b.comments - a.comments ||
+          a.item.id.localeCompare(b.item.id),
       )
       .slice(0, DEVTO_PER_DAY);
     const perTag = DEVTO_TAGS.map(
