@@ -127,6 +127,8 @@ export async function collectStackExchangeDay(
     }
     counts.push(`${site}=${received}`);
   }
+  // A day still running at retrieval stays partial, so collect never freezes half a day.
+  if (start + DAY_MS > Date.parse(retrievedAt)) capped.push("Day not finished at retrieval");
   return {
     items: sortItems([...items.values()]),
     coverage: {

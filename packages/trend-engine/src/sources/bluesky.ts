@@ -195,6 +195,8 @@ export async function collectBlueskyDay(
     if (crowdedSeconds)
       sampled.push(`term "${term}": ${crowdedSeconds} one-second windows exceeded one page`);
   }
+  // A day still running at retrieval stays partial, so collect never freezes half a day.
+  if (start + DAY_MS > Date.parse(retrievedAt)) sampled.push("Day not finished at retrieval");
   return {
     items: sortItems([...items.values()]),
     coverage: {

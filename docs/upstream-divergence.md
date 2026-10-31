@@ -1177,3 +1177,51 @@ Extracto de evidencia: `evidenceItems` copia `excerpt` del `Dossier` (vacío en 
 Con `~/earlyscript-data/runs`: 15 tendencias en `run_20261031_20261031T003855_5e57bf` y 18 en `run_20261019_20261027T003754_2263f7`, sin expedientes omitidos. Sobre una base que importó esas corridas con `0d84824fea` (reproductores de la verificación en `~/earlyscript-data/dossier-native-verify`), una `sync` deja 33 expedientes, LLM judge en el puesto 3 y ambas corridas en la versión 2, con o sin tocar los mtimes; la segunda `sync` no cambia nada.
 
 Corrección tras la reverificación de Sol (31 de octubre): una corrida indexada por un importador más nuevo (`interpretation_version` mayor que la de esta compilación) no se reescribe nunca hacia atrás; `sync` la deja como está y lo registra con una advertencia (`isNewer` en `EditorialImportService.ts`, con prueba «never rewrites a run that a newer importer indexed»).
+
+## 19. Fuentes portadas de Earlywindow: arXiv, Wikipedia, npm, Stack Exchange y Bluesky (rama `es/sources-earlywindow`, 31 de octubre de 2026)
+
+Base: `f75eebfae2`. Cero archivos de upstream modificados. Sin dependencias nuevas.
+
+Archivos nuevos en `packages/trend-engine/src/`: `purge.ts` y `purge.test.ts`; en `sources/`: `arxiv.ts`, `wikipedia.ts`, `npm.ts`, `stackexchange.ts`, `bluesky.ts`, `earlywindow-sources.test.ts` y `robots.ts` (copia literal del de §21, `a5ec1257fb`, para que la fusión no tenga dos versiones); fixtures en `src/testkit/sources/`. Se amplían `SourceId` (`"arxiv","wikipedia","npm","stackexchange","bluesky"`; S1 y §21 lo amplían también, se resuelve al fusionar), `index.ts`, `shared.ts` (`bodyFields`, `githubEntities`, `joinNotes`, `gatedGet`), `http.ts`, `collect.ts` (una línea: no guardar ítems purgados), `cli.ts` (`engine purge`) y `live.test.ts`. Los adaptadores declaran su procedencia en Earlywindow `src/engine/sources/`. El `config/engine.v1.json` sigue con `sources: ["hn","github"]`: ninguna fuente nueva entra al motor hasta un backtest que no empeore P@5 (decisión de Miguel del 31 de octubre).
+
+`http.ts` y `cli.ts` toman la forma de §21 (`MAX_RESPONSE_BYTES`, `PAUSE_MS`, `USER_AGENT`, opción `text`, `isSourceId` con `Schema.is`) y añaden solo entradas: así la fusión con `es/sources-lobsters-rss` se reduce a líneas contiguas. Lo propio en `http.ts` es la opción `throttle`: Stack Exchange declara `backoff`, `quota_remaining` y el error 502 `throttle_violation` en el cuerpo JSON (incluso con HTTP 400), no en cabeceras; el cliente lee ese cuerpo, bloquea el estado compartido de la fuente y reintenta.
+
+Selección, cobertura y licencia:
+
+| Fuente | Selección (va al hash del corpus) | Política | Estados | Licencia y uso |
+| --- | --- | --- | --- | --- |
+| `arxiv` | cs.AI, cs.CL, cs.SE y cs.LG por `submittedDate` del día UTC, las primeras 1000 | `census` | `complete` solo si la captura ocurre 4 días después del fin del día y llegaron todas; antes `partial` con motivo | Metadatos CC0 1.0; términos de la API: una petición cada 3 s y una conexión |
+| `wikipedia` | Top 1000 de en.wikipedia (all-access) del día; páginas no artículo excluidas; resúmenes de las 50 primeras donde `robots.txt` lo permita | `sample` | `complete`; `unavailable` con HTTP 404 si Wikimedia aún no publicó el día | Texto CC BY-SA; sin datos personales |
+| `npm` | Búsqueda `keywords:ai,llm,agent,mcp,cli`, 5250 resultados por consulta, versión más reciente fechada en el día, al menos 500 descargas semanales, las 100 con más descargas | `sample` | Siempre `partial`: descargas actuales y orden por relevancia | Metadatos públicos del registro |
+| `stackexchange` | Preguntas de stackoverflow y ai por día UTC de creación, `sort:votes`, 300 por sitio, cuota anónima | `sample` | `complete` si ningún sitio llega al tope; `partial` con tope | CC BY-SA 4.0 con atribución. Solo captura: no entra al motor ni al redactor hasta leer los API Terms vigentes |
+| `bluesky` | `searchPosts` `lang=en`, `sort=latest`, términos `llm, agent, open source, github, developer, python, typescript, rust` (sin `ai`, M29); una página de 100 por ventana; 20 peticiones por término | `sample` | `complete` si ninguna ventana se desbordó; `partial` si alguna conservó solo sus 100 más recientes | Contenido de los autores; la guía de desarrolladores pide respetar borrados: ver `engine purge` |
+
+Reglas comunes: ítems con id estable y prefijo de fuente (`itm_arxiv_`, `itm_wikipedia_<día>_p<posición>`, `itm_npm_<paquete>@<versión>`, `itm_se_<sitio>_`, `itm_bsky_<did>_<rkey>`, los mismos de Earlywindow), cuerpo en texto plano recortado a `MAX_ITEM_BODY_CHARS` (4000), `published_at` dentro de su día UTC (Wikipedia usa el primer milisegundo del día) y `retrieved_at` de la respuesta. El idioma se filtra como en HN, en `prepare.ts` al correr el motor; el adaptador no descarta nada por idioma, salvo el parámetro `lang=en` que Bluesky aplica en el proveedor. Un fallo de red, de cuota (`rate_limited: ...`) o de `robots.txt` deja el día `partial` o `unavailable` con el motivo al inicio de la nota, como §11. Stack Exchange y Bluesky marcan `partial` un día aún no terminado al capturarlo, como §21. Las respuestas de los proveedores se validan con esquemas locales en cada adaptador, no en `editorial-contracts`, para no chocar con S1.
+
+Regla de «conocido» de npm (M28): un paquete entra en su día si su versión más reciente se publicó ese día y tiene al menos `NPM_MIN_WEEKLY_DOWNLOADS = 500` descargas semanales actuales. La búsqueda por palabra clave devuelve miles de paquetes con un puñado de descargas (espejos y bots); 500 deja herramientas que alguien usa. El encargo decía «≥ N descargas o versión nueva ese día»; como toda candidata ya tiene una versión nueva ese día, la disyunción admitiría todo, así que se aplica como conjunción. Un paquete nuevo con pocas descargas queda fuera; la nota del día cuenta cuántos (`below=`).
+
+Pausas (`PAUSE_MS`, una petición a la vez por fuente, así que una conexión por host): arXiv 3 s, Wikipedia 400 ms (compartida por wikimedia.org y en.wikipedia.org), Stack Exchange 1 s más su `backoff`, npm 1 s, Bluesky 1 s. Límite de cuerpo por página: 4 MiB arXiv, npm y Stack Exchange; 2 MiB Wikipedia y Bluesky. Cinco minutos por día, como §11; Bluesky limita cada término a 20 peticiones (8 términos por 20 caben en ese tiempo) y reparte el presupuesto restante en ventanas iguales del día, en lugar de las 40 de Earlywindow.
+
+`robots.txt`: las cinco fuentes usan `robotsGate` de `robots.ts` (§21) con el mismo cliente pausado, antes de cada petición (`gatedGet`). A diferencia de §21, las reglas se leen de nuevo cada día (el mapa vive una llamada a `collectDay`). Comprobado el 31 de octubre de 2026 con `User-Agent: Earlyscript/0.1 (+https://github.com/miwgel)`:
+
+| Host | Respuesta | Resultado |
+| --- | --- | --- |
+| export.arxiv.org | 200, `User-agent: *` / `Disallow: /` | Prohibido. arXiv queda `unavailable` con `robots_disallowed` sin pedir datos |
+| wikimedia.org | 302 a www.wikimedia.org, que da 404 | Permitido (4xx) |
+| en.wikipedia.org | 200, `Disallow: /api/` para `*` | Resúmenes prohibidos; Wikipedia guarda solo el top con vistas y rango, y la nota dice `summaries skipped: robots_disallowed` |
+| api.stackexchange.com | 400 (`no_method`) | Permitido (4xx) |
+| registry.npmjs.org | 200 con el JSON del paquete npm llamado `robots.txt`; sin reglas | Permitido |
+| api.bsky.app | 200, `Allow: /` | Permitido |
+
+arXiv, además, rechazó el 31 de octubre las consultas por `submittedDate` con 503 y 429 (`Rate exceeded.`) desde dos IP distintas, mientras respondía a consultas por categoría sin rango de fechas. Con su `robots.txt` actual el adaptador no llega a pedirlas. Usar arXiv exige que Miguel decida: pedir permiso a arXiv, cambiar a OAI-PMH (otro host, otro `robots.txt`) o retirarla. El fixture de arXiv es sintético por ese motivo.
+
+Procedimiento de borrado (`src/purge.ts`):
+
+- `engine purge --corpus <dir> --source bluesky --author <did|handle>` o `--uri <at://did/app.bsky.feed.post/rkey | permalink>`. Para cualquier otra fuente, `--uri <permalink>` o `--author <campo author>`. Exactamente uno de los dos.
+- Un DID se busca en el `permalink` (`https://bsky.app/profile/<did>/post/<rkey>`), que no cambia; un handle en `author`, sin distinguir mayúsculas y sin `@`. Si un autor cambió de handle, hay que purgar por DID.
+- Bajo el mismo bloqueo `.collect.lock` que `collect`, comprueba el manifiesto y cada archivo, quita los ítems de todos los días de la fuente y de cada copia en `history/` (que se renombra con su nuevo hash o se borra si queda vacía), sin dejar respaldo, y actualiza `items` y `note` («purged N item(s) on request») en `coverage.jsonl`.
+- Registra la purga en `purges` del manifiesto (`purged_at`, `source`, `match`, `value_sha256`, `items_removed`, `files_rewritten`) y recalcula `corpus_hash`. El identificador se guarda como SHA-256, no en claro; un handle es público y su hash puede revertirse por diccionario, así que esto evita listar a quién se borró, no lo oculta.
+- `collect` lee esas purgas y no vuelve a guardar un ítem que coincida, aunque el proveedor lo siga sirviendo o se fuerce la recolección. Por eso una purga que no quitó nada también se registra.
+- Las ejecuciones (`runs`) ya calculadas con esos ítems no se reescriben: guardan extractos de evidencia. Si un borrado debe alcanzarlas, hay que volver a correr el motor sobre el corpus purgado y borrar la corrida vieja.
+
+Pruebas: respuestas grabadas reales recortadas (top de Wikipedia y un resumen, dos preguntas de ai.stackexchange, cinco resultados de npm sin correos) y sintéticas (feed de arXiv y publicaciones de Bluesky con cuentas inventadas, para no guardar publicaciones reales). Cubren selección del día, regla de 4 días, `robots_disallowed` sin petición de datos, resúmenes omitidos, tope de Stack Exchange y su throttle en cuerpo, regla de npm, reparto de ventanas de Bluesky y `engine purge` (por DID, handle, at-URI y permalink de HN; historia limpia; recolección forzada sin reaparición; manifiesto verificado). En vivo, una prueba por fuente con `EARLYSCRIPT_LIVE_TESTS=1`.
