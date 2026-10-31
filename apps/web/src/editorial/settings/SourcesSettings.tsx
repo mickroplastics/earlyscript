@@ -16,6 +16,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  EditorialSourceBacktest,
   EditorialSourceCaptureStatus,
   EditorialSourceEntry,
   EditorialSourceGap,
@@ -24,7 +25,7 @@ import type {
   EditorialSourcesView,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
@@ -100,8 +101,24 @@ const formatCount = (count: number) => count.toLocaleString("es");
 
 export type SourcePatch = { readonly collect?: boolean; readonly rank?: boolean };
 
+const VERDICT_LABEL: Readonly<Record<EditorialSourceBacktest["verdict"], string>> = {
+  "not-worse": "no empeora",
+  worse: "empeora",
+};
+
+const formatMetric = (value: number | null) =>
+  value === null ? "sin dato" : value.toLocaleString("es", { maximumFractionDigits: 2 });
+const formatLead = (value: number | null) =>
+  value === null ? "sin dato" : `${value.toLocaleString("es", { maximumFractionDigits: 1 })} d`;
+const plural = (count: number, one: string, many: string) =>
+  `${formatCount(count)} ${count === 1 ? one : many}`;
+
 function engineNote(entry: EditorialSourceEntry, governance: SourceGovernance): string {
   if (entry.rankBlocked === "no-backtest") {
+    if (entry.backtest?.verdict === "worse")
+      return "No entra al motor: su backtest empeora P@5 o la anticipación.";
+    if (entry.backtest?.status === "provisional")
+      return "No entra al motor: su backtest es provisional y no se registró con --allow-provisional.";
     return "Pendiente de backtest: entra al motor solo tras un backtest que no empeore P@5.";
   }
   if (entry.rankBlocked === "not-ready") {
@@ -110,7 +127,41 @@ function engineNote(entry: EditorialSourceEntry, governance: SourceGovernance): 
       : "Pendiente de leer sus términos: no se captura ni entra al motor.";
   }
   if (governance.engineBaseline) return "Línea base del motor.";
-  return `Backtest registrado: ${entry.backtestRunId}.`;
+  return entry.backtest
+    ? "Puede entrar al motor: su backtest no empeora la línea base."
+    : `Backtest registrado: ${entry.backtestRunId}.`;
+}
+
+/** The recorded backtest: when it ran, over which cutoffs, P@5 and lead, and its verdict. */
+function BacktestSummary({ backtest }: { readonly backtest: EditorialSourceBacktest }) {
+  return (
+    <span className="block space-y-0.5" data-testid="source-backtest">
+      <span className="block">
+        Backtest del {formatDay(backtest.experimentAt.slice(0, 10))}, cortes del{" "}
+        {formatShortDay(backtest.cutoffFrom)} al {formatShortDay(backtest.cutoffTo)}:{" "}
+        <span className="font-medium text-foreground">{VERDICT_LABEL[backtest.verdict]}</span>.
+      </span>
+      <span className="block">
+        P@5 {formatMetric(backtest.p5Baseline)} sin la fuente y {formatMetric(backtest.p5Candidate)}{" "}
+        con ella; anticipación mediana {formatLead(backtest.leadBaseline)} y{" "}
+        {formatLead(backtest.leadCandidate)}. Sobre{" "}
+        {plural(backtest.completeCutoffs, "corte completo", "cortes completos")}; aparte,{" "}
+        {plural(backtest.partialCutoffs, "corte parcial", "cortes parciales")} con P@5{" "}
+        {formatMetric(backtest.partialP5Baseline)} y {formatMetric(backtest.partialP5Candidate)}.
+      </span>
+      {backtest.status === "provisional" ? (
+        <span className="flex items-start gap-1 text-warning-foreground">
+          <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
+          <span>
+            Resultado provisional: seguimiento incompleto.
+            {backtest.allowProvisional
+              ? " Registrado a sabiendas por el operador."
+              : " No habilita el motor."}
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function captureText(entry: EditorialSourceEntry): string {
@@ -261,6 +312,9 @@ function SourceRow({
           <span id={engineNoteId} className="block">
             {engineNote(entry, governance)}
           </span>
+          {entry.backtest && !governance.engineBaseline ? (
+            <BacktestSummary backtest={entry.backtest} />
+          ) : null}
           {entry.collectBlocked === "blocked" ? (
             <span className="block">Captura bloqueada mientras la fuente esté bloqueada.</span>
           ) : null}

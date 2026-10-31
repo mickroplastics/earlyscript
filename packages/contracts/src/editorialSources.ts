@@ -25,7 +25,10 @@ export const EDITORIAL_SOURCES_WS_METHODS = {
 
 const Day = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/));
 
-/** `not-ready`: terms not read or the source is blocked; `no-backtest`: no backtest recorded. */
+/**
+ * `not-ready`: terms not read or the source is blocked; `no-backtest`: no backtest recorded
+ * that shows the source does not make the ranking worse.
+ */
 export const EditorialSourceRankBlock = Schema.Literals(["not-ready", "no-backtest"]);
 export type EditorialSourceRankBlock = typeof EditorialSourceRankBlock.Type;
 
@@ -59,12 +62,42 @@ export type EditorialSourceGapReason = typeof EditorialSourceGapReason.Type;
 export const EditorialSourceGap = Schema.Struct({ day: Day, reason: EditorialSourceGapReason });
 export type EditorialSourceGap = typeof EditorialSourceGap.Type;
 
+/**
+ * The backtest that lets a source into the engine (`record-source-backtest`): what the
+ * settings show next to it. P@5 and lead come from the cutoffs whose follow-up was complete,
+ * the verdict's basis; the partial cutoffs' P@5 is shown apart.
+ */
+export const EditorialSourceBacktest = Schema.Struct({
+  backtestId: Schema.String,
+  logicalHash: Schema.String,
+  /** When the backtest ran, not when it was recorded. */
+  experimentAt: Schema.String,
+  cutoffFrom: Day,
+  cutoffTo: Day,
+  status: Schema.Literals(["final", "provisional"]),
+  verdict: Schema.Literals(["not-worse", "worse"]),
+  completeCutoffs: NonNegativeInt,
+  partialCutoffs: NonNegativeInt,
+  p5Baseline: Schema.NullOr(Schema.Number),
+  p5Candidate: Schema.NullOr(Schema.Number),
+  leadBaseline: Schema.NullOr(Schema.Number),
+  leadCandidate: Schema.NullOr(Schema.Number),
+  partialP5Baseline: Schema.NullOr(Schema.Number),
+  partialP5Candidate: Schema.NullOr(Schema.Number),
+  /** The operator recorded a provisional backtest on purpose (`--allow-provisional`). */
+  allowProvisional: Schema.Boolean,
+  recordedAt: IsoDateTime,
+});
+export type EditorialSourceBacktest = typeof EditorialSourceBacktest.Type;
+
 export const EditorialSourceEntry = Schema.Struct({
   source: Schema.String,
   /** Effective values: a stored `true` the source no longer allows reads as `false`. */
   collect: Schema.Boolean,
   rank: Schema.Boolean,
   backtestRunId: Schema.NullOr(Schema.String),
+  /** The recorded backtest's summary; null without one, or for a row recorded before 011. */
+  backtest: Schema.NullOr(EditorialSourceBacktest),
   /** Null when `rank` may be turned on. */
   rankBlocked: Schema.NullOr(EditorialSourceRankBlock),
   /** Null when captures may collect the source: only a source whose terms were read can. */

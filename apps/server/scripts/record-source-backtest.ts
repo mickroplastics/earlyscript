@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // @effect-diagnostics preferSchemaOverJson:off - backtest.json is hashed as parsed, then decoded by checkBacktestReport.
 
-// Records the backtest that lets a source into the engine (§18 `recordBacktest`, §23), only
-// when the report checks out and its verdict is `not-worse`:
-//   node apps/server/scripts/record-source-backtest.ts --db <dir>/editorial.sqlite --source npm --backtest <dir>/backtest.json
-// It does not switch the source's `rank` on: the operator does that in Settings › Editorial.
+// Records a not-worse source backtest (§23) whose arms are exactly {hn, github} and
+// {hn, github, source}, against a truth of exactly {hn, github}; a provisional one only with
+// --allow-provisional. It never switches `rank` on. Usage:
+//   node apps/server/scripts/record-source-backtest.ts --db <editorial.sqlite> --source npm --backtest <backtest.json> [--allow-provisional]
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,7 +14,7 @@ import {
   SOURCE_CATALOG,
   SOURCE_IDS,
 } from "@earlyscript/editorial-contracts/sourceCatalog";
-import { checkBacktestReport } from "@earlyscript/trend-engine/backtest-report";
+import { backtestSummary, checkBacktestReport } from "@earlyscript/trend-engine/backtest-report";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,7 +36,9 @@ export class RecordSourceBacktestError extends Schema.TaggedError<RecordSourceBa
       "unknown-source",
       "baseline-source",
       "wrong-arms",
+      "wrong-truth",
       "worse",
+      "provisional",
     ]),
     detail: Schema.String,
   },
@@ -50,6 +52,7 @@ export interface RecordSourceBacktestResult {
   readonly source: SourceId;
   readonly backtestId: string;
   readonly logicalHash: string;
+  readonly provisional: boolean;
   readonly databasePath: string;
 }
 
@@ -59,13 +62,17 @@ const fail = (reason: RecordSourceBacktestError["reason"], detail: string) =>
 /** The engine baseline of the catalog (hn and github): what every source is measured against. */
 const ENGINE_BASELINE = SOURCE_IDS.filter((id) => SOURCE_CATALOG[id].engineBaseline);
 
-const sameSet = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
-  a.length === b.length && a.every((x) => b.includes(x));
+/** The same set: no repeated id in `a`, and the same members as `expected`. */
+export const exactSet = (a: ReadonlyArray<string>, expected: ReadonlyArray<string>) =>
+  new Set(a).size === a.length &&
+  new Set(expected).size === a.length &&
+  expected.every((id) => a.includes(id));
 
 export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(function* (input: {
   readonly databasePath: string;
   readonly source: string;
   readonly backtestPath: string;
+  readonly allowProvisional?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -91,10 +98,10 @@ export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(func
       new RecordSourceBacktestError({ reason: "unreadable-backtest", detail: String(cause) }),
   });
   if (!checked.ok) return yield* fail("tampered-backtest", checked.problems.join("; "));
-  const { inputs, verdict } = checked.report.logical;
+  const { inputs, verdict, status } = checked.report.logical;
   if (
-    !sameSet(inputs.baseline_sources, ENGINE_BASELINE) ||
-    !sameSet(inputs.candidate_sources, [...ENGINE_BASELINE, source])
+    !exactSet(inputs.baseline_sources, ENGINE_BASELINE) ||
+    !exactSet(inputs.candidate_sources, [...ENGINE_BASELINE, source])
   ) {
     return yield* fail(
       "wrong-arms",
@@ -103,15 +110,32 @@ export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(func
         `${[...ENGINE_BASELINE, source].join(",")}`,
     );
   }
+  // With the candidate among the truth sources, the source would confirm its own trends.
+  if (!exactSet(inputs.truth_sources, ENGINE_BASELINE)) {
+    return yield* fail(
+      "wrong-truth",
+      `the backtest labels against ${inputs.truth_sources.join(",")}, not ${ENGINE_BASELINE.join(",")}`,
+    );
+  }
   if (verdict.verdict !== "not-worse") {
     return yield* fail("worse", verdict.reasons.join("; "));
+  }
+  const provisional = status === "provisional";
+  if (provisional && input.allowProvisional !== true) {
+    return yield* fail(
+      "provisional",
+      "fewer than 7 cutoffs with a complete follow-up; record it on purpose with --allow-provisional",
+    );
   }
 
   // An existing database only: a typo in --db must not create an empty one.
   if (!(yield* fs.exists(databasePath))) return yield* fail("missing-database", databasePath);
   yield* Effect.gen(function* () {
     const sources = yield* EditorialSourcesService.EditorialSourcesService;
-    yield* sources.recordBacktest(source, checked.backtest_id);
+    yield* sources.recordBacktest(source, {
+      ...backtestSummary(checked.report),
+      allowProvisional: provisional,
+    });
   }).pipe(
     Effect.provide(
       // recordBacktest never reads the corpus; the directory only satisfies the constructor.
@@ -124,6 +148,7 @@ export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(func
     source,
     backtestId: checked.backtest_id,
     logicalHash: checked.recorded,
+    provisional,
     databasePath,
   } satisfies RecordSourceBacktestResult;
 });
@@ -136,16 +161,23 @@ const recordSourceBacktestCommand = Command.make(
     backtest: Flag.String("backtest").pipe(
       Flag.withDescription("backtest.json written by `engine backtest`."),
     ),
+    allowProvisional: Flag.Boolean("allow-provisional").pipe(
+      Flag.withDefault(false),
+      Flag.withDescription(
+        "Record a provisional backtest (fewer than 7 cutoffs with a complete follow-up).",
+      ),
+    ),
   },
-  ({ db, source, backtest }) =>
+  ({ db, source, backtest, allowProvisional }) =>
     Effect.gen(function* () {
       const result = yield* runRecordSourceBacktest({
         databasePath: db,
         source,
         backtestPath: backtest,
+        allowProvisional,
       });
       yield* Console.log(
-        `Recorded ${result.backtestId} (${result.logicalHash}) for ${result.source} in ${result.databasePath}.`,
+        `Recorded ${result.backtestId} (${result.logicalHash})${result.provisional ? ", provisional," : ""} for ${result.source} in ${result.databasePath}.`,
       );
     }),
 ).pipe(
