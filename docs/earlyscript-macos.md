@@ -49,7 +49,7 @@ Las terminales de T3 Code exportan `T3CODE_HOME=~/.t3` y `open` pasa ese entorno
 | Modelo de embeddings (Qwen3 0,6B ONNX q8, unos 600 MB)                              | `~/earlyscript-data/models/<revisión>/`                         |
 | Caché de embeddings                                                                 | `~/earlyscript-data/embeddings/embeddings.sqlite`               |
 
-El CLI `earlyscript` respeta un `T3CODE_HOME` heredado, como el `t3` de upstream. Desde una terminal de T3 Code, ejecútalo con `env -u T3CODE_HOME earlyscript …`.
+El CLI `earlyscript` usa siempre `~/.earlyscript`, también desde una terminal de T3 Code: el lanzador fija `T3CODE_HOME` al home de la instalación. Para otro directorio, pasa `--base-dir`.
 
 T3 Code real usa `~/.t3` y el puerto 3773 (en Gertrudis corre como servicio `t3`). Las dos apps pueden estar abiertas a la vez sin compartir estado.
 
