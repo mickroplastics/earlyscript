@@ -193,9 +193,12 @@ export const EditorialVideoDecideInput = Schema.Struct({
 });
 export type EditorialVideoDecideInput = typeof EditorialVideoDecideInput.Type;
 
+/** How the server names a script version: SHA-256 of its content, lowercase hex. */
+export const EditorialScriptContentHash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/));
+
 export const EditorialVideoOpenVersionInput = Schema.Struct({
   threadId: ThreadId,
-  contentHash: Schema.String,
+  contentHash: EditorialScriptContentHash,
 });
 export type EditorialVideoOpenVersionInput = typeof EditorialVideoOpenVersionInput.Type;
 
