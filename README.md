@@ -103,19 +103,19 @@ El método del motor es el de Earlywindow `engine.v0.02`: texto de título más 
 
 ## Organización del repositorio
 
-| Carpeta | Contenido |
-|---|---|
-| `packages/editorial-contracts/` | Esquemas de ítem, fuente, corrida, ficha de tendencia, perfil y decisión, y lector del formato de Earlywindow |
-| `packages/trend-engine/` | Motor: fuentes, corpus, embeddings, apilado, series, rankings, corrida y verificación; CLI `engine` |
-| `packages/editorial-script/` | Validador del guion; CLI `check` |
-| `apps/server/src/editorial/` | Base `editorial.sqlite` con migraciones 001 a 006, servicios de lectura, comando, importación, presentaciones, resultados, reloj de trabajo e hilo de video; política que bloquea agentes en hilos manuales; herramienta MCP `script_check` |
-| `apps/web/src/editorial/` | Barra lateral con espacios, bandeja y ficha de tendencia, panel de decisión, reloj, resultados |
-| `apps/server/src/earlyscript/`, `apps/desktop/src/earlyscript/` | Banderas que apagan telemetría, analítica y funciones escondidas en la capa más alta del servidor |
-| `packages/shared/src/earlyscriptBrand.ts`, `earlyscriptFlags.ts` | Marca, puertos, directorio base y banderas |
-| `scripts/earlyscript/` | Batería rápida `es:*` y comprobación de alcance |
-| `docs/upstream-divergence.md` | Registro archivo por archivo de lo que difiere de T3 Code |
-| `docs/dev-environment-linux.md` | Preparación del entorno y resultados de la batería en Linux |
-| Resto del árbol | T3 Code sin cambios o con enganches de una línea registrados |
+| Carpeta                                                          | Contenido                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/editorial-contracts/`                                  | Esquemas de ítem, fuente, corrida, ficha de tendencia, perfil y decisión, y lector del formato de Earlywindow                                                                                                                               |
+| `packages/trend-engine/`                                         | Motor: fuentes, corpus, embeddings, apilado, series, rankings, corrida y verificación; CLI `engine`                                                                                                                                         |
+| `packages/editorial-script/`                                     | Validador del guion; CLI `check`                                                                                                                                                                                                            |
+| `apps/server/src/editorial/`                                     | Base `editorial.sqlite` con migraciones 001 a 006, servicios de lectura, comando, importación, presentaciones, resultados, reloj de trabajo e hilo de video; política que bloquea agentes en hilos manuales; herramienta MCP `script_check` |
+| `apps/web/src/editorial/`                                        | Barra lateral con espacios, bandeja y ficha de tendencia, panel de decisión, reloj, resultados                                                                                                                                              |
+| `apps/server/src/earlyscript/`, `apps/desktop/src/earlyscript/`  | Banderas que apagan telemetría, analítica y funciones escondidas en la capa más alta del servidor                                                                                                                                           |
+| `packages/shared/src/earlyscriptBrand.ts`, `earlyscriptFlags.ts` | Marca, puertos, directorio base y banderas                                                                                                                                                                                                  |
+| `scripts/earlyscript/`                                           | Batería rápida `es:*` y comprobación de alcance                                                                                                                                                                                             |
+| `docs/upstream-divergence.md`                                    | Registro archivo por archivo de lo que difiere de T3 Code                                                                                                                                                                                   |
+| `docs/dev-environment-linux.md`                                  | Preparación del entorno y resultados de la batería en Linux                                                                                                                                                                                 |
+| Resto del árbol                                                  | T3 Code sin cambios o con enganches de una línea registrados                                                                                                                                                                                |
 
 Los datos viven fuera del repositorio, en `~/earlyscript-data/`: `corpus/`, `runs/`, `models/`, `embeddings/` (caché SQLite por modelo, plataforma y texto) y `profiles/`. No se versionan corpus, corridas, bases ni credenciales.
 
