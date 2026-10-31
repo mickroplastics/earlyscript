@@ -224,10 +224,55 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * The trend's manual thread, one per dossier: a retry or a second click opens the same one.
+   * It records the trend and the dossier it was chosen from, shows neither, and leaves the
+   * trend's production link to the assisted thread.
+   */
+  const createManualVideo = Effect.fn("EditorialInboxCommands.createManualVideo")(function* (
+    input: EditorialCreateVideoInput,
+  ) {
+    const shown = yield* read
+      .getDossier({ runId: input.runId, dossierId: input.dossierId, evidenceLimit: 1 })
+      .pipe(Effect.mapError(commandError("not-found", "Cannot read the dossier")));
+    // A purged manual thread frees its dossier: the next one takes a new operation, since the
+    // first one's T3 launch receipt still names the deleted thread.
+    const base = `editorial:trend-video-manual:${input.runId}:${input.dossierId}`;
+    const purged = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM editorial_events
+      WHERE type = 'video-thread.purged'
+        AND json_extract(payload_json, '$.operationId') LIKE ${`${base}%`}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.n ?? 0),
+      Effect.mapError(commandError("storage", "Cannot read the editorial events")),
+    );
+    const created = yield* threads
+      .createVideo({
+        operationId: purged === 0 ? base : `${base}:${purged + 1}`,
+        projectId: input.projectId,
+        mode: "manual",
+        title: shown.trend.presentation?.title ?? shown.trend.label,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        creationSource: "web",
+        trendKey: input.trendKey,
+        runId: input.runId,
+      })
+      .pipe(Effect.mapError(fromCommandFailure));
+    const { state } = yield* respond(input.trendKey);
+    return {
+      trendKey: input.trendKey,
+      threadId: ThreadId.make(created.thread.threadId),
+      created: created.created,
+      state,
+    };
+  });
+
   const createVideo: EditorialInboxCommandsShape["createVideo"] = Effect.fn(
     "EditorialInboxCommands.createVideo",
   )(function* (_session, input) {
     const { dossier } = yield* requireTrendDossier(input);
+    if (input.mode === "manual") return yield* createManualVideo(input);
     const before = yield* respond(input.trendKey);
     // A production link does not prove the operation finished (the clock may not have
     // started): a trend's thread resumes its own operation, which replays the steps done.
