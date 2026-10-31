@@ -35,6 +35,7 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+import { VideoThreadSections } from "../../editorial/VideoThreadSections";
 
 const GitActionsControl = memo(BaseGitActionsControl);
 
@@ -158,6 +159,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         return (
           <>
             <div className="group/details-items">
+              {props.draftId ? null : <VideoThreadSections threadRef={activeThreadRef} />}
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"
