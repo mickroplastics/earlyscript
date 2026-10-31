@@ -8,7 +8,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v2";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v3";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
@@ -148,6 +148,7 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- citedItemIds: ids copied exactly from the id attribute; cite only ids listed below",
     "- Every factual claim about an event, including claims in the title, must be explicitly supported by the title or excerpt of at least one cited evidence item. Do not fill gaps with background knowledge.",
     "- In summary, place [itemId] immediately after each evidence-based factual claim. Include every such id in citedItemIds. Keep the title free of citation markers, but include its supporting ids in citedItemIds.",
+    "- In user-facing prose, expand source codes to their public names (hn → Hacker News, github → GitHub); never write “la fuente hn” or expose internal source codes.",
     "- Do not infer authorship, publisher, organization, affiliation, or product ownership from a product name, a URL, or prior knowledge. Mention these only when explicitly stated in the item's title or excerpt. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
     "- Treat evidence titles and excerpts as reports or claims, not as independently verified facts. When only a title is available, describe what that title reports and state any material uncertainty.",
     "- Use trend_data only for the supplied engine measurements. Do not turn those measurements into unsupported explanations of causes, importance, or future outcomes.",
@@ -281,9 +282,16 @@ export function finalizeTrendPresentation(
   return { title, summary, citedItemIds, warnings };
 }
 
-/** Stable hash of the logical input; ignores cwd, model and prompt version, which are recorded apart. */
-export function hashTrendPresentationInput(input: TrendPresentationPromptInput): string {
+/**
+ * Stable hash of the logical input: what the model reads and the prompt it reads it with.
+ * Ignores cwd and model, which are recorded apart, so a cheaper model does not invalidate.
+ */
+export function hashTrendPresentationInput(
+  input: TrendPresentationPromptInput,
+  promptVersion: string = TREND_PRESENTATION_PROMPT_VERSION,
+): string {
   const logical = {
+    promptVersion,
     language: input.language?.trim() || "es",
     profile: {
       version: input.profile.version,

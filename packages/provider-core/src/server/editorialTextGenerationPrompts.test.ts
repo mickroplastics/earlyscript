@@ -6,6 +6,7 @@ import {
   buildTrendPresentationPrompt,
   finalizeTrendPresentation,
   hashTrendPresentationInput,
+  TREND_PRESENTATION_PROMPT_VERSION,
   MAX_TREND_TITLE_CHARS,
   type TrendPresentationPromptInput,
 } from "./editorialTextGenerationPrompts.ts";
@@ -169,6 +170,15 @@ describe("hashTrendPresentationInput", () => {
 
     expect(hashTrendPresentationInput(reordered)).toBe(hashTrendPresentationInput(input));
     expect(hashTrendPresentationInput({ ...input, evidence: input.evidence.slice(1) })).not.toBe(
+      hashTrendPresentationInput(input),
+    );
+  });
+
+  it("changes with the prompt version, so a corrected prompt invalidates stored text", () => {
+    expect(hashTrendPresentationInput(input, "trend-presentation.v2")).not.toBe(
+      hashTrendPresentationInput(input),
+    );
+    expect(hashTrendPresentationInput(input, TREND_PRESENTATION_PROMPT_VERSION)).toBe(
       hashTrendPresentationInput(input),
     );
   });
