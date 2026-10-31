@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDate:off nodeBuiltinImport:off preferSchemaOverJson:off - corpus/1 filesystem boundary.
-// Deletion requests: removes one author's or one URI's items from every day and history file
-// of a corpus/1 directory and records the purge in the manifest, so collect never stores them again.
+// Deletion requests: removes one author's, one URL's or one feed's items from every day and
+// history file of a corpus/1 directory and records the purge in the manifest, so collect never
+// stores them again. One module for every source: S2 (es/sources-earlywindow) adds Bluesky DIDs
+// and at:// URIs, S4 (es/sources-lobsters-rss) the `feed` match for rss.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
@@ -21,7 +23,7 @@ const decodeCoverage = Schema.decodeUnknownSync(CoverageRecord);
 export const PurgeRecord = Schema.Struct({
   purged_at: Schema.String,
   source: SourceId,
-  match: Schema.Literals(["author", "uri"]),
+  match: Schema.Literals(["author", "uri", "feed"]),
   value_sha256: Schema.String,
   items_removed: Schema.Int,
   files_rewritten: Schema.Int,
@@ -31,45 +33,56 @@ const isPurgeRecord = Schema.is(PurgeRecord);
 
 export interface PurgeTarget {
   readonly source: SourceId;
-  /** A Bluesky DID or handle, or the `author` field of any other source. */
+  /** The `author` field of an item; for bluesky also the author's DID. */
   readonly author?: string;
-  /** An item permalink; for Bluesky also the post's at:// URI. */
+  /** An item permalink; for bluesky also the post's at:// URI. */
   readonly uri?: string;
+  /** A feed URL (rss): every item whose `feed_url` is this feed. */
+  readonly feed?: string;
 }
 
 interface Matchable {
   readonly source: string;
   readonly author?: unknown;
   readonly permalink?: unknown;
+  readonly feed_url?: unknown;
 }
 
-/** Values a target compares, normalized: lower-case authors and permalinks for URIs. */
-function targetValue(target: PurgeTarget): { match: "author" | "uri"; value: string } {
-  if ((target.author === undefined) === (target.uri === undefined))
-    throw new Error("Purge needs exactly one of --author or --uri");
-  if (target.author !== undefined) {
-    const author = target.author.trim().replace(/^@/, "").toLowerCase();
-    if (!author) throw new Error("Empty --author");
-    return { match: "author", value: author };
+/** Values a target compares, normalized: lower-case authors, URLs as given. */
+function targetValue(target: PurgeTarget): { match: PurgeRecord["match"]; value: string } {
+  const given = (["author", "uri", "feed"] as const).filter((key) => target[key] !== undefined);
+  if (given.length !== 1) throw new Error("Purge needs exactly one of --author, --url or --feed");
+  const match = given[0]!;
+  const raw = target[match]!.trim();
+  if (!raw) throw new Error(`Empty --${match}`);
+  if (match === "author") return { match, value: raw.replace(/^@/, "").toLowerCase() };
+  if (match === "feed" && target.source !== "rss") throw new Error("--feed applies to rss only");
+  // A Bluesky post URI names the same post as its bsky.app permalink.
+  if (match === "uri" && raw.startsWith("at://")) {
+    const permalink = target.source === "bluesky" ? blueskyPermalink(raw) : null;
+    if (!permalink) throw new Error(`Not a purgeable URI: ${raw}`);
+    return { match, value: permalink };
   }
-  const uri = target.uri!.trim();
-  const permalink = uri.startsWith("at://") ? blueskyPermalink(uri) : uri;
-  if (!permalink || (uri.startsWith("at://") && target.source !== "bluesky"))
-    throw new Error(`Not a purgeable URI: ${uri}`);
-  return { match: "uri", value: permalink };
+  return { match, value: raw };
 }
 
-/** Hashes an item would match under each purge kind. Bluesky authors match by handle and by DID. */
-function itemValues(item: Matchable): { author: Array<string>; uri: Array<string> } {
-  const permalink = typeof item.permalink === "string" ? item.permalink : "";
-  const author = typeof item.author === "string" ? [item.author.toLowerCase()] : [];
+/**
+ * Hashes an item would match under each purge kind. A Bluesky author also matches by the DID
+ * in its permalink, which survives a handle change.
+ */
+function itemValues(item: Matchable): Record<PurgeRecord["match"], Array<string>> {
+  const text = (value: unknown) => (typeof value === "string" && value ? [value] : []);
   const did =
     item.source === "bluesky"
-      ? /^https:\/\/bsky\.app\/profile\/(did:[^/]+)\//.exec(permalink)
-      : null;
+      ? text(item.permalink).flatMap((value) => {
+          const found = /^https:\/\/bsky\.app\/profile\/(did:[^/]+)\//.exec(value)?.[1];
+          return found ? [found] : [];
+        })
+      : [];
   return {
-    author: [...author, ...(did?.[1] ? [did[1].toLowerCase()] : [])].map((value) => sha256(value)),
-    uri: permalink ? [sha256(permalink)] : [],
+    author: [...text(item.author), ...did].map((value) => sha256(value.toLowerCase())),
+    uri: text(item.permalink).map((value) => sha256(value)),
+    feed: text(item.feed_url).map((value) => sha256(value)),
   };
 }
 
@@ -88,10 +101,13 @@ export function purgeFilter(
   };
 }
 
-export async function purgeCorpus(options: { readonly dir: string } & PurgeTarget) {
+export async function purgeCorpus(
+  options: { readonly dir: string; readonly now?: () => string } & PurgeTarget,
+) {
   const { match, value } = targetValue(options);
   const record = { source: options.source, match, value_sha256: sha256(value) };
   const matches = purgeFilter([{ ...record, purged_at: "", items_removed: 0, files_rewritten: 0 }]);
+  const now = options.now ?? (() => new Date().toISOString());
   const root = NodePath.resolve(options.dir);
   const lockPath = NodePath.join(root, ".collect.lock");
   const lock = await NodeFSP.open(lockPath, "wx");
@@ -150,27 +166,27 @@ export async function purgeCorpus(options: { readonly dir: string } & PurgeTarge
     }
     if (dayCounts.size) {
       const raw = contents.get("coverage.jsonl")?.toString("utf8") ?? "";
-      let coverage: Array<CoverageRecord> = raw
+      const coverage = raw
         .split("\n")
         .filter(Boolean)
-        .map((line) => decodeCoverage(JSON.parse(line)));
-      coverage = coverage.map((row) => {
-        const counts = row.source === options.source ? dayCounts.get(row.day) : undefined;
-        return counts
-          ? {
-              ...row,
-              items: counts.kept,
-              note: [row.note, `purged ${counts.removed} item(s) on request`]
-                .filter(Boolean)
-                .join("; "),
-            }
-          : row;
-      });
+        .map((line) => decodeCoverage(JSON.parse(line)))
+        .map((row) => {
+          const counts = row.source === options.source ? dayCounts.get(row.day) : undefined;
+          return counts
+            ? {
+                ...row,
+                items: counts.kept,
+                note: [row.note, `purged ${counts.removed} item(s) on request`]
+                  .filter(Boolean)
+                  .join("; "),
+              }
+            : row;
+        });
       await write("coverage.jsonl", coverage.map((row) => `${JSON.stringify(row)}\n`).join(""));
     }
     const purge: PurgeRecord = {
       ...record,
-      purged_at: new Date().toISOString(),
+      purged_at: now(),
       items_removed: removed,
       files_rewritten: rewritten,
     };
@@ -186,11 +202,7 @@ export async function purgeCorpus(options: { readonly dir: string } & PurgeTarge
     };
     await NodeFSP.writeFile(
       NodePath.join(root, "corpus-manifest.json.tmp"),
-      JSON.stringify(
-        { ...next, corpus_hash: hashCorpus(next), written_at: new Date().toISOString() },
-        null,
-        2,
-      ) + "\n",
+      JSON.stringify({ ...next, corpus_hash: hashCorpus(next), written_at: now() }, null, 2) + "\n",
     );
     await NodeFSP.rename(
       NodePath.join(root, "corpus-manifest.json.tmp"),
