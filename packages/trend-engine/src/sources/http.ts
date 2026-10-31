@@ -85,8 +85,8 @@ export interface SourceState {
 
 /**
  * Largest accepted body; larger ones are aborted, not parsed. Pages: HN 1000 hits, GitHub 100
- * repositories, Lobsters 25 stories, Hub 1000 models (~350 KiB), dev.to 1000 articles
- * (~2.2 MiB); the largest curated feed measured on 31 October 2026 was 2.6 MB.
+ * repositories, Lobsters 25 stories, Hub 1000 models (~350 KiB); the largest curated feed
+ * measured on 31 October 2026 was 2.6 MB.
  */
 export const MAX_RESPONSE_BYTES = {
   hn: 4 * 1024 * 1024,
@@ -94,7 +94,6 @@ export const MAX_RESPONSE_BYTES = {
   lobsters: 1024 * 1024,
   rss: 4 * 1024 * 1024,
   huggingface: 2 * 1024 * 1024,
-  devto: 4 * 1024 * 1024,
 } as const;
 export type HttpSource = keyof typeof MAX_RESPONSE_BYTES;
 
@@ -106,14 +105,11 @@ export const PAUSE_MS: Readonly<Record<HttpSource, number>> = {
   rss: 1000,
   // Anonymous Hub API quota: 500 requests per 5-minute window per IP; halved with HF_TOKEN.
   huggingface: 700,
-  // Unpublished limits; the beta reference states 10 requests per 30 seconds.
-  devto: 3000,
 };
 
-/** Time budget per collected day where 5 minutes is short: listings walked back from today. */
+/** Time budget per collected day where 5 minutes is short: a listing walked back from today. */
 const DAY_TIMEOUT_MS: Partial<Record<HttpSource, number>> = {
   huggingface: 600_000,
-  devto: 900_000,
 };
 
 /** Collector name, protocol version and contact, as polite crawlers identify themselves. */
@@ -198,7 +194,6 @@ export function createHttpClient(
           headers: {
             "User-Agent": USER_AGENT,
             ...(source === "github" ? { Accept: "application/vnd.github+json" } : {}),
-            ...(source === "devto" ? { Accept: "application/vnd.forem.api-v1+json" } : {}),
             ...extraHeaders,
             // Last: on its own origin the credential wins over any caller header.
             ...credentialHeaders(credential, url),

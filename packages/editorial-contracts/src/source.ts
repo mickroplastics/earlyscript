@@ -11,7 +11,6 @@ export const SourceId = Schema.Literals([
   "stackexchange",
   "bluesky",
   "huggingface",
-  "devto",
   "lobsters",
   "rss",
 ]);

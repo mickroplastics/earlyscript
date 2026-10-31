@@ -56,14 +56,7 @@ export type SourceGovernance = typeof SourceGovernance.Type;
 const MANUAL_CORPUS_DELETION =
   "Borrado manual del directorio del corpus o de sus archivos por día; no hay borrado por ítem ni registro de purgas.";
 
-/**
- * Retired by its conditions of use: dev.to on 31 October 2026 (its use license allows only
- * personal, non-commercial viewing). The id stays in SourceId until its adapter leaves.
- */
-export type RetiredSourceId = Extract<SourceId, "devto">;
-export type CatalogSourceId = Exclude<SourceId, RetiredSourceId>;
-
-export const SOURCE_CATALOG: Readonly<Record<CatalogSourceId, SourceGovernance>> = {
+export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
   hn: {
     id: "hn",
     name: "Hacker News",
@@ -278,8 +271,7 @@ export const SOURCE_CATALOG: Readonly<Record<CatalogSourceId, SourceGovernance>>
   },
 };
 
-/** Catalog order; a retired id is not listed. */
-export const SOURCE_IDS = Object.keys(SOURCE_CATALOG) as ReadonlyArray<CatalogSourceId>;
+/** Catalog order. */
+export const SOURCE_IDS: ReadonlyArray<SourceId> = SourceId.literals;
 
-export const isCatalogSourceId = (id: string): id is CatalogSourceId =>
-  Object.hasOwn(SOURCE_CATALOG, id);
+export const isCatalogSourceId = (id: string): id is SourceId => Object.hasOwn(SOURCE_CATALOG, id);

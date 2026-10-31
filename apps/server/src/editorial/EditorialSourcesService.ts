@@ -2,12 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
-import { CoverageStatus, UtcDay } from "@earlyscript/editorial-contracts/source";
+import { CoverageStatus, UtcDay, type SourceId } from "@earlyscript/editorial-contracts/source";
 import {
   isCatalogSourceId,
   SOURCE_CATALOG,
   SOURCE_IDS,
-  type CatalogSourceId,
 } from "@earlyscript/editorial-contracts/sourceCatalog";
 import type { RssFeed } from "@earlyscript/editorial-contracts/source";
 import { RSS_FEEDS } from "@earlyscript/trend-engine/sources";
@@ -41,8 +40,8 @@ const MANIFEST_FILE = "corpus-manifest.json";
 const COVERAGE_FILE = "coverage.jsonl";
 
 export interface EnabledSources {
-  readonly collect: ReadonlyArray<CatalogSourceId>;
-  readonly rank: ReadonlyArray<CatalogSourceId>;
+  readonly collect: ReadonlyArray<SourceId>;
+  readonly rank: ReadonlyArray<SourceId>;
   /** The `rss` source's feeds: the default ones not excluded, then the operator's. */
   readonly rssFeeds: ReadonlyArray<RssFeed>;
 }
@@ -74,7 +73,7 @@ export interface EditorialSourcesServiceShape {
   ) => Effect.Effect<EditorialSourcesView, EditorialSourcesError>;
   /** Names the backtest that lets `source` into the engine; null withdraws it and its `rank`. */
   readonly recordBacktest: (
-    source: CatalogSourceId,
+    source: SourceId,
     runId: string | null,
   ) => Effect.Effect<void, EditorialSourcesError>;
 }
@@ -100,13 +99,13 @@ interface Stored {
   readonly updatedAt: string | null;
 }
 
-const defaultSetting = (source: CatalogSourceId): Stored => {
+const defaultSetting = (source: SourceId): Stored => {
   const baseline = SOURCE_CATALOG[source].engineBaseline;
   return { collect: baseline, rank: baseline, backtestRunId: null, updatedAt: null };
 };
 
 const rankBlockOf = (
-  source: CatalogSourceId,
+  source: SourceId,
   backtestRunId: string | null,
 ): EditorialSourceEntry["rankBlocked"] => {
   const entry = SOURCE_CATALOG[source];
@@ -114,7 +113,7 @@ const rankBlockOf = (
   return entry.engineBaseline || backtestRunId !== null ? null : "no-backtest";
 };
 
-const collectBlockOf = (source: CatalogSourceId): EditorialSourceEntry["collectBlocked"] => {
+const collectBlockOf = (source: SourceId): EditorialSourceEntry["collectBlocked"] => {
   const status = SOURCE_CATALOG[source].status;
   return status === "ready" ? null : status;
 };
@@ -220,7 +219,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     SELECT source, collect, rank, backtest_run_id, updated_at FROM editorial_source_settings
   `.pipe(
     Effect.map((rows) => {
-      const stored = new Map<CatalogSourceId, Stored>();
+      const stored = new Map<SourceId, Stored>();
       for (const row of rows) {
         // A row from a build with more sources stays in the table untouched.
         if (!isCatalogSourceId(row.source)) continue;
@@ -236,10 +235,10 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
     Effect.mapError(storageError),
   );
 
-  const settingOf = (stored: ReadonlyMap<CatalogSourceId, Stored>, source: CatalogSourceId) =>
+  const settingOf = (stored: ReadonlyMap<SourceId, Stored>, source: SourceId) =>
     stored.get(source) ?? defaultSetting(source);
 
-  const effective = (source: CatalogSourceId, setting: Stored) => {
+  const effective = (source: SourceId, setting: Stored) => {
     const rankBlocked = rankBlockOf(source, setting.backtestRunId);
     const blocked = collectBlockOf(source);
     return {
@@ -335,7 +334,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   }).pipe(Effect.withSpan("EditorialSourcesService.list"));
 
   const write = Effect.fn("EditorialSourcesService.write")(function* (
-    source: CatalogSourceId,
+    source: SourceId,
     next: Stored,
   ) {
     const updatedAt = yield* nowIso;
@@ -410,7 +409,7 @@ const makeWithCorpusDir = Effect.fn("EditorialSourcesService.make")(function* (c
   );
 
   const recordBacktest = Effect.fn("EditorialSourcesService.recordBacktest")(function* (
-    source: CatalogSourceId,
+    source: SourceId,
     runId: string | null,
   ) {
     const current = settingOf(yield* readStored, source);

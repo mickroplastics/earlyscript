@@ -4,16 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { SourceId } from "./source.ts";
 import { SOURCE_CATALOG, SOURCE_IDS, SourceGovernance } from "./sourceCatalog.ts";
 
-/** Kept in SourceId until its adapter leaves the engine; never in the catalog. */
-const RETIRED = ["devto"];
-
 const decode = Schema.decodeUnknownSync(SourceGovernance);
 
 describe("source catalog", () => {
   it("has a valid record for every source id, under its own id", () => {
-    expect(Object.keys(SOURCE_CATALOG).toSorted()).toEqual(
-      SourceId.literals.filter((id) => !RETIRED.includes(id)).toSorted(),
-    );
+    expect(Object.keys(SOURCE_CATALOG).toSorted()).toEqual([...SourceId.literals].toSorted());
+    expect(SOURCE_IDS).toHaveLength(10);
     for (const id of SOURCE_IDS) {
       expect(decode(SOURCE_CATALOG[id]).id).toBe(id);
     }

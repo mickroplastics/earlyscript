@@ -1,7 +1,5 @@
-import {
-  SOURCE_CATALOG,
-  type CatalogSourceId,
-} from "@earlyscript/editorial-contracts/sourceCatalog";
+import type { SourceId } from "@earlyscript/editorial-contracts/source";
+import { SOURCE_CATALOG } from "@earlyscript/editorial-contracts/sourceCatalog";
 import type {
   EditorialSourceCapture,
   EditorialSourceCaptureStatus,
@@ -32,7 +30,7 @@ const dayMillis = (day: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(`$
 const dayOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis)).slice(0, 10);
 
 const gapReason = (
-  source: CatalogSourceId,
+  source: SourceId,
   row: CoverageRow | undefined,
 ): EditorialSourceGap["reason"] | null => {
   if (row === undefined) return "not_collected";
@@ -55,7 +53,7 @@ const gapReason = (
  * source's first day, so a source added this week is not blamed for the days before it.
  */
 export function summarizeSourceCoverage(
-  source: CatalogSourceId,
+  source: SourceId,
   rows: ReadonlyArray<CoverageRow>,
   toDay: string,
 ): SourceCoverageSummary {

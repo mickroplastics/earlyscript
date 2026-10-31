@@ -1,8 +1,8 @@
+import type { SourceId } from "@earlyscript/editorial-contracts/source";
 import {
   DELETION_NONE_DOCUMENTED,
   isCatalogSourceId,
   SOURCE_CATALOG,
-  type CatalogSourceId,
   type SourceAccess,
   type SourceCost,
   type SourceCoveragePolicy,
@@ -297,7 +297,7 @@ export function SourcesSettingsView({
 }: {
   readonly view: EditorialSourcesView;
   readonly pending: ReadonlySet<string>;
-  readonly onChange: (source: CatalogSourceId, patch: SourcePatch) => void;
+  readonly onChange: (source: SourceId, patch: SourcePatch) => void;
   readonly feeds: RssFeedControls;
 }) {
   return (
@@ -400,7 +400,7 @@ function SourcesSettingsForEnvironment({
     onTest: async (feedUrl) => outcome(await validateFeed({ environmentId, input: { feedUrl } })),
   };
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
-  const onChange = async (source: CatalogSourceId, patch: SourcePatch) => {
+  const onChange = async (source: SourceId, patch: SourcePatch) => {
     setPending((current) => new Set(current).add(source));
     const result = await update({ environmentId, input: { source, ...patch } });
     setPending((current) => {

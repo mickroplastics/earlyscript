@@ -1,10 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - recorded Hub responses replayed through the plain adapter.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, it, expect, vi } from "vite-plus/test";
 import { huggingfaceCollector, hfModelsUrl } from "./huggingface.ts";
 import { createHttpClient, MAX_RESPONSE_BYTES, type GetResponse } from "./http.ts";
-import { liveSources } from "./index.ts";
-import type { RobotsGate } from "./robots.ts";
+import { fixtureSources, liveSources, sourceDescriptor } from "./index.ts";
+import { robotsAllows, robotsRules, type RobotsGate } from "./robots.ts";
+import { collectCorpus } from "../collect.ts";
+import { readCorpus } from "../corpus.ts";
 import { markdownText } from "./shared.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
@@ -256,11 +260,77 @@ describe("Hugging Face source", () => {
     expect(result.coverage?.note).toContain("model card: robots_disallowed: test");
   });
 
+  it("declares the fallback body in its selection", () => {
+    expect(sourceDescriptor("huggingface").selection.huggingface).toContain(
+      "without a usable card (absent, empty, refused by robots.txt, over 2 MiB) body = the model tags",
+    );
+  });
+
   it("turns a model card into plain text", () => {
     expect(markdownText("---\na: 1\n---\n## Usage\n> note\n- item one\n~~~\ncode\n~~~\nend")).toBe(
       "Usage note item one end",
     );
     expect(markdownText("```\nunterminated")).toBe("");
+  });
+});
+
+describe("Hugging Face in a corpus/1 collection", () => {
+  it("allows every Hub path the adapter requests (robots.txt recorded on 31 October 2026)", async () => {
+    const hub = robotsRules(
+      await NodeFSP.readFile(new URL("../testkit/huggingface-robots.txt", import.meta.url), "utf8"),
+    );
+    expect(hub).toEqual([{ allow: true, pattern: "/" }]);
+    for (const url of [
+      hfModelsUrl(),
+      "https://huggingface.co/api/daily_papers?date=2026-10-30&limit=100&p=0",
+      "https://huggingface.co/ostris/primal_vae/resolve/main/README.md",
+    ])
+      expect(robotsAllows(hub, url)).toBe(true);
+  });
+
+  it("registers the source and writes a verified corpus", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hf-corpus-"));
+    try {
+      const models = await fixture<{ page1: unknown[] }>("hf-models-pages.json");
+      const papers = await fixture<unknown[]>("hf-daily-papers-2026-10-30.json");
+      const robots = await NodeFSP.readFile(
+        new URL("../testkit/huggingface-robots.txt", import.meta.url),
+        "utf8",
+      );
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/robots.txt") return new Response(robots);
+        if (url.href === hfModelsUrl()) return Response.json(models.page1);
+        if (url.pathname === "/api/daily_papers") return Response.json(papers);
+        return new Response("", { status: 404 });
+      });
+      const adapters = liveSources(["huggingface"], {
+        fetch: fetcher,
+        sleep: async () => undefined,
+      });
+      const rows = await collectCorpus({
+        dir: root,
+        from: "2026-10-30",
+        to: "2026-10-31",
+        adapters,
+      });
+      expect(rows.map(({ source, status, items }) => ({ source, status, items }))).toEqual([
+        { source: "huggingface", status: "partial", items: 5 },
+      ]);
+      const manifest = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(root, "corpus-manifest.json"), "utf8"),
+      );
+      expect(Object.keys(manifest.selection)).toContain("huggingface");
+      const corpus = await readCorpus({
+        dir: root,
+        untilDay: "2026-10-31",
+        adapters: fixtureSources(root, ["huggingface"]),
+      });
+      expect(corpus.verified).toBe(true);
+      expect(sourceDescriptor("huggingface").coverage_policy).toBe("sample");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
   });
 });
 
