@@ -239,7 +239,9 @@ export function useScopedLocale(
         for (const name of names) translateAttribute(element, name, true);
       });
       // Then what was added or moved, by value: a node still holding our write stays ours.
+      let left = false;
       for (const record of records) {
+        if (record.type === "childList" && record.removedNodes.length > 0) left = true;
         if (record.target === document.body) {
           for (const added of record.addedNodes) {
             if (!(added instanceof Element)) continue;
@@ -265,9 +267,22 @@ export function useScopedLocale(
           for (const added of record.addedNodes) translateTree(added);
         }
       }
+      // Whatever left for good (a portal now in another scope, a subtree out of the DOM) is no
+      // longer this scope's to restore: forget it without reverting. A move inside the scope
+      // in the same batch is still observed and keeps its record.
+      if (left) forgetUnobserved();
       observer.takeRecords();
       observe();
     });
+    /** Drops every record of a node this scope no longer observes, leaving its value as is. */
+    const forgetUnobserved = () => {
+      texts.forEach((_rewrite, node) => {
+        if (!isInside(node)) texts.delete(node);
+      });
+      attributes.forEach((_byName, element) => {
+        if (!isInside(element)) attributes.delete(element);
+      });
+    };
     const observe = () => {
       for (const root of roots) observer.observe(root, observeOptions);
       for (const portal of portals) observer.observe(portal, observeOptions);
@@ -309,6 +324,8 @@ export function useScopedLocale(
       for (const type of interactions) {
         document.removeEventListener(type, onInteraction, { capture: true });
       }
+      // Only what this scope still observes: a node elsewhere may be another scope's now.
+      forgetUnobserved();
       // Back to upstream's strings where they are still ours; React may have replaced some.
       texts.forEach((rewrite, node) => {
         if (node.nodeValue === rewrite.written) node.nodeValue = rewrite.original;

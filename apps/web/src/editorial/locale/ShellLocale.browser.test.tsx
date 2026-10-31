@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { makeTranslator, useScopedLocale, type ScopedLocaleOptions } from "./scopedLocale";
-import { useSidebarLocale, useThreadAreaLocale } from "./ShellLocale";
+import {
+  SIDEBAR_LOCALE,
+  THREAD_LOCALE,
+  useSidebarLocale,
+  useThreadAreaLocale,
+} from "./ShellLocale";
 
 /** Counts every MutationObserver callback the page runs while `body` executes. */
 async function countObserverCallbacks(body: () => Promise<void>): Promise<number> {
@@ -411,6 +416,114 @@ describe("shell locale scopes", () => {
       expect(text.nodeValue).toBe("Delete");
       expect(button.getAttribute("aria-label")).toBe("Delete");
       target.remove();
+    });
+  });
+  describe("a scope restores only what it still observes", () => {
+    const containerA = document.createElement("div");
+    const containerB = document.createElement("div");
+    // The real sidebar and thread scopes, their roots narrowed to two test containers.
+    const scopeA: ScopedLocaleOptions = { ...SIDEBAR_LOCALE, roots: () => [containerA] };
+    const scopeB: ScopedLocaleOptions = { ...THREAD_LOCALE, roots: () => [containerB] };
+    function ScopeA() {
+      useScopedLocale(containerA, scopeA);
+      return null;
+    }
+    function ScopeB() {
+      useScopedLocale(containerB, scopeB);
+      return null;
+    }
+    const press = (target: Element) =>
+      target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    const makePortal = () => {
+      const portal = document.createElement("div");
+      portal.innerHTML = '<span>Delete</span><button title="Delete" aria-label="Delete"></button>';
+      return {
+        portal,
+        text: portal.querySelector("span")!.firstChild as Text,
+        button: portal.querySelector("button")!,
+      };
+    };
+    const values = (text: Text, button: HTMLButtonElement) => [
+      text.nodeValue,
+      button.title,
+      button.getAttribute("aria-label"),
+    ];
+    async function mountBoth() {
+      document.body.append(containerA, containerB);
+      const a = await render(<ScopeA />);
+      const b = await render(<ScopeB />);
+      return { a, b };
+    }
+    const cleanUp = (...nodes: Element[]) => {
+      for (const node of [containerA, containerB, ...nodes]) node.remove();
+      containerA.replaceChildren();
+      containerB.replaceChildren();
+    };
+
+    it("keeps upstream's Spanish when a portal moves from A to B and back to body", async () => {
+      const { a, b } = await mountBoth();
+      const { portal, text, button } = makePortal();
+      press(containerA);
+      document.body.append(portal);
+      await vi.waitFor(() => expect(values(text, button)).toEqual(["Borrar", "Borrar", "Borrar"]));
+      containerB.append(portal);
+      await endBatch();
+      press(containerB);
+      document.body.append(portal);
+      await endBatch();
+      text.nodeValue = "Borrar";
+      button.title = "Borrar";
+      button.setAttribute("aria-label", "Borrar");
+      await endBatch();
+      await a.unmount();
+      expect(values(text, button)).toEqual(["Borrar", "Borrar", "Borrar"]);
+      await endBatch();
+      await b.unmount();
+      expect(values(text, button)).toEqual(["Borrar", "Borrar", "Borrar"]);
+      cleanUp(portal);
+    });
+
+    it("leaves a portal nobody adopts as it is, and never touches it again", async () => {
+      const { a, b } = await mountBoth();
+      const { portal, text, button } = makePortal();
+      press(containerA);
+      document.body.append(portal);
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      // A press elsewhere, then out of body into a plain container no scope observes.
+      press(document.body);
+      const elsewhere = document.body.appendChild(document.createElement("section"));
+      elsewhere.append(portal);
+      await endBatch();
+      button.title = "Settings";
+      await endBatch();
+      await a.unmount();
+      await b.unmount();
+      // Still translated where A left it, upstream's later write untouched.
+      expect(values(text, button)).toEqual(["Borrar", "Settings", "Borrar"]);
+      cleanUp(elsewhere);
+    });
+
+    it("forgets a node that leaves the DOM; it is new to the scope when it returns", async () => {
+      const { a, b } = await mountBoth();
+      const { portal: row, text, button } = makePortal();
+      containerA.append(row);
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      row.remove();
+      await endBatch();
+      // Back with what A wrote: A cannot tell it from upstream's Spanish, so it keeps it.
+      containerA.append(row);
+      await endBatch();
+      // Out again, upstream writes English while nobody watches, and it returns.
+      row.remove();
+      await endBatch();
+      text.nodeValue = "Delete";
+      containerA.append(row);
+      await vi.waitFor(() => expect(text.nodeValue).toBe("Borrar"));
+      await a.unmount();
+      expect(text.nodeValue).toBe("Delete");
+      expect(button.title).toBe("Borrar");
+      await b.unmount();
+      cleanUp();
     });
   });
 });
