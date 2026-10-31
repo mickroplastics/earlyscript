@@ -31,10 +31,11 @@ import {
 } from "../components/ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenu } from "../components/ui/sidebar";
 import { inboxSections, runGroupLabel, trendMenuItems } from "./editorial.logic";
-import { editorialEnvironment } from "./state";
+import { EMPTY_INBOX_VIEW, editorialEnvironment, withLiveInboxState } from "./state";
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
+import { TrendPresentationRunButton } from "./TrendPresentationRunButton";
 
 const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly label: string }> =
   [
@@ -46,11 +47,18 @@ const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly
 const isInboxSort = (value: unknown): value is EditorialInboxSort =>
   SORT_OPTIONS.some((option) => option.value === value);
 
-/** The live inbox: a snapshot, then each change from this or any other client. */
+/**
+ * The inbox query, which commands and drafted titles refresh, with each trend's state from
+ * the live subscription, so a change from any client shows without a refetch.
+ */
 export function useTrendInbox(environmentId: EnvironmentId, sort: EditorialInboxSort) {
-  return AsyncResult.map(
-    useAtomValue(editorialEnvironment.liveInbox({ environmentId, input: { sort } })),
-    (view) => view.inbox,
+  const target = { environmentId, input: { sort } };
+  const live = AsyncResult.getOrElse(
+    useAtomValue(editorialEnvironment.liveInbox(target)),
+    () => EMPTY_INBOX_VIEW,
+  );
+  return AsyncResult.map(useAtomValue(editorialEnvironment.inbox(target)), (inbox) =>
+    withLiveInboxState(inbox, live.inbox),
   );
 }
 
@@ -193,6 +201,9 @@ export function TrendInbox({
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
               {inbox?.run ? runGroupLabel(inbox.run, nowMinute) : "Tendencias"}
             </span>
+            {inbox?.run ? (
+              <TrendPresentationRunButton environmentId={environmentId} runId={inbox.run.runId} />
+            ) : null}
             <Menu>
               <MenuTrigger
                 render={

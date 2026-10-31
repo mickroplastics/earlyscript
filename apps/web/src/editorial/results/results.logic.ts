@@ -101,7 +101,7 @@ export const COMPARISON_TEXT: Readonly<
 > = {
   explore: {
     title: "Explorar",
-    assisted: "Tendencias: explorar y leer el expediente",
+    assisted: "Tendencias: explorar y leer la ficha de tendencia",
     manual: "Explorar a mano",
   },
   write: {

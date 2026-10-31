@@ -141,6 +141,8 @@ export const EditorialTrendPresentation = Schema.Struct({
   model: Schema.String,
   promptVersion: Schema.String,
   generatedAt: IsoDateTime,
+  /** `stale`: written for an earlier input (evidence, profile or prompt); kept until regenerated. */
+  status: Schema.optionalKey(Schema.Literals(["current", "stale"])),
 });
 export type EditorialTrendPresentation = typeof EditorialTrendPresentation.Type;
 

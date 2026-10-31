@@ -18,7 +18,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 /** Bumped after an inbox command succeeds, so open inbox and dossier reads refetch. */
 const inboxRevision = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
 
-const bumpInbox = (
+export const bumpInbox = (
   { environmentId }: { readonly environmentId: EnvironmentId },
   registry: AtomRegistry.AtomRegistry,
 ) => Effect.sync(() => registry.update(inboxRevision(environmentId), (value) => value + 1));
@@ -56,6 +56,31 @@ export function applyEditorialStreamItem(
       snoozedCount: trends.filter((trend) => trend.inbox?.snoozed != null).length,
       dismissedCount: trends.filter((trend) => trend.inbox?.dismissed != null).length,
     },
+  };
+}
+
+/**
+ * The inbox read with each trend's state as the subscription last left it. The read keeps
+ * what the subscription does not carry (titles drafted after it started); the subscription
+ * keeps the states current. A view of another run leaves the read as it is.
+ */
+export function withLiveInboxState(
+  inbox: EditorialInbox,
+  live: EditorialInbox | null,
+): EditorialInbox {
+  if (live === null || live.run?.runId !== inbox.run?.runId) return inbox;
+  const liveByKey = new Map(live.trends.map((trend) => [trend.trendKey, trend]));
+  return {
+    ...inbox,
+    trends: inbox.trends.map((trend) => {
+      const current = trend.trendKey === undefined ? undefined : liveByKey.get(trend.trendKey);
+      return current?.inbox === undefined
+        ? trend
+        : { ...trend, isNew: current.isNew, inbox: current.inbox };
+    }),
+    newCount: live.newCount,
+    snoozedCount: live.snoozedCount,
+    dismissedCount: live.dismissedCount,
   };
 }
 

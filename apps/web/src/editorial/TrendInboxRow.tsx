@@ -1,6 +1,6 @@
 import { ThreadId, type EditorialTrendSummary, type EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import type { LucideIcon } from "lucide-react";
+import { HistoryIcon, type LucideIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
 
 import { cn } from "../lib/utils";
@@ -98,7 +98,9 @@ export function TrendInboxRow({
   ) => void;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
-  const title = trend.presentation?.title ?? trend.label;
+  const presentation = trend.presentation;
+  const stale = presentation?.status === "stale";
+  const title = presentation?.title ?? trend.label;
   const production = trend.inbox?.production ?? null;
   const dismissed = trend.inbox?.dismissed ?? null;
   // Read, snoozed and dismissed rows recede like a seen thread; new ones keep full weight.
@@ -134,15 +136,50 @@ export function TrendInboxRow({
         {trend.isNew ? (
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : null}
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-sm",
-            trend.isNew ? "font-medium text-foreground" : "font-normal",
-            recede && "text-foreground/75",
-          )}
-        >
-          {title}
-        </span>
+        {presentation ? (
+          // The assistant's title replaces the engine label; the engine's words stay one hover away.
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  data-presentation-title=""
+                  data-stale={stale ? "" : undefined}
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-sm",
+                    trend.isNew ? "font-medium" : "font-normal",
+                    stale
+                      ? "text-muted-foreground"
+                      : recede
+                        ? "text-foreground/75"
+                        : "text-foreground",
+                  )}
+                />
+              }
+            >
+              {presentation.title}
+            </TooltipTrigger>
+            <TooltipPopup side="right" className="max-w-72">
+              {stale ? "Desactualizado: se redactó sobre otra evidencia, perfil o prompt · " : null}
+              Redactado por el asistente · términos del motor: {trend.label}
+            </TooltipPopup>
+          </Tooltip>
+        ) : (
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-sm",
+              trend.isNew ? "font-medium text-foreground" : "font-normal",
+              recede && "text-foreground/75",
+            )}
+          >
+            {trend.label}
+          </span>
+        )}
+        {presentation ? (
+          <span className="sr-only">
+            {stale ? "Redacción desactualizada. " : null}Términos del motor: {trend.label}.
+          </span>
+        ) : null}
+        {stale ? <HistoryIcon aria-hidden className="size-3 shrink-0 text-warning" /> : null}
         {trend.isNew ? <span className="sr-only">Nueva.</span> : null}
         {production ? <span className="sr-only">En producción.</span> : null}
         {dismissed ? <span className="sr-only">Descartada: {dismissed.reason}.</span> : null}
