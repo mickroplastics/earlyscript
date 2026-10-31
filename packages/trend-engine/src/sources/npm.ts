@@ -137,9 +137,7 @@ export async function collectNpmDay(
                   ? pkg.maintainers?.[0]?.username
                   : pkg.publisher?.username) ?? null,
               title: `${pkg.name} ${pkg.version}`,
-              ...itemBody(
-                [description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n"),
-              ),
+              ...itemBody([description, `weekly downloads: ${weekly}`].filter(Boolean).join("\n")),
               retrieved_at: response.observed_at,
               entities: githubEntity(repository),
             },
