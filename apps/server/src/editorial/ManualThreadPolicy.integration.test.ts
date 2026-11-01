@@ -83,7 +83,21 @@ const project = {
   deletedAt: null,
 } as const;
 
-const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
+type SettingsOverrides = Parameters<typeof ServerSettings.layerTest>[0];
+
+/** Every provider the settings page lists, switched off. */
+const disabledProviders = Object.fromEntries(
+  (["codex", "claudeAgent"] as const).map((driver) => [
+    ProviderInstanceId.make(driver),
+    { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+  ]),
+);
+
+const makeLayer = (
+  sessionOpens: Ref.Ref<number>,
+  dbPath: string,
+  settings: SettingsOverrides = {},
+) => {
   const adapter = {
     instanceId: modelSelection.instanceId,
     driver: ProviderDriverKind.make("codex"),
@@ -108,7 +122,7 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerServerSettings = ServerSettings.layerTest();
+  const layerServerSettings = ServerSettings.layerTest(settings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
@@ -177,13 +191,20 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
   );
 };
 
-const withHarness = <A, E, R>(body: (sessionOpens: Ref.Ref<number>) => Effect.Effect<A, E, R>) =>
+const withHarness = <A, E, R>(
+  body: (sessionOpens: Ref.Ref<number>) => Effect.Effect<A, E, R>,
+  settings: SettingsOverrides = {},
+) =>
   Effect.gen(function* () {
     const sessionOpens = yield* Ref.make(0);
     const dir = makeTempDir();
     return yield* body(sessionOpens).pipe(
       Effect.provide(
-        makeLayer(sessionOpens, NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME)),
+        makeLayer(
+          sessionOpens,
+          NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME),
+          settings,
+        ),
       ),
       Effect.ensuring(removeDir(dir)),
     );
@@ -246,6 +267,71 @@ describe("ManualThreadPolicy at every entry", () => {
         );
         yield* assertNoAgentWork(threadId, sessionOpens);
       }),
+    ),
+  );
+
+  it.effect("creates a manual video thread with every provider disabled", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const threadId = yield* createVideo("op:disabled", "manual");
+          const retried = yield* createVideo("op:disabled", "manual");
+          assert.strictEqual(retried, threadId);
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          assert.deepStrictEqual(
+            listed.map((thread) => [thread.id, thread.title]),
+            [[threadId, "Video: Quantum error correction"]],
+          );
+          const video = yield* EditorialThreadService.EditorialThreadService.use((service) =>
+            service.getVideoThread(threadId),
+          );
+          assert.strictEqual(Option.getOrThrow(video).launchState, "launched");
+          // Creating it enabled nothing: a message is still refused.
+          const refused = yield* Effect.flip(
+            ThreadMessageIntake.dispatchCommand(message(threadId, "disabled")),
+          );
+          assert.strictEqual(refused._tag, "ThreadManagementProviderInstanceDisabledError");
+          yield* assertNoAgentWork(threadId, sessionOpens);
+        }),
+      { providerInstances: disabledProviders },
+    ),
+  );
+
+  it.effect("creates a manual video thread when the project disables its provider", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const threadId = yield* createVideo("op:project-disabled", "manual");
+          yield* assertNoAgentWork(threadId, sessionOpens);
+        }),
+      {
+        projectSettingsOverrides: {
+          [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
+        },
+      },
+    ),
+  );
+
+  it.effect("an assisted video thread with a disabled provider still fails to launch", () =>
+    withHarness(
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(createVideo("op:disabled-assisted", "assisted"));
+          assert.strictEqual(error._tag, "EditorialVideoLaunchError");
+          assert.strictEqual(
+            error._tag === "EditorialVideoLaunchError"
+              ? (error.cause as { readonly _tag?: string })._tag
+              : undefined,
+            "ThreadManagementProviderInstanceDisabledError",
+          );
+          // The toast shows this text as is.
+          assert.include(error.message, "Ajustes › Proveedores");
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          assert.deepStrictEqual(listed, []);
+        }),
+      { providerInstances: disabledProviders },
     ),
   );
 

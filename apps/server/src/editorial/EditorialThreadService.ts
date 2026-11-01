@@ -16,6 +16,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
@@ -66,7 +67,10 @@ export interface CreateVideoInput {
   readonly mode: VideoThreadMode;
   /** Video title; the thread is titled "Video: <title>". */
   readonly title: string;
-  /** Composer defaults of the client. A manual thread keeps them but never runs them. */
+  /**
+   * Composer defaults of the client. A manual thread keeps them but never runs them, so it
+   * opens even when their provider is disabled or there is none.
+   */
   readonly modelSelection: ModelSelection;
   readonly runtimeMode?: RuntimeMode | undefined;
   readonly interactionMode?: ProviderInteractionMode | undefined;
@@ -93,6 +97,10 @@ export interface CreateVideoResult {
   readonly created: boolean;
 }
 
+const isProviderInstanceDisabled = Schema.is(
+  ThreadManagement.ThreadManagementProviderInstanceDisabledError,
+);
+
 export class EditorialVideoLaunchError extends Schema.TaggedError<EditorialVideoLaunchError>()(
   "EditorialVideoLaunchError",
   {
@@ -101,8 +109,19 @@ export class EditorialVideoLaunchError extends Schema.TaggedError<EditorialVideo
     cause: Schema.Defect(),
   },
 ) {
+  /**
+   * Shown as is in the client's toast, by both creation RPCs, so it says in Spanish what to do
+   * about the causes Miguel can fix. The server log keeps the cause itself.
+   */
   override get message(): string {
-    return `Video thread ${this.threadId} was registered but its T3 thread could not be created.`;
+    const cause = this.cause as { readonly _tag?: unknown; readonly operation?: unknown };
+    if (isProviderInstanceDisabled(this.cause)) {
+      return `El proveedor «${this.cause.instanceId}» está desactivado. Actívalo en Ajustes › Proveedores o usa «Crear hilo manual», que funciona sin modelo.`;
+    }
+    if (cause?._tag === "ThreadLaunchError" && cause.operation === "resolve-project") {
+      return "El proyecto del hilo ya no existe en T3.";
+    }
+    return "El hilo quedó registrado, pero no se pudo crear en T3. Vuelve a intentarlo; la causa queda en el registro del servidor.";
   }
 }
 
@@ -216,6 +235,7 @@ const make = Effect.gen(function* () {
   const commands = yield* EditorialCommandService;
   const clock = yield* WorkClockService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const threadManagement = yield* ThreadManagement.ThreadManagementService;
   const videoProject = yield* EditorialVideoProject;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const newId = yield* makeNewId;
@@ -367,10 +387,11 @@ const make = Effect.gen(function* () {
       const threadId = ThreadId.make(thread.threadId);
       // The command id derives from the operation, so a retry replays the
       // launch receipt instead of creating a second thread.
-      yield* videoProject.resolve(input.projectId).pipe(
-        Effect.flatMap((projectId) =>
-          launches.launch({
-            commandId: CommandId.make(`editorial:create-video:${thread.operationId}`),
+      const commandId = CommandId.make(`editorial:create-video:${thread.operationId}`);
+      const launchThread = (projectId: ProjectId) =>
+        launches
+          .launch({
+            commandId,
             threadId,
             projectId,
             title: `Video: ${title}`,
@@ -380,8 +401,42 @@ const make = Effect.gen(function* () {
             workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
             createdBy: "user",
             creationSource: input.creationSource ?? "web",
-          }),
-        ),
+          })
+          .pipe(Effect.asVoid);
+      // The launch refuses a disabled provider; a manual thread never runs one, so it is
+      // created by the launch's own `thread.create`, in the project root, unprepared. The
+      // shared command id lets a retry through either path replay it.
+      const createManualThread = (projectId: ProjectId) =>
+        threadManagement
+          .dispatch({
+            type: "thread.create",
+            commandId,
+            threadId,
+            projectId,
+            title: `Video: ${title}`,
+            modelSelection: input.modelSelection,
+            runtimeMode: input.runtimeMode ?? "approval-required",
+            interactionMode: input.interactionMode ?? "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+          })
+          .pipe(Effect.asVoid);
+      const createThread = Effect.fnUntraced(function* (projectId: ProjectId) {
+        if (
+          input.mode === "manual" &&
+          !(yield* threadManagement.isProviderInstanceEnabledForProject({
+            projectId,
+            instanceId: input.modelSelection.instanceId,
+          }))
+        ) {
+          return yield* createManualThread(projectId);
+        }
+        return yield* launchThread(projectId);
+      });
+      yield* videoProject.resolve(input.projectId).pipe(
+        Effect.flatMap(createThread),
         Effect.catch((cause) =>
           markLaunchState(thread.threadId, "failed").pipe(
             Effect.ignore,

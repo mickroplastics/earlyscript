@@ -17,7 +17,11 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
-import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
+import {
+  providerInstanceEntriesFor,
+  resolveProjectDefaultProviderModelSelection,
+  resolveSelectableProviderInstanceEntry,
+} from "../providerInstances";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProjects, readThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -43,10 +47,9 @@ export const NO_MODEL_DESCRIPTION =
   "Ningún proveedor de modelos está disponible. Conecta Codex o Claude en Ajustes › Proveedores; mientras tanto, «Crear hilo manual» funciona sin modelo.";
 
 /**
- * Where a video thread opens: the environment's most recently used project, as the root page
- * picks it for a new draft, with the model and runtime mode a new thread there would get; with
- * no project yet, the server's studio project with the global defaults. Null only for an
- * assisted thread no provider can run.
+ * The most recent project (none: the server's studio) with a new thread's model and runtime
+ * mode. A default whose provider is disabled or unavailable gives way to one that is not, as in
+ * the composer; null only for an assisted thread no provider can run.
  */
 export function videoThreadTargetFor(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -60,17 +63,27 @@ export function videoThreadTargetFor(input: {
   const project = sortScopedProjectsForSidebar(input.projects, input.threadShells, "updated_at")[0];
   const projectId = project?.id ?? null;
   const projectSettings = resolveProjectSettings(settings, projectId, project).settings;
+  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  const usable = (selection: ModelSelection | null): selection is ModelSelection =>
+    selection !== null &&
+    resolveSelectableProviderInstanceEntry(entries, selection.instanceId)?.instanceId ===
+      selection.instanceId;
+  const configured = projectSettings.defaultModelSelection;
   const { selection } = resolveNewThreadModelSelection({
-    defaultSelection:
-      projectSettings.defaultModelSelection ??
-      resolveProjectDefaultProviderModelSelection(providers, settings, projectId),
+    defaultSelection: usable(configured)
+      ? configured
+      : resolveProjectDefaultProviderModelSelection(providers, settings, projectId),
     fallbackSelection: settings.fallbackModelSelection ?? null,
     providers,
     settings,
     projectId,
     now: input.now,
   });
-  const modelSelection = selection ?? (input.mode === "manual" ? MANUAL_THREAD_MODEL : null);
+  const modelSelection = usable(selection)
+    ? selection
+    : input.mode === "manual"
+      ? MANUAL_THREAD_MODEL
+      : null;
   if (modelSelection === null) return null;
   return {
     ...(projectId === null ? {} : { projectId }),
