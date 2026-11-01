@@ -9,6 +9,8 @@ import {
   EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES,
   EDITORIAL_VIDEO_WS_METHODS,
   EditorialVideoRpcGroup,
+  ProjectId,
+  ProviderInstanceId,
   RpcScopeAuthorization,
   ThreadId,
   type EditorialVideoError,
@@ -26,6 +28,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../config.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -628,6 +631,44 @@ describe("editorial video RPC, review of 76967e71c6", () => {
           1,
         );
       }),
+    ),
+  );
+});
+
+describe("editorial video RPC, creation errors", () => {
+  /** A launcher that fails as upstream's does when the project is gone. */
+  const layerProjectGone = Layer.mock(ThreadLaunch.ThreadLaunchService)({
+    launch: (input) =>
+      Effect.fail(
+        new ThreadLaunch.ThreadLaunchError({
+          operation: "resolve-project",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          cause: "Project not found.",
+        }),
+      ),
+  });
+
+  it.effect("keeps a launch failure's Spanish text, not a storage error", () =>
+    withVideoWorkspace(
+      () =>
+        Effect.gen(function* () {
+          const client = yield* operator;
+          const error = yield* Effect.flip(
+            client[EDITORIAL_VIDEO_WS_METHODS.createManual]({
+              operationId: "gone",
+              projectId: ProjectId.make("project:gone"),
+              title: "Manual",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            }),
+          );
+          assert.strictEqual(reasonOf(error), "launch");
+          assert.strictEqual(
+            "message" in error ? error.message : undefined,
+            "El proyecto del hilo ya no existe en T3.",
+          );
+        }).pipe(Effect.provide(videoRpcLayer), Effect.scoped),
+      { launch: layerProjectGone },
     ),
   );
 });

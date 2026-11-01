@@ -334,6 +334,11 @@ export const EditorialVideoErrorReason = Schema.Literals([
   "thread-deleted",
   /** A purge needs the T3 thread deleted first, so a live thread never loses its mode. */
   "thread-live",
+  /**
+   * The video thread was registered but T3 did not create it: its project is gone or cloning,
+   * its provider is off, or the launch failed. The message is the server's Spanish text for it.
+   */
+  "launch",
   "storage",
 ]);
 export type EditorialVideoErrorReason = typeof EditorialVideoErrorReason.Type;

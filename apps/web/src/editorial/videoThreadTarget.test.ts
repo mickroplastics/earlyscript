@@ -142,4 +142,80 @@ describe("videoThreadTargetFor", () => {
     });
     expect(resolved?.modelSelection).toEqual(CLAUDE);
   });
+
+  describe("replacing a default that cannot run (cost review, round 2)", () => {
+    const CODEX_OFF = {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...disabled("codex"),
+      defaultModelSelection: CODEX,
+    } as ServerSettings;
+    const model = (slug: string, name: string, isDefault = false) => ({
+      slug,
+      name,
+      isCustom: false,
+      ...(isDefault ? { isDefault } : {}),
+      capabilities: {},
+    });
+    const claude = (models: ReadonlyArray<ReturnType<typeof model>>) =>
+      provider("claudeAgent", { displayName: "Claude", models: [...models] });
+    const codexOff = provider("codex", {
+      enabled: false,
+      displayName: "Codex",
+      models: [model(CODEX.model, "GPT-6-Astra", true)],
+    });
+
+    it("takes the model the composer picks for that provider: its catalog default", () => {
+      const resolved = target({
+        settings: CODEX_OFF,
+        providers: [
+          codexOff,
+          claude([
+            model("claude-opus-5-5", "Claude Opus 5.5"),
+            model("claude-sonnet-5-5", "Claude Sonnet 5.5", true),
+          ]),
+        ],
+      });
+      expect(resolved?.modelSelection).toEqual({
+        instanceId: CLAUDE.instanceId,
+        model: "claude-sonnet-5-5",
+      });
+      expect(resolved?.providerNotice).toBe(
+        "Se usará Claude Sonnet 5.5 (Claude) porque GPT-6-Astra (Codex) no está disponible. Puedes cambiarlo antes de enviar.",
+      );
+    });
+
+    it("takes the first model listed when the catalog has no default or hides it", () => {
+      const models = [
+        model("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+        model("claude-opus-5-5", "Claude Opus 5.5"),
+      ];
+      expect(
+        target({ settings: CODEX_OFF, providers: [codexOff, claude(models)] })?.modelSelection
+          .model,
+      ).toBe("claude-sonnet-5-5");
+      const hidden = {
+        ...CODEX_OFF,
+        providerModelPreferences: {
+          [CLAUDE.instanceId]: { hiddenModels: ["claude-opus-5-5"], modelOrder: [] },
+        },
+      } as ServerSettings;
+      const withDefault = [model("claude-opus-5-5", "Claude Opus 5.5", true), models[0]!];
+      expect(
+        target({ settings: hidden, providers: [codexOff, claude(withDefault)] })?.modelSelection
+          .model,
+      ).toBe("claude-sonnet-5-5");
+    });
+
+    it("says nothing when the default runs, when none is saved, or for a manual thread", () => {
+      const sonnet = claude([model("claude-sonnet-5-5", "Claude Sonnet 5.5", true)]);
+      expect(target({ providers: [sonnet] })).not.toHaveProperty("providerNotice");
+      const unsaved = { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection: null };
+      expect(target({ settings: unsaved, providers: [sonnet] })).not.toHaveProperty(
+        "providerNotice",
+      );
+      expect(
+        target({ settings: CODEX_OFF, providers: [codexOff, sonnet], mode: "manual" }),
+      ).not.toHaveProperty("providerNotice");
+    });
+  });
 });

@@ -12,7 +12,7 @@ import * as Migrator from "effect/sql/Migrator";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
-import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import { ManualThreadLauncher } from "../ManualThreadLauncher.ts";
 import * as EditorialThreadService from "../EditorialThreadService.ts";
 import * as EditorialPersistence from "../persistenceLayer.ts";
 import { EditorialVideoProject } from "../VideoProject.ts";
@@ -32,12 +32,16 @@ export const TEST_STUDIO_PROJECT_ID = ProjectId.make("project:editorial-studio")
 const layerLaunchUnused = Layer.mock(ThreadLaunch.ThreadLaunchService)({});
 
 /**
- * Every provider enabled, so a manual thread goes through the launch double like an assisted
- * one. `ManualThreadPolicy.integration.test.ts` runs the disabled case on the real services.
+ * A manual thread goes through the same launch double as an assisted one.
+ * `ManualThreadPolicy.integration.test.ts` runs the real manual launcher.
  */
-const layerProvidersEnabled = Layer.mock(ThreadManagement.ThreadManagementService)({
-  isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-});
+const layerManualFromLaunch = Layer.effect(
+  ManualThreadLauncher,
+  Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    return ManualThreadLauncher.of({ launch: (input) => launches.launch(input) });
+  }),
+);
 
 export const makeTempDir = () =>
   NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "earlyscript-editorial-"));
@@ -54,7 +58,7 @@ export const layerAt = (
     Layer.provide(
       Layer.mergeAll(
         launch,
-        layerProvidersEnabled,
+        layerManualFromLaunch.pipe(Layer.provide(launch)),
         Layer.mock(EditorialVideoProject)({
           resolve: (projectId) => Effect.succeed(projectId ?? TEST_STUDIO_PROJECT_ID),
         }),

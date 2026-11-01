@@ -2,6 +2,7 @@ import {
   CommandId,
   type ModelSelection,
   type OrchestrationV2CreationSource,
+  OrchestrationDispatchCommandError,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -18,6 +19,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
+import { ManualThreadLauncher } from "./ManualThreadLauncher.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type {
@@ -100,6 +102,7 @@ export interface CreateVideoResult {
 const isProviderInstanceDisabled = Schema.is(
   ThreadManagement.ThreadManagementProviderInstanceDisabledError,
 );
+const isCloneRefusal = Schema.is(OrchestrationDispatchCommandError);
 
 export class EditorialVideoLaunchError extends Schema.TaggedError<EditorialVideoLaunchError>()(
   "EditorialVideoLaunchError",
@@ -114,12 +117,19 @@ export class EditorialVideoLaunchError extends Schema.TaggedError<EditorialVideo
    * about the causes Miguel can fix. The server log keeps the cause itself.
    */
   override get message(): string {
-    const cause = this.cause as { readonly _tag?: unknown; readonly operation?: unknown };
+    const cause = this.cause as {
+      readonly _tag?: unknown;
+      readonly operation?: unknown;
+      readonly cause?: unknown;
+    };
     if (isProviderInstanceDisabled(this.cause)) {
       return `El proveedor «${this.cause.instanceId}» está desactivado. Actívalo en Ajustes › Proveedores o usa «Crear hilo manual», que funciona sin modelo.`;
     }
     if (cause?._tag === "ThreadLaunchError" && cause.operation === "resolve-project") {
-      return "El proyecto del hilo ya no existe en T3.";
+      // `rejectCommandsDuringClone` fails with a dispatch error; a missing project, with text.
+      return isCloneRefusal(cause.cause)
+        ? "El repositorio del proyecto todavía se está clonando o su clonado falló. Espera a que termine o reintenta el clonado en T3."
+        : "El proyecto del hilo ya no existe en T3.";
     }
     return "El hilo quedó registrado, pero no se pudo crear en T3. Vuelve a intentarlo; la causa queda en el registro del servidor.";
   }
@@ -235,7 +245,7 @@ const make = Effect.gen(function* () {
   const commands = yield* EditorialCommandService;
   const clock = yield* WorkClockService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
-  const threadManagement = yield* ThreadManagement.ThreadManagementService;
+  const manualLauncher = yield* ManualThreadLauncher;
   const videoProject = yield* EditorialVideoProject;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const newId = yield* makeNewId;
@@ -388,8 +398,12 @@ const make = Effect.gen(function* () {
       // The command id derives from the operation, so a retry replays the
       // launch receipt instead of creating a second thread.
       const commandId = CommandId.make(`editorial:create-video:${thread.operationId}`);
-      const launchThread = (projectId: ProjectId) =>
-        launches
+      // A manual thread never runs its model, so its launcher skips only the provider check
+      // (ManualThreadLauncher.ts); the project, clone, Scratch folder and workspace strategy
+      // checks are the same launch's.
+      const launcher = input.mode === "manual" ? manualLauncher : launches;
+      const createThread = (projectId: ProjectId) =>
+        launcher
           .launch({
             commandId,
             threadId,
@@ -403,38 +417,6 @@ const make = Effect.gen(function* () {
             creationSource: input.creationSource ?? "web",
           })
           .pipe(Effect.asVoid);
-      // The launch refuses a disabled provider; a manual thread never runs one, so it is
-      // created by the launch's own `thread.create`, in the project root, unprepared. The
-      // shared command id lets a retry through either path replay it.
-      const createManualThread = (projectId: ProjectId) =>
-        threadManagement
-          .dispatch({
-            type: "thread.create",
-            commandId,
-            threadId,
-            projectId,
-            title: `Video: ${title}`,
-            modelSelection: input.modelSelection,
-            runtimeMode: input.runtimeMode ?? "approval-required",
-            interactionMode: input.interactionMode ?? "default",
-            branch: null,
-            worktreePath: null,
-            createdBy: "user",
-            creationSource: input.creationSource ?? "web",
-          })
-          .pipe(Effect.asVoid);
-      const createThread = Effect.fnUntraced(function* (projectId: ProjectId) {
-        if (
-          input.mode === "manual" &&
-          !(yield* threadManagement.isProviderInstanceEnabledForProject({
-            projectId,
-            instanceId: input.modelSelection.instanceId,
-          }))
-        ) {
-          return yield* createManualThread(projectId);
-        }
-        return yield* launchThread(projectId);
-      });
       yield* videoProject.resolve(input.projectId).pipe(
         Effect.flatMap(createThread),
         Effect.catch((cause) =>

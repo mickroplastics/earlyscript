@@ -3,6 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_MODEL,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
@@ -12,12 +13,17 @@ import {
   type RuntimeMode,
   type ServerProvider,
   type ServerSettings,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
+import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
+  getDefaultProviderInstanceModel,
+  type ProviderInstanceEntry,
   providerInstanceEntriesFor,
   resolveProjectDefaultProviderModelSelection,
   resolveSelectableProviderInstanceEntry,
@@ -31,6 +37,12 @@ export interface VideoThreadTarget {
   readonly projectId?: ProjectId;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
+  /**
+   * Set when an assisted thread takes another provider than the configured default, because
+   * that one is disabled, unavailable or out of usage: the toast that says so. Not sent to the
+   * server.
+   */
+  readonly providerNotice?: string;
 }
 
 /**
@@ -46,10 +58,49 @@ export const MANUAL_THREAD_MODEL: ModelSelection = {
 export const NO_MODEL_DESCRIPTION =
   "Ningún proveedor de modelos está disponible. Conecta Codex o Claude en Ajustes › Proveedores; mientras tanto, «Crear hilo manual» funciona sin modelo.";
 
+/** "GPT-6-Astra (Codex)": the catalog's names, or the ids when the catalog has none. */
+function describeSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection,
+): string {
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+  return `${model?.name ?? selection.model} (${provider?.displayName ?? selection.instanceId})`;
+}
+
+/**
+ * Replaces a default that cannot run: the provider a new thread's composer offers first, and the
+ * model the composer picks on switching to it (catalog default after Miguel's order and hidden
+ * models, else the first listed). Not the cheapest: the composer shows it before anything is sent.
+ */
+function replacementSelection(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  providers: ReadonlyArray<ServerProvider>,
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const fallback = resolveProjectDefaultProviderModelSelection(providers, settings, projectId);
+  const entry =
+    fallback === null
+      ? undefined
+      : entries.find((candidate) => candidate.instanceId === fallback.instanceId);
+  if (fallback === null || entry === undefined) return fallback;
+  const modelSettings: UnifiedSettings = {
+    ...DEFAULT_CLIENT_SETTINGS,
+    ...settings,
+    ...resolveModelPreferences(settings),
+  };
+  const model =
+    resolveAppModelSelectionForInstance(entry.instanceId, modelSettings, providers, null) ??
+    getDefaultProviderInstanceModel(providers, entry.instanceId);
+  return model === undefined ? fallback : { instanceId: entry.instanceId, model };
+}
+
 /**
  * The most recent project (none: the server's studio) with a new thread's model and runtime
  * mode. A default whose provider is disabled or unavailable gives way to one that is not, as in
- * the composer; null only for an assisted thread no provider can run.
+ * the composer (`replacementSelection`), and an assisted target then carries the notice that
+ * says so; null only for an assisted thread no provider can run.
  */
 export function videoThreadTargetFor(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -72,7 +123,7 @@ export function videoThreadTargetFor(input: {
   const { selection } = resolveNewThreadModelSelection({
     defaultSelection: usable(configured)
       ? configured
-      : resolveProjectDefaultProviderModelSelection(providers, settings, projectId),
+      : replacementSelection(entries, providers, settings, projectId),
     fallbackSelection: settings.fallbackModelSelection ?? null,
     providers,
     settings,
@@ -85,10 +136,18 @@ export function videoThreadTargetFor(input: {
       ? MANUAL_THREAD_MODEL
       : null;
   if (modelSelection === null) return null;
+  // A manual thread never runs its model, so the change does not matter there.
+  const providerNotice =
+    input.mode === "assisted" &&
+    configured !== null &&
+    configured.instanceId !== modelSelection.instanceId
+      ? `Se usará ${describeSelection(providers, modelSelection)} porque ${describeSelection(providers, configured)} no está disponible. Puedes cambiarlo antes de enviar.`
+      : undefined;
   return {
     ...(projectId === null ? {} : { projectId }),
     modelSelection,
     runtimeMode: projectSettings.defaultRuntimeMode,
+    ...(providerNotice === undefined ? {} : { providerNotice }),
   };
 }
 

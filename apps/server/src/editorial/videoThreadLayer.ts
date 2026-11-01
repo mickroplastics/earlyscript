@@ -1,6 +1,7 @@
 import * as Layer from "effect/Layer";
 
 import * as EditorialThreadService from "./EditorialThreadService.ts";
+import * as ManualThreadLauncher from "./ManualThreadLauncher.ts";
 import * as ScriptVersionService from "./ScriptVersionService.ts";
 import * as VideoProject from "./VideoProject.ts";
 
@@ -10,5 +11,9 @@ import * as VideoProject from "./VideoProject.ts";
  * from `persistenceLayer.ts`, below.
  */
 export const layer = ScriptVersionService.layer.pipe(
-  Layer.provideMerge(EditorialThreadService.layer.pipe(Layer.provide(VideoProject.layer))),
+  Layer.provideMerge(
+    EditorialThreadService.layer.pipe(
+      Layer.provide(Layer.mergeAll(VideoProject.layer, ManualThreadLauncher.layer)),
+    ),
+  ),
 );

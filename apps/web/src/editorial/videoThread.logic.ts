@@ -230,6 +230,7 @@ const FAILURE_TEXT: Readonly<Record<EditorialVideoErrorReason, string>> = {
   "script-file": "No se pudo leer el archivo del guion.",
   "thread-deleted": "El hilo se borró: su registro editorial ya no admite cambios.",
   "thread-live": "Borra primero el hilo; sus datos editoriales se borran después.",
+  launch: "No se pudo crear el hilo en T3.",
   storage: "No se pudo escribir en la base editorial.",
 };
 
@@ -244,10 +245,18 @@ export function videoFailureReason(error: unknown): EditorialVideoErrorReason | 
     : null;
 }
 
-/** Spanish text for a failed command; the server detail follows for input and file errors. */
+/**
+ * Spanish text for a failed command; the server detail follows for input and file errors, and a
+ * launch failure shows the server's text alone.
+ */
 export function videoFailureText(error: unknown): string {
   const reason = videoFailureReason(error);
   if (reason !== null) {
+    // A launch failure's message is the server's own Spanish text for its cause.
+    if (reason === "launch" && typeof error === "object" && error !== null && "message" in error) {
+      const message = String(error.message).trim();
+      if (message.length > 0) return message;
+    }
     const detail =
       (reason === "invalid-input" || reason === "script-file") &&
       typeof error === "object" &&

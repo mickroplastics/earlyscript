@@ -126,18 +126,27 @@ export function useTrendActions(environmentId: EnvironmentId) {
         });
         return false;
       }
+      const { providerNotice, ...launchTarget } = target;
       const result = await createVideo({
         environmentId,
         input: {
           trendKey: trend.trendKey,
           runId: trend.runId,
           dossierId: trend.dossierId,
-          ...target,
+          ...launchTarget,
           ...(mode === "manual" ? { mode } : {}),
         },
       });
       if (!settle(result, failureTitle) || !AsyncResult.isSuccess(result)) {
         return false;
+      }
+      // Only a thread this click created took the replacement; an existing one keeps its own.
+      if (providerNotice !== undefined && result.value.created) {
+        toastManager.add({
+          type: "info",
+          title: "Otro proveedor para este hilo",
+          description: providerNotice,
+        });
       }
       await navigate({
         to: "/$environmentId/$threadId",

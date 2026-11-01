@@ -127,6 +127,9 @@ const toVideoError = (cause: {
     }
     case "ScriptFileError":
       return videoError("script-file", cause.message);
+    // Its message getter is fixed Spanish text by cause, never the cause's own message.
+    case "EditorialVideoLaunchError":
+      return videoError("launch", cause.message);
     default:
       return videoError("storage", cause.message);
   }
