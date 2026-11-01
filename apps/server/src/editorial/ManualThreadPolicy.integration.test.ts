@@ -15,6 +15,7 @@ import {
   RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
+  type ProjectCloneSnapshot,
 } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -37,6 +38,7 @@ import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderRepl
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
+import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -83,7 +85,30 @@ const project = {
   deletedAt: null,
 } as const;
 
-const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
+type SettingsOverrides = Parameters<typeof ServerSettings.layerTest>[0];
+
+/** Project states the launcher checks, all off by default. */
+interface ProjectDoubles {
+  /** The project's repository is still being cloned. */
+  readonly cloning?: boolean;
+  /** The project is Scratch: each thread gets this folder of its own. */
+  readonly scratchFolder?: string;
+}
+
+/** Every provider the settings page lists, switched off. */
+const disabledProviders = Object.fromEntries(
+  (["codex", "claudeAgent"] as const).map((driver) => [
+    ProviderInstanceId.make(driver),
+    { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+  ]),
+);
+
+const makeLayer = (
+  sessionOpens: Ref.Ref<number>,
+  dbPath: string,
+  settings: SettingsOverrides = {},
+  doubles: ProjectDoubles = {},
+) => {
   const adapter = {
     instanceId: modelSelection.instanceId,
     driver: ProviderDriverKind.make("codex"),
@@ -108,7 +133,7 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerServerSettings = ServerSettings.layerTest();
+  const layerServerSettings = ServerSettings.layerTest(settings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
@@ -117,7 +142,14 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
   );
   const layerExternal = Layer.mergeAll(
     WorktreeSetupTracker.layer,
-    Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+    Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
+      get: (id) =>
+        Effect.succeed(
+          doubles.cloning === true && id === projectId
+            ? ({ phase: "running" } as unknown as ProjectCloneSnapshot)
+            : null,
+        ),
+    }),
     Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
     Layer.mock(ProjectService.ProjectService)({
       getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
@@ -131,8 +163,14 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
     ProviderRegistryMock.layer(),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
-      isScratchProject: () => Effect.succeed(false),
-      folderForThread: () => Effect.succeedNone,
+      isScratchProject: (id) =>
+        Effect.succeed(doubles.scratchFolder !== undefined && id === projectId),
+      folderForThread: (input) =>
+        Effect.succeed(
+          doubles.scratchFolder !== undefined && input.projectId === projectId
+            ? Option.some(doubles.scratchFolder)
+            : Option.none(),
+        ),
     }),
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
@@ -140,7 +178,13 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
       Layer.mergeAll(layerExternal, layerThreadManagement, layerReceipts, IdAllocator.layer),
     ),
   );
-  const layerT3 = Layer.mergeAll(layerLaunch, layerThreadManagement, layerExternal);
+  // The manual launcher reads receipts through the same repository the server provides.
+  const layerT3 = Layer.mergeAll(
+    layerLaunch,
+    layerThreadManagement,
+    layerExternal,
+    OrchestrationCommandReceipts.layer.pipe(Layer.provide(layerDatabase)),
+  );
   const layerScheduledTasks = ScheduledTasks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -177,13 +221,22 @@ const makeLayer = (sessionOpens: Ref.Ref<number>, dbPath: string) => {
   );
 };
 
-const withHarness = <A, E, R>(body: (sessionOpens: Ref.Ref<number>) => Effect.Effect<A, E, R>) =>
+const withHarness = <A, E, R>(
+  body: (sessionOpens: Ref.Ref<number>) => Effect.Effect<A, E, R>,
+  settings: SettingsOverrides = {},
+  doubles: ProjectDoubles = {},
+) =>
   Effect.gen(function* () {
     const sessionOpens = yield* Ref.make(0);
     const dir = makeTempDir();
     return yield* body(sessionOpens).pipe(
       Effect.provide(
-        makeLayer(sessionOpens, NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME)),
+        makeLayer(
+          sessionOpens,
+          NodePath.join(dir, EditorialDatabase.EDITORIAL_DATABASE_FILENAME),
+          settings,
+          doubles,
+        ),
       ),
       Effect.ensuring(removeDir(dir)),
     );
@@ -246,6 +299,168 @@ describe("ManualThreadPolicy at every entry", () => {
         );
         yield* assertNoAgentWork(threadId, sessionOpens);
       }),
+    ),
+  );
+
+  it.effect("creates a manual video thread with every provider disabled", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const threadId = yield* createVideo("op:disabled", "manual");
+          const retried = yield* createVideo("op:disabled", "manual");
+          assert.strictEqual(retried, threadId);
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          assert.deepStrictEqual(
+            listed.map((thread) => [thread.id, thread.title]),
+            [[threadId, "Video: Quantum error correction"]],
+          );
+          const video = yield* EditorialThreadService.EditorialThreadService.use((service) =>
+            service.getVideoThread(threadId),
+          );
+          assert.strictEqual(Option.getOrThrow(video).launchState, "launched");
+          // Creating it enabled nothing: a message is still refused.
+          const refused = yield* Effect.flip(
+            ThreadMessageIntake.dispatchCommand(message(threadId, "disabled")),
+          );
+          assert.strictEqual(refused._tag, "ThreadManagementProviderInstanceDisabledError");
+          yield* assertNoAgentWork(threadId, sessionOpens);
+        }),
+      { providerInstances: disabledProviders },
+    ),
+  );
+
+  it.effect("creates a manual video thread when the project disables its provider", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const threadId = yield* createVideo("op:project-disabled", "manual");
+          yield* assertNoAgentWork(threadId, sessionOpens);
+        }),
+      {
+        projectSettingsOverrides: {
+          [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
+        },
+      },
+    ),
+  );
+
+  // The manual launcher keeps every launch check but the provider's (review round 2, R3).
+  const failManualLaunch = (input: {
+    readonly operationId: string;
+    readonly projectId?: ProjectId;
+  }) =>
+    EditorialThreadService.EditorialThreadService.use((threads) =>
+      threads.createVideo({
+        operationId: input.operationId,
+        projectId: input.projectId ?? projectId,
+        mode: "manual",
+        title: "Quantum error correction",
+        modelSelection,
+      }),
+    ).pipe(
+      Effect.flip,
+      Effect.flatMap((error) =>
+        Effect.gen(function* () {
+          assert.strictEqual(error._tag, "EditorialVideoLaunchError");
+          const launch = error._tag === "EditorialVideoLaunchError" ? error : undefined;
+          assert.strictEqual(
+            (launch?.cause as { readonly operation?: string } | undefined)?.operation,
+            "resolve-project",
+          );
+          const video = yield* EditorialThreadService.EditorialThreadService.use((service) =>
+            service.getVideoThread(launch?.threadId ?? ""),
+          );
+          assert.strictEqual(Option.getOrThrow(video).launchState, "failed");
+          return error.message;
+        }),
+      ),
+    );
+
+  it.effect("a manual thread with every provider disabled refuses a missing project", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const missing = ProjectId.make("project:missing");
+          const message = yield* failManualLaunch({
+            operationId: "op:missing",
+            projectId: missing,
+          });
+          assert.strictEqual(message, "El proyecto del hilo ya no existe en T3.");
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({
+            projectId: missing,
+            includeSubagents: false,
+          });
+          assert.deepStrictEqual(listed, []);
+          assert.strictEqual(yield* Ref.get(sessionOpens), 0);
+        }),
+      { providerInstances: disabledProviders },
+    ),
+  );
+
+  it.effect("a manual thread with every provider disabled waits for its project's clone", () =>
+    withHarness(
+      () =>
+        Effect.gen(function* () {
+          const message = yield* failManualLaunch({ operationId: "op:cloning" });
+          assert.include(message, "se está clonando");
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          assert.deepStrictEqual(listed, []);
+        }),
+      { providerInstances: disabledProviders },
+      { cloning: true },
+    ),
+  );
+
+  it.effect("a manual thread with every provider disabled gets its own Scratch folder", () =>
+    withHarness(
+      (sessionOpens) =>
+        Effect.gen(function* () {
+          const folder = "/scratch/2026-11-01-quantum-error-correction";
+          // Scratch has no Git: the launcher turns a worktree request into the thread's folder.
+          const { thread } = yield* EditorialThreadService.EditorialThreadService.use((service) =>
+            service.createVideo({
+              operationId: "op:scratch",
+              projectId,
+              mode: "manual",
+              title: "Quantum error correction",
+              modelSelection,
+              workspaceStrategy: { type: "worktree", baseRef: "main" },
+            }),
+          );
+          const threadId = ThreadId.make(thread.threadId);
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const shell = yield* threads.getThreadShell(threadId);
+          assert.strictEqual(shell?.worktreePath, folder);
+          assert.strictEqual(shell?.branch, null);
+          yield* assertNoAgentWork(threadId, sessionOpens);
+        }),
+      { providerInstances: disabledProviders },
+      { scratchFolder: "/scratch/2026-11-01-quantum-error-correction" },
+    ),
+  );
+
+  it.effect("an assisted video thread with a disabled provider still fails to launch", () =>
+    withHarness(
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(createVideo("op:disabled-assisted", "assisted"));
+          assert.strictEqual(error._tag, "EditorialVideoLaunchError");
+          assert.strictEqual(
+            error._tag === "EditorialVideoLaunchError"
+              ? (error.cause as { readonly _tag?: string })._tag
+              : undefined,
+            "ThreadManagementProviderInstanceDisabledError",
+          );
+          // The toast shows this text as is.
+          assert.include(error.message, "Ajustes › Proveedores");
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          assert.deepStrictEqual(listed, []);
+        }),
+      { providerInstances: disabledProviders },
     ),
   );
 

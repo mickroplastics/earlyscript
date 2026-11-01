@@ -586,8 +586,10 @@ function TrendDecision({
                 disabled={creating}
                 onClick={async () => {
                   setCreating(true);
-                  await actions.createVideo({ ...trend, trendKey });
-                  setCreating(false);
+                  // The button comes back even if the action throws.
+                  await actions
+                    .createVideo({ ...trend, trendKey })
+                    .finally(() => setCreating(false));
                 }}
               >
                 Crear hilo de video
@@ -600,8 +602,10 @@ function TrendDecision({
               title="Mismo tema, sin asistente ni expediente: para comparar por pares"
               onClick={async () => {
                 setCreating(true);
-                await actions.createVideo({ ...trend, trendKey }, "manual");
-                setCreating(false);
+                // The button comes back even if the action throws.
+                await actions
+                  .createVideo({ ...trend, trendKey }, "manual")
+                  .finally(() => setCreating(false));
               }}
             >
               Crear hilo manual

@@ -264,7 +264,8 @@ export type EditorialVideoSaveResultInput = typeof EditorialVideoSaveResultInput
 export const EditorialVideoCreateManualInput = Schema.Struct({
   /** Generated once by the client per creation and reused on retries. */
   operationId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  projectId: ProjectId,
+  /** The server's studio project when omitted, as for "Crear hilo de video". */
+  projectId: Schema.optionalKey(ProjectId),
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   /** Kept on the thread for its T3 shell; the policy refuses to run it. */
   modelSelection: ModelSelection,
@@ -333,6 +334,11 @@ export const EditorialVideoErrorReason = Schema.Literals([
   "thread-deleted",
   /** A purge needs the T3 thread deleted first, so a live thread never loses its mode. */
   "thread-live",
+  /**
+   * The video thread was registered but T3 did not create it: its project is gone or cloning,
+   * its provider is off, or the launch failed. The message is the server's Spanish text for it.
+   */
+  "launch",
   "storage",
 ]);
 export type EditorialVideoErrorReason = typeof EditorialVideoErrorReason.Type;

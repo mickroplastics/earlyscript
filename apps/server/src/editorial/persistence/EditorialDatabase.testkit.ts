@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,8 +12,10 @@ import * as Migrator from "effect/sql/Migrator";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
+import { ManualThreadLauncher } from "../ManualThreadLauncher.ts";
 import * as EditorialThreadService from "../EditorialThreadService.ts";
 import * as EditorialPersistence from "../persistenceLayer.ts";
+import { EditorialVideoProject } from "../VideoProject.ts";
 import * as EditorialDatabase from "./EditorialDatabase.ts";
 import { EDITORIAL_MIGRATIONS_TABLE } from "./Migrations.ts";
 import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
@@ -23,8 +25,23 @@ import Migration0004 from "./Migrations/004_EditorialRuns.ts";
 
 export const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment:editorial-test");
 
+/** The project an omitted `projectId` resolves to in tests. */
+export const TEST_STUDIO_PROJECT_ID = ProjectId.make("project:editorial-studio");
+
 /** Launches nothing unless a test passes its own double. */
 const layerLaunchUnused = Layer.mock(ThreadLaunch.ThreadLaunchService)({});
+
+/**
+ * A manual thread goes through the same launch double as an assisted one.
+ * `ManualThreadPolicy.integration.test.ts` runs the real manual launcher.
+ */
+const layerManualFromLaunch = Layer.effect(
+  ManualThreadLauncher,
+  Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    return ManualThreadLauncher.of({ launch: (input) => launches.launch(input) });
+  }),
+);
 
 export const makeTempDir = () =>
   NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "earlyscript-editorial-"));
@@ -41,6 +58,10 @@ export const layerAt = (
     Layer.provide(
       Layer.mergeAll(
         launch,
+        layerManualFromLaunch.pipe(Layer.provide(launch)),
+        Layer.mock(EditorialVideoProject)({
+          resolve: (projectId) => Effect.succeed(projectId ?? TEST_STUDIO_PROJECT_ID),
+        }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(TEST_ENVIRONMENT_ID),
         }),

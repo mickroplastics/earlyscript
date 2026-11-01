@@ -171,6 +171,20 @@ describe("decision block", () => {
     ).toBe("No se pudo leer el archivo del guion. Gone.");
     expect(videoFailureReason(new Error("socket closed"))).toBeNull();
   });
+
+  it("shows a launch failure's own text and keeps storage details hidden", () => {
+    // The manual creation toast of "Nuevo hilo manual" (review round 2, R4).
+    const gone = "El proyecto del hilo ya no existe en T3.";
+    expect(videoFailureText(new EditorialVideoError({ reason: "launch", message: gone }))).toBe(
+      gone,
+    );
+    expect(videoFailureText(new EditorialVideoError({ reason: "launch", message: " " }))).toBe(
+      "No se pudo crear el hilo en T3.",
+    );
+    expect(
+      videoFailureText(new EditorialVideoError({ reason: "storage", message: "SQLITE_BUSY" })),
+    ).toBe("No se pudo escribir en la base editorial.");
+  });
 });
 
 describe("video result draft", () => {

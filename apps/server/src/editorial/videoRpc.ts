@@ -127,6 +127,9 @@ const toVideoError = (cause: {
     }
     case "ScriptFileError":
       return videoError("script-file", cause.message);
+    // Its message getter is fixed Spanish text by cause, never the cause's own message.
+    case "EditorialVideoLaunchError":
+      return videoError("launch", cause.message);
     default:
       return videoError("storage", cause.message);
   }
@@ -602,7 +605,7 @@ const makeHandlers = Effect.gen(function* () {
   /** A manual thread with no dossier; the operation id is the client's, scoped to this use. */
   const createManual = Effect.fn("EditorialVideoRpc.createManual")(function* (input: {
     readonly operationId: string;
-    readonly projectId: ProjectId;
+    readonly projectId?: ProjectId;
     readonly title: string;
     readonly modelSelection: Parameters<typeof threads.createVideo>[0]["modelSelection"];
     readonly trendKey?: string;

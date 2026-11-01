@@ -13,7 +13,7 @@ import { AsyncResult } from "effect/reactivity";
 import { toastManager } from "../components/ui/toast";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { editorialEnvironment } from "./state";
-import { resolveVideoThreadTarget } from "./videoThreadTarget";
+import { NO_MODEL_DESCRIPTION, resolveVideoThreadTarget } from "./videoThreadTarget";
 
 /** What an inbox action needs of a trend; `trendKey` is absent only from older servers. */
 export type ActionableTrend = Pick<EditorialTrendSummary, "trendKey" | "runId" | "dossierId">;
@@ -104,6 +104,8 @@ export function useTrendActions(environmentId: EnvironmentId) {
     /**
      * Creates the trend's video thread, or finds the one it has, and opens it. `manual` opens
      * the trend's manual thread instead: same topic, no chat, for the paired comparison.
+     * Without a project the server opens it in its studio project; only an assisted thread
+     * with no model to run stops here, saying where to connect one.
      */
     createVideo: async (
       trend: ActionableTrend & { readonly trendKey: EditorialTrendKey },
@@ -111,27 +113,40 @@ export function useTrendActions(environmentId: EnvironmentId) {
     ) => {
       const failureTitle =
         mode === "manual" ? "No se pudo crear el hilo manual" : "No se pudo crear el hilo de video";
-      const target = resolveVideoThreadTarget(environmentId);
+      const target = resolveVideoThreadTarget(environmentId, mode);
       if (target === null) {
         toastManager.add({
           type: "error",
           title: failureTitle,
-          description: "Hace falta un proyecto con un modelo disponible en el espacio Hilos.",
+          description: NO_MODEL_DESCRIPTION,
+          actionProps: {
+            children: "Abrir Proveedores",
+            onClick: () => void navigate({ to: "/settings/providers" }),
+          },
         });
         return false;
       }
+      const { providerNotice, ...launchTarget } = target;
       const result = await createVideo({
         environmentId,
         input: {
           trendKey: trend.trendKey,
           runId: trend.runId,
           dossierId: trend.dossierId,
-          ...target,
+          ...launchTarget,
           ...(mode === "manual" ? { mode } : {}),
         },
       });
       if (!settle(result, failureTitle) || !AsyncResult.isSuccess(result)) {
         return false;
+      }
+      // Only a thread this click created took the replacement; an existing one keeps its own.
+      if (providerNotice !== undefined && result.value.created) {
+        toastManager.add({
+          type: "info",
+          title: "Otro proveedor para este hilo",
+          description: providerNotice,
+        });
       }
       await navigate({
         to: "/$environmentId/$threadId",
