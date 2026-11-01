@@ -170,7 +170,7 @@ export const EditorialNightlySettings = Schema.Struct({
   timezone: Schema.String,
   /** Embedding child processes of the engine run. */
   workers: Workers,
-  /** The next scheduled run; null while disabled. */
+  /** The next scheduled time that would run a job (its cutoff has none yet); null while disabled. */
   nextRunAt: Schema.NullOr(IsoDateTime),
 });
 export type EditorialNightlySettings = typeof EditorialNightlySettings.Type;

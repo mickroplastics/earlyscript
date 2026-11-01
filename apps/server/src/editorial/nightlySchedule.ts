@@ -40,6 +40,40 @@ export function lastOccurrence(timeOfDay: string, timeZone: string, nowMs: numbe
   return candidate === null || candidate > nowMs ? null : candidate;
 }
 
+/** The next `count` occurrences of `timeOfDay` in `timeZone` strictly after `afterMs`. */
+export function upcomingOccurrences(
+  timeOfDay: string,
+  timeZone: string,
+  afterMs: number,
+  count: number,
+): ReadonlyArray<number> {
+  const occurrences: Array<number> = [];
+  let after = afterMs;
+  while (occurrences.length < count) {
+    const next = nextOccurrence(timeOfDay, timeZone, after);
+    if (next === null) break;
+    occurrences.push(next);
+    after = next;
+  }
+  return occurrences;
+}
+
+/**
+ * The first occurrence at which `scheduleDue` would create a job: at or after `enabledAtMs`,
+ * its cutoff without a daily job of any status (failed and skipped ones are never reclaimed).
+ * All covered, which needs future rows the server never writes: the last, as null means off.
+ */
+export function nextUsefulOccurrence(
+  occurrences: ReadonlyArray<number>,
+  enabledAtMs: number,
+  coveredCutoffs: ReadonlySet<string>,
+): number | null {
+  const useful = occurrences.find(
+    (occurrence) => occurrence >= enabledAtMs && !coveredCutoffs.has(cutoffOf(occurrence)),
+  );
+  return useful ?? occurrences.at(-1) ?? null;
+}
+
 export interface CollectWindow {
   readonly fromDay: string;
   /** Exclusive. */

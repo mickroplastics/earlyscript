@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG_PATH } from "@earlyscript/trend-engine/run";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EditorialPresentationError, EditorialRunId, type EditorialJob } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -480,6 +481,71 @@ describe("EditorialJobsService", () => {
         yield* jobs.runDue;
         yield* onlyJob;
         assert.strictEqual(fx.trace().filter((line) => line === "run").length, 1);
+      }),
+    );
+  });
+
+  it.live("announces the next scheduled time that would run, not one already covered", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        const clock = yield* Clock.Clock;
+        const at =
+          (iso: string) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.provideService(
+                Clock.Clock,
+                // The live clock's methods sit on its prototype; only wall time is fixed.
+                Object.assign(Object.create(clock) as Clock.Clock, {
+                  currentTimeMillisUnsafe: () => Date.parse(iso),
+                  currentTimeMillis: Effect.sync(() => Date.parse(iso)),
+                }),
+              ),
+            );
+        // The evening of 31 Oct in Guayaquil, 1 Nov in UTC, with the run on at 03:00 local.
+        const evening = at("2026-11-01T01:18:00.000Z");
+        yield* sql`
+          INSERT INTO editorial_nightly_settings (
+            id, enabled, time_of_day, timezone, workers, enabled_at, updated_at
+          ) VALUES (1, 1, '03:00', 'America/Guayaquil', 2, ${PAST}, ${PAST})
+        `;
+        assert.strictEqual(
+          (yield* evening(jobs.getSettings)).nextRunAt,
+          "2026-11-01T08:00:00.000Z",
+        );
+
+        // Ejecutar ahora took the cutoff of 1 Nov and finished: 03:00 on 1 Nov runs nothing.
+        const job = yield* evening(jobs.runNow);
+        assert.strictEqual(job.cutoffAt, "2026-11-01T00:00:00.000Z");
+        yield* sql`UPDATE editorial_jobs SET status = 'done' WHERE job_id = ${job.jobId}`;
+        assert.strictEqual(
+          (yield* evening(jobs.getSettings)).nextRunAt,
+          "2026-11-02T08:00:00.000Z",
+        );
+        // Saving the settings answers the same rule, in the zone it stores.
+        const saved = yield* evening(jobs.updateSettings({ workers: 2 }));
+        assert.strictEqual(saved.nextRunAt, (yield* evening(jobs.getSettings)).nextRunAt);
+
+        // A failed job covers its cutoff too: at 03:00 the Scheduler neither recreates it nor
+        // claims it again.
+        yield* sql`
+          UPDATE editorial_nightly_settings SET timezone = 'America/Guayaquil', enabled_at = ${PAST}
+        `;
+        yield* sql`UPDATE editorial_jobs SET status = 'failed' WHERE job_id = ${job.jobId}`;
+        assert.strictEqual(
+          (yield* evening(jobs.getSettings)).nextRunAt,
+          "2026-11-02T08:00:00.000Z",
+        );
+        yield* at("2026-11-01T08:00:30.000Z")(jobs.runDue);
+        assert.deepStrictEqual(
+          (yield* jobs.list).jobs.map((entry) => entry.status),
+          ["failed"],
+        );
+        assert.deepStrictEqual(fx.trace(), []);
       }),
     );
   });

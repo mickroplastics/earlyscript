@@ -11,7 +11,9 @@ import {
   cutoffOf,
   lastOccurrence,
   nextOccurrence,
+  nextUsefulOccurrence,
   sha256,
+  upcomingOccurrences,
 } from "./nightlySchedule.ts";
 
 describe("nightly schedule", () => {
@@ -30,6 +32,43 @@ describe("nightly schedule", () => {
     expect(nextOccurrence("03:00", "America/Guayaquil", now)).toBe(
       Date.parse("2026-11-01T08:00:00.000Z"),
     );
+  });
+
+  it("skips the scheduled times whose cutoff already has its job", () => {
+    const zone = "America/Guayaquil";
+    const next = (nowIso: string, covered: ReadonlyArray<string>, timeOfDay = "03:00") =>
+      nextUsefulOccurrence(
+        upcomingOccurrences(timeOfDay, zone, Date.parse(nowIso), 7),
+        Date.parse("2026-10-30T00:00:00.000Z"),
+        new Set(covered),
+      );
+    // Ejecutar ahora at 01:18Z on 1 Nov (20:18 on 31 Oct in Guayaquil) took the cutoff of
+    // 1 Nov, so 03:00 on 1 Nov would run nothing; the next useful one is 03:00 on 2 Nov.
+    expect(next("2026-11-01T01:18:00.000Z", ["2026-11-01T00:00:00.000Z"])).toBe(
+      Date.parse("2026-11-02T08:00:00.000Z"),
+    );
+    // No job yet: the next scheduled time itself.
+    expect(next("2026-11-01T01:18:00.000Z", [])).toBe(Date.parse("2026-11-01T08:00:00.000Z"));
+    // 22:00 in Guayaquil is 03:00Z of the next UTC day: the job of the local day leaves
+    // tonight's run free, the job of the next UTC day takes it.
+    expect(next("2026-10-31T12:00:00.000Z", ["2026-10-31T00:00:00.000Z"], "22:00")).toBe(
+      Date.parse("2026-11-01T03:00:00.000Z"),
+    );
+    expect(next("2026-10-31T12:00:00.000Z", ["2026-11-01T00:00:00.000Z"], "22:00")).toBe(
+      Date.parse("2026-11-02T03:00:00.000Z"),
+    );
+    // Before the run was switched on, a time does not count either.
+    expect(
+      nextUsefulOccurrence(
+        upcomingOccurrences("03:00", zone, Date.parse("2026-11-01T01:18:00.000Z"), 7),
+        Date.parse("2026-11-01T09:00:00.000Z"),
+        new Set(),
+      ),
+    ).toBe(Date.parse("2026-11-02T08:00:00.000Z"));
+    // Every time in the window covered: the last one looked at, never null while enabled.
+    const all = upcomingOccurrences("03:00", zone, Date.parse("2026-11-01T01:18:00.000Z"), 7);
+    expect(all).toHaveLength(7);
+    expect(next("2026-11-01T01:18:00.000Z", all.map(cutoffOf))).toBe(all[6]);
   });
 
   it("captures from the last corpus day to yesterday and names the days without a run", () => {

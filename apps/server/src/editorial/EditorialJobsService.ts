@@ -53,8 +53,9 @@ import {
   cutoffOf,
   isTimeZone,
   lastOccurrence,
-  nextOccurrence,
+  nextUsefulOccurrence,
   sha256,
+  upcomingOccurrences,
 } from "./nightlySchedule.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { makeNewId } from "./persistence/support.ts";
@@ -65,6 +66,8 @@ const LIST_LIMIT = 30;
 const INITIAL_CORPUS_DAYS = 28;
 const DEFAULT_TIME_OF_DAY = "03:00";
 const DEFAULT_WORKERS = 2;
+/** Scheduled times `nextRunAt` looks through for one whose cutoff has no job yet. */
+const NEXT_RUN_LOOKAHEAD = 7;
 /** A capture lock older than this outlived its process; a newer one may still be working. */
 const STALE_COLLECT_LOCK_MS = 60 * 60_000;
 const EMBEDDINGS_CACHE_ENV = "EARLYSCRIPT_EDITORIAL_EMBEDDINGS_CACHE";
@@ -355,19 +358,48 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     Effect.mapError(storage),
   );
 
-  const settingsView = (stored: StoredSettings, nowMs: number): EditorialNightlySettings => {
-    const next = stored.enabled ? nextOccurrence(stored.timeOfDay, stored.timezone, nowMs) : null;
+  /** The next scheduled time that would run a job, not one whose cutoff already has its job. */
+  const nextRunAtOf = Effect.fn("EditorialJobsService.nextRunAt")(function* (
+    stored: StoredSettings,
+    nowMs: number,
+  ) {
+    if (!stored.enabled || stored.enabledAt === null) return null;
+    const occurrences = upcomingOccurrences(
+      stored.timeOfDay,
+      stored.timezone,
+      nowMs,
+      NEXT_RUN_LOOKAHEAD,
+    );
+    const first = occurrences[0];
+    const last = occurrences.at(-1);
+    if (first === undefined || last === undefined) return null;
+    const covered = yield* sql<{ readonly cutoff_at: string }>`
+      SELECT DISTINCT cutoff_at FROM editorial_jobs
+      WHERE kind = 'daily' AND cutoff_at >= ${cutoffOf(first)} AND cutoff_at <= ${cutoffOf(last)}
+    `.pipe(Effect.mapError(storage));
+    const next = nextUsefulOccurrence(
+      occurrences,
+      Date.parse(stored.enabledAt),
+      new Set(covered.map((row) => row.cutoff_at)),
+    );
+    return next === null ? null : isoOf(next);
+  });
+
+  const settingsView = Effect.fn("EditorialJobsService.settingsView")(function* (
+    stored: StoredSettings,
+    nowMs: number,
+  ) {
     return {
       enabled: stored.enabled,
       timeOfDay: stored.timeOfDay,
       timezone: stored.timezone,
       workers: stored.workers,
-      nextRunAt: next === null ? null : isoOf(next),
-    };
-  };
+      nextRunAt: yield* nextRunAtOf(stored, nowMs),
+    } satisfies EditorialNightlySettings;
+  });
 
   const getSettings = Effect.gen(function* () {
-    return settingsView(yield* readSettings, yield* Clock.currentTimeMillis);
+    return yield* settingsView(yield* readSettings, yield* Clock.currentTimeMillis);
   }).pipe(Effect.withSpan("EditorialJobsService.getSettings"));
 
   const updateSettings = Effect.fn("EditorialJobsService.updateSettings")(function* (
@@ -402,7 +434,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         enabled_at = excluded.enabled_at,
         updated_at = excluded.updated_at
     `.pipe(Effect.mapError(storage));
-    return settingsView(next, nowMs);
+    return yield* settingsView(next, nowMs);
   });
 
   const plan: Effect.Effect<JobPlan, EditorialJobsError> = Effect.gen(function* () {
