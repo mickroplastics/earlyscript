@@ -15,11 +15,37 @@ import "~/index.css";
 
 import { render } from "../../test/render";
 import { TrendDossierView, type TrendPresentationActions } from "./TrendDossierPage";
+import { NO_MODEL_DESCRIPTION } from "./videoThreadTarget";
 
+const STUDIO_TARGET = {
+  projectId: "project:studio",
+  modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
+  runtimeMode: "approval-required",
+} as const;
 const state = vi.hoisted(() => ({
   opened: [] as string[],
   commands: [] as Array<readonly [string, unknown]>,
+  toasts: [] as Array<{
+    readonly title?: unknown;
+    readonly description?: unknown;
+    readonly actionProps?: { readonly children?: unknown };
+  }>,
+  // The client's target for a video thread; set per test, `null` when no model can run it.
+  target: null as object | null,
 }));
+vi.mock("../components/ui/toast", async (original) => {
+  const actual = await original<typeof import("../components/ui/toast")>();
+  return {
+    ...actual,
+    toastManager: {
+      ...actual.toastManager,
+      add: (toast: (typeof state.toasts)[number]) => {
+        state.toasts.push(toast);
+        return "toast";
+      },
+    },
+  };
+});
 vi.mock("../browser/useOpenLink", () => ({
   useOpenLink: () => async (url: string) => {
     state.opened.push(url);
@@ -38,17 +64,16 @@ vi.mock("../state/use-orchestration-command", async () => {
       },
   };
 });
-vi.mock("./videoThreadTarget", () => ({
-  resolveVideoThreadTarget: () => ({
-    projectId: "project:studio",
-    modelSelection: { instanceId: "codex", model: "gpt-6-luna" },
-    runtimeMode: "approval-required",
-  }),
+vi.mock("./videoThreadTarget", async (original) => ({
+  ...(await original<typeof import("./videoThreadTarget")>()),
+  resolveVideoThreadTarget: () => state.target,
 }));
 
-function setup() {
+function setup(target: object | null = STUDIO_TARGET) {
   state.opened = [];
   state.commands = [];
+  state.toasts = [];
+  state.target = target;
 }
 
 const ENVIRONMENT_ID = EnvironmentId.make("env-1");
@@ -200,6 +225,64 @@ describe("TrendDossierView", () => {
     await vi.waitFor(() =>
       expect(screen.router?.state.location.pathname).toBe("/env-1/thread-video"),
     );
+  });
+
+  it("creates the video thread of an install with no project, leaving the project to the server", async () => {
+    const { projectId: _none, ...withoutProject } = STUDIO_TARGET;
+    setup(withoutProject);
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Crear hilo de video" }));
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        [
+          "environment-data:editorial:create-video",
+          {
+            trendKey: TREND_KEY,
+            runId: RUN_ID,
+            dossierId: DOSSIER.trend.dossierId,
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" },
+            runtimeMode: "approval-required",
+          },
+        ],
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/env-1/thread-video"),
+    );
+    expect(state.toasts).toEqual([]);
+  });
+
+  it("says where to connect a model when none can run the assisted thread", async () => {
+    setup(null);
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={DOSSIER}
+        evidence={DOSSIER}
+        onEvidencePage={() => {}}
+      />,
+    );
+    const create = screen.getByRole("button", { name: "Crear hilo de video" });
+    await userEvent.click(create);
+    await vi.waitFor(() =>
+      expect(state.toasts).toEqual([
+        expect.objectContaining({
+          title: "No se pudo crear el hilo de video",
+          description: NO_MODEL_DESCRIPTION,
+          actionProps: expect.objectContaining({ children: "Abrir Proveedores" }),
+        }),
+      ]),
+    );
+    expect(state.commands).toEqual([]);
+    // The button comes back for a second try once a provider is connected.
+    await expect.element(create).toBeEnabled();
   });
 
   it("dismisses only with a reason of at least three characters", async () => {

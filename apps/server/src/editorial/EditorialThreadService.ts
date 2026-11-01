@@ -34,6 +34,7 @@ import {
   toPersistenceError,
 } from "./persistence/Errors.ts";
 import { makeNewId, nowIso } from "./persistence/support.ts";
+import { EditorialVideoProject } from "./VideoProject.ts";
 import { type WorkClockError, WorkClockService } from "./WorkClockService.ts";
 
 export interface RegisterVideoThreadInput {
@@ -60,7 +61,8 @@ export interface RegisterVideoThreadResult {
 export interface CreateVideoInput {
   /** Generated once by the client when Miguel chooses to create; reused on every retry. */
   readonly operationId: string;
-  readonly projectId: ProjectId;
+  /** The studio project of `VideoProject.ts` when omitted. */
+  readonly projectId?: ProjectId | undefined;
   readonly mode: VideoThreadMode;
   /** Video title; the thread is titled "Video: <title>". */
   readonly title: string;
@@ -214,6 +216,7 @@ const make = Effect.gen(function* () {
   const commands = yield* EditorialCommandService;
   const clock = yield* WorkClockService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const videoProject = yield* EditorialVideoProject;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const newId = yield* makeNewId;
 
@@ -364,35 +367,43 @@ const make = Effect.gen(function* () {
       const threadId = ThreadId.make(thread.threadId);
       // The command id derives from the operation, so a retry replays the
       // launch receipt instead of creating a second thread.
-      yield* launches
-        .launch({
-          commandId: CommandId.make(`editorial:create-video:${thread.operationId}`),
-          threadId,
-          projectId: input.projectId,
-          title: `Video: ${title}`,
-          modelSelection: input.modelSelection,
-          runtimeMode: input.runtimeMode ?? "approval-required",
-          interactionMode: input.interactionMode ?? "default",
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
-          createdBy: "user",
-          creationSource: input.creationSource ?? "web",
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            markLaunchState(thread.threadId, "failed").pipe(
-              Effect.ignore,
-              Effect.andThen(
-                Effect.fail(
-                  new EditorialVideoLaunchError({
-                    operationId: thread.operationId,
-                    threadId: thread.threadId,
-                    cause,
-                  }),
-                ),
+      yield* videoProject.resolve(input.projectId).pipe(
+        Effect.flatMap((projectId) =>
+          launches.launch({
+            commandId: CommandId.make(`editorial:create-video:${thread.operationId}`),
+            threadId,
+            projectId,
+            title: `Video: ${title}`,
+            modelSelection: input.modelSelection,
+            runtimeMode: input.runtimeMode ?? "approval-required",
+            interactionMode: input.interactionMode ?? "default",
+            workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+            createdBy: "user",
+            creationSource: input.creationSource ?? "web",
+          }),
+        ),
+        Effect.catch((cause) =>
+          markLaunchState(thread.threadId, "failed").pipe(
+            Effect.ignore,
+            // The client sees only that the launch failed; the server log keeps why.
+            Effect.andThen(
+              Effect.logWarning("Video thread launch failed", {
+                operationId: thread.operationId,
+                cause,
+              }),
+            ),
+            Effect.andThen(
+              Effect.fail(
+                new EditorialVideoLaunchError({
+                  operationId: thread.operationId,
+                  threadId: thread.threadId,
+                  cause,
+                }),
               ),
             ),
           ),
-        );
+        ),
+      );
       thread = yield* markLaunchState(thread.threadId, "launched");
     }
     // The trend's production link names its assisted thread. A manual thread on the same

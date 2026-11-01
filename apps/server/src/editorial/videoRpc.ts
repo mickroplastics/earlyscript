@@ -602,7 +602,7 @@ const makeHandlers = Effect.gen(function* () {
   /** A manual thread with no dossier; the operation id is the client's, scoped to this use. */
   const createManual = Effect.fn("EditorialVideoRpc.createManual")(function* (input: {
     readonly operationId: string;
-    readonly projectId: ProjectId;
+    readonly projectId?: ProjectId;
     readonly title: string;
     readonly modelSelection: Parameters<typeof threads.createVideo>[0]["modelSelection"];
     readonly trendKey?: string;

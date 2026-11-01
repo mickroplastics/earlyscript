@@ -2,6 +2,7 @@ import * as Layer from "effect/Layer";
 
 import * as EditorialThreadService from "./EditorialThreadService.ts";
 import * as ScriptVersionService from "./ScriptVersionService.ts";
+import * as VideoProject from "./VideoProject.ts";
 
 /**
  * Video thread services. They launch and read T3 threads, so `server.ts`
@@ -9,5 +10,5 @@ import * as ScriptVersionService from "./ScriptVersionService.ts";
  * from `persistenceLayer.ts`, below.
  */
 export const layer = ScriptVersionService.layer.pipe(
-  Layer.provideMerge(EditorialThreadService.layer),
+  Layer.provideMerge(EditorialThreadService.layer.pipe(Layer.provide(VideoProject.layer))),
 );

@@ -9,7 +9,10 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { defaultScriptPath, EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
-import { withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.ts";
+import {
+  TEST_STUDIO_PROJECT_ID,
+  withEditorialDatabase,
+} from "./persistence/EditorialDatabase.testkit.ts";
 import { WorkClockService } from "./WorkClockService.ts";
 
 const projectId = ProjectId.make("project:studio");
@@ -167,6 +170,27 @@ describe("EditorialThreadService.createVideo", () => {
 
           const conflict = yield* Effect.flip(threads.createVideo({ ...input, mode: "manual" }));
           assert.strictEqual(conflict._tag, "EditorialConflictError");
+        }),
+        { launch: launch.layer },
+      );
+    }),
+  );
+
+  it.effect("opens a thread with no project in the studio project", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withEditorialDatabase(
+        Effect.gen(function* () {
+          const threads = yield* EditorialThreadService;
+          const created = yield* threads.createVideo({
+            operationId: "op-no-project",
+            mode: "assisted",
+            title: "Sin proyecto",
+            modelSelection,
+          });
+          assert.strictEqual(created.thread.launchState, "launched");
+          const [call] = yield* Ref.get(launch.calls);
+          assert.strictEqual(call?.projectId, TEST_STUDIO_PROJECT_ID);
         }),
         { launch: launch.layer },
       );

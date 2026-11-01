@@ -264,7 +264,8 @@ export type EditorialVideoSaveResultInput = typeof EditorialVideoSaveResultInput
 export const EditorialVideoCreateManualInput = Schema.Struct({
   /** Generated once by the client per creation and reused on retries. */
   operationId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  projectId: ProjectId,
+  /** The server's studio project when omitted, as for "Crear hilo de video". */
+  projectId: Schema.optionalKey(ProjectId),
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   /** Kept on the thread for its T3 shell; the policy refuses to run it. */
   modelSelection: ModelSelection,

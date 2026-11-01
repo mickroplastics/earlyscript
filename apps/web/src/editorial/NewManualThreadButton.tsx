@@ -62,21 +62,13 @@ export function NewManualThreadButton({
   );
 
   const create = async () => {
-    const target = resolveVideoThreadTarget(environmentId);
-    if (target === null) {
-      toastManager.add({
-        type: "error",
-        title: "No se pudo crear el hilo manual",
-        description: "Hace falta un proyecto con un modelo disponible en el espacio Hilos.",
-      });
-      return;
-    }
+    const target = resolveVideoThreadTarget(environmentId, "manual");
     setBusy(true);
     const result = await createManual({
       environmentId,
       input: {
         operationId,
-        projectId: target.projectId,
+        ...(target.projectId === undefined ? {} : { projectId: target.projectId }),
         modelSelection: target.modelSelection,
         title: title.trim() || defaultManualTitle(),
         ...(trendKey === NO_TREND ? {} : { trendKey: trendKey as EditorialTrendKey }),

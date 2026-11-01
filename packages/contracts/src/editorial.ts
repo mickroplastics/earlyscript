@@ -314,12 +314,13 @@ export type EditorialTrendStateResult = typeof EditorialTrendStateResult.Type;
 /**
  * "Crear hilo de video" from a dossier. The server reads the title and the dossier hash from
  * its index; the client sends the project and composer defaults a new thread there would get.
+ * Without a project (an install that has none yet) the server opens it in its studio project.
  */
 export const EditorialCreateVideoInput = Schema.Struct({
   trendKey: EditorialTrendKey,
   runId: EditorialRunId,
   dossierId: EditorialDossierId,
-  projectId: ProjectId,
+  projectId: Schema.optionalKey(ProjectId),
   modelSelection: ModelSelection,
   runtimeMode: Schema.optionalKey(RuntimeMode),
   /**
