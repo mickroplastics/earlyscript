@@ -20,6 +20,7 @@ import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { NATIVE_FIXTURE_RUN_ID } from "./editorialLayer.testkit.ts";
 import * as EditorialImportService from "./EditorialImportService.ts";
 import * as EditorialJobsService from "./EditorialJobsService.ts";
+import * as EditorialProfileService from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import { addDays } from "./nightlySchedule.ts";
@@ -241,6 +242,7 @@ const withJobs = <A, E>(
     E,
     | EditorialJobsService.EditorialJobsService
     | EditorialImportService.EditorialImportService
+    | EditorialProfileService.EditorialProfileService
     | EditorialSql
   >,
   options: {
@@ -277,7 +279,7 @@ const withJobs = <A, E>(
     engine:
       options.engine ?? Result.succeed({ cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH }),
     jobsDir: NodePath.join(fx.root, "jobs"),
-    profilePath: NodePath.join(fx.root, "profile.json"),
+    profilesDir: NodePath.join(fx.root, "profiles"),
     cacheFile: NodePath.join(fx.root, "embeddings.sqlite"),
     modelsDir: null,
     ...EditorialJobsService.DEFAULT_JOB_TIMING,
@@ -287,6 +289,7 @@ const withJobs = <A, E>(
     Layer.provideMerge(
       Layer.mergeAll(
         EditorialSourcesService.layerWithCorpusDir(fx.corpusDir),
+        EditorialProfileService.layer,
         importer,
         Layer.mock(EditorialPresentationService)({
           startRun: (runId) =>
@@ -460,6 +463,41 @@ describe("EditorialJobsService", () => {
         assert.strictEqual((yield* jobs.runNow).status, "done");
         yield* jobs.runDue;
         assert.strictEqual(fx.trace().length, 5);
+      }),
+    );
+  });
+
+  it.live("keys the job with the active profile and hands the engine that version's file", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const profiles = yield* EditorialProfileService.EditorialProfileService;
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const v1 = yield* profiles.activeFile;
+        const job = yield* jobs.runNow;
+        assert.strictEqual(job.profileHash, v1.hash);
+
+        // A new version before the job runs: the pending job is replaced by one of the new key.
+        const { active } = yield* profiles.update({
+          name: "SingulariDev",
+          audience: "Solo founders building with AI agents",
+          include: ["AI coding agents"],
+          exclude: [],
+        });
+        yield* jobs.runDue;
+        yield* jobs.runDue;
+        const list = (yield* jobs.list).jobs;
+        const replaced = list.find((entry) => entry.jobId === job.jobId);
+        const current = list.find((entry) => entry.profileHash === active.hash);
+        assert.strictEqual(replaced?.status, "skipped");
+        assert.strictEqual(current?.status, "done");
+        const written = NodeFS.readFileSync(
+          NodePath.join(fx.root, "profiles", `${active.hash.slice("sha256:".length)}.json`),
+          "utf8",
+        );
+        assert.strictEqual(written, (yield* profiles.activeFile).bytes);
+        assert.include(written, '"version": 2');
       }),
     );
   });

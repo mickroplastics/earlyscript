@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as SqlClient from "effect/sql/SqlClient";
 
-import { currentPresentationProfile } from "./channelProfile.ts";
+import { currentPresentationProfile } from "./EditorialProfileService.ts";
 import type { EditorialRunDirectoryShape, IndexedDossier } from "./RunDirectory.ts";
 
 /** What the model reads: the generation input without where and with which model it runs. */
@@ -102,6 +102,11 @@ export const loadPresentationDossiers = Effect.fn("loadPresentationDossiers")(fu
     });
   }
   const loaded = yield* directory.load(entry.value);
-  const profile = yield* currentPresentationProfile(sql);
+  const profile = yield* currentPresentationProfile(sql).pipe(
+    Effect.mapError(
+      (cause) =>
+        new EditorialPresentationError({ reason: "storage-failed", message: cause.message }),
+    ),
+  );
   return loaded.dossiers.map((dossier) => presentationDossierOf(runId, dossier, profile));
 });

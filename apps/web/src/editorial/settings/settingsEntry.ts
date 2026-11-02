@@ -16,8 +16,18 @@ export const EDITORIAL_NIGHTLY_SECTION_ID = "editorial-nightly";
 export const EDITORIAL_ONBOARDING_SECTION_ID = "editorial-onboarding";
 export const EDITORIAL_DATA_HANDLING_ID = "editorial-data-handling";
 export const EDITORIAL_DRAFTING_SECTION_ID = "editorial-drafting";
+export const EDITORIAL_PROFILE_SECTION_ID = "editorial-profile";
 
 export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
+  {
+    id: EDITORIAL_PROFILE_SECTION_ID,
+    title: "Perfil del estudio",
+    to: EDITORIAL_SETTINGS_PATH,
+    searchTerms: [
+      "perfil profile estudio studio canal channel audiencia audience temas topics",
+      "incluir include excluir exclude versión version pesos weights puntuación scoring",
+    ],
+  },
   {
     id: EDITORIAL_SOURCES_SECTION_ID,
     title: "Fuentes",
