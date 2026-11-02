@@ -277,6 +277,7 @@ export const SHARE_EVENT_DATA: Readonly<
   "video-thread.launch-failed": { previous: oneOf("pending", "launched", "failed") },
   "video-thread.purged": { mode: MODES, ...PURGE_COUNTS },
   "video-thread.t3-deleted": {},
+  "video-thread.folder-prepared": {},
   "work.started": { stage: STAGES },
   "work.paused": { stage: STAGES },
   "work.resumed": { stage: STAGES },

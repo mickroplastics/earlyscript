@@ -22,6 +22,7 @@ import { EditorialThreadService } from "./EditorialThreadService.ts";
 import * as EditorialDatabase from "./persistence/EditorialDatabase.ts";
 import { layerAt, makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
 import * as ScriptVersionService from "./ScriptVersionService.ts";
+import * as VideoWorkspaceService from "./VideoWorkspace.ts";
 
 export const VIDEO_THREAD_ID = "thread-video";
 export const SCRIPT_PATH = "videos/quantum.md";
@@ -59,7 +60,7 @@ export const withVideoWorkspace = <A, E, R>(
   const outside = NodePath.join(root, "outside");
   NodeFS.mkdirSync(workspace);
   NodeFS.mkdirSync(outside);
-  const layer = ScriptVersionService.layer.pipe(
+  const layer = Layer.merge(ScriptVersionService.layer, VideoWorkspaceService.layer).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagement.ThreadManagementService)({

@@ -7,7 +7,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { FileTextIcon, SaveIcon } from "lucide-react";
+import { FileSearchIcon, FileTextIcon, MessageSquarePlusIcon, SaveIcon } from "lucide-react";
 import { useState } from "react";
 
 import { ThreadDetailsSection } from "../components/chat/ThreadDetailsSection";
@@ -15,14 +15,22 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { useNowSecond } from "../hooks/useNowSecond";
+import { useQuietThreadShell } from "../state/entities";
 import { VideoDecisionPanel, type VideoDecisionControls } from "./VideoDecisionPanel";
 import { VideoResultForm, type VideoResultControls } from "./VideoResultForm";
-import { openScript, useThreadWorkspaceRoot } from "./videoCommands";
+import {
+  openDossier,
+  openScript,
+  placeComposerMessage,
+  useThreadWorkspaceRoot,
+} from "./videoCommands";
 import { useVideoDecision } from "./useVideoDecision";
 import {
   MODE_LABEL,
   STAGE_LABEL,
   claimsLabel,
+  draftRequestPaths,
+  draftRequestPrompt,
   formatClock,
   formatSavedAt,
   interpolateClock,
@@ -38,6 +46,10 @@ interface VideoThreadSectionsControls {
   readonly busy: boolean;
   /** Null when the client cannot tell where the thread's files are. */
   readonly onOpenScript: (() => void) | null;
+  /** Null without a dossier file or a known workspace. */
+  readonly onOpenDossier: (() => void) | null;
+  /** Fills the composer with the first request to the agent; null once it is not the start. */
+  readonly onRequestDraft: (() => void) | null;
   /** Opens the read-only copy of the version the decision names. */
   readonly onOpenDecidedVersion: (contentHash: string) => void;
   readonly onSaveVersion: () => void;
@@ -178,6 +190,17 @@ function VideoThreadSectionsView({
               onResolve={controls.onResolve}
             />
           ))}
+          {controls.onRequestDraft !== null ? (
+            <div className="mt-1 flex flex-col items-start gap-1">
+              <Button size="xs" onClick={() => controls.onRequestDraft?.()}>
+                <MessageSquarePlusIcon aria-hidden />
+                Pedir un borrador del guion
+              </Button>
+              <p className="text-muted-foreground text-xs">
+                Deja la petición escrita en el mensaje. El agente empieza cuando la envías.
+              </p>
+            </div>
+          ) : null}
         </div>
       </ThreadDetailsSection>
 
@@ -218,8 +241,9 @@ function VideoThreadSectionsView({
               Guardar versión
             </Button>
           </div>
-          <code className="truncate text-muted-foreground">
-            {script.path ?? "Sin ruta de guion"}
+          {/* Cut from the start: the end of the path names the file. */}
+          <code className="truncate text-left text-muted-foreground [direction:rtl]">
+            <bdi>{script.path ?? "Sin ruta de guion"}</bdi>
           </code>
           {head === null ? (
             <p className="text-muted-foreground">
@@ -233,6 +257,20 @@ function VideoThreadSectionsView({
               {claims ? ` · ${claims}` : ""}
             </p>
           )}
+          {script.dossierPath ? (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={controls.onOpenDossier === null}
+                onClick={() => controls.onOpenDossier?.()}
+              >
+                <FileSearchIcon aria-hidden />
+                Abrir expediente
+              </Button>
+              <span className="text-muted-foreground">Solo lectura</span>
+            </div>
+          ) : null}
         </div>
       </ThreadDetailsSection>
 
@@ -287,6 +325,8 @@ function LiveVideoThreadSections({
   const outcome = useVideoDecision({ threadRef, video, workspaceRoot, busy, run });
   const { commands } = outcome;
   const scriptPath = video.script.path;
+  const dossierPath = video.script.dossierPath ?? null;
+  const draftPaths = draftRequestPaths(video, useQuietThreadShell(threadRef));
 
   return (
     <VideoThreadSectionsView
@@ -304,6 +344,14 @@ function LiveVideoThreadSections({
           workspaceRoot === null || scriptPath === null
             ? null
             : () => void openScript(threadRef, workspaceRoot, scriptPath),
+        onOpenDossier:
+          workspaceRoot === null || dossierPath === null
+            ? null
+            : () => openDossier(threadRef, workspaceRoot, dossierPath),
+        onRequestDraft:
+          draftPaths === null
+            ? null
+            : () => placeComposerMessage(threadRef, draftRequestPrompt(draftPaths)),
         onOpenDecidedVersion: (contentHash) => void commands.openVersion(contentHash),
         onSaveVersion: () =>
           void run(() => commands.saveScript("No se guardó la versión del guion")),

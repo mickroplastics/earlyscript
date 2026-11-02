@@ -48,6 +48,27 @@ export const WRITING: EditorialVideoState = {
   visits: [],
 };
 
+/**
+ * The same assisted thread right after "Crear hilo de video": reading for a minute, its dossier
+ * file and its script written by the server, nothing asked of the agent yet.
+ */
+export const JUST_CREATED: EditorialVideoState = {
+  ...WRITING,
+  clock: {
+    ...WRITING.clock,
+    state: { _tag: "running", stage: "read", since: "2026-10-31T13:08:00.000Z" },
+    stages: [{ stage: "read", activeMs: MINUTE, segments: 1 }],
+    activeMs: MINUTE,
+  },
+  script: {
+    path: "videos/computacion-cuantica-threadvi/guion.md",
+    exists: true,
+    dossierPath: "videos/computacion-cuantica-threadvi/expediente.md",
+    head: null,
+    versionCount: 0,
+  },
+};
+
 export const DECIDED: EditorialVideoState = {
   ...WRITING,
   clock: { ...WRITING.clock, state: { _tag: "idle" } },

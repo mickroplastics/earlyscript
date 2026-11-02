@@ -4,6 +4,7 @@ import type {
   EditorialTrendKey,
   EditorialTrendSummary,
   EnvironmentId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
@@ -13,6 +14,7 @@ import { AsyncResult } from "effect/reactivity";
 import { toastManager } from "../components/ui/toast";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { editorialEnvironment } from "./state";
+import { editorialVideoEnvironment } from "./videoState";
 import { NO_MODEL_DESCRIPTION, resolveVideoThreadTarget } from "./videoThreadTarget";
 
 /** What an inbox action needs of a trend; `trendKey` is absent only from older servers. */
@@ -37,6 +39,7 @@ export function useTrendActions(environmentId: EnvironmentId) {
   const dismiss = useOrchestrationCommand(editorialEnvironment.dismiss, options);
   const reopen = useOrchestrationCommand(editorialEnvironment.reopen, options);
   const createVideo = useOrchestrationCommand(editorialEnvironment.createVideo, options);
+  const prepareVideo = useOrchestrationCommand(editorialVideoEnvironment.prepare, options);
 
   const settle = (result: AtomCommandResult<unknown, unknown>, failureTitle: string) => {
     if (AsyncResult.isSuccess(result)) return true;
@@ -107,6 +110,16 @@ export function useTrendActions(environmentId: EnvironmentId) {
      * Without a project the server opens it in its studio project; only an assisted thread
      * with no model to run stops here, saying where to connect one.
      */
+    /**
+     * Before opening a trend's thread: writes what is missing of its folder (script, dossier,
+     * the studio's instructions). Its subscription may still be alive from an earlier visit and
+     * would not prepare anything; this does, and its view follows. Silent: opening the thread
+     * does not wait for it and a failure leaves the thread as it was.
+     */
+    prepareVideo: (threadId: ThreadId) => {
+      void prepareVideo({ environmentId, input: { threadId } });
+    },
+
     createVideo: async (
       trend: ActionableTrend & { readonly trendKey: EditorialTrendKey },
       mode: "assisted" | "manual" = "assisted",

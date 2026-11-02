@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - path syntax checks, no file access.
 import * as NodePath from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,6 +14,7 @@ import { EditorialCommandService, type RecordDecisionInput } from "./EditorialCo
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { Decision, ScriptVersion, VideoThread } from "./persistence/EditorialModel.ts";
+import { threadWorkspaceRoot } from "./threadWorkspace.ts";
 import {
   type EditorialConflictError,
   type EditorialInvalidInputError,
@@ -132,6 +132,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const rootOf = threadWorkspaceRoot(threadManagement, projects);
+
   /** The thread's worktree, else its project's checkout. */
   const workspaceRootOf = Effect.fn("ScriptVersionService.workspaceRootOf")(function* (
     thread: VideoThread,
@@ -139,14 +141,8 @@ const make = Effect.gen(function* () {
   ) {
     const noWorkspace = (cause?: unknown) =>
       new ScriptFileError({ threadId: thread.threadId, path, reason: "no-workspace", cause });
-    const shell = yield* threadManagement
-      .getThreadShell(ThreadId.make(thread.threadId))
-      .pipe(Effect.mapError(noWorkspace));
-    if (shell === null || shell.deletedAt !== null) return yield* noWorkspace();
-    if (shell.worktreePath !== null) return shell.worktreePath;
-    const project = yield* projects.getById(shell.projectId).pipe(Effect.mapError(noWorkspace));
-    if (Option.isNone(project)) return yield* noWorkspace();
-    return project.value.workspaceRoot;
+    const root = yield* rootOf(thread.threadId).pipe(Effect.mapError(noWorkspace));
+    return root === null ? yield* noWorkspace() : root;
   });
 
   const readScript: ScriptVersionService["Service"]["readScript"] = Effect.fn(

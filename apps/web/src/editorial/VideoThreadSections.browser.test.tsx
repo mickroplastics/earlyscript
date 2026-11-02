@@ -23,6 +23,8 @@ const testState = vi.hoisted(() => ({
   answers: new Map<string, unknown>(),
   /** The thread's workspace; null keeps the editor's write flush out of the way. */
   workspace: null as string | null,
+  /** The T3 thread shell, when a test needs more of it than its workspace. */
+  shell: null as null | Record<string, unknown>,
   flush: (async () => true) as (target: unknown) => Promise<boolean>,
   toast: vi.fn(),
 }));
@@ -35,13 +37,14 @@ vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   // No workspace unless a test sets one: auto-versioning stays off and "Abrir guion" disabled.
   useQuietThreadShell: (() =>
-    testState.workspace === null
+    testState.shell ??
+    (testState.workspace === null
       ? null
       : {
           environmentId: "environment-video",
           projectId: "project",
           worktreePath: testState.workspace,
-        }) as never,
+        })) as never,
   useProject: (() => null) as never,
 }));
 vi.mock(import("../components/files/fileSaveSessions"), async (original) => ({
@@ -66,9 +69,12 @@ vi.mock(import("../components/ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: testState.toast } };
 });
 
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { createFileSaveSessions, type FileSaveTarget } from "../components/files/fileSaveSessions";
-import { DECIDED, WRITING } from "./videoThread.fixture";
+import { DECIDED, JUST_CREATED, WRITING } from "./videoThread.fixture";
+import { draftRequestPrompt } from "./videoThread.logic";
 import { VideoThreadSections } from "./VideoThreadSections";
 import { WorkClock } from "./WorkClock";
 
@@ -103,6 +109,7 @@ function setup(video: EditorialVideoState | null): Disposable {
   testState.failures.clear();
   testState.answers.clear();
   testState.workspace = null;
+  testState.shell = null;
   testState.flush = async () => true;
   testState.toast.mockReset();
   setVideo(video);
@@ -198,6 +205,75 @@ describe("VideoThreadSections", () => {
     await userEvent.click(screen.getByRole("button", { name: "Decidir sobre la versión nueva" }));
     // The draft survives; the operator submits again on the version now shown.
     await expect.element(screen.getByRole("button", { name: "Registrar decisión" })).toBeEnabled();
+  });
+
+  it("fills the composer with the draft request of a new assisted thread and sends nothing", async () => {
+    using _setup = setup(JUST_CREATED);
+    const fresh = {
+      environmentId: "environment-video",
+      projectId: "project",
+      worktreePath: "/workspace",
+      latestRun: null,
+      latestUserMessageAt: null,
+    };
+    testState.shell = fresh;
+    useComposerDraftStore.getState().setPrompt(THREAD_REF, "");
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    // The server wrote the script with the dossier, so the panel no longer says it is missing.
+    expect(screen.container.textContent).toContain("Sin versiones guardadas.");
+    expect(screen.container.textContent).not.toContain("Aún no existe");
+
+    await userEvent.click(screen.getByRole("button", { name: "Pedir un borrador del guion" }));
+    const prompt = draftRequestPrompt({
+      dossierPath: "videos/computacion-cuantica-threadvi/expediente.md",
+      scriptPath: "videos/computacion-cuantica-threadvi/guion.md",
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(THREAD_REF)?.prompt).toBe(prompt);
+    // Filling the composer runs no command: the operator sends it.
+    expect(testState.calls).toEqual([]);
+
+    // A message the operator was typing stays until they choose to replace it.
+    useComposerDraftStore.getState().setPrompt(THREAD_REF, "mi idea");
+    await userEvent.click(screen.getByRole("button", { name: "Pedir un borrador del guion" }));
+    expect(useComposerDraftStore.getState().getComposerDraft(THREAD_REF)?.prompt).toBe("mi idea");
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Ya hay un mensaje a medio escribir" }),
+    );
+
+    // The dossier opens by its host path, read-only in the file surface.
+    await userEvent.click(screen.getByRole("button", { name: "Abrir expediente" }));
+    expect(openFile).toHaveBeenCalledWith(
+      THREAD_REF,
+      "/workspace/videos/computacion-cuantica-threadvi/expediente.md",
+    );
+
+    // Once the agent has been asked, the button goes.
+    testState.shell = { ...fresh, latestRun: { runId: "run-1" } };
+    await screen.rerender(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <VideoThreadSections threadRef={THREAD_REF} />
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Pedir un borrador del guion" }))
+      .not.toBeInTheDocument();
+    useComposerDraftStore.getState().setPrompt(THREAD_REF, "");
+    openFile.mockRestore();
+  });
+
+  it("offers no draft request in a thread already under way", async () => {
+    using _setup = setup(WRITING);
+    testState.shell = {
+      latestRun: { runId: "run-1" },
+      latestUserMessageAt: "2026-10-31T13:01:00.000Z",
+    };
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await expect.element(screen.getByRole("heading", { name: "Hilo de video" })).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Pedir un borrador");
+    expect(screen.container.textContent).not.toContain("Abrir expediente");
   });
 
   it("is read-only once decided and offers the result form", async () => {
