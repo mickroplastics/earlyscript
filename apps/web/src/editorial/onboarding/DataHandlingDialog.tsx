@@ -13,6 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../../components/ui/dialog";
+import { DATA_OUTBOUND, outboundSentence } from "./dataOutbound";
 
 const STATE_DIR = "~/.earlyscript";
 const DATA_DIR = "~/earlyscript-data";
@@ -32,7 +33,7 @@ function Path({ children }: { readonly children: string }) {
 
 /**
  * «Cómo se tratan tus datos»: where Earlyscript keeps its data and what leaves the machine.
- * Kept true against the network inventory in docs/upstream-divergence.md (flags section).
+ * What leaves the machine comes from dataOutbound.ts, the list the first-run step shows too.
  */
 export function DataHandlingDialog({
   trigger,
@@ -75,22 +76,21 @@ export function DataHandlingDialog({
               </p>
             </Section>
             <Section title="Qué sale de esta máquina">
+              {/* The same list as the «Datos y permisos» step (dataOutbound.ts). */}
               <ul className="list-disc space-y-1 ps-5">
-                <li>Las peticiones de captura a las fuentes que actives.</li>
-                <li>
-                  Los textos de las tendencias, solo al proveedor de modelos que elijas, cuando
-                  redacta presentaciones o guiones.
-                </li>
-                <li>La descarga del modelo de embeddings desde Hugging Face, una vez.</li>
-                <li>
-                  La app consulta las versiones de los CLI de los proveedores y el uso de tu cuenta
-                  de Anthropic.
-                </li>
-                <li>
-                  Consultas técnicas heredadas de T3 Code, sin tus textos: el catálogo de modelos y
-                  la tabla de precios desde GitHub, y los iconos de los sitios enlazados desde
-                  Google, que recibe sus dominios.
-                </li>
+                {DATA_OUTBOUND.filter((entry) => entry.origin === "earlyscript").map((entry) => (
+                  <li key={entry.id} data-outbound-id={entry.id}>
+                    {outboundSentence(entry)}
+                  </li>
+                ))}
+              </ul>
+              <p>Consultas técnicas heredadas de T3 Code, sin tus textos:</p>
+              <ul className="list-disc space-y-1 ps-5">
+                {DATA_OUTBOUND.filter((entry) => entry.origin === "t3").map((entry) => (
+                  <li key={entry.id} data-outbound-id={entry.id}>
+                    {outboundSentence(entry)}
+                  </li>
+                ))}
               </ul>
             </Section>
             <Section title="Cómo borrarlo">

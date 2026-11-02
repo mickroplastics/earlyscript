@@ -40,6 +40,12 @@ import {
   type ConsentSourceRow,
   type DataConsentAcceptance,
 } from "./dataConsent.logic";
+import {
+  HIGHLIGHTED_OUTBOUND,
+  OTHER_OUTBOUND,
+  OTHER_OUTBOUND_PREFIX,
+  otherOutboundItem,
+} from "./dataOutbound";
 import type { OnboardingStepProps } from "./steps";
 
 // The step grows inside the wizard's own ScrollArea (WizardPopup): one scroll for the whole
@@ -379,15 +385,30 @@ export function DataConsentView({
         <div className={cn(TEXT, "space-y-1.5")}>
           <p>{policy.outbound[0]}</p>
           <ol className="space-y-1.5">
-            {(["a", "b"] as const).map((marker, index) => (
-              <li key={marker} className="grid grid-cols-[1.25rem_minmax(0,1fr)]">
-                <span aria-hidden>{marker})</span>
-                <span>{policy.outbound[index + 1]}</span>
+            {HIGHLIGHTED_OUTBOUND.map((entry, index) => (
+              <li
+                key={entry.id}
+                data-outbound-id={entry.id}
+                className="grid grid-cols-[1.25rem_minmax(0,1fr)]"
+              >
+                <span aria-hidden>{String.fromCharCode(97 + index)})</span>
+                <span>{entry.detail}</span>
               </li>
             ))}
           </ol>
-          <p>{policy.outbound[3]}</p>
-          <p>{policy.outbound[4]}</p>
+          {/* Same text as otherOutboundLine(), which policyHash covers; one span per entry. */}
+          <p data-testid="consent-other-outbound">
+            {OTHER_OUTBOUND_PREFIX}
+            {OTHER_OUTBOUND.map((entry, index) => (
+              <Fragment key={entry.id}>
+                {index > 0 ? "; " : null}
+                <span data-outbound-id={entry.id}>{otherOutboundItem(entry)}</span>
+              </Fragment>
+            ))}
+            .
+          </p>
+          <p>{policy.outbound[1]}</p>
+          <p>{policy.outbound[2]}</p>
         </div>
       </Block>
 
