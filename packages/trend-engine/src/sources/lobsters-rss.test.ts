@@ -11,6 +11,7 @@ import { robotsAllows, robotsGate, robotsRules } from "./robots.ts";
 import { parseXml, XmlError } from "./xml.ts";
 import { USER_AGENT, type FrozenResponse, type GetResponse } from "./http.ts";
 import { liveSources, SOURCES } from "./index.ts";
+import { expectStoredKeys } from "../testkit/storedKeys.ts";
 import { collectCorpus } from "../collect.ts";
 import { coverageSummary, type CoverageIndex } from "../series.ts";
 
@@ -53,6 +54,7 @@ describe("lobsters", () => {
       allow,
       now,
     );
+    expectStoredKeys("lobsters", result.items);
     expect(urls).toEqual([lobstersPageUrl(1), lobstersPageUrl(2)]);
     // 95quqz was created at 02:32 UTC on 31 October; zzzold on the 29th.
     expect(result.items.map((item) => item.id)).toEqual([
@@ -224,6 +226,7 @@ describe("rss", () => {
       { feeds: [latent, simon], get: await feedsGet(), robots: allow, cache: new Map() },
       now,
     );
+    expectStoredKeys("rss", result.items);
     expect(result.items.map((item) => [item.title, item.author])).toEqual([
       ["Quoting someone", simon.name],
       ["Agents that read your repo & ship", "swyx"],

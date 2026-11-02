@@ -1,3 +1,5 @@
+import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+
 /**
  * Spanish sentences for failed `editorial.sources.*` calls, shared by Settings › Editorial ›
  * Fuentes and the first-run «Datos y permisos» step.
@@ -29,5 +31,26 @@ export function failureText(error: unknown): string {
       if (text) return text;
     }
   }
-  return error instanceof Error ? error.message : "Error desconocido.";
+  const message =
+    typeof error === "string"
+      ? error
+      : typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : null;
+  if (message !== null && isConnectionMessage(message)) return CONNECTION_LOST;
+  // Any other message is the transport's or the server's English: keep it for the console.
+  console.error("editorial.sources:", error);
+  return UNREACHABLE;
 }
+
+/** Spanish for every connection failure the client reports, whatever machine it names. */
+export const CONNECTION_LOST =
+  "Se perdió la conexión con el servidor de Earlyscript; espera a que se reconecte.";
+export const UNREACHABLE = "No se pudo contactar con el servidor.";
+
+// T3's own transport patterns ("<machine> is not connected.", "disconnected.", socket and
+// ping errors) plus the time-outs and unreachable hosts the RPC layer reports.
+const CONNECTION_PATTERN =
+  /\b(?:is not connected|disconnected|timed out|not reachable|unreachable)\b/i;
+const isConnectionMessage = (message: string) =>
+  isTransportConnectionErrorMessage(message) || CONNECTION_PATTERN.test(message);

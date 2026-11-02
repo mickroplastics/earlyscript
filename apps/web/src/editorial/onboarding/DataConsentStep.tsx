@@ -28,6 +28,7 @@ import { editorialSourcesEnvironment } from "../settings/sourcesState";
 import { failureText } from "../settings/sourcesText";
 import {
   buildAcceptance,
+  COMMON_STORED_LINE,
   consentSourceRows,
   corpusText,
   DATA_CONSENT_POLICY,
@@ -242,6 +243,9 @@ function SourcesList({
         Solo se capturan las fuentes cuyos términos se leyeron. Que una fuente pese en el ranking se
         decide después, en Ajustes, tras un backtest.
       </p>
+      <p className={TEXT} data-testid="consent-common-stored">
+        {COMMON_STORED_LINE}
+      </p>
       <ul
         aria-label="Fuentes que puedes capturar"
         className="divide-y rounded-lg border bg-background"
@@ -275,6 +279,8 @@ function SourcesList({
     </>
   );
 }
+
+const UNEXPECTED_SAVE_ERROR = "No se pudo guardar la elección de fuentes. Vuelve a intentarlo.";
 
 export type SaveSwitches = (
   writes: ReadonlyArray<{ readonly source: SourceId; readonly collect: boolean }>,
@@ -310,21 +316,25 @@ export function DataConsentView({
   const policy = DATA_CONSENT_POLICY;
   const canContinue = view !== null && accepted && !saving;
 
-  const submit = async () => {
+  // A promise chain, not try/finally: React Compiler does not compile try without catch.
+  const submit = () => {
     if (view === null || !canContinue) return;
     const rows = consentSourceRows(view.sources);
     setSaving(true);
     setSaveError(null);
-    try {
-      const error = await save(pendingWrites(rows, draft));
-      if (error !== null) {
-        setSaveError(error);
-        return;
-      }
-      onContinue(await buildAcceptance(selectedSources(rows, draft)));
-    } finally {
-      setSaving(false);
-    }
+    void save(pendingWrites(rows, draft))
+      .then((error) => {
+        if (error !== null) {
+          setSaveError(error);
+          return;
+        }
+        return buildAcceptance(selectedSources(rows, draft)).then(onContinue);
+      })
+      .catch((cause: unknown) => {
+        console.error("Datos y permisos: no se pudo continuar", cause);
+        setSaveError(UNEXPECTED_SAVE_ERROR);
+      })
+      .finally(() => setSaving(false));
   };
 
   return (
@@ -431,7 +441,7 @@ export function DataConsentView({
           )}
           <Button
             disabled={!canContinue}
-            onClick={() => void submit()}
+            onClick={submit}
             {...(saveError !== null
               ? { "aria-describedby": errorId }
               : view !== null && !accepted

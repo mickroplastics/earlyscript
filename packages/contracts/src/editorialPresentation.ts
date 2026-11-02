@@ -14,6 +14,16 @@ import { EditorialDossierId, EditorialRunId, EditorialTrendPresentation } from "
 // through the text generation service and stores them in editorial.sqlite; reading them
 // back goes through `editorial.getInbox` and `editorial.getDossier` (`presentation`).
 
+/** Evidence items the assistant reads per trend, in the engine's selection order. */
+export const PRESENTATION_EVIDENCE_LIMIT = 12;
+
+/**
+ * Longest excerpt of one evidence item sent to the assistant. The engine's default
+ * (`text.excerpt_chars` of engine.v1.json) is the same, but an imported or custom run may store
+ * longer ones: the server cuts at this boundary, and the first-run step promises it.
+ */
+export const PRESENTATION_EXCERPT_CHARS = 500;
+
 export const EDITORIAL_PRESENTATION_WS_METHODS = {
   ensure: "editorial.presentation.ensure",
   regenerate: "editorial.presentation.regenerate",

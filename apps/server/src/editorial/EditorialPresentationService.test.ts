@@ -1,5 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { EditorialDossierId, EditorialRunId, TextGenerationError } from "@t3tools/contracts";
+import {
+  EditorialDossierId,
+  EditorialRunId,
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import {
   hashTrendPresentationInput,
   type TrendPresentationGenerationInput,
@@ -367,6 +373,38 @@ describe("EditorialReadService with presentations", () => {
         assert.deepStrictEqual(dossier.trend.presentation, drafted.presentation);
         const other = yield* read.getDossier({ runId: RUN_ID, dossierId: JUDGE });
         assert.isUndefined(other.trend.presentation);
+      }),
+    ),
+  );
+
+  it.effect("sends at most twelve evidence items, each excerpt cut to 500 characters", () =>
+    withDrafting((generator, runs) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const file = `${runs.runDir}/dossiers/13-dos_bbb80d57481e.json`;
+        const dossier = JSON.parse(yield* fs.readFileString(file)) as {
+          evidence: Array<Record<string, unknown>>;
+        };
+        // An imported run may store longer excerpts than the engine's default: twenty of 1,200.
+        const long = "x".repeat(1_200);
+        const template = dossier.evidence[0]!;
+        dossier.evidence = Array.from({ length: 20 }, (_, index) => ({
+          ...template,
+          itemId: `${String(template["itemId"])}-${index}`,
+          excerpt: long,
+        }));
+        yield* fs.writeFileString(file, JSON.stringify(dossier));
+        yield* (yield* EditorialImportService).sync;
+
+        yield* (yield* EditorialPresentationService).ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const input = (yield* Ref.get(generator.calls))[0]!;
+        assert.strictEqual(input.evidence.length, PRESENTATION_EVIDENCE_LIMIT);
+        assert.isTrue(
+          input.evidence.every(
+            (item) => item.excerpt === long.slice(0, PRESENTATION_EXCERPT_CHARS),
+          ),
+        );
+        assert.strictEqual(PRESENTATION_EXCERPT_CHARS, 500);
       }),
     ),
   );

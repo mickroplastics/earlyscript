@@ -7,7 +7,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { Dialog } from "../../components/ui/dialog";
 import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
-import { DATA_CONSENT_POLICY } from "./dataConsent.logic";
+import { COMMON_STORED_LINE, DATA_CONSENT_POLICY } from "./dataConsent.logic";
 import { DataConsentView, type DataConsentViewProps } from "./DataConsentStep";
 import { ONBOARDING_STAGES } from "./steps";
 
@@ -186,7 +186,15 @@ describe("DataConsentStep", () => {
     await expect
       .element(hn.getByRole("link", { name: "Leer términos" }))
       .toHaveAttribute("href", "https://www.ycombinator.com/legal");
-    await expect.element(hn.getByText(/^Título, enlace, usuario que la envió/)).toBeVisible();
+    await expect
+      .element(hn.getByText(/^Título; enlace a la discusión; usuario que la envió/))
+      .toBeVisible();
+    const common = page.getByTestId("consent-common-stored");
+    await expect.element(common).toBeVisible();
+    expect(common.element().textContent).toBe(COMMON_STORED_LINE);
+    await expect
+      .element(page.getByTestId("consent-source-rss").getByText(/URL del feed\.$/))
+      .toBeVisible();
     await expect.element(hn.getByText("Hasta la revisión del 27 nov 2026.")).toBeVisible();
     await expect.element(page.getByRole("switch", { name: "Capturar Hacker News" })).toBeChecked();
     await expect.element(page.getByRole("switch", { name: "Capturar GitHub" })).toBeChecked();
@@ -304,6 +312,30 @@ describe("DataConsentStep", () => {
     // Changing a switch clears the stale error.
     await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
     expect(alert.elements()).toHaveLength(0);
+  });
+
+  it("says when the server locks a source this client's catalog thinks is ready", async () => {
+    await using _viewport = await viewport(390, 844);
+    const locked: EditorialSourcesView = {
+      ...FIRST_RUN,
+      sources: FIRST_RUN.sources.map((source) =>
+        source.source === "arxiv" ? { ...source, collectBlocked: "blocked" as const } : source,
+      ),
+    };
+    await using _screen = await render(
+      <InWizard>
+        <DataConsentView {...props({ view: locked })} />
+      </InWizard>,
+    );
+    const arxiv = page
+      .getByRole("list", { name: "Fuentes sin permiso para capturar" })
+      .getByTestId("consent-source-arxiv");
+    await expect
+      .element(arxiv.getByText("Bloqueada en esta instalación", { exact: false }))
+      .toBeVisible();
+    await expect.element(page.getByRole("switch", { name: "Capturar arXiv" })).toBeDisabled();
+    arxiv.element().scrollIntoView({ block: "center" });
+    await shot("12-movil-claro-bloqueada-por-el-servidor");
   });
 
   it("shows loading, then an RPC error in Spanish with a retry", async () => {

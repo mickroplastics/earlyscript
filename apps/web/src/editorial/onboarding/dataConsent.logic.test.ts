@@ -1,21 +1,31 @@
-import { SOURCE_CATALOG } from "@earlyscript/editorial-contracts/sourceCatalog";
-import type { EditorialSourceEntry, EditorialSourcesCorpus } from "@t3tools/contracts";
+import { Item, SOURCE_ITEM_KEYS } from "@earlyscript/editorial-contracts/item";
+import { SOURCE_CATALOG, SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
+import {
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+  type EditorialSourceEntry,
+  type EditorialSourcesCorpus,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { failureText } from "../settings/sourcesText";
+import { CONNECTION_LOST, failureText, UNREACHABLE } from "../settings/sourcesText";
 import {
   buildAcceptance,
   canonicalJson,
   catalogHash,
+  COMMON_STORED_LINE,
   consentSourceRows,
   corpusText,
   DATA_CONSENT_POLICY,
   deletionCommand,
+  describedKeys,
   pendingWrites,
   policyHash,
   selectedSources,
   shownCollect,
+  SERVER_LOCK_TEXT,
   STORED_FIELDS,
+  storedText,
   termsLine,
 } from "./dataConsent.logic";
 
@@ -100,7 +110,8 @@ describe("consentSourceRows", () => {
       collect: true,
       termsLine: "Términos leídos el 26 de octubre de 2026",
       termsUrl: "https://www.ycombinator.com/legal",
-      storedText: STORED_FIELDS.hn,
+      storedText:
+        "Título; enlace a la discusión; usuario que la envió; texto de la publicación, hasta 4.000 caracteres.",
       retentionText: "Hasta la revisión del 27 nov 2026.",
     });
     expect(row("bluesky").retentionText).toBe("Efímera, fuera del corpus congelado.");
@@ -204,10 +215,100 @@ describe("buildAcceptance", () => {
       await catalogHash({ ...SOURCE_CATALOG, hn: { ...SOURCE_CATALOG.hn, status: "blocked" } }),
     ).not.toBe(base);
     const policy = await policyHash();
-    expect(await policyHash({ ...DATA_CONSENT_POLICY, accept: "Acepto" })).not.toBe(policy);
+    expect(await policyHash()).toBe(policy);
+    // Every accepted text counts: the policy, and what a source stores (Sol, H3).
+    const accept = DATA_CONSENT_POLICY.accept;
+    Object.assign(DATA_CONSENT_POLICY, { accept: "Acepto" });
+    try {
+      expect(await policyHash()).not.toBe(policy);
+    } finally {
+      Object.assign(DATA_CONSENT_POLICY, { accept });
+    }
+    const rss = STORED_FIELDS.rss;
+    Object.assign(STORED_FIELDS, { rss: { ...rss, body: "el artículo entero" } });
+    try {
+      expect(await policyHash()).not.toBe(policy);
+      expect(await catalogHash()).toBe(base);
+    } finally {
+      Object.assign(STORED_FIELDS, { rss });
+    }
+    expect(await policyHash()).toBe(policy);
   });
 
   it("hashes key order away", () => {
     expect(canonicalJson({ b: 1, a: [{ d: 2, c: null }] })).toBe('{"a":[{"c":null,"d":2}],"b":1}');
+  });
+});
+
+describe("what each source stores (Sol, H2)", () => {
+  it("describes exactly the keys each source's items carry", () => {
+    for (const source of SOURCE_IDS) {
+      expect(describedKeys(source)).toEqual([...SOURCE_ITEM_KEYS[source]].toSorted());
+    }
+  });
+
+  it("covers every key of the corpus item, so a new field must be described", () => {
+    const declared = new Set(SOURCE_IDS.flatMap((source) => SOURCE_ITEM_KEYS[source]));
+    expect([...declared].toSorted()).toEqual(Object.keys(Item.fields).toSorted());
+  });
+
+  it("names RSS's feed URL and body origin, and arXiv's GitHub entities", () => {
+    expect(storedText("rss")).toBe(
+      "Título; enlace; autor, o el nombre del feed si no lo hay; extracto de hasta 500 caracteres (nunca el artículo entero); origen del extracto (resumen o contenido); URL del feed.",
+    );
+    expect(storedText("arxiv")).toContain(
+      "repositorios de GitHub citados en el resumen o en sus comentarios",
+    );
+    expect(COMMON_STORED_LINE).toBe(
+      "Todas las fuentes guardan además: identificador, fuente, enlace externo si lo hay, fecha de publicación, fecha de captura, entidades detectadas, longitud del cuerpo y si fue truncado.",
+    );
+    // RSS's retention sentence no longer reads as the full list of what it keeps.
+    expect(DATA_CONSENT_POLICY.retention.join(" ")).not.toContain("solo se guarda");
+  });
+});
+
+describe("what goes to the model provider (Sol, H4)", () => {
+  it("quotes the server's own limits", () => {
+    expect(PRESENTATION_EVIDENCE_LIMIT).toBe(12);
+    expect(PRESENTATION_EXCERPT_CHARS).toBe(500);
+    expect(DATA_CONSENT_POLICY.outbound[2]).toContain(
+      "como máximo 12 ítems de evidencia con su fuente, fecha, enlace, título y un extracto recortado a 500 caracteres",
+    );
+  });
+});
+
+describe("connection failures (Sol, H5)", () => {
+  it("never shows the transport's English", () => {
+    expect(failureText(new Error("beatriz is not connected."))).toBe(CONNECTION_LOST);
+    expect(failureText(new Error("Environment disconnected."))).toBe(CONNECTION_LOST);
+    expect(failureText(new Error("Request timed out after 30s"))).toBe(CONNECTION_LOST);
+    expect(failureText(new Error("Host not reachable"))).toBe(CONNECTION_LOST);
+    expect(failureText(new Error("Something odd in English"))).toBe(UNREACHABLE);
+    expect(failureText("socket closed")).toBe(UNREACHABLE);
+    expect(failureText(undefined)).toBe(UNREACHABLE);
+  });
+});
+
+describe("the server's lock (Sol, H6)", () => {
+  it("shows the server's lock when the local catalog says ready", () => {
+    const [blocked] = consentSourceRows([entry("arxiv", { collectBlocked: "blocked" })]);
+    expect(blocked).toMatchObject({
+      capturable: false,
+      status: "blocked",
+      termsLine: SERVER_LOCK_TEXT.blocked,
+    });
+    expect(blocked?.termsLine).toBe(
+      "Bloqueada en esta instalación: el servidor no permite capturarla.",
+    );
+    const [pending] = consentSourceRows([entry("npm", { collectBlocked: "pending-review" })]);
+    expect(pending).toMatchObject({
+      status: "pending-review",
+      termsLine: SERVER_LOCK_TEXT["pending-review"],
+    });
+  });
+
+  it("keeps the catalog's own words when the server agrees", () => {
+    const [lobsters] = consentSourceRows([entry("lobsters", { collectBlocked: "blocked" })]);
+    expect(lobsters?.termsLine).toMatch(/^Bloqueada: Su robots\.txt/);
   });
 });

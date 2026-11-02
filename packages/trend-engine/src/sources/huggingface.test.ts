@@ -10,6 +10,7 @@ import { robotsAllows, robotsRules, type RobotsGate } from "./robots.ts";
 import { collectCorpus } from "../collect.ts";
 import { readCorpus } from "../corpus.ts";
 import { markdownText } from "./shared.ts";
+import { expectStoredKeys } from "../testkit/storedKeys.ts";
 
 const observed = "2026-10-31T04:00:00.000Z";
 const allow: RobotsGate = async () => null;
@@ -75,6 +76,7 @@ describe("Hugging Face source", () => {
     expect(calls.filter((url) => url.includes("/api/models?"))).toHaveLength(1);
 
     const day = await collect("2026-10-30", get, allow, get);
+    expectStoredKeys("huggingface", day.items);
     expect(calls.filter((url) => url.includes("/api/models?"))).toEqual([hfModelsUrl(), NEXT]);
     const models = day.items.filter((item) => item.id.startsWith("itm_hf_model_"));
     // Unliked models never enter; order in the corpus is by creation time.

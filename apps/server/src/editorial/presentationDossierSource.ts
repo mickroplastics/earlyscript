@@ -1,4 +1,8 @@
-import { EditorialPresentationError } from "@t3tools/contracts";
+import {
+  EditorialPresentationError,
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+} from "@t3tools/contracts";
 import {
   hashTrendPresentationInput,
   type TrendPresentationGenerationInput,
@@ -15,9 +19,6 @@ type TrendPresentationPromptInput = Omit<
   TrendPresentationGenerationInput,
   "cwd" | "modelSelection"
 >;
-
-/** Evidence items sent to the assistant, in the engine's selection order. */
-const PRESENTATION_EVIDENCE_LIMIT = 12;
 
 /**
  * One dossier as the assistant reads it, with the identity of that input. Reads and
@@ -60,11 +61,13 @@ function presentationDossierOf(
         daysUnavailable: entry.daysUnavailable,
       })),
     },
+    // The output boundary: at most PRESENTATION_EVIDENCE_LIMIT items, each excerpt cut to
+    // PRESENTATION_EXCERPT_CHARS whatever the run stored (the first-run step promises both).
     evidence: dossier.evidence.slice(0, PRESENTATION_EVIDENCE_LIMIT).map((item) => ({
       itemId: item.itemId,
       source: item.source,
       title: item.title,
-      excerpt: item.excerpt,
+      excerpt: item.excerpt.slice(0, PRESENTATION_EXCERPT_CHARS),
       publishedAt: item.publishedAt,
       url: item.externalUrl ?? item.permalink ?? "",
     })),

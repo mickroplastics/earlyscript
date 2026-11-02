@@ -1,3 +1,4 @@
+import type { ItemKey } from "@earlyscript/editorial-contracts/item";
 import type { SourceId } from "@earlyscript/editorial-contracts/source";
 import {
   isCatalogSourceId,
@@ -7,7 +8,12 @@ import {
   type SourceRetention,
   type SourceReviewStatus,
 } from "@earlyscript/editorial-contracts/sourceCatalog";
-import type { EditorialSourceEntry, EditorialSourcesCorpus } from "@t3tools/contracts";
+import {
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+  type EditorialSourceEntry,
+  type EditorialSourcesCorpus,
+} from "@t3tools/contracts";
 
 // The "Datos y permisos" step: what Earlyscript collects, from where, under which terms, how
 // long it keeps it, how it is deleted and what leaves the machine. Every sentence was checked
@@ -29,6 +35,7 @@ const shortDayFormat = new Intl.DateTimeFormat("es", {
 const toDate = (day: string) => new Date(`${day}T00:00:00Z`);
 const formatLongDay = (day: string) => longDayFormat.format(toDate(day));
 const formatShortDay = (day: string) => shortDayFormat.format(toDate(day));
+const formatCount = (count: number) => count.toLocaleString("es");
 
 /**
  * Review date of the frozen corpus's retention: Miguel's decision of 31 October 2026
@@ -47,13 +54,13 @@ export const DATA_CONSENT_POLICY = {
   outbound: [
     "Nada sale de esta máquina salvo dos cosas:",
     "Las peticiones a cada fuente activada para capturar. Earlyscript deja una pausa mínima entre peticiones (de 0,25 s en Hacker News a 6,5 s en GitHub), se detiene ante sus límites de cuota y comprueba el robots.txt del sitio antes de cada petición, salvo en las API de Hacker News y GitHub; arXiv tiene una excepción documentada por los términos de su API.",
-    "Los textos de las tendencias que pidas redactar. Al proveedor de modelos que elijas (Claude o Codex, con tu cuenta y bajo sus condiciones) van el perfil editorial del canal, las cifras del motor para esa tendencia y hasta 12 ítems de evidencia con su fuente, fecha, enlace, título y extracto de hasta 500 caracteres. En un hilo de video, ese proveedor recibe además lo que escribas y lo que su agente lea del espacio de trabajo.",
+    `Los textos de las tendencias que pidas redactar. Al proveedor de modelos que elijas (Claude o Codex, con tu cuenta y bajo sus condiciones) van el perfil editorial del canal, las cifras del motor para esa tendencia y como máximo ${formatCount(PRESENTATION_EVIDENCE_LIMIT)} ítems de evidencia con su fuente, fecha, enlace, título y un extracto recortado a ${formatCount(PRESENTATION_EXCERPT_CHARS)} caracteres. En un hilo de video, ese proveedor recibe además lo que escribas y lo que su agente lea del espacio de trabajo.`,
     "Sin telemetría: las trazas, la analítica de producto y la búsqueda de actualizaciones heredadas de T3 Code están apagadas. La descarga del modelo local de embeddings pide el archivo, sin enviar tus datos.",
     "Esto describe cómo funciona el sistema; no es una política legal.",
   ],
   retention: [
     `Lo capturado se guarda como corpus congelado, con la huella SHA-256 de cada archivo en su manifiesto, hasta la revisión del ${formatLongDay(RETENTION_REVIEW_DAY)}, cuando se decide cuánto conservarlo.`,
-    "De los feeds RSS solo se guarda título, enlace, autor y un extracto de hasta 500 caracteres.",
+    "De los feeds RSS el cuerpo es un extracto de hasta 500 caracteres, nunca el artículo entero; el resto de lo que se guarda se detalla en cada fuente.",
   ],
   deletion: [
     "Puedes borrar por fuente, por enlace o por autor con la orden purge del motor, desde la línea de comandos; este asistente no la lanza:",
@@ -70,23 +77,113 @@ export const deletionCommand = (directory: string) =>
   DATA_CONSENT_POLICY.deletionCommand.replace("<directorio>", directory);
 
 /**
- * What a captured item keeps, in the operator's words, read from each adapter in
- * packages/trend-engine/src/sources. Every item also keeps its permalink and its publication
- * and retrieval times. Keyed by SourceId, so a new catalog source fails to compile until it
- * says what it stores.
+ * What every item keeps, whatever its source, in the operator's words: one entry per key of
+ * corpus/1's `Item` that the step describes once for all sources. A source may describe
+ * `entities` in its own words instead (STORED_FIELDS).
  */
-export const STORED_FIELDS: Readonly<Record<SourceId, string>> = {
-  hn: "Título, enlace, usuario que la envió y texto de la publicación, hasta 4.000 caracteres.",
-  github: "Nombre del repositorio, enlace, propietario y descripción, hasta 4.000 caracteres.",
-  arxiv: "Título, enlace, primer autor y resumen, hasta 4.000 caracteres; nunca el PDF.",
-  wikipedia: "Título de la página, enlace, visitas del día y posición; nunca el artículo.",
-  npm: "Nombre y versión del paquete, enlace, mantenedor, descripción y descargas semanales.",
-  stackexchange: "Título, enlace, autor, etiquetas y texto de la pregunta, hasta 4.000 caracteres.",
-  bluesky: "Texto de la publicación, enlace, identificador del autor y enlaces que cita.",
-  huggingface: "Nombre del modelo o artículo, autor y tarjeta o resumen, hasta 4.000 caracteres.",
-  lobsters: "Título, enlace, usuario que la envió y descripción, hasta 4.000 caracteres.",
-  rss: "Título, enlace, autor y extracto de hasta 500 caracteres; nunca el artículo entero.",
+const COMMON_STORED_FIELDS = {
+  id: "identificador",
+  source: "fuente",
+  external_url: "enlace externo, si lo hay",
+  published_at: "fecha de publicación",
+  retrieved_at: "fecha de captura",
+  entities: "entidades detectadas (repositorios de GitHub enlazados)",
+  body_length: "longitud del cuerpo",
+  truncated: "si fue truncado",
+} as const satisfies Partial<Record<ItemKey, string>>;
+
+export const COMMON_STORED_LINE =
+  "Todas las fuentes guardan además: identificador, fuente, enlace externo si lo hay, fecha de publicación, fecha de captura, entidades detectadas, longitud del cuerpo y si fue truncado.";
+
+/**
+ * What each source's items keep beyond COMMON_STORED_FIELDS, one entry per key, read from each
+ * adapter in packages/trend-engine/src/sources. Together with COMMON_STORED_FIELDS they must
+ * name exactly the keys of SOURCE_ITEM_KEYS (a test checks it, and the trend-engine tests check
+ * SOURCE_ITEM_KEYS against what every adapter writes).
+ */
+export const STORED_FIELDS: Readonly<Record<SourceId, Partial<Record<ItemKey, string>>>> = {
+  hn: {
+    title: "título",
+    permalink: "enlace a la discusión",
+    author: "usuario que la envió",
+    body: "texto de la publicación, hasta 4.000 caracteres",
+  },
+  github: {
+    title: "nombre del repositorio",
+    permalink: "enlace",
+    author: "propietario",
+    body: "descripción, hasta 4.000 caracteres",
+  },
+  arxiv: {
+    title: "título",
+    permalink: "enlace al resumen",
+    author: "primer autor",
+    body: "resumen, hasta 4.000 caracteres (nunca el PDF)",
+    entities: "repositorios de GitHub citados en el resumen o en sus comentarios",
+  },
+  wikipedia: {
+    title: "título de la página",
+    permalink: "enlace",
+    author: "sin autor",
+    body: "visitas del día y posición en el top (nunca el texto del artículo)",
+    entities: "la página como entidad",
+  },
+  npm: {
+    title: "nombre y versión del paquete",
+    permalink: "enlace",
+    author: "mantenedor que lo publicó",
+    body: "descripción y descargas semanales",
+  },
+  stackexchange: {
+    title: "título",
+    permalink: "enlace",
+    author: "nombre visible del autor",
+    body: "etiquetas y texto de la pregunta, hasta 4.000 caracteres",
+    entities: "ninguna entidad",
+  },
+  bluesky: {
+    title: "sin título",
+    permalink: "enlace",
+    author: "identificador del autor",
+    body: "texto de la publicación",
+    entities: "repositorios de GitHub de los enlaces que cita",
+  },
+  huggingface: {
+    title: "nombre del modelo o título del artículo",
+    permalink: "enlace",
+    author: "autor del modelo o quien propuso el artículo",
+    body: "tarjeta del modelo o resumen del artículo, hasta 4.000 caracteres",
+  },
+  lobsters: {
+    title: "título",
+    permalink: "enlace a la discusión",
+    author: "usuario que la envió",
+    body: "etiquetas y descripción, hasta 4.000 caracteres",
+  },
+  rss: {
+    title: "título",
+    permalink: "enlace",
+    author: "autor, o el nombre del feed si no lo hay",
+    body: "extracto de hasta 500 caracteres (nunca el artículo entero)",
+    body_kind: "origen del extracto (resumen o contenido)",
+    feed_url: "URL del feed",
+  },
 };
+
+/** The keys the step describes for a source: the common ones plus the source's own. */
+export const describedKeys = (source: SourceId): ReadonlyArray<ItemKey> =>
+  [
+    ...new Set([
+      ...(Object.keys(COMMON_STORED_FIELDS) as Array<ItemKey>),
+      ...(Object.keys(STORED_FIELDS[source]) as Array<ItemKey>),
+    ]),
+  ].toSorted();
+
+/** «Título; enlace a la discusión; …», in the order STORED_FIELDS describes them. */
+export function storedText(source: SourceId): string {
+  const sentence = Object.values(STORED_FIELDS[source]).join("; ");
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
+}
 
 const RETENTION_TEXT: Readonly<Record<SourceRetention, string>> = {
   "frozen-corpus": `Hasta la revisión del ${formatShortDay(RETENTION_REVIEW_DAY)}.`,
@@ -114,6 +211,28 @@ export function termsLine(governance: SourceGovernance): string {
     case "blocked":
       return `Bloqueada: ${firstSentence(governance.notes)}`;
   }
+}
+
+/**
+ * What the step says when the server's lock disagrees with this client's catalog (a client older
+ * or newer than the server). `collectBlocked` carries no reason, so the sentence says where the
+ * lock comes from.
+ */
+export const SERVER_LOCK_TEXT: Readonly<Record<"blocked" | "pending-review", string>> = {
+  blocked: "Bloqueada en esta instalación: el servidor no permite capturarla.",
+  "pending-review":
+    "Pendiente de leer sus términos en esta instalación: el servidor no permite capturarla.",
+};
+
+/** The status the row shows: the server's lock wins over the local catalog. */
+function shownStatus(
+  governance: SourceGovernance,
+  entry: EditorialSourceEntry,
+): { readonly status: SourceReviewStatus; readonly termsLine: string } {
+  const lock = entry.collectBlocked;
+  if (lock === null || lock === governance.status)
+    return { status: governance.status, termsLine: termsLine(governance) };
+  return { status: lock, termsLine: SERVER_LOCK_TEXT[lock] };
 }
 
 const STATUS_ORDER: Readonly<Record<SourceReviewStatus, number>> = {
@@ -153,21 +272,21 @@ export function consentSourceRows(
     if (!isCatalogSourceId(entry.source)) continue;
     const governance = SOURCE_CATALOG[entry.source];
     const capturable = governance.status === "ready" && entry.collectBlocked === null;
+    const shown = shownStatus(governance, entry);
     rows.push({
       id: governance.id,
       name: governance.name,
-      status: governance.status,
-      termsLine: termsLine(governance),
+      status: shown.status,
+      termsLine: shown.termsLine,
       termsUrl: governance.termsUrl,
       licenseText: governance.license.text,
       licenseUrl: governance.license.url,
-      storedText: STORED_FIELDS[governance.id],
+      storedText: storedText(governance.id),
       retentionText: RETENTION_TEXT[governance.retention],
       capturable,
       collect: entry.collect,
       order:
-        (capturable ? 0 : 1 + STATUS_ORDER[governance.status]) * 100 +
-        SOURCE_IDS.indexOf(governance.id),
+        (capturable ? 0 : 1 + STATUS_ORDER[shown.status]) * 100 + SOURCE_IDS.indexOf(governance.id),
     });
   }
   return rows.toSorted((a, b) => a.order - b.order).map(({ order: _order, ...row }) => row);
@@ -245,7 +364,21 @@ export const catalogHash = (
   catalog: Readonly<Record<SourceId, SourceGovernance>> = SOURCE_CATALOG,
 ) => sha256(canonicalJson(SOURCE_IDS.map((id) => catalog[id])));
 
-export const policyHash = (policy: unknown = DATA_CONSENT_POLICY) => sha256(canonicalJson(policy));
+/**
+ * Every text the operator accepts besides the catalog records (`catalogHash`): the policy, what
+ * each source stores and for how long, and the server-lock sentences. A change to any of them
+ * changes `policyHash`. Read at hash time, so the hash follows the texts as they are.
+ */
+const acceptedTexts = () => ({
+  policy: DATA_CONSENT_POLICY,
+  commonStored: COMMON_STORED_FIELDS,
+  commonStoredLine: COMMON_STORED_LINE,
+  stored: STORED_FIELDS,
+  retention: RETENTION_TEXT,
+  serverLock: SERVER_LOCK_TEXT,
+});
+
+export const policyHash = (texts: unknown = acceptedTexts()) => sha256(canonicalJson(texts));
 
 /** What the shell stores as the dated decision of this step: ids, days and hashes only. */
 export interface DataConsentAcceptance {
