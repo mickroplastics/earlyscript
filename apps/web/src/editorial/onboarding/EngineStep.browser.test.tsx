@@ -1,13 +1,16 @@
 import { EnvironmentId, type EditorialNightlySettings } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { Dialog } from "../../components/ui/dialog";
+import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
 import { NIGHTLY_OFF, NIGHTLY_ON, RUNNING_JOB } from "../firstRun.fixture";
 import { firstRunView } from "../firstRun.logic";
 import { EngineStep, EngineStepView, type EngineStepViewProps } from "./EngineStep";
+import { ONBOARDING_STAGES } from "./steps";
 
 type Settled = AsyncResult.AsyncResult<EditorialNightlySettings, unknown>;
 
@@ -176,5 +179,81 @@ describe("EngineStep", () => {
     await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
     expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ nightlyEnabled: true }));
+  });
+});
+
+/** Every scrollable ancestor of `element`, by its `data-slot`. */
+const scrollableAncestors = (element: Element): ReadonlyArray<string> => {
+  const found: Array<string> = [];
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") found.push(node.dataset.slot ?? node.tagName);
+  }
+  return found;
+};
+
+describe.each([
+  ["desktop", 1280, 800],
+  ["mobile", 390, 844],
+] as const)("EngineStep in the wizard dialog at %s", (_size, width, height) => {
+  it("has no scroll of its own and reaches Continuar through the dialog's scroll", async () => {
+    await page.viewport(width, height);
+    await using _screen = await render(
+      <Dialog open disablePointerDismissal>
+        <WizardPopup size="wide" bottomStickOnMobile={false}>
+          <WizardHeader title="Configurar Earlyscript">
+            <WizardSteps
+              steps={ONBOARDING_STAGES.map((stage) => stage.label)}
+              currentStep={ONBOARDING_STAGES.findIndex((stage) => stage.id === "motor")}
+            />
+          </WizardHeader>
+          <WizardPanel>
+            <EngineStepView
+              settings={NIGHTLY_ON}
+              loadError={null}
+              model={<div className="h-40 rounded-md border">Modelo</div>}
+              modelReady
+              run={firstRunView({ active: RUNNING_JOB, latest: null, emptyRun: false })}
+              starting={false}
+              runError={null}
+              firstRunStarted
+              saving={false}
+              saveError={null}
+              onRetrySave={() => {}}
+              onChange={() => {}}
+              onRun={() => {}}
+              onRetry={() => {}}
+              onBack={() => {}}
+              onContinue={() => {}}
+            />
+          </WizardPanel>
+        </WizardPopup>
+      </Dialog>,
+      { router: false },
+    );
+    await expect.element(page.getByTestId("engine-step")).toBeVisible();
+    expect(
+      page
+        .getByTestId("engine-step")
+        .element()
+        .querySelectorAll("[data-slot=scroll-area-viewport]"),
+    ).toHaveLength(0);
+    const phases = page.getByRole("list", { name: "Fases de la corrida" }).element();
+    expect(scrollableAncestors(phases)).toEqual(["scroll-area-viewport"]);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+
+    const viewport = document.querySelector<HTMLElement>(
+      "[role=dialog] [data-slot=scroll-area-viewport]",
+    );
+    if (!viewport) throw new Error("wizard scroll area not found");
+    const button = page.getByRole("button", { name: "Continuar" }).element();
+    expect(scrollableAncestors(button)).toEqual(["scroll-area-viewport"]);
+    // WizardPanel animates its height, so this retries until the last control is inside.
+    await vi.waitFor(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+      expect(button.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+        viewport.getBoundingClientRect().bottom,
+      );
+    });
   });
 });

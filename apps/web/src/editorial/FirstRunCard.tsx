@@ -346,10 +346,11 @@ export function DraftingNotice({
     >
       <span>{problem.short}</span>
       <Link
-        to="/settings/providers"
-        className="self-start font-medium whitespace-nowrap underline underline-offset-2"
+        to={problem.link.to}
+        {...(problem.link.hash === undefined ? {} : { hash: problem.link.hash })}
+        className="self-start font-medium underline underline-offset-2"
       >
-        Abrir Ajustes › Proveedores
+        {problem.link.label}
       </Link>
     </div>
   );
