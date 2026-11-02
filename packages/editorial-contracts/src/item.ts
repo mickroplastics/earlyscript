@@ -31,3 +31,39 @@ export const Cutoff = Schema.String.check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z$/),
 );
 export type Cutoff = typeof Cutoff.Type;
+
+export type ItemKey = keyof Item;
+
+/** The fields every adapter writes on every item (`Item`'s required keys). */
+const BASE_ITEM_KEYS = [
+  "id",
+  "source",
+  "permalink",
+  "external_url",
+  "published_at",
+  "author",
+  "title",
+  "body",
+  "body_length",
+  "truncated",
+  "retrieved_at",
+  "entities",
+] as const satisfies ReadonlyArray<ItemKey>;
+
+/**
+ * The keys each source's items carry, as its adapter writes them. The trend-engine tests check
+ * every adapter's items against this list, and the first-run consent step describes each key in
+ * words, so what the operator accepts and what the corpus stores cannot drift apart silently.
+ */
+export const SOURCE_ITEM_KEYS: Readonly<Record<SourceId, ReadonlyArray<ItemKey>>> = {
+  hn: BASE_ITEM_KEYS,
+  github: BASE_ITEM_KEYS,
+  arxiv: BASE_ITEM_KEYS,
+  wikipedia: BASE_ITEM_KEYS,
+  npm: BASE_ITEM_KEYS,
+  stackexchange: BASE_ITEM_KEYS,
+  bluesky: BASE_ITEM_KEYS,
+  huggingface: BASE_ITEM_KEYS,
+  lobsters: BASE_ITEM_KEYS,
+  rss: [...BASE_ITEM_KEYS, "body_kind", "feed_url"],
+};

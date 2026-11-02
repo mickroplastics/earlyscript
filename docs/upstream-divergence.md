@@ -1948,3 +1948,35 @@ Decisiones reversibles: estado por tamaños y no por hash; el error queda en el 
 - **H4, descarga ya hecha.** `prepareModel` no lanza nada si el último estado conocido es `ready` sin error.
 - **H5, paréntesis huérfano.** «Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models».
 - **H6 (reverificación de Sol sobre `8e0604f1bc`), sin permiso de descarga no se borra nada.** `prepareModel(dir, false)` ya no barre parciales: falla con `Model file missing` y deja intactos los huérfanos, que el siguiente `prepareModel(dir, true)` adopta y reanuda con `Range`. El barrido (el mayor parcial abandonado por archivo se conserva, los demás se borran, el de un proceso vivo se respeta) ocurre solo antes de descargar. Cambia lo descrito en §26 para `allowDownload` falso.
+
+## Asistente de primer arranque, paso «Datos y permisos» (rama `es/onboarding-data`, 2 de noviembre de 2026)
+
+Base: `es/onboarding-base` (`f10f26fb55`). Cero archivos de upstream modificados. El paso reemplaza el stub `apps/web/src/editorial/onboarding/DataConsentStep.tsx` con la interfaz de `steps.ts`; lo monta `es/onboarding-shell`.
+
+Archivos nuestros:
+
+- `onboarding/DataConsentStep.tsx`: `DataConsentView` (sin RPC, la que prueba el navegador) y `DataConsentStep` (lee `editorial.sources.list`, escribe con `editorial.sources.update`).
+- `onboarding/dataConsent.logic.ts` y su prueba: filas, interruptores, escrituras pendientes, textos aceptados (`DATA_CONSENT_POLICY`) y aceptación.
+- `settings/sourcesText.ts`: `failureText`, la tabla de errores de `editorial.sources.*`, sacada de `SourcesSettings.tsx` para que la usen Ajustes y el paso. Suma `not-acknowledged` y `EnvironmentAuthorizationError`.
+- `packages/editorial-contracts/src/sourceCatalog.ts`: el borrado de ocho fichas decía «borrado manual; no hay borrado por ítem». Desde §19 y §21, `engine purge --source <id> (--author | --url | --feed)` borra por autor o enlace en cualquier fuente y por feed en RSS (`trend-engine/src/cli.ts`, `src/purge.ts`). Ahora cada ficha nombra la orden con su fuente; Wikipedia, sin campo de autor, solo `--url`. Cambia `catalogHash`.
+
+Comportamiento:
+
+- Lista las diez fuentes del catálogo: primero las que se pueden capturar (ficha `ready` y sin `collectBlocked` del servidor, que manda), después las pendientes y las bloqueadas en filas compactas con el interruptor desactivado. Cada fila dice el estado de sus términos en palabras (fecha larga de lectura, «Pendiente de leer sus términos» o «Bloqueada:» con la primera frase de sus notas), la licencia, qué guarda (`STORED_FIELDS`, leído de cada adaptador de `trend-engine/src/sources`) y su conservación. No ofrece «Usar en el motor»: eso se decide en Ajustes tras un backtest.
+- Los interruptores son un borrador: el paso escribe con `editorial.sources.update` solo los que cambiaron, una a la vez, al pulsar «Continuar». Si una escritura falla, el error en español queda junto al botón (`role="alert"`, `aria-describedby`) y el paso no avanza; al cambiar un interruptor el error se borra.
+- «Qué sale de esta máquina»: peticiones a las fuentes (pausas de `PAUSE_MS` en `trend-engine/src/sources/http.ts`, robots.txt salvo HN y GitHub, excepción de arXiv) y lo que va al proveedor al redactar (perfil, cifras, hasta 12 ítems de evidencia, `PRESENTATION_EVIDENCE_LIMIT` en `presentationDossierSource.ts`, con extracto de 500 caracteres, `text.excerpt_chars` de `engine.v1.json`). Sin telemetría, según las banderas por defecto de `earlyscriptFlags.ts`.
+- «Conservación y borrado»: directorio real de `corpus.directory`, revisión del 27 de noviembre de 2026 y la orden `engine purge` con ese directorio, que el paso no lanza.
+- Aceptación: casilla obligatoria; `onContinue` recibe `{ sources, acknowledgedTerms: true, catalogHash, policyHash, acceptedTermsDates }`. `catalogHash` es el SHA-256 del JSON canónico de las diez fichas; `policyHash`, el de `DATA_CONSENT_POLICY`, sin el directorio de la máquina.
+- Sin scroll propio: el paso crece dentro del único `ScrollArea` de `WizardPopup`. Un test de navegador lo comprueba (la lista solo tiene un ancestro desplazable, el viewport del diálogo) y que no haya scroll horizontal en 390 px.
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `511a1b877d`)
+
+Informe en Beatriz, `/home/mick/earlyscript-data/verify-onb-data/informe.md`. Cero archivos de upstream modificados.
+
+- **H1, React Compiler.** `submit` de `DataConsentStep.tsx` usaba `try/finally` sin `catch`, que el compilador no admite (`reactCompilerCoverage.test.ts`). Ahora es una cadena de promesas con `.catch` (error en español junto al botón, detalle a la consola) y `.finally`.
+- **H2, qué se guarda.** `SOURCE_ITEM_KEYS` (`packages/editorial-contracts/src/item.ts`) declara las claves de `Item` que escribe cada fuente: las doce comunes y, en RSS, `body_kind` y `feed_url`. `trend-engine/src/testkit/storedKeys.ts` (`expectStoredKeys`) lo comprueba contra los ítems reales de los diez adaptadores en sus pruebas con fixtures (una línea en `earlywindow-sources.test.ts`, `live.test.ts`, `lobsters-rss.test.ts` y `huggingface.test.ts`). En el paso, `COMMON_STORED_FIELDS` y `STORED_FIELDS` describen cada clave en palabras, y una prueba exige que juntos nombren exactamente las claves de cada fuente y que todas las claves de `Item` estén declaradas. Se muestra la línea común «Todas las fuentes guardan además: …». La frase de RSS dejó de ser excluyente.
+- **H3, hashes.** `policyHash` cubre la política, los textos comunes y por fuente de «Guarda», los de conservación y los de bloqueo del servidor; `catalogHash` sigue cubriendo las diez fichas.
+- **H4, 500 caracteres.** `PRESENTATION_EVIDENCE_LIMIT = 12` y `PRESENTATION_EXCERPT_CHARS = 500` viven en `packages/contracts/src/editorialPresentation.ts`, para que los usen el servidor y el paso. `presentationDossierSource.ts` recorta cada extracto a 500 caracteres en la frontera de salida: la redacción recibe como máximo 12 evidencias de 500 caracteres, aunque una corrida importada guarde extractos más largos. Con el motor por defecto (`excerpt_chars` 500) nada cambia, ni la entrada ni su hash. Prueba en `EditorialPresentationService.test.ts`: 20 evidencias de 1.200 caracteres llegan como 12 de 500.
+- **H5, inglés en errores.** `settings/sourcesText.ts` traduce los fallos de conexión (`isTransportConnectionErrorMessage` de `@t3tools/client-runtime/errors`, más «timed out», «not reachable» y «unreachable») a una frase en español. Cualquier otro mensaje se sustituye por «No se pudo contactar con el servidor.» y su detalle va a la consola. Afecta también a Ajustes › Fuentes.
+- **H6, bloqueo del servidor.** Cuando `collectBlocked` del servidor no coincide con el estado de la ficha local, la fila toma el estado del servidor y dice «Bloqueada en esta instalación: el servidor no permite capturarla.» (o su equivalente pendiente); el servidor no da motivo.
+- `apps/web/src/editorial/onboarding/README.md` pasado por `vp fmt` (venía sin formato desde la base).
