@@ -4,7 +4,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { PrivacyNote } from "./DataHandlingDialog";
 import { EarlyscriptWizardView, type EarlyscriptWizardViewProps } from "./EarlyscriptWizardView";
+
+/** Screenshots only when asked: `VITE_EARLYSCRIPT_CAPTURE=1`. Ignored by Git. */
+const CAPTURE = (import.meta.env as Record<string, unknown>)["VITE_EARLYSCRIPT_CAPTURE"] === "1";
+const capture = async (name: string) => {
+  if (CAPTURE) await page.screenshot({ path: `__screenshots__/${name}.png` });
+};
 
 const ENVIRONMENT_ID = EnvironmentId.make("env-1");
 
@@ -33,8 +40,10 @@ describe("EarlyscriptWizardView", () => {
     const { element, onRecord, onFinish } = setup();
     await using _screen = await render(element);
     await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
+    await expect.element(caption()).toHaveTextContent("Paso 1 de 4: Datos y permisos");
     await userEvent.click(continueButton());
     await expect.element(page.getByText("Paso «proveedores» en construcción.")).toBeVisible();
+    await expect.element(caption()).toHaveTextContent("Paso 2 de 4: Proveedores");
     await userEvent.click(continueButton());
     await userEvent.click(continueButton());
     await expect.element(page.getByText("Paso «motor» en construcción.")).toBeVisible();
@@ -78,7 +87,7 @@ describe("EarlyscriptWizardView", () => {
         "No se guardó tu decisión: La base editorial no respondió. Vuelve a intentarlo.",
       );
     await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
-    await page.screenshot({ path: "__screenshots__/wizard-error.png" });
+    await capture("wizard-error");
   });
 
   it("has no close button on the first run and one that leaves when reopened", async () => {
@@ -101,35 +110,53 @@ describe("EarlyscriptWizardView", () => {
     await expect
       .element(page.getByText("Este navegador no está conectado al servidor local de Earlyscript."))
       .toBeVisible();
-    await page.screenshot({ path: "__screenshots__/wizard-sin-servidor.png" });
+    await capture("wizard-sin-servidor");
     await userEvent.click(page.getByRole("button", { name: "Entrar sin configurar" }));
     expect(onLeave).toHaveBeenCalledOnce();
   });
 
-  it("captures the four steps in both themes and two sizes", async () => {
-    for (const theme of ["light", "dark"] as const) {
-      document.documentElement.classList.toggle("dark", theme === "dark");
-      for (const [width, height] of [
-        [1280, 800],
-        [390, 844],
-      ] as const) {
-        await page.viewport(width, height);
-        const { element } = setup();
-        await using _screen = await render(element);
-        for (const [step, label] of [
-          [1, "Datos y permisos"],
-          [2, "Proveedores"],
-          [3, "Estudio"],
-          [4, "Motor y nocturna"],
-        ] as const) {
-          await expect.element(caption()).toHaveTextContent(`Paso ${step} de 4: ${label}`);
-          await page.screenshot({
-            path: `__screenshots__/wizard-${theme}-${width}-paso${step}.png`,
-          });
-          if (step < 4) await userEvent.click(continueButton());
-        }
-      }
-    }
-    document.documentElement.classList.remove("dark");
+  it("names every close button of the data dialog in Spanish", async () => {
+    await using _screen = await render(<PrivacyNote />);
+    await userEvent.click(page.getByRole("button", { name: "Cómo se tratan tus datos" }));
+    const dialog = page.getByRole("dialog", { name: "Cómo se tratan tus datos" });
+    await expect.element(dialog).toBeVisible();
+    expect(dialog.getByRole("button", { name: "Cerrar", exact: true }).elements()).toHaveLength(2);
+    await expect
+      .element(page.getByRole("button", { name: "Close", exact: true }))
+      .not.toBeInTheDocument();
+    await userEvent.click(dialog.getByRole("button", { name: "Cerrar", exact: true }).first());
+    await expect.element(dialog).not.toBeInTheDocument();
   });
 });
+
+// The capture matrix renders sixteen screens; it runs only when asked, apart from the checks above.
+if (CAPTURE) {
+  describe("EarlyscriptWizardView captures", () => {
+    it("captures the four steps in both themes and two sizes", async () => {
+      for (const theme of ["light", "dark"] as const) {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        for (const [width, height] of [
+          [1280, 800],
+          [390, 844],
+        ] as const) {
+          await page.viewport(width, height);
+          const { element } = setup();
+          await using _screen = await render(element);
+          for (const [step, label] of [
+            [1, "Datos y permisos"],
+            [2, "Proveedores"],
+            [3, "Estudio"],
+            [4, "Motor y nocturna"],
+          ] as const) {
+            await expect.element(caption()).toHaveTextContent(`Paso ${step} de 4: ${label}`);
+            await page.screenshot({
+              path: `__screenshots__/wizard-${theme}-${width}-paso${step}.png`,
+            });
+            if (step < 4) await userEvent.click(continueButton());
+          }
+        }
+      }
+      document.documentElement.classList.remove("dark");
+    });
+  });
+}

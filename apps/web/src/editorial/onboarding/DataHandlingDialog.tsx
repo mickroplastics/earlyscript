@@ -1,3 +1,4 @@
+import { XIcon } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -43,7 +44,15 @@ export function DataHandlingDialog({
   return (
     <Dialog>
       <DialogTrigger render={trigger}>{label}</DialogTrigger>
-      <DialogPopup>
+      {/* Its own close button: the automatic one is named "Close" and no translator covers this portal. */}
+      <DialogPopup showCloseButton={false}>
+        <DialogClose
+          aria-label="Cerrar"
+          className="absolute end-2 top-2"
+          render={<Button size="icon" variant="ghost" />}
+        >
+          <XIcon />
+        </DialogClose>
         <DialogHeader>
           <DialogTitle>Cómo se tratan tus datos</DialogTitle>
           <DialogDescription>
@@ -73,6 +82,10 @@ export function DataHandlingDialog({
                   redacta presentaciones o guiones.
                 </li>
                 <li>La descarga del modelo de embeddings desde Hugging Face, una vez.</li>
+                <li>
+                  La app consulta las versiones de los CLI de los proveedores y el uso de tu cuenta
+                  de Anthropic.
+                </li>
                 <li>
                   Consultas técnicas heredadas de T3 Code, sin tus textos: el catálogo de modelos y
                   la tabla de precios desde GitHub, y los iconos de los sitios enlazados desde
