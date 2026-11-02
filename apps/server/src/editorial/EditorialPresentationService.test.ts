@@ -1,5 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { EditorialDossierId, EditorialRunId, TextGenerationError } from "@t3tools/contracts";
+import {
+  EditorialDossierId,
+  EditorialRunId,
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import {
   hashTrendPresentationInput,
   type TrendPresentationGenerationInput,
@@ -10,12 +16,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { TestClock } from "effect/testing";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as EditorialPresentation from "./EditorialPresentationService.ts";
-import { EditorialPresentationService } from "./EditorialPresentationService.ts";
+import { draftBudgetMonth, EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { SINGULARIDEV_PROFILE_V1, presentationProfileFromBytes } from "./channelProfile.ts";
@@ -92,10 +99,13 @@ const makeGenerator = Effect.gen(function* () {
   } satisfies Generator;
 });
 
-const presentationLayer = (generator: Generator) =>
+const presentationLayer = (
+  generator: Generator,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   EditorialPresentation.layer.pipe(
     Layer.provide(textGenerationLayer(generator)),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ServerSettings.layerTest(settings)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "editorial-presentation-" })),
   );
 
@@ -108,13 +118,25 @@ const withDrafting = <A, E, R>(
     generator: Generator,
     runs: { readonly dir: string; readonly runDir: string },
   ) => Effect.Effect<A, E, R>,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) =>
   withEditorial((runs) =>
     Effect.gen(function* () {
       const generator = yield* makeGenerator;
-      return yield* effect(generator, runs).pipe(Effect.provide(presentationLayer(generator)));
+      return yield* effect(generator, runs).pipe(
+        Effect.provide(presentationLayer(generator, settings)),
+      );
     }),
   );
+
+/** Every provider that settings could fall back to, switched off in Settings › Providers. */
+const ALL_PROVIDERS_DISABLED = {
+  providerInstances: Object.fromEntries(
+    ["codex", "claudeAgent", "cursor", "grok", "muse", "pi", "opencode", "antigravity"].map(
+      (driver) => [driver, { driver, enabled: false, config: {} }],
+    ),
+  ),
+} as Parameters<typeof ServerSettings.layerTest>[0];
 
 /** What each dossier of the run shows, as the read side computes it. */
 const shown = Effect.gen(function* () {
@@ -322,6 +344,133 @@ describe("EditorialPresentationService", () => {
     ),
   );
 
+  it.effect("the monthly cap refuses drafting with a typed error and counts only this month", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-11-15T12:00:00.000Z"));
+        const service = yield* EditorialPresentationService;
+        const sql = yield* EditorialSql;
+        const month = draftBudgetMonth(Date.parse("2026-11-15T12:00:00.000Z"));
+        const previousMonth = draftBudgetMonth(Date.parse(month.from) - 1).from;
+        // An attempt of the previous month does not count.
+        yield* sql`
+          INSERT INTO editorial_presentations (
+            presentation_id, run_id, dossier_id, trend_key, input_hash, revision, requested_at, status
+          ) VALUES ('p-old', ${RUN_ID}, ${JUDGE}, 'sig', 'sha256:old', 1,
+            ${previousMonth}, 'pending')
+        `;
+        assert.deepStrictEqual(yield* service.getBudget, {
+          monthlyLimit: 600,
+          usedThisMonth: 0,
+          month: "2026-11",
+        });
+
+        yield* service.updateBudget(2);
+        // A failed attempt does not count: a night without a provider never eats the month.
+        yield* Ref.set(generator.failing, new Set(["sig_833479e1f4de"]));
+        yield* service.ensure({ runId: RUN_ID, dossierId: CHINA }).pipe(Effect.flip);
+        assert.strictEqual((yield* service.getBudget).usedThisMonth, 0);
+        yield* Ref.set(generator.failing, new Set());
+        yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        yield* service.ensure({ runId: RUN_ID, dossierId: CHINA });
+        const refused = yield* service
+          .ensure({ runId: RUN_ID, dossierId: JUDGE })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "budget-reached");
+        assert.strictEqual(refused.message, "Monthly drafting cap reached (2/2).");
+        const regenerate = yield* service
+          .regenerate({ runId: RUN_ID, dossierId: QUANTUM })
+          .pipe(Effect.flip);
+        assert.strictEqual(regenerate.reason, "budget-reached");
+        // The refusals wrote nothing and called no provider; a ready text is still returned.
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 3);
+        assert.strictEqual((yield* presentationRows).length, 4);
+        assert.isTrue((yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM })).reused);
+        assert.deepStrictEqual(yield* service.getBudget, {
+          monthlyLimit: 2,
+          usedThisMonth: 2,
+          month: "2026-11",
+        });
+
+        // 0 lifts the cap.
+        yield* service.updateBudget(0);
+        yield* service.ensure({ runId: RUN_ID, dossierId: JUDGE });
+        assert.deepStrictEqual(yield* service.getBudget, {
+          monthlyLimit: 0,
+          usedThisMonth: 3,
+          month: "2026-11",
+        });
+        // The next month starts from zero.
+        yield* TestClock.setTime(Date.parse(month.to));
+        assert.strictEqual((yield* service.getBudget).usedThisMonth, 0);
+      }),
+    ),
+  );
+
+  it.effect("a result that cannot be stored frees its unit of the cap", () =>
+    withDrafting(() =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const sql = yield* EditorialSql;
+        yield* service.updateBudget(1);
+        yield* sql.unsafe(
+          "CREATE TRIGGER refuse_ready BEFORE UPDATE OF status ON editorial_presentations WHEN NEW.status = 'ready' BEGIN SELECT RAISE(FAIL, 'injected write failure'); END",
+        );
+        const failure = yield* service
+          .ensure({ runId: RUN_ID, dossierId: QUANTUM })
+          .pipe(Effect.flip);
+        yield* sql.unsafe("DROP TRIGGER refuse_ready");
+
+        assert.strictEqual(failure.reason, "storage-failed");
+        const rows = yield* presentationRows;
+        assert.deepStrictEqual(
+          rows.map((row) => row.status),
+          ["failed"],
+        );
+        assert.include(rows[0]?.error ?? "", "markReady");
+        assert.strictEqual((yield* service.getBudget).usedThisMonth, 0);
+        const next = yield* service.ensure({ runId: RUN_ID, dossierId: CHINA });
+        assert.isFalse(next.reused);
+      }),
+    ),
+  );
+
+  it.effect("a disabled drafting provider is never called, alone or for the whole run", () =>
+    withDrafting(
+      (generator) =>
+        Effect.gen(function* () {
+          const service = yield* EditorialPresentationService;
+          assert.isFalse(yield* service.draftingProviderEnabled);
+          const refused = yield* service
+            .ensure({ runId: RUN_ID, dossierId: QUANTUM })
+            .pipe(Effect.flip);
+          assert.strictEqual(refused.reason, "provider-disabled");
+          const progress = yield* service.ensureAll(RUN_ID, { concurrency: 2 });
+          assert.deepStrictEqual([progress.total, progress.ready, progress.failed], [3, 0, 0]);
+          assert.strictEqual((yield* Ref.get(generator.calls)).length, 0);
+          assert.deepStrictEqual(yield* presentationRows, []);
+        }),
+      ALL_PROVIDERS_DISABLED,
+    ),
+  );
+
+  it.effect("ensureAll stops at the cap and leaves the rest undrafted, without failed rows", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* service.updateBudget(1);
+        // Two in flight never both take the last unit.
+        const progress = yield* service.ensureAll(RUN_ID, { concurrency: 2 });
+        assert.deepStrictEqual([progress.total, progress.ready, progress.failed], [3, 1, 0]);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 1);
+        assert.deepStrictEqual(
+          (yield* presentationRows).map((row) => row.status),
+          ["ready"],
+        );
+      }),
+    ),
+  );
+
   it.effect("marks rows left pending by a previous process as failed", () =>
     withEditorial(() =>
       Effect.gen(function* () {
@@ -367,6 +516,39 @@ describe("EditorialReadService with presentations", () => {
         assert.deepStrictEqual(dossier.trend.presentation, drafted.presentation);
         const other = yield* read.getDossier({ runId: RUN_ID, dossierId: JUDGE });
         assert.isUndefined(other.trend.presentation);
+      }),
+    ),
+  );
+
+  it.effect("sends at most twelve evidence items, each excerpt cut to 500 characters", () =>
+    withDrafting((generator, runs) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const file = `${runs.runDir}/dossiers/13-dos_bbb80d57481e.json`;
+        const dossier = JSON.parse(yield* fs.readFileString(file)) as {
+          evidence: Array<Record<string, unknown>>;
+        };
+        // An imported run may store longer excerpts than the engine's default: twenty of 1,200.
+        // A supplementary character sits across the cut: the boundary must not split its pair.
+        const long = `${"x".repeat(499)}😀${"y".repeat(700)}`;
+        const template = dossier.evidence[0]!;
+        dossier.evidence = Array.from({ length: 20 }, (_, index) => ({
+          ...template,
+          itemId: `${String(template["itemId"])}-${index}`,
+          excerpt: long,
+        }));
+        yield* fs.writeFileString(file, JSON.stringify(dossier));
+        yield* (yield* EditorialImportService).sync;
+
+        yield* (yield* EditorialPresentationService).ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        const input = (yield* Ref.get(generator.calls))[0]!;
+        assert.strictEqual(input.evidence.length, PRESENTATION_EVIDENCE_LIMIT);
+        const expected = Array.from(long).slice(0, PRESENTATION_EXCERPT_CHARS).join("");
+        assert.isTrue(input.evidence.every((item) => item.excerpt === expected));
+        assert.isTrue(input.evidence.every((item) => item.excerpt.isWellFormed()));
+        assert.isTrue(input.evidence.every((item) => item.excerpt.endsWith("😀")));
+        assert.notStrictEqual(expected, long.slice(0, PRESENTATION_EXCERPT_CHARS));
+        assert.strictEqual(PRESENTATION_EXCERPT_CHARS, 500);
       }),
     ),
   );

@@ -105,6 +105,15 @@ const dayFormat = new Intl.DateTimeFormat("es", {
 const formatDays = (days: ReadonlyArray<string>) =>
   days.map((day) => dayFormat.format(new Date(`${day}T00:00:00Z`))).join(", ");
 
+/** What the trend engine was doing when it exited with an error; its log has the detail. */
+const ENGINE_FAILED_TEXT: Readonly<Record<EditorialJobPhaseName, string>> = {
+  collect: "El motor de tendencias terminó con error al capturar las fuentes.",
+  run: "El motor de tendencias terminó con error al agrupar las publicaciones.",
+  check: "El motor de tendencias terminó con error al comprobar la corrida.",
+  import: "El motor de tendencias terminó con error al importar la corrida.",
+  presentations: "El motor de tendencias terminó con error al redactar las tendencias.",
+};
+
 /** The operator's wording of a notice; the technical detail stays on the server. */
 function noticeText(notice: EditorialJobNotice): string {
   switch (notice.code) {
@@ -118,6 +127,10 @@ function noticeText(notice: EditorialJobNotice): string {
       return `Redacción pendiente: ${notice.ready ?? 0} de ${notice.total ?? 0} tendencias redactadas. Revisa el modelo de texto en Ajustes.`;
     case "presentations_unavailable":
       return "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.";
+    case "presentations_provider_disabled":
+      return "El proveedor de modelos elegido para redactar está desactivado. Actívalo en Ajustes › Proveedores o elige otro modelo en Ajustes › Editorial › Redacción.";
+    case "presentations_budget":
+      return `Redacción detenida por el tope mensual (${notice.used ?? 0}/${notice.limit ?? 0}): ${notice.ready ?? 0} de ${notice.total ?? 0} tendencias redactadas. Sube el tope en Ajustes › Editorial o espera al mes siguiente.`;
     case "config_changed":
       return "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.";
     case "no_sources":
@@ -125,7 +138,7 @@ function noticeText(notice: EditorialJobNotice): string {
     case "engine_missing":
       return "No se encontró el motor de tendencias en esta instalación. Reinstala Earlyscript o revisa EARLYSCRIPT_ENGINE_CLI.";
     case "engine_failed":
-      return `Falló el motor en la fase de ${PHASE_LABEL[notice.phase ?? "run"]}.`;
+      return ENGINE_FAILED_TEXT[notice.phase ?? "run"];
     case "check_failed":
       return "La comprobación no reprodujo la corrida.";
     case "import_failed":

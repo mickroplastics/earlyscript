@@ -40,6 +40,7 @@ import { dot } from "./cluster.ts";
 import { readCorpus } from "./corpus.ts";
 import { DAY_MS, dayOf, dayStart } from "./days.ts";
 import { createLocalEmbedder } from "./embed/local.ts";
+import { defaultModelDir } from "./embed/model.ts";
 import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
 import { prepare } from "./prepare.ts";
@@ -195,8 +196,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
     createLocalEmbedder(embeddingSpec(baseConfig.embedder), {
       cacheFile:
         options.cacheFile ?? NodePath.join(DEFAULT_DATA_DIR, "embeddings/embeddings.sqlite"),
-      modelDir:
-        options.modelDir ?? NodePath.join(DEFAULT_DATA_DIR, "models", baseConfig.embedder.revision),
+      modelDir: options.modelDir ?? defaultModelDir(DEFAULT_DATA_DIR, baseConfig.embedder.revision),
       workers: options.workers ?? 2,
       allowDownload: true,
       log,

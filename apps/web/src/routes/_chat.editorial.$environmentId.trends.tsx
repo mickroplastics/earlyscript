@@ -1,17 +1,15 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { Outlet, createFileRoute, useChildMatches } from "@tanstack/react-router";
 
-import { EditorialEmptyPage } from "../editorial/EditorialPage";
+import { TrendsEmptyPage } from "../editorial/TrendDossierPage";
 
 function TrendsRouteView() {
+  const { environmentId } = Route.useParams();
   const hasDossier = useChildMatches({ select: (matches) => matches.length > 0 });
   return hasDossier ? (
     <Outlet />
   ) : (
-    <EditorialEmptyPage
-      space="Tendencias"
-      title="Elige una tendencia"
-      description="Abre una tendencia de la lista para leer su ficha de tendencia: curva, cobertura, evidencia y por qué está aquí."
-    />
+    <TrendsEmptyPage environmentId={EnvironmentId.make(environmentId)} />
   );
 }
 

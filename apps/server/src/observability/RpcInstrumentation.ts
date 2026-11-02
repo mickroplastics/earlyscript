@@ -11,6 +11,9 @@ import { EDITORIAL_PRESENTATION_RPC_AGGREGATES } from "../editorial/presentation
 import { EDITORIAL_VIDEO_RPC_AGGREGATES } from "../editorial/videoRpc.ts";
 import { EDITORIAL_SOURCES_RPC_AGGREGATES } from "../editorial/sourcesRpc.ts";
 import { EDITORIAL_JOBS_RPC_AGGREGATES } from "../editorial/jobsRpc.ts";
+import { EDITORIAL_ONBOARDING_RPC_AGGREGATES } from "../editorial/onboardingRpc.ts";
+import { EDITORIAL_PROFILE_RPC_AGGREGATES } from "../editorial/profileRpc.ts";
+import { EDITORIAL_ENGINE_RPC_AGGREGATES } from "../editorial/engineRpc.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -23,6 +26,9 @@ const RPC_AGGREGATES = {
   ...EDITORIAL_VIDEO_RPC_AGGREGATES,
   ...EDITORIAL_SOURCES_RPC_AGGREGATES,
   ...EDITORIAL_JOBS_RPC_AGGREGATES,
+  ...EDITORIAL_ONBOARDING_RPC_AGGREGATES,
+  ...EDITORIAL_PROFILE_RPC_AGGREGATES,
+  ...EDITORIAL_ENGINE_RPC_AGGREGATES,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",

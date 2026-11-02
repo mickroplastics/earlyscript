@@ -14,6 +14,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const ENGINE_CLI_ENV = "EARLYSCRIPT_ENGINE_CLI";
+const MODELS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_MODELS_DIR";
 
 /** The desktop app's copy, staged under its resources by scripts/earlyscript/stageTrendEngine.ts. */
 const BUNDLED_ENGINE_CLI = ["trend-engine", "dist", "cli.mjs"] as const;
@@ -87,12 +88,28 @@ export const resolveEngineLocation = Effect.gen(function* () {
   });
 });
 
+/**
+ * The model directory every engine command gets: `EARLYSCRIPT_EDITORIAL_MODELS_DIR`, or null
+ * for the engine's own default (`~/earlyscript-data/models/<revision>`, `defaultModelDir`).
+ */
+export const resolveModelsDir = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const configured = yield* Config.String(MODELS_DIR_ENV).pipe(Config.option);
+  return Option.match(configured, { onNone: () => null, onSome: (dir) => path.resolve(dir) });
+});
+
+/** `--models <dir>` when a directory is configured; nothing leaves the engine's default. */
+export const modelsArgs = (modelsDir: string | null): ReadonlyArray<string> =>
+  modelsDir === null ? [] : ["--models", modelsDir];
+
 export interface EngineInvocation {
   readonly args: ReadonlyArray<string>;
   /** Receives both streams as they arrive, after the command line. */
   readonly logFile: string;
   /** Called for each stderr line, where the engine reports progress as JSON. */
   readonly onStderrLine?: (line: string) => Effect.Effect<void>;
+  /** Called for each stdout line, for commands that print progress there (`model prepare`). */
+  readonly onStdoutLine?: (line: string) => Effect.Effect<void>;
   /** Runs once the child exists; a failure here kills it. */
   readonly onSpawn?: (pid: number) => Effect.Effect<void, EngineSpawnRejected>;
 }
@@ -138,7 +155,16 @@ export const runEngineCommand = Effect.fn("EditorialEngine.run")(function* (
       if (invocation.onSpawn !== undefined) yield* invocation.onSpawn(Number(child.pid));
       const [stdout] = yield* Effect.all(
         [
-          child.stdout.pipe(Stream.tap(append), Stream.decodeText, Stream.mkString),
+          invocation.onStdoutLine === undefined
+            ? child.stdout.pipe(Stream.tap(append), Stream.decodeText, Stream.mkString)
+            : child.stdout.pipe(
+                Stream.tap(append),
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.tap(invocation.onStdoutLine),
+                Stream.map((line) => `${line}\n`),
+                Stream.mkString,
+              ),
           child.stderr.pipe(
             Stream.tap(append),
             Stream.decodeText,

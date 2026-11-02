@@ -12,7 +12,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Badge } from "../../components/ui/badge";
@@ -39,6 +39,7 @@ import {
   jobMessages,
   jobProgressText,
 } from "../jobsState";
+import { ModelDownloadCard } from "../onboarding/ModelDownloadCard";
 import { useEditorialJobActivity } from "../TrendJobIndicator";
 import { EDITORIAL_NIGHTLY_SECTION_ID } from "./settingsEntry";
 
@@ -69,7 +70,7 @@ const cutoffFormat = new Intl.DateTimeFormat("es", {
   year: "numeric",
 });
 
-function nextRunText(settings: EditorialNightlySettings): string {
+export function nextRunText(settings: EditorialNightlySettings): string {
   if (!settings.enabled || settings.nextRunAt === null) {
     return "Desactivada. «Ejecutar ahora» sigue disponible.";
   }
@@ -147,6 +148,8 @@ export interface NightlyRunSettingsViewProps {
   readonly starting: boolean;
   readonly onChange: (patch: EditorialNightlySettingsUpdateInput) => void;
   readonly onRunNow: () => void;
+  /** The model card, for machines that went through the first-run wizard already. */
+  readonly modelCard?: ReactNode;
 }
 
 export function NightlyRunSettingsView({
@@ -157,6 +160,7 @@ export function NightlyRunSettingsView({
   starting,
   onChange,
   onRunNow,
+  modelCard,
 }: NightlyRunSettingsViewProps) {
   const busy = starting || active !== null;
   return (
@@ -219,6 +223,14 @@ export function NightlyRunSettingsView({
           </Select>
         }
       />
+      {modelCard === undefined ? null : (
+        <SettingsRow
+          title="Modelo del motor"
+          description="La corrida nocturna lo necesita; se descarga una sola vez en esta máquina."
+        >
+          {modelCard}
+        </SettingsRow>
+      )}
       <SettingsRow
         title="Ejecutar ahora"
         description={
@@ -259,7 +271,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   "invalid-settings": "El ajuste no es válido.",
 };
 
-function failureText(result: AtomCommandResult<unknown, unknown>): string {
+export function failureText(result: AtomCommandResult<unknown, unknown>): string {
   if (result._tag === "Success") return "";
   if (isAtomCommandInterrupted(result)) return "Se canceló.";
   const error = squashAtomCommandFailure(result);
@@ -269,6 +281,8 @@ function failureText(result: AtomCommandResult<unknown, unknown>): string {
   }
   return error instanceof Error ? error.message : "Error desconocido.";
 }
+
+const ignoreReady = () => {};
 
 function NightlyRunSettingsForEnvironment({
   environmentId,
@@ -325,6 +339,7 @@ function NightlyRunSettingsForEnvironment({
       starting={starting}
       onChange={onChange}
       onRunNow={onRunNow}
+      modelCard={<ModelDownloadCard environmentId={environmentId} onReady={ignoreReady} bare />}
     />
   );
 }

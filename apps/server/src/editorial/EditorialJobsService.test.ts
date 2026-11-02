@@ -20,6 +20,7 @@ import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { NATIVE_FIXTURE_RUN_ID } from "./editorialLayer.testkit.ts";
 import * as EditorialImportService from "./EditorialImportService.ts";
 import * as EditorialJobsService from "./EditorialJobsService.ts";
+import * as EditorialProfileService from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import { addDays } from "./nightlySchedule.ts";
@@ -241,11 +242,16 @@ const withJobs = <A, E>(
     E,
     | EditorialJobsService.EditorialJobsService
     | EditorialImportService.EditorialImportService
+    | EditorialProfileService.EditorialProfileService
     | EditorialSql
   >,
   options: {
     readonly timing?: Partial<EditorialJobsService.EditorialJobsOptions>;
     readonly draftFails?: boolean;
+    /** The monthly drafting cap stops the run with one of its three trends drafted. */
+    readonly draftCapped?: boolean;
+    /** The drafting model's provider is disabled; one of the three trends was drafted before. */
+    readonly draftProviderDisabled?: boolean;
     /** The real importer over the fixture's runs directory, instead of a double. */
     readonly realImport?: boolean;
     readonly engine?: EditorialJobsService.EditorialJobsOptions["engine"];
@@ -275,7 +281,7 @@ const withJobs = <A, E>(
     engine:
       options.engine ?? Result.succeed({ cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH }),
     jobsDir: NodePath.join(fx.root, "jobs"),
-    profilePath: NodePath.join(fx.root, "profile.json"),
+    profilesDir: NodePath.join(fx.root, "profiles"),
     cacheFile: NodePath.join(fx.root, "embeddings.sqlite"),
     modelsDir: null,
     ...EditorialJobsService.DEFAULT_JOB_TIMING,
@@ -285,6 +291,7 @@ const withJobs = <A, E>(
     Layer.provideMerge(
       Layer.mergeAll(
         EditorialSourcesService.layerWithCorpusDir(fx.corpusDir),
+        EditorialProfileService.layer,
         importer,
         Layer.mock(EditorialPresentationService)({
           startRun: (runId) =>
@@ -303,10 +310,20 @@ const withJobs = <A, E>(
           awaitRun: (runId) => {
             draftsAwaited += 1;
             const hold = draftsAwaited === 1 ? fx.holdFirstDraft : null;
+            const progress =
+              options.draftCapped === true || options.draftProviderDisabled === true
+                ? { ...progressOf(runId), ready: 1 }
+                : progressOf(runId);
             return hold === null
-              ? Effect.succeed(progressOf(runId))
-              : Effect.promise(() => hold).pipe(Effect.as(progressOf(runId)));
+              ? Effect.succeed(progress)
+              : Effect.promise(() => hold).pipe(Effect.as(progress));
           },
+          draftingProviderEnabled: Effect.succeed(options.draftProviderDisabled !== true),
+          getBudget: Effect.succeed({
+            monthlyLimit: 600,
+            usedThisMonth: options.draftCapped === true ? 600 : 0,
+            month: "2026-11",
+          }),
         }),
       ),
     ),
@@ -451,6 +468,41 @@ describe("EditorialJobsService", () => {
         assert.strictEqual((yield* jobs.runNow).status, "done");
         yield* jobs.runDue;
         assert.strictEqual(fx.trace().length, 5);
+      }),
+    );
+  });
+
+  it.live("keys the job with the active profile and hands the engine that version's file", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const profiles = yield* EditorialProfileService.EditorialProfileService;
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const v1 = yield* profiles.activeFile;
+        const job = yield* jobs.runNow;
+        assert.strictEqual(job.profileHash, v1.hash);
+
+        // A new version before the job runs: the pending job is replaced by one of the new key.
+        const { active } = yield* profiles.update({
+          name: "SingulariDev",
+          audience: "Solo founders building with AI agents",
+          include: ["AI coding agents"],
+          exclude: [],
+        });
+        yield* jobs.runDue;
+        yield* jobs.runDue;
+        const list = (yield* jobs.list).jobs;
+        const replaced = list.find((entry) => entry.jobId === job.jobId);
+        const current = list.find((entry) => entry.profileHash === active.hash);
+        assert.strictEqual(replaced?.status, "skipped");
+        assert.strictEqual(current?.status, "done");
+        const written = NodeFS.readFileSync(
+          NodePath.join(fx.root, "profiles", `${active.hash.slice("sha256:".length)}.json`),
+          "utf8",
+        );
+        assert.strictEqual(written, (yield* profiles.activeFile).bytes);
+        assert.include(written, '"version": 2');
       }),
     );
   });
@@ -696,6 +748,42 @@ describe("EditorialJobsService", () => {
         assert.deepStrictEqual(done.artifacts.notices, [{ code: "presentations_unavailable" }]);
       }),
       { draftFails: true },
+    );
+  });
+
+  it.live("finishes with a budget notice when the monthly cap stops drafting", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.deepStrictEqual(done.artifacts.notices, [
+          { code: "presentations_budget", ready: 1, total: 3, used: 600, limit: 600 },
+        ]);
+      }),
+      { draftCapped: true },
+    );
+  });
+
+  it.live("finishes with a provider notice when the drafting provider is disabled", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.deepStrictEqual(done.artifacts.notices, [
+          { code: "presentations_provider_disabled", ready: 1, total: 3 },
+        ]);
+      }),
+      { draftProviderDisabled: true },
     );
   });
 

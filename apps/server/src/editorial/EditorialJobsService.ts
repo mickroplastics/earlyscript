@@ -6,6 +6,7 @@ import {
   EditorialJobArtifacts,
   EditorialJobNotice,
   EditorialJobsError,
+  isDraftBudgetReached,
   type EditorialJob,
   type EditorialJobActivity,
   type EditorialJobPhase,
@@ -32,8 +33,8 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
-import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
+import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import {
@@ -41,8 +42,10 @@ import {
   killProcess,
   lastJsonLine,
   LOCK_TOKEN_FLAG,
+  modelsArgs,
   processesWithToken,
   resolveEngineLocation,
+  resolveModelsDir,
   runEngineCommand,
   type EngineLocation,
   type EngineNotFound,
@@ -71,15 +74,17 @@ const NEXT_RUN_LOOKAHEAD = 7;
 /** A capture lock older than this outlived its process; a newer one may still be working. */
 const STALE_COLLECT_LOCK_MS = 60 * 60_000;
 const EMBEDDINGS_CACHE_ENV = "EARLYSCRIPT_EDITORIAL_EMBEDDINGS_CACHE";
-const MODELS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_MODELS_DIR";
 
 export interface EditorialJobsOptions {
   /** Found once at startup; without it every job reports `engine_missing` in its first phase. */
   readonly engine: Result.Result<EngineLocation, EngineNotFound>;
   /** One directory per job, with its logs and the files it hands the engine. */
   readonly jobsDir: string;
-  /** The channel profile file the engine reads; written from `channelProfile.ts`. */
-  readonly profilePath: string;
+  /**
+   * Where the studio profile files the engine reads are written, one per version hash, from
+   * `EditorialProfileService`.
+   */
+  readonly profilesDir: string;
   readonly cacheFile: string;
   /** Null leaves the engine's default model directory. */
   readonly modelsDir: string | null;
@@ -311,7 +316,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   const active = yield* SubscriptionRef.make<EditorialJob | null>(null);
   const runsDir = directory.runsDir;
   const corpusDir = sources.corpusDir;
-  const profileHash = sha256(SINGULARIDEV_PROFILE_V1);
+  const profiles = yield* EditorialProfileService;
 
   const fallbackArtifacts = (jobDir: string, enabled?: EnabledSources): EditorialJobArtifacts => ({
     jobDir,
@@ -451,6 +456,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     }
     // The engine reads its sources from the configuration, so the switches enter its hash.
     const config = { ...base, sources: enabled.rank };
+    // The active profile enters the job key: a new version replaces a pending job.
+    const profileHash = (yield* profiles.activeFile.pipe(Effect.mapError(storage))).hash;
     return { enabled, config, configHash: sha256(canonicalJson(config)), profileHash };
   });
 
@@ -1161,14 +1168,26 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       : null;
   });
 
-  const ensureProfileFile = Effect.gen(function* () {
-    const existing = yield* fs.readFileString(options.profilePath).pipe(Effect.option);
-    if (Option.isSome(existing) && existing.value === SINGULARIDEV_PROFILE_V1) return;
-    yield* fs.makeDirectory(path.dirname(options.profilePath), { recursive: true });
-    const tmp = `${options.profilePath}.${yield* newId}.tmp`;
-    yield* fs.writeFileString(tmp, SINGULARIDEV_PROFILE_V1);
-    yield* fs.rename(tmp, options.profilePath);
-  }).pipe(Effect.mapError(storage));
+  /**
+   * Writes the profile version the job was keyed with (not whichever is active now, which may
+   * have changed since the claim) and answers its path. Named by hash, so it never changes.
+   */
+  const ensureProfileFile = Effect.fn("EditorialJobsService.ensureProfileFile")(function* (
+    profileHash: string,
+  ) {
+    const file = yield* profiles.fileByHash(profileHash).pipe(Effect.mapError(storage));
+    if (Option.isNone(file)) return yield* storage(`no stored profile has ${profileHash}`);
+    const target = path.join(options.profilesDir, `${profileHash.replace(/^sha256:/, "")}.json`);
+    const existing = yield* fs.readFileString(target).pipe(Effect.option);
+    if (Option.isSome(existing) && existing.value === file.value.bytes) return target;
+    yield* fs
+      .makeDirectory(options.profilesDir, { recursive: true })
+      .pipe(Effect.mapError(storage));
+    const tmp = `${target}.${yield* newId}.tmp`;
+    yield* fs.writeFileString(tmp, file.value.bytes).pipe(Effect.mapError(storage));
+    yield* fs.rename(tmp, target).pipe(Effect.mapError(storage));
+    return target;
+  });
 
   const runPhaseEngine = (ctx: PhaseContext) => afterPreviousEngine(ctx, runWithLock(ctx));
 
@@ -1188,7 +1207,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     if (ctx.plan.enabled.rank.length === 0) {
       return yield* fail("No source is enabled for the engine.", { code: "no_sources" });
     }
-    yield* ensureProfileFile;
+    const profileFile = yield* ensureProfileFile(ctx.job.profile_hash);
     const configFile = jobFile(ctx, "engine-config", "json");
     yield* fs
       .writeFileString(configFile, `${encodeJson(ctx.plan.config)}\n`)
@@ -1200,7 +1219,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       "--cutoff",
       ctx.job.cutoff_at,
       "--profile",
-      options.profilePath,
+      profileFile,
       "--out",
       runsDir,
       "--config",
@@ -1209,7 +1228,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       String(ctx.workers),
       "--cache",
       options.cacheFile,
-      ...(options.modelsDir === null ? [] : ["--models", options.modelsDir]),
+      ...modelsArgs(options.modelsDir),
     ];
     const output = yield* engineRun(ctx, "run", args, (line) =>
       Option.match(Option.flatMap(decodeJsonOption(line), decodeEmbedProgress), {
@@ -1348,6 +1367,26 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     yield* report(progress);
     const { ready, total } = progress;
     if (ready < total) {
+      // A disabled provider or the monthly cap stops drafting without failing the job: the rest
+      // can be drafted later.
+      const enabled = yield* presentations.draftingProviderEnabled.pipe(Effect.option);
+      if (Option.isSome(enabled) && !enabled.value) {
+        return yield* pending(`the drafting provider is disabled, ${ready} of ${total} drafted.`, {
+          code: "presentations_provider_disabled",
+          ready,
+          total,
+        });
+      }
+      const budget = yield* presentations.getBudget.pipe(Effect.option);
+      if (Option.isSome(budget) && isDraftBudgetReached(budget.value)) {
+        return yield* pending(`monthly cap reached, ${ready} of ${total} drafted.`, {
+          code: "presentations_budget",
+          ready,
+          total,
+          used: budget.value.usedThisMonth,
+          limit: budget.value.monthlyLimit,
+        });
+      }
       return yield* pending(`${ready} of ${total} drafted.`, {
         code: "presentations_pending",
         ready,
@@ -1406,18 +1445,17 @@ const resolveOptions = Effect.gen(function* () {
   );
   if (Result.isFailure(engine)) yield* Effect.logWarning(engine.failure.message);
   const cache = yield* Config.String(EMBEDDINGS_CACHE_ENV).pipe(Config.option);
-  const models = yield* Config.String(MODELS_DIR_ENV).pipe(Config.option);
   return {
     engine,
     jobsDir: path.join(stateDir, "editorial-jobs"),
-    profilePath: path.join(stateDir, "editorial-profiles", "singularidev.v1.json"),
+    profilesDir: path.join(stateDir, "editorial-profiles"),
     // The engine's default: one cache shared by every run and backtest of this machine.
     cacheFile: Option.match(cache, {
       onNone: () =>
         path.join(NodeOS.homedir(), "earlyscript-data", "embeddings", "embeddings.sqlite"),
       onSome: (file) => path.resolve(file),
     }),
-    modelsDir: Option.match(models, { onNone: () => null, onSome: (dir) => path.resolve(dir) }),
+    modelsDir: yield* resolveModelsDir,
     ...DEFAULT_JOB_TIMING,
   } satisfies EditorialJobsOptions;
 });

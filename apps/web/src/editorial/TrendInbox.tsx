@@ -37,6 +37,7 @@ import {
   refreshEditorialInbox,
   withLiveInboxState,
 } from "./state";
+import { DraftingNotice, FirstRunCard } from "./FirstRunCard";
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
@@ -219,50 +220,66 @@ export function TrendInbox({
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
               {inbox?.run ? runGroupLabel(inbox.run, nowMinute) : "Tendencias"}
             </span>
-            <TrendJobIndicator environmentId={environmentId} />
+            {/* An empty inbox shows the job's phases in its first-run card instead. */}
+            {inbox !== null && inbox.trends.length > 0 ? (
+              <TrendJobIndicator environmentId={environmentId} />
+            ) : null}
             {inbox?.run ? (
               <TrendPresentationRunButton environmentId={environmentId} runId={inbox.run.runId} />
             ) : null}
-            <Menu>
-              <MenuTrigger
-                render={
-                  <SidebarHeaderIconButton
-                    label={`Orden: ${SORT_OPTIONS.find((option) => option.value === sort)?.label ?? ""}`}
-                  />
-                }
-              >
-                <ArrowDownUpIcon className="size-4" />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                <MenuGroup>
-                  <MenuGroupLabel>Orden</MenuGroupLabel>
-                  <MenuRadioGroup
-                    value={sort}
-                    onValueChange={(value) => {
-                      if (isInboxSort(value)) setSort(value);
-                    }}
-                  >
-                    {SORT_OPTIONS.map((option) => (
-                      <MenuRadioItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
-              </MenuPopup>
-            </Menu>
+            {inbox === null || inbox.trends.length === 0 ? null : (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <SidebarHeaderIconButton
+                      label={`Orden: ${SORT_OPTIONS.find((option) => option.value === sort)?.label ?? ""}`}
+                    />
+                  }
+                >
+                  <ArrowDownUpIcon className="size-4" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  <MenuGroup>
+                    <MenuGroupLabel>Orden</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={sort}
+                      onValueChange={(value) => {
+                        if (isInboxSort(value)) setSort(value);
+                      }}
+                    >
+                      {SORT_OPTIONS.map((option) => (
+                        <MenuRadioItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                </MenuPopup>
+              </Menu>
+            )}
           </div>
         </SidebarGroup>
       }
     >
-      <SidebarGroup>
-        {inbox === null ? (
-          result._tag === "Failure" ? (
+      {inbox === null ? (
+        <SidebarGroup>
+          {result._tag === "Failure" ? (
             <InboxNotice>No se pudieron leer las corridas de este entorno.</InboxNotice>
-          ) : null
-        ) : inbox.run === null ? (
-          <InboxNotice>Todavía no hay corridas del motor.</InboxNotice>
-        ) : (
+          ) : null}
+        </SidebarGroup>
+      ) : inbox.run === null || inbox.trends.length === 0 ? (
+        <SidebarGroup className="flex-1 justify-center">
+          <div className="px-2 py-6">
+            <FirstRunCard environmentId={environmentId} emptyRun={inbox.run !== null} />
+          </div>
+        </SidebarGroup>
+      ) : (
+        <SidebarGroup>
+          <DraftingNotice
+            environmentId={environmentId}
+            runId={inbox.run.runId}
+            undrafted={inbox.trends.filter((trend) => trend.presentation === undefined).length}
+          />
           <SidebarMenu aria-label={runGroupLabel(inbox.run, nowMinute)}>
             {sections.visible.map((trend) => renderRow(trend))}
             {sections.folded.length > 0 ? (
@@ -302,8 +319,8 @@ export function TrendInbox({
               </InboxSection>
             ) : null}
           </SidebarMenu>
-        )}
-      </SidebarGroup>
+        </SidebarGroup>
+      )}
       {dismissing !== null ? (
         <TrendDismissDialog
           trendTitle={dismissing.title}

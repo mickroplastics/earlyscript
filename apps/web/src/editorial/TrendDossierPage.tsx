@@ -20,6 +20,7 @@ import {
   ChevronDownIcon,
   CircleCheckIcon,
   ExternalLinkIcon,
+  PanelLeftIcon,
   RefreshCwIcon,
   SparklesIcon,
   TriangleAlertIcon,
@@ -41,6 +42,7 @@ import {
   MenuShortcut,
   MenuTrigger,
 } from "../components/ui/menu";
+import { useSidebar, useSidebarVisibility } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useClientSettings } from "../hooks/useSettings";
@@ -72,6 +74,7 @@ import { editorialEnvironment } from "./state";
 import { useTrendActions, type TrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { useTrendInbox } from "./TrendInbox";
+import { useEditorialJobActivity } from "./TrendJobIndicator";
 
 const SPACE_LABEL = "Tendencias";
 
@@ -767,6 +770,66 @@ export function TrendDossierView({
   );
 }
 
+/** Opens the inbox in the sidebar, which is a sheet on a narrow window. */
+function OpenInboxButton() {
+  const { isMobile, setOpen, setOpenMobile } = useSidebar();
+  if (useSidebarVisibility()) return null;
+  return (
+    <Button
+      variant="outline"
+      className="mt-5"
+      onClick={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
+    >
+      <PanelLeftIcon aria-hidden />
+      Abrir la bandeja
+    </Button>
+  );
+}
+
+/**
+ * Tendencias with no dossier open: "Elige una tendencia" once a run has trends; before
+ * that, a pointer to the first-run card at the top of the inbox.
+ */
+export function TrendsEmptyPage({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
+  const active = useEditorialJobActivity(environmentId);
+  if (inbox !== null && (inbox.run === null || inbox.trends.length === 0) && active !== null) {
+    return (
+      <EditorialEmptyPage
+        space={SPACE_LABEL}
+        title="Corrida en curso"
+        description="Sigue sus fases en la bandeja de Tendencias. Sus tendencias aparecen allí cuando termina la importación."
+      >
+        <OpenInboxButton />
+      </EditorialEmptyPage>
+    );
+  }
+  if (inbox !== null && (inbox.run === null || inbox.trends.length === 0)) {
+    return (
+      <EditorialEmptyPage
+        space={SPACE_LABEL}
+        title={
+          inbox.run === null ? "Todavía no hay corridas" : "La última corrida no trajo tendencias"
+        }
+        description={
+          inbox.run === null
+            ? "Lanza la primera corrida desde la bandeja de Tendencias, en la barra lateral. Allí verás sus fases mientras corre y, al terminar, sus tendencias."
+            : "La bandeja de Tendencias explica por qué y muestra la próxima corrida."
+        }
+      >
+        <OpenInboxButton />
+      </EditorialEmptyPage>
+    );
+  }
+  return (
+    <EditorialEmptyPage
+      space={SPACE_LABEL}
+      title="Elige una tendencia"
+      description="Abre una tendencia de la lista para leer su ficha de tendencia: curva, cobertura, evidencia y por qué está aquí."
+    />
+  );
+}
+
 export function TrendDossierPage({
   environmentId,
   runId,
@@ -780,11 +843,7 @@ export function TrendDossierPage({
   const resolvedRunId = runId ?? inbox?.run?.runId ?? null;
   if (resolvedRunId === null) {
     return inbox !== null && inbox.run === null ? (
-      <EditorialEmptyPage
-        space={SPACE_LABEL}
-        title="Sin corridas"
-        description="Todavía no hay corridas del motor en este entorno."
-      />
+      <TrendsEmptyPage environmentId={environmentId} />
     ) : (
       <EditorialPage space={SPACE_LABEL}>{null}</EditorialPage>
     );
@@ -879,6 +938,10 @@ function presentationErrorText(cause: Cause.Cause<unknown>): string {
         return "la ficha de tendencia ya no está en el directorio de corridas.";
       case "storage-failed":
         return "no se pudo guardar en la base editorial.";
+      case "provider-disabled":
+        return "el proveedor del modelo de redacción está desactivado. Actívalo en Ajustes › Proveedores o elige otro modelo en Ajustes › Editorial › Redacción.";
+      case "budget-reached":
+        return "se alcanzó el tope mensual de redacciones. Súbelo en Ajustes › Editorial o espera al mes siguiente.";
     }
   }
   return error instanceof Error ? error.message : String(error);

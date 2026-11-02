@@ -83,6 +83,8 @@ export const EditorialJobNoticeCode = Schema.Literals([
   "collect_locked",
   "storage",
   "too_many_attempts",
+  "presentations_budget",
+  "presentations_provider_disabled",
 ]);
 export type EditorialJobNoticeCode = typeof EditorialJobNoticeCode.Type;
 
@@ -92,6 +94,9 @@ export const EditorialJobNotice = Schema.Struct({
   days: Schema.optionalKey(Schema.Array(Day)),
   ready: Schema.optionalKey(NonNegativeInt),
   total: Schema.optionalKey(NonNegativeInt),
+  /** `presentations_budget`: trends drafted this month and the monthly cap. */
+  used: Schema.optionalKey(NonNegativeInt),
+  limit: Schema.optionalKey(NonNegativeInt),
 });
 export type EditorialJobNotice = typeof EditorialJobNotice.Type;
 

@@ -12,6 +12,7 @@ import { hashCorpus, readCorpus } from "../corpus.ts";
 import { sha256 } from "../hash.ts";
 import * as Schema from "effect/Schema";
 import { Item } from "@earlyscript/editorial-contracts/item";
+import { expectStoredKeys } from "../testkit/storedKeys.ts";
 
 const day = "2026-10-15";
 const until = "2026-10-16";
@@ -44,6 +45,7 @@ describe("live sources", () => {
       body: { hits: items.map(hit), nbHits: items.length },
     }));
     expect(result.items).toEqual(items);
+    expectStoredKeys("hn", result.items);
     expect(result.coverage).toMatchObject({ day, status: "complete", items: 20 });
   });
   it("retries 429 with exponential waits and honors Retry-After", async () => {
@@ -209,6 +211,7 @@ describe("live sources", () => {
       },
     }));
     expect(result.items).toHaveLength(1);
+    expectStoredKeys("github", result.items);
     expect(result.coverage?.status).toBe("partial");
   });
   it("is idempotent, updates hashes, preserves forced data and continues after failed days", async () => {

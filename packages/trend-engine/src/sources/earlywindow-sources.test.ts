@@ -15,6 +15,7 @@ import { collectNpmDay, NPM_QUERIES } from "./npm.ts";
 import { robotsGate, type RobotsGate } from "./robots.ts";
 import { collectStackExchangeDay } from "./stackexchange.ts";
 import { collectWikipediaDay, wikipediaTopUrl } from "./wikipedia.ts";
+import { expectStoredKeys } from "../testkit/storedKeys.ts";
 
 const observed = "2026-10-31T03:00:00.000Z";
 const ok = (body: unknown, observed_at = observed): FrozenResponse => ({
@@ -65,6 +66,7 @@ describe("arXiv", () => {
       entities: ["github:example/budget-agents"],
     });
     expect(early.items[1]?.entities).toEqual(["github:example/review-bench"]);
+    expectStoredKeys("arxiv", early.items);
     expect(early.coverage).toMatchObject({ status: "partial", items: 2 });
     expect(early.coverage?.note).toContain("4-day announcement lag");
     const late = await collectArxivDay(
@@ -199,6 +201,7 @@ describe("Wikipedia", () => {
       },
       allow,
     );
+    expectStoredKeys("wikipedia", result.items);
     // No summary requests, even where robots.txt would allow them.
     expect(urls).toEqual([wikipediaTopUrl("2026-10-29")]);
     // 15 ranked rows less Main_Page, Special:Search and Wikipedia:Featured_pictures.
@@ -257,6 +260,7 @@ describe("Stack Exchange", () => {
       },
       allow,
     );
+    expectStoredKeys("stackexchange", result.items);
     expect(urls).toHaveLength(2);
     expect(new URL(urls[0]!).searchParams.get("fromdate")).toBe(
       String(Date.parse("2026-10-29T00:00:00Z") / 1000),
@@ -340,6 +344,7 @@ describe("npm", () => {
       },
       allow,
     );
+    expectStoredKeys("npm", result.items);
     expect(urls).toHaveLength(5);
     expect(result.items.map((item) => item.title)).toEqual([
       "@modelcontextprotocol/sdk 1.32.2",
@@ -398,6 +403,7 @@ describe("Bluesky", () => {
       },
       allow,
     );
+    expectStoredKeys("bluesky", result.items);
     expect(urls).toHaveLength(BLUESKY_TERMS.length);
     expect(BLUESKY_TERMS).not.toContain("ai");
     expect(result.items.map((item) => item.id)).toEqual([

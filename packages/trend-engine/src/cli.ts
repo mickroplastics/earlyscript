@@ -4,6 +4,7 @@
 //   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>]
 //   node src/cli.ts check --backtest <backtest.json> [--rerun --out <dir>]
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
+//   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
@@ -16,7 +17,16 @@ import { repairRobotsOverrideTerms } from "./repair.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
 import * as Schema from "effect/Schema";
 import { SourceId } from "@earlyscript/editorial-contracts/source";
-import { runEngine } from "./run.ts";
+import { defaultModelDir, modelStatus } from "./embed/model.ts";
+import {
+  classifyModelError,
+  prepareModelCommand,
+  type ModelCommandLine,
+} from "./embed/modelCommand.ts";
+import { DEFAULT_DATA_DIR, runEngine } from "./run.ts";
+
+/** A mirror of Hugging Face with the same layout, for tests and machines behind a proxy. */
+const MODEL_BASE_URL_ENV = "EARLYSCRIPT_MODEL_BASE_URL";
 
 const isSourceId = Schema.is(SourceId);
 
@@ -32,11 +42,44 @@ const USAGE =
   "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir>]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
+  "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
 
+/**
+ * `model status` prints `{ status, revision, path, bytesPresent, bytesExpected }`; `model
+ * prepare` downloads what is missing, printing `{ file, bytesDone, bytesTotal }` lines and
+ * then `{ done: true, path }`. `--models` is the revision directory, as for `run`.
+ */
+async function modelCommand(argv: ReadonlyArray<string>): Promise<number> {
+  const { values, positionals } = NodeUtil.parseArgs({
+    args: [...argv],
+    allowPositionals: true,
+    options: { models: { type: "string" }, "lock-token": { type: "string" } },
+  });
+  const dir = values.models ?? defaultModelDir(DEFAULT_DATA_DIR);
+  if (positionals.length === 1 && positionals[0] === "status") {
+    console.log(JSON.stringify(await modelStatus(dir)));
+    return 0;
+  }
+  if (positionals.length === 1 && positionals[0] === "prepare") {
+    const baseUrl = process.env[MODEL_BASE_URL_ENV];
+    const write = (line: ModelCommandLine) => console.log(JSON.stringify(line));
+    try {
+      await prepareModelCommand(dir, write, baseUrl ? { baseUrl } : {});
+      return 0;
+    } catch (error) {
+      write({ error: classifyModelError(error) });
+      return 1;
+    }
+  }
+  console.error(USAGE);
+  return 64;
+}
+
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
+  if (command === "model") return modelCommand(rest);
   const { values } = NodeUtil.parseArgs({
     args: [...rest],
     options: {

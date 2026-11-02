@@ -60,8 +60,14 @@ export const SourceGovernance = Schema.Struct({
 });
 export type SourceGovernance = typeof SourceGovernance.Type;
 
-const MANUAL_CORPUS_DELETION =
-  "Borrado manual del directorio del corpus o de sus archivos por día; no hay borrado por ítem ni registro de purgas.";
+/**
+ * `engine purge` (trend-engine `src/purge.ts`) removes items by author or permalink from every
+ * day of the source and from `history/`, records only the value's SHA-256 in the manifest and
+ * keeps `collect` from storing them again. `--feed` exists for `rss` only; Wikipedia has no
+ * author field, so only `--url` applies there.
+ */
+const purgeDeletion = (source: string, byAuthor = true) =>
+  `engine purge --source ${source} ${byAuthor ? "--author <autor> o " : ""}--url <enlace>: quita los ítems de todos los días del corpus y de history/, registra solo su huella SHA-256 en el manifiesto y collect no los vuelve a guardar. También se puede borrar el directorio del corpus o los archivos de un día.`;
 
 export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
   hn: {
@@ -76,7 +82,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://www.ycombinator.com/legal",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("hn"),
     language: "en",
     cost: "none",
     status: "ready",
@@ -98,7 +104,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
       "https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("github"),
     language: "en",
     cost: "none",
     status: "ready",
@@ -119,7 +125,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://info.arxiv.org/help/api/tou.html",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("arxiv"),
     language: "en",
     cost: "none",
     status: "ready",
@@ -147,7 +153,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("wikipedia", false),
     language: "en",
     cost: "none",
     status: "ready",
@@ -168,7 +174,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://docs.npmjs.com/policies/open-source-terms",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("npm"),
     language: "en",
     cost: "none",
     status: "ready",
@@ -189,7 +195,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://stackoverflow.com/legal/api-terms-of-use",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("stackexchange"),
     language: "en",
     cost: "none",
     status: "pending-review",
@@ -232,7 +238,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: "https://huggingface.co/terms-of-service",
     access: "public",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("huggingface"),
     language: "en",
     cost: "none",
     status: "ready",
@@ -253,7 +259,7 @@ export const SOURCE_CATALOG: Readonly<Record<SourceId, SourceGovernance>> = {
     termsUrl: null,
     access: "approval",
     retention: "frozen-corpus",
-    deletion: MANUAL_CORPUS_DELETION,
+    deletion: purgeDeletion("lobsters"),
     language: "en",
     cost: "none",
     status: "blocked",

@@ -1896,3 +1896,219 @@ Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda3.md
 - Queda la ventana de microsegundos entre la consulta y la llamada al sistema, del mismo tipo que la de R3.
 
 **`script_check` con el expediente no disponible.** Si el hilo tiene expediente pero no se pudo comparar, devuelve `ok: false` y `warning: "the dossier of this thread is unavailable; citations were not checked"`, para que el agente no lo tome por aprobado.
+
+## Asistente de primer arranque: carcasa (rama `es/onboarding-shell`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). El asistente de T3 Code (Connect / Agents / Projects, en inglés y con un pie que decía que se recogían datos de uso anónimos con enlace a `t3.codes`) se sustituye en `/welcome` por el de Earlyscript: cuatro pasos de `apps/web/src/editorial/onboarding/steps.ts`, cada aceptación registrada en el servidor con fecha y versión (observación 9 del Comité). `WelcomeWizard.tsx` sigue en el árbol, sin montar.
+
+Archivos de upstream tocados (enganches de una línea):
+
+| Archivo                                               | Líneas       | Cambio                                                                                                                                                                    |
+| ----------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/routes/welcome.tsx`                     | 8            | Importa `EarlyscriptWizard as WelcomeWizard`: el montaje de la línea 39 queda igual y monta el nuestro.                                                                   |
+| `apps/web/src/components/settings/SettingsPanels.tsx` | 4, 2007      | El import de `PRIVACY_POLICY_URL` pasa a ser el de `PrivacySettingsRow`, que sustituye la fila «Privacy policy» de Acerca de › Legal (texto falso y enlace a `t3.codes`). |
+| `packages/contracts/src/index.ts` y `rpc.ts`          | 77; 42, 2154 | Exportación y `.merge(EditorialOnboardingRpcGroup)`.                                                                                                                      |
+| `apps/server/src/ws.ts`                               | 249, 1883    | Handlers del grupo, como §18 y §22.                                                                                                                                       |
+| `apps/server/src/server.ts`                           | 57, 645      | `EditorialOnboardingRpc.layer` junto a `EditorialSourcesRpc.layer`.                                                                                                       |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 9, 55        | Ámbitos del grupo.                                                                                                                                                        |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 14, 27       | Agregados del grupo.                                                                                                                                                      |
+
+`apps/server/src/editorial/persistence/Migrations.ts` (propio) registra la 012 y la marca como repetible. `apps/web/src/earlyscript/hiddenFeatures.ts` (propio) oculta la entrada «privacy-policy» del buscador de Ajustes con la bandera `marketing`; la búsqueda encuentra en su lugar «Cómo se tratan tus datos» y «Asistente de inicio» (`settingsEntry.ts`). `settingsSearch.ts` y `legalLinks.ts` no se tocan: `PRIVACY_POLICY_URL` solo lo usa `WelcomeWizard.tsx`, que ya no se monta.
+
+Archivos nuevos:
+
+- `packages/contracts/src/editorialOnboarding.ts`: grupo `editorial.onboarding.*`. `record` y `complete` con `orchestration:operate`; `list` y `status` con `orchestration:read`. Pasos `datos`, `proveedores`, `estudio`, `motor` (los de `steps.ts`; `contractStep` en la web no compila si divergen). Carga de hasta 16 KiB de JSON.
+- `apps/server/src/editorial/EditorialOnboardingService.ts`, `onboardingRpc.ts`, `EditorialOnboardingService.test.ts` y `persistence/Migrations/012_EditorialOnboarding.ts`: tablas `editorial_onboarding_acceptances` (id, paso, `accepted_at`, carga JSON validada con `json_valid`, `app_version` del servidor) y `editorial_onboarding_completions` (cuándo se terminaron los cuatro pasos). Solo se insertan filas; reabrir el asistente añade otras.
+- `apps/web/src/editorial/onboarding/`: `EarlyscriptWizard.tsx` (contenedor: RPC, `completeOnboarding()` de upstream y cierre), `EarlyscriptWizardView.tsx` (vista con los pasos, cabecera de upstream `WizardSteps` y pie de privacidad), `wizardNavigation.ts` y su prueba, `onboardingState.ts` (consultas y órdenes), `DataHandlingDialog.tsx` («Cómo se tratan tus datos» y el pie) y `EarlyscriptWizardView.browser.test.tsx`.
+- `apps/web/src/editorial/settings/OnboardingSettings.tsx` (Ajustes › Editorial › Asistente de inicio: reabrir, decisiones registradas y el diálogo de datos) y `PrivacySettingsRow.tsx`.
+
+Decisiones reversibles:
+
+- Sin X en el primer arranque, con X al reabrir desde Ajustes (`onboardingCompletedAt` ya fijado al montar). En el primer arranque la X de upstream daba el asistente por terminado y saltaba el consentimiento de datos; nadie queda encerrado porque la compuerta solo lleva a `/welcome` desde `/`. La X y «Entrar sin configurar» llaman `completeOnboarding()` del cliente, sin registrar un completado en el servidor; si no, la compuerta volvería a abrir `/welcome`.
+- Salida (H2 de la verificación de la integración): terminar, la X y «Entrar sin configurar» llevan a `/editorial/<entorno>/trends` y guardan `trends` como espacio del entorno en `spaceStore`, así la siguiente sesión aterriza ahí (`EditorialLanding`). La landing de esta sesión ya se decidió antes de abrir el asistente, así que volver a `/` mostraba los Hilos de upstream. Sin servidor local se usa el `onDone` de `welcome.tsx` (`/`). Lógica en `onboarding/wizardExit.ts`, con prueba.
+- Cada cambio de paso, también el regreso al primero, deja el popup arriba y el foco en el título del paso (H3).
+- Un paso solo avanza cuando el servidor guardó su aceptación; si falla, el paso queda en pantalla con el motivo en español. Terminar registra el completado en el servidor y después marca el cliente.
+- Sin servidor local (`localAvailable` falso o sin entorno primario) el asistente lo dice y ofrece «Entrar sin configurar»; no bloquea.
+- Navegación: la cabecera abre cualquier paso ya alcanzado; los pasos reciben `onBack` (nulo en el primero). Volver y aceptar de nuevo añade otra fila.
+- El diálogo de datos usa su propio botón de cierre con `aria-label="Cerrar"` (`showCloseButton={false}`): vive en otro portal que el traductor del asistente no cubre.
+- `aria-label` en español de `WizardSteps` («Progreso del asistente», «…, paso N») y del cierre («Cerrar») con `useScopedLocale`, limitado al popup del asistente y solo a `aria-label`. En móvil `WizardSteps` oculta las etiquetas: la carcasa añade «Paso N de 4: …» bajo la cabecera.
+- Texto de privacidad: «sin telemetría ni analítica»; no dice que nada salga de la máquina. El diálogo lista lo que sí sale: capturas de las fuentes activas, textos al proveedor de modelos elegido al redactar, descarga del modelo de embeddings desde Hugging Face, versiones de los CLI de proveedores en `registry.npmjs.org` y uso de la cuenta de Anthropic (`api.anthropic.com/api/oauth/usage`), observadas por Sol, y consultas heredadas sin bandera (catálogo de modelos y precios de litellm desde GitHub, iconos de sitios desde Google). Los datos viven en `~/.earlyscript` y `~/earlyscript-data`.
+
+## Proveedores y tope mensual de redacción (rama `es/onboarding-providers`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). Paso 2 del asistente de primer arranque («Proveedores»), fila «Redacción» de Ajustes › Editorial y tope mensual de tendencias redactadas.
+
+Archivos de upstream tocados: ninguno. El grupo `editorial.presentation.*` ya estaba enganchado en contratos, `ws.ts`, autorización e instrumentación (§7 y §14); los dos métodos nuevos van al final del grupo y heredan esos enganches.
+
+Archivos propios:
+
+- `packages/contracts/src/editorialPresentation.ts`: `getBudget` (`orchestration:read`) y `updateBudget` (`orchestration:operate`), `EditorialDraftBudget`, `EditorialDraftBudgetUpdate`, `isDraftBudgetReached`, motivo `budget-reached`, `EDITORIAL_DRAFT_BUDGET_DEFAULT` (600) y `EDITORIAL_DRAFT_BUDGET_MAX` (100.000). `editorialJobs.ts`: aviso `presentations_budget` al final de `EditorialJobNoticeCode`, con `used` y `limit`.
+- Servidor: migración `013_EditorialDraftBudget.ts` (tabla `editorial_draft_budget` de una fila, sin sembrar, e índice `editorial_presentations_by_requested_at`); `EditorialPresentationService` (`getBudget`, `updateBudget`, comprobación del tope antes de insertar la fila `pending`, bajo un semáforo propio); fase `presentations` de `EditorialJobsService`; `presentationRpc.ts`.
+- Web: `editorial/onboarding/{ProvidersStep.tsx,providersStep.logic.ts,providersStep.fixture.ts}` con sus pruebas, `editorial/settings/DraftingSettings.tsx` con su prueba de navegador, montaje en `EditorialSettings.tsx`, entrada de búsqueda en `settingsEntry.ts`, `presentationState.ts` (consulta y orden del tope), `TrendPresentationRunButton.tsx`, `TrendDossierPage.tsx` (texto de `budget-reached`) y `jobsState.ts` (texto del aviso).
+
+Decisiones reversibles:
+
+- La migración tiene asignado el número 13 porque `es/onboarding-shell` ocupa el 12 (`EditorialOnboarding`). En esta rama se registra con el id 12, porque el manifiesto debe ir de 1 a n; al fusionar pasa a `[13, "EditorialDraftBudget", …]`. Es repetible y figura en `REPLAYABLE_MIGRATION_NAMES`, así que una base de desarrollo que la aplicó como 12 se repara con `repair-editorial-migrations.ts`.
+- El tope cuenta tendencias redactadas, no dinero: Claude y Codex son suscripciones sin precio por llamada. Cuenta las filas `ready` y `pending` de `editorial_presentations` cuyo `requested_at` cae en el mes natural de la zona horaria del servidor. Los intentos fallidos no cuentan, para que una noche sin proveedor no agote el mes. Sin fila guardada rige el predeterminado; 0 quita el tope.
+- El tope detiene toda redacción nueva (en lote, nocturna y la de una sola tendencia) con `budget-reached`; un texto ya redactado para la misma entrada se sigue devolviendo. `ensureAll` deja de intentar tras el primer rechazo y no escribe filas `failed`. La nocturna termina `done` con el aviso `presentations_budget` cuando quedan tendencias sin redactar y el tope está alcanzado.
+- Tokens: la vía de generación de texto de Claude y Codex no devuelve consumo, y llevarlo hasta aquí exigiría tocar `ClaudeTextGeneration.ts` y el runner de `provider-core`. La interfaz dice «Tokens: el proveedor no informa el consumo.» en vez de mostrar ceros.
+- Iniciar sesión: con la bandera `terminal` apagada, el botón abre un diálogo propio con la orden exacta (`claude auth login`, `codex login` o la instalación nativa de upstream seguida del inicio de sesión) y «Volver a comprobar», que pide al servidor sondear los proveedores. No se enciende la terminal.
+- Modelo recomendado: el modelo barato de generación de texto que T3 ya usa por proveedor (`DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER`: Haiku en Claude, Luna en Codex), y Claude antes que Codex. Se respeta un modelo ya elegido por el operador si sigue disponible. Se guarda en `textGenerationModelSelection` con el RPC de ajustes de upstream.
+
+## Perfil del estudio editable y paso «Estudio» del asistente (rama `es/onboarding-studio`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). El perfil del canal deja de ser la constante `SINGULARIDEV_PROFILE_V1` y pasa a `editorial.sqlite` con versiones. `EditorialProfileService` es su único lector y escritor: la corrida nocturna escribe para el motor el archivo de la versión con que se creó el job y la redacción lee la versión activa. La versión 1 se siembra con los bytes de `profiles/singularidev.v1.json` de Earlywindow, así que su hash sigue siendo `sha256:db510e30…` y las corridas y expedientes existentes coinciden.
+
+Archivos de upstream modificados (enganches de una línea, como §18 y §22, al final de cada lista):
+
+| Archivo                                               | Líneas    | Alcance                                                                                                                                                                        |
+| ----------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts/src/index.ts`                     | 77        | Exporta `editorialProfile.ts`.                                                                                                                                                 |
+| `packages/contracts/src/rpc.ts`                       | 42, 2154  | Importa y fusiona `EditorialProfileRpcGroup` en `WsRpcGroup`.                                                                                                                  |
+| `apps/server/src/server.ts`                           | 57, 645   | Importa `editorial/profileRpc.ts` y monta su capa con `Layer.provideMerge` tras la de Fuentes: publica `EditorialProfileService` para `EditorialJobsRpc.layer` del `mergeAll`. |
+| `apps/server/src/ws.ts`                               | 249, 1883 | Esparce `EditorialProfileRpcHandlers`.                                                                                                                                         |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 9, 55     | Ámbitos: `get` y `history` con `orchestration:read`, `update` con `orchestration:operate`.                                                                                     |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 14, 27    | Agregado `editorial` de los tres métodos.                                                                                                                                      |
+
+Archivos nuevos:
+
+- `packages/contracts/src/editorialProfile.ts`: grupo `editorial.profile.{get,history,update}`, esquemas, límites (`EDITORIAL_PROFILE_LIMITS`: nombre 80, audiencia 300, tema 200, 30 temas por lista) y la normalización y validación que comparten cliente y servidor (`normalizeEditorialProfileDraft`, `editorialProfileIssues`, `sameEditorialProfile`).
+- `apps/server/src/editorial/EditorialProfileService.ts` (`get`, `history`, `update`, `activeFile`, `fileByHash`, `editorialProfileBytes` y `currentPresentationProfile`, que sale de `channelProfile.ts`), `profileRpc.ts` (handlers y `engineScoringOf`, que lee los parámetros con nombre de la configuración por defecto del motor), la migración `persistence/Migrations/014_EditorialProfile.ts` y `EditorialProfileService.test.ts`.
+- `apps/web/src/editorial/profile/`: `ProfileForm.tsx` (formulario, lista de temas, panel de pesos e historial), `useProfileEditor.ts`, `profileState.ts`, `profileForm.logic.ts` y su prueba.
+- `apps/web/src/editorial/settings/StudioProfileSettings.tsx` y `apps/web/src/editorial/onboarding/StudioStep.browser.test.tsx`.
+
+Archivos propios modificados: `onboarding/StudioStep.tsx` (reemplaza el stub), `settings/EditorialSettings.tsx` (monta la sección, primera de la página), `settings/settingsEntry.ts` (sección y búsqueda «Perfil del estudio»), `channelProfile.ts` (queda la constante, solo para la semilla y las pruebas, y `presentationProfileFromBytes`), `presentationDossierSource.ts` (lee el perfil activo; un fallo de SQLite es `storage-failed`), `EditorialJobsService.ts` y su prueba, `persistence/Migrations.ts`.
+
+Decisiones reversibles:
+
+- Migración: el archivo es `014_EditorialProfile.ts` (número reservado para esta rama), pero en la rama se registra con el id 12, porque el manifiesto exige ids 1..n sin huecos y la 012 y la 013 aún no están fusionadas. Al fusionar pasa al 14. Es repetible (`CREATE TABLE IF NOT EXISTS` y semilla solo con la tabla vacía) y está en `REPLAYABLE_MIGRATION_NAMES`, así que una base de desarrollo que la aplicó como 12 se repara con `repair-editorial-migrations.ts`.
+- Tabla `editorial_profiles`: `profile_id`, `version` única y creciente, `name`, `audience`, `include_json`, `exclude_json`, `bytes` (el archivo del motor), `sha256`, `origin` (`earlywindow` para la semilla, `operator` para las ediciones), `created_at` y `active`, con un índice único parcial que admite una sola activa. Las versiones no se borran.
+- Formato del archivo: profile/1 de Earlywindow, JSON con dos espacios y salto final, claves en el orden de `singularidev.v1.json`. La versión 1 no lleva clave `version` (byte a byte como ese archivo); desde la 2 la lleva, así el motor la registra en `run.json` y en los expedientes, y dos versiones con los mismos temas no comparten hash. El esquema `ChannelProfile` del motor ya admitía `version` opcional.
+- Edición sin cambios: el servidor normaliza (espacios, temas vacíos y repetidos sin distinguir mayúsculas) y compara con la activa; si es igual responde `changed: false` y no crea versión. El orden de los temas cuenta.
+- Corrida nocturna: el hash del perfil activo entra en la clave del job (ya existía `profile_hash`). Un job pendiente creado con otra versión se marca `skipped` con el aviso `config_changed` y lo reemplaza uno de la clave nueva, por la lógica de §22. La fase del motor escribe el archivo de la versión del job (`fileByHash`), no la activa del momento, en `<stateDir>/editorial-profiles/<hex>.json`; la opción `profilePath` pasa a `profilesDir`.
+- Redacción: lee la versión activa. Como versión y hash entran en el `inputHash` de cada presentación (§14), guardar una versión nueva marca como desactualizadas las redacciones anteriores. Es lo esperado; queda dicho en la descripción de Ajustes.
+- Pesos del motor: solo lectura, en un panel plegado bajo el formulario. Se leen en cada `get` del `engine.v1.json` que usa la corrida nocturna (`resolveEngineLocation`), con una lista fija de claves (`profile.include_min`, `profile.exclude_max`, `cluster.threshold`, `stage.growth_min`, `stage.fading_max`, `stage.growing_min_items_7d`, cada peso de `rank.weighted.weights` y `emit.max_dossiers`). Sin motor, `scoring` es nulo y el panel lo dice. Editarlos queda para después del análisis de sensibilidad, entregable aparte de la tesis.
+- Lista de temas: un renglón por tema que se ajusta a su texto, con número y botón «Quitar», y un renglón vacío al final para añadir. Enter crea el siguiente, Retroceso en un tema vacío lo quita y pegar varias líneas crea un tema por línea. Reemplazó a un `textarea` de un tema por línea porque los temas largos se partían en dos renglones y en 390 px no se distinguía dónde acababa cada uno. `field-sizing: content` no existe en Safari antiguo; ahí cada renglón se ve con altura de una línea y desplazamiento interno.
+- Audiencia: `textarea` de un solo párrafo (Enter no hace salto), para que no se trunque en móvil.
+- Aceptación del paso: `{ profileVersion, profileHash }`, sin textos.
+
+### Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `15b605cbde`)
+
+Informe en Beatriz `/home/mick/earlyscript-data/verify-onb-studio/informe.md`.
+
+- **H1, redacciones visibles tras guardar.** El `onSuccess` de `editorial.profile.update` (`apps/web/src/editorial/profile/profileState.ts`) llama también a `bumpInbox` (`editorial/state.ts`): la bandeja y los expedientes ya consultados vuelven a leer y muestran «Desactualizado» sin recargar. Regresión en `profile/profileSave.browser.test.tsx`: con los átomos reales de perfil, bandeja y expediente, y Ajustes real, y solo el transporte simulado por un servidor que marca `stale` las redacciones cuando cambia la versión, se lee un expediente, se abre Ajustes, se guarda la v2 y al volver el expediente y la bandeja dicen «Desactualizado». Sin el `bumpInbox` la prueba falla con «Redacción vigente».
+- **H2, guarda de permisos en el cliente.** `packages/contracts/src/editorialProfile.ts` exporta `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` (`update` con `orchestration:operate`), y un archivo de upstream gana dos líneas:
+
+| Archivo                                          | Líneas | Alcance                                                                                                 |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/clientRpcPermissions.ts` | 15, 70 | Importa `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` y lo esparce al final de `CLIENT_GUARDED_RPC_SCOPES`. |
+
+Con eso `permissionAtom` del comando exige la sesión con `orchestration:operate`. `useProfileEditor` lo lee; sin el permiso, `ProfileForm` desactiva campos, renglones y «Quitar» y muestra «Solo lectura: tu sesión no puede cambiar el perfil.»; en Ajustes se desactivan «Guardar versión N» y «Descartar cambios»; el paso «Estudio» sigue permitiendo «Continuar» con la versión activa, sin guardar. Pruebas: caso de solo lectura en `onboarding/StudioStep.browser.test.tsx` y en `profile/profileSave.browser.test.tsx` (permiso denegado, ningún `update`). Mientras se carga la sesión el átomo vale `false`, así que el aviso puede verse un instante al abrir.
+
+## Modelo del motor desde la app (rama `es/onboarding-engine-model`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). Antes, el modelo local de embeddings (Qwen3-Embedding-0.6B q8, revisión `c25a394d…`, 596 MiB) se descargaba solo en la primera corrida del motor, sin que el operador lo viera. Ahora el estado y la descarga tienen una orden del CLI, un grupo RPC y una tarjeta en la interfaz.
+
+Archivos de upstream modificados (enganches de una línea, al final de cada lista, como §22):
+
+| Archivo                                               | Líneas    | Cambio                                                            | Motivo                                                     |
+| ----------------------------------------------------- | --------- | ----------------------------------------------------------------- | ---------------------------------------------------------- |
+| `packages/contracts/src/index.ts`                     | 77        | `export * from "./editorialEngine.ts"`.                           | Exportación del grupo.                                     |
+| `packages/contracts/src/rpc.ts`                       | 42, 2154  | Import y `.merge(EditorialEngineRpcGroup)`.                       | Grupo en `WsRpcGroup`.                                     |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 9, 55     | `EDITORIAL_ENGINE_RPC_REQUIRED_SCOPES`.                           | Ámbitos del grupo.                                         |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 14, 27    | `EDITORIAL_ENGINE_RPC_AGGREGATES`.                                | Agregados de trazas.                                       |
+| `apps/server/src/ws.ts`                               | 249, 1883 | `EditorialEngineRpcHandlers`.                                     | Handlers.                                                  |
+| `apps/server/src/server.ts`                           | 57, 640   | `EditorialEngineRpc.layer` tras `EditorialJobsRpc.layer`.         | Servicio montado.                                          |
+| `packages/client-runtime/src/rpc/client.ts`           | 10, 82    | `editorial.engine.watchModel` en `EnvironmentSubscriptionRpcTag`. | Stream como suscripción, igual que `editorial.jobs.watch`. |
+
+Archivos nuevos: `packages/contracts/src/editorialEngine.ts`; `apps/server/src/editorial/{EditorialEngineService.ts,engineRpc.ts}` y su prueba; `packages/trend-engine/src/embed/modelCommand.ts`, `testkit/modelMirror.ts` y `embed/modelCommand.test.ts`; `apps/web/src/editorial/engineState.ts` y la prueba de navegador de `onboarding/ModelDownloadCard.tsx`.
+
+Motor (`packages/trend-engine`):
+
+- `engine model status [--models <dir>]` imprime `{ status: "ready" | "missing" | "partial", revision, path, bytesPresent, bytesExpected }`. Mira tamaños, no hashes (hashear 596 MiB en cada consulta tarda segundos; `prepareModel` hashea antes de que una corrida use los archivos). Un parcial cuenta sus bytes. `QWEN_FILES` lleva ahora el tamaño de cada archivo.
+- `engine model prepare [--models <dir>]` descarga con `prepareModel` e imprime una línea JSON `{ file, bytesDone, bytesTotal }` cada 500 ms u 8 MiB (y al empezar cada archivo y al terminar), luego `{ done: true, path }`; si falla, `{ error: { code, message } }` con `network`, `http`, `hash`, `disk` u `other`, y sale con 1. Los bytes cuentan el modelo entero.
+- `--models` es el directorio de la revisión, como en `run`; sin él, `defaultModelDir(DEFAULT_DATA_DIR)` (`~/earlyscript-data/models/<revisión>`), la misma función que usan ahora `run.ts` y `backtest.ts`. `EARLYSCRIPT_MODEL_BASE_URL` apunta a un espejo con la estructura de Hugging Face (pruebas, proxy).
+- `prepareModel(dir, allowDownload, options?)`: tercer parámetro opcional (`onProgress`, `baseUrl`, `files`); el contrato anterior no cambia. Reanudación: una conexión que se corta deja el parcial sin dueño (`<archivo>.<uuid>.partial`) en lugar de borrarlo, y el siguiente intento lo adopta y pide el resto con `Range: bytes=<n>-`; un servidor que ignora el rango (200) vuelve a empezar. Se adopta también el parcial de un proceso muerto (el mayor por archivo; los demás se borran). Un hash que no coincide borra los bytes. Con `allowDownload` falso, los parciales abandonados se borran como antes (§26).
+
+Servidor:
+
+- `EditorialEngineService` lanza `engine model status|prepare` con `runEngineCommand` (`engineProcess.ts`, que gana `onStdoutLine`). El estado vive en un `SubscriptionRef`; la descarga se reclama en la misma actualización que la muestra, así que dos `prepareModel` seguidos lanzan un solo proceso. La velocidad es la media de los últimos 5 s. El proceso corre en un ámbito del servicio: al apagar el servidor se mata. Log en `<stateDir>/editorial-engine/model.log`.
+- Directorio de modelos en una sola función: `resolveModelsDir` (`engineProcess.ts`): `EARLYSCRIPT_EDITORIAL_MODELS_DIR` o null (el valor por defecto del motor). La usan la nocturna (`EditorialJobsService.ts`, que antes leía la variable por su cuenta) y este servicio.
+- RPC `editorial.engine.modelStatus` y `watchModel` con `orchestration:read`; `prepareModel` con `orchestration:operate`. Sin motor, el estado lleva `error.code = "engine_missing"` en vez de fallar la llamada.
+
+Interfaz: `onboarding/ModelDownloadCard.tsx` (firma `{ environmentId, onReady }` conservada, más `bare` para Ajustes) con estados comprobando, falta (o descarga a medias, con «Continuar descarga»), descargando con barra, velocidad y tiempo restante, comprobando archivos, error con «Reintentar» y listo. `engineState.ts` tiene el átomo de suscripción y el texto en español. Ajustes › Editorial › Corrida nocturna (`NightlyRunSettings.tsx`) muestra la fila «Modelo del motor» con la misma tarjeta.
+
+Decisiones reversibles: estado por tamaños y no por hash; el error queda en el estado hasta la siguiente descarga (no se persiste: tras reiniciar el servidor, la tarjeta muestra «Descarga a medias»); el detalle técnico del error no se muestra (queda en `model.log`); la nocturna sigue pudiendo descargar el modelo por su cuenta si nadie usó la tarjeta.
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `b27cfe9794`)
+
+- **H1, archivo final corrupto.** `prepareModel` borra y vuelve a descargar un archivo final con tamaño distinto o hash incorrecto cuando puede descargar (sin descarga, sigue fallando con `hash mismatch`). `modelStatus` cuenta los bytes de un archivo final truncado y lo da por `partial`. Un archivo del mismo tamaño con un byte cambiado sigue `ready` por tamaños; lo arregla el siguiente `prepare`, que también hace la corrida. `modelIsReady` (`engineState.ts`) exige además `error === null`, y la tarjeta lo usa para `onReady`.
+- **H2, velocidad al reanudar.** Cada línea de progreso lleva `sessionBytes`, los bytes recibidos por ese proceso; la velocidad se mide sobre ellos y no sobre `bytesDone`, que salta sobre los archivos comprobados y el parcial adoptado. El servidor no publica nunca un `bytesDone` menor que el último de la misma descarga.
+- **H3, rutas temporales de macOS.** La prueba del servicio usa `realpathSync` sobre su directorio temporal.
+- **H4, descarga ya hecha.** `prepareModel` no lanza nada si el último estado conocido es `ready` sin error.
+- **H5, paréntesis huérfano.** «Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models».
+- **H6 (reverificación de Sol sobre `8e0604f1bc`), sin permiso de descarga no se borra nada.** `prepareModel(dir, false)` ya no barre parciales: falla con `Model file missing` y deja intactos los huérfanos, que el siguiente `prepareModel(dir, true)` adopta y reanuda con `Range`. El barrido (el mayor parcial abandonado por archivo se conserva, los demás se borran, el de un proceso vivo se respeta) ocurre solo antes de descargar. Cambia lo descrito en §26 para `allowDownload` falso.
+
+## Asistente de primer arranque, paso «Datos y permisos» (rama `es/onboarding-data`, 2 de noviembre de 2026)
+
+Base: `es/onboarding-base` (`f10f26fb55`). Cero archivos de upstream modificados. El paso reemplaza el stub `apps/web/src/editorial/onboarding/DataConsentStep.tsx` con la interfaz de `steps.ts`; lo monta `es/onboarding-shell`.
+
+Archivos nuestros:
+
+- `onboarding/DataConsentStep.tsx`: `DataConsentView` (sin RPC, la que prueba el navegador) y `DataConsentStep` (lee `editorial.sources.list`, escribe con `editorial.sources.update`).
+- `onboarding/dataConsent.logic.ts` y su prueba: filas, interruptores, escrituras pendientes, textos aceptados (`DATA_CONSENT_POLICY`) y aceptación.
+- `settings/sourcesText.ts`: `failureText`, la tabla de errores de `editorial.sources.*`, sacada de `SourcesSettings.tsx` para que la usen Ajustes y el paso. Suma `not-acknowledged` y `EnvironmentAuthorizationError`.
+- `packages/editorial-contracts/src/sourceCatalog.ts`: el borrado de ocho fichas decía «borrado manual; no hay borrado por ítem». Desde §19 y §21, `engine purge --source <id> (--author | --url | --feed)` borra por autor o enlace en cualquier fuente y por feed en RSS (`trend-engine/src/cli.ts`, `src/purge.ts`). Ahora cada ficha nombra la orden con su fuente; Wikipedia, sin campo de autor, solo `--url`. Cambia `catalogHash`.
+
+Comportamiento:
+
+- Lista las diez fuentes del catálogo: primero las que se pueden capturar (ficha `ready` y sin `collectBlocked` del servidor, que manda), después las pendientes y las bloqueadas en filas compactas con el interruptor desactivado. Cada fila dice el estado de sus términos en palabras (fecha larga de lectura, «Pendiente de leer sus términos» o «Bloqueada:» con la primera frase de sus notas), la licencia, qué guarda (`STORED_FIELDS`, leído de cada adaptador de `trend-engine/src/sources`) y su conservación. No ofrece «Usar en el motor»: eso se decide en Ajustes tras un backtest.
+- Los interruptores son un borrador: el paso escribe con `editorial.sources.update` solo los que cambiaron, una a la vez, al pulsar «Continuar». Si una escritura falla, el error en español queda junto al botón (`role="alert"`, `aria-describedby`) y el paso no avanza; al cambiar un interruptor el error se borra.
+- «Qué sale de esta máquina»: peticiones a las fuentes (pausas de `PAUSE_MS` en `trend-engine/src/sources/http.ts`, robots.txt salvo HN y GitHub, excepción de arXiv) y lo que va al proveedor al redactar (perfil, cifras, hasta 12 ítems de evidencia, `PRESENTATION_EVIDENCE_LIMIT` en `presentationDossierSource.ts`, con extracto de 500 caracteres, `text.excerpt_chars` de `engine.v1.json`). Sin telemetría, según las banderas por defecto de `earlyscriptFlags.ts`.
+- «Conservación y borrado»: directorio real de `corpus.directory`, revisión del 27 de noviembre de 2026 y la orden `engine purge` con ese directorio, que el paso no lanza.
+- Aceptación: casilla obligatoria; `onContinue` recibe `{ sources, acknowledgedTerms: true, catalogHash, policyHash, acceptedTermsDates }`. `catalogHash` es el SHA-256 del JSON canónico de las diez fichas; `policyHash`, el de `DATA_CONSENT_POLICY`, sin el directorio de la máquina.
+- Sin scroll propio: el paso crece dentro del único `ScrollArea` de `WizardPopup`. Un test de navegador lo comprueba (la lista solo tiene un ancestro desplazable, el viewport del diálogo) y que no haya scroll horizontal en 390 px.
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `511a1b877d`)
+
+Informe en Beatriz, `/home/mick/earlyscript-data/verify-onb-data/informe.md`. Cero archivos de upstream modificados.
+
+- **H1, React Compiler.** `submit` de `DataConsentStep.tsx` usaba `try/finally` sin `catch`, que el compilador no admite (`reactCompilerCoverage.test.ts`). Ahora es una cadena de promesas con `.catch` (error en español junto al botón, detalle a la consola) y `.finally`.
+- **H2, qué se guarda.** `SOURCE_ITEM_KEYS` (`packages/editorial-contracts/src/item.ts`) declara las claves de `Item` que escribe cada fuente: las doce comunes y, en RSS, `body_kind` y `feed_url`. `trend-engine/src/testkit/storedKeys.ts` (`expectStoredKeys`) lo comprueba contra los ítems reales de los diez adaptadores en sus pruebas con fixtures (una línea en `earlywindow-sources.test.ts`, `live.test.ts`, `lobsters-rss.test.ts` y `huggingface.test.ts`). En el paso, `COMMON_STORED_FIELDS` y `STORED_FIELDS` describen cada clave en palabras, y una prueba exige que juntos nombren exactamente las claves de cada fuente y que todas las claves de `Item` estén declaradas. Se muestra la línea común «Todas las fuentes guardan además: …». La frase de RSS dejó de ser excluyente.
+- **H3, hashes.** `policyHash` cubre la política, los textos comunes y por fuente de «Guarda», los de conservación y los de bloqueo del servidor; `catalogHash` sigue cubriendo las diez fichas.
+- **H4, 500 caracteres.** `PRESENTATION_EVIDENCE_LIMIT = 12` y `PRESENTATION_EXCERPT_CHARS = 500` viven en `packages/contracts/src/editorialPresentation.ts`, para que los usen el servidor y el paso. `presentationDossierSource.ts` recorta cada extracto a 500 caracteres en la frontera de salida: la redacción recibe como máximo 12 evidencias de 500 caracteres, aunque una corrida importada guarde extractos más largos. Con el motor por defecto (`excerpt_chars` 500) nada cambia, ni la entrada ni su hash. Prueba en `EditorialPresentationService.test.ts`: 20 evidencias de 1.200 caracteres llegan como 12 de 500.
+- **H5, inglés en errores.** `settings/sourcesText.ts` traduce los fallos de conexión (`isTransportConnectionErrorMessage` de `@t3tools/client-runtime/errors`, más «timed out», «not reachable» y «unreachable») a una frase en español. Cualquier otro mensaje se sustituye por «No se pudo contactar con el servidor.» y su detalle va a la consola. Afecta también a Ajustes › Fuentes.
+- **H6, bloqueo del servidor.** Cuando `collectBlocked` del servidor no coincide con el estado de la ficha local, la fila toma el estado del servidor y dice «Bloqueada en esta instalación: el servidor no permite capturarla.» (o su equivalente pendiente); el servidor no da motivo.
+- `apps/web/src/editorial/onboarding/README.md` pasado por `vp fmt` (venía sin formato desde la base).
+
+## N. Paso «Motor y nocturna» y primera corrida desde Tendencias (rama `es/onboarding-engine-run`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). No toca archivos de upstream.
+
+Archivos propios nuevos, en `apps/web/src/editorial/`:
+
+- `onboarding/EngineStep.tsx` (reemplaza el stub) y `onboarding/engineStep.logic.ts`: modelo local (`ModelDownloadCard`, sin editar), interruptor y hora de la corrida nocturna con la zona del servidor en palabras, primera corrida con sus fases. Guarda cada cambio con `editorial.jobs.updateSettings` en el momento, como Ajustes › Editorial; `onContinue` entrega `{ nightlyEnabled, timeOfDay, timezone, firstRunStarted, modelReady }`.
+- `FirstRunCard.tsx` (`FirstRunPanel`, `NightlyNote`, `useFirstRun`, `FirstRunCard`) y `firstRun.logic.ts` (`firstRunView`, `firstRunPhaseRows`): la primera corrida como tarjeta, compartida por el paso y por la bandeja. Sigue el job de `editorial.jobs.watch`, el que contestó `runNow` y el más reciente de `editorial.jobs.list`; los avisos se redactan con `jobMessages` de `jobsState.ts`. Las cinco fases son filas de altura fija; la fase en curso muestra el conteo del motor o, mientras el motor no informa (lo hace cada 1024 textos), el tiempo transcurrido por minuto. En el panel estrecho cada fase terminada muestra solo lo que produjo.
+- Pruebas: `firstRun.logic.test.ts`, `onboarding/engineStep.logic.test.ts`, `FirstRunCard.browser.test.tsx`, `onboarding/EngineStep.browser.test.tsx`, `TrendsEmptyPage.browser.test.tsx` y dos casos nuevos en `TrendInbox.browser.test.tsx`; datos en `firstRun.fixture.ts`.
+
+Archivos propios modificados:
+
+- `TrendInbox.tsx`: una bandeja sin corrida, o con una corrida sin tendencias, muestra `FirstRunCard` centrada en el panel en lugar de «Todavía no hay corridas del motor.»; el menú de orden y el indicador de la cabecera («Corriendo: …») se ocultan mientras no hay tendencias, porque la tarjeta ya muestra las fases.
+- `TrendDossierPage.tsx`: `TrendsEmptyPage`, que la ruta `_chat.editorial.$environmentId.trends.tsx` monta en lugar de «Elige una tendencia» cuando no hay corridas (o «Corrida en curso» mientras corre una); con la barra lateral oculta (móvil o plegada) ofrece «Abrir la bandeja». También el estado vacío de una ficha sin corridas.
+- `EditorialPage.tsx`: `EditorialEmptyPage` acepta `children` (una acción bajo la descripción).
+- `settings/NightlyRunSettings.tsx`: exporta `nextRunText` y `failureText` para reutilizarlas.
+
+Decisiones reversibles: los ajustes del paso se guardan al cambiar, no al pulsar «Continuar»; la nocturna conserva su estado del servidor (desactivada por defecto) y el paso no la activa solo; una corrida terminada sin tendencias no ofrece volver a correr, porque `runNow` devolvería el mismo job del día.
+
+Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `0113697eb1`):
+
+- H1: el tiempo transcurrido usaba `Date.parse` sobre el reloj por minuto de `useNowMinute` (`YYYY-MM-DDTHH:mm`, UTC sin `Z`), que JavaScript lee como hora local: en America/Guayaquil salía «4 h 59 min» al empezar. `minuteClockMs` lo lee como UTC y `firstRunPhaseRows` trabaja en milisegundos; la prueba fija `TZ=America/Guayaquil`.
+- H2: el paso guardaba sin retener el guardado y «Continuar» podía entregar ajustes anteriores al cambio. Ahora muestra el cambio mientras viaja, deshabilita «Continuar» («Guardando…») hasta que el servidor confirma y construye la aceptación con lo confirmado; un fallo se muestra junto al control con «Reintentar» y no deja avanzar.
+- H3: una corrida importada vacía sin job de este servidor dice que no hay registro de su ejecución y ofrece «Ejecutar una corrida» (`runNow` crea el job del día, que no existe). Mientras la lista de jobs carga no se afirma ni se ofrece nada.
+- Redacción sin proveedor o sin sesión (comprobación pendiente de Sol): el job termina `done` con `presentations_pending` o `presentations_unavailable` y la tarjeta ya no se ve, porque la bandeja tiene tendencias. `DraftingNotice` (en `FirstRunCard.tsx`) avisa arriba de la lista, con enlace a Ajustes › Proveedores, mientras queden tendencias de esa corrida sin redactar; el paso marca la fase de redacción con aviso y explica qué falta (`draftingProblem` en `firstRun.logic.ts`).
+- `jobsState.ts`: `engine_failed` dice qué hacía el motor («terminó con error al agrupar las publicaciones») en lugar de «Falló el motor en la fase de motor».
+- Los `Spinner` propios van envueltos en `aria-hidden`: su `aria-label="Loading"` (inglés) entraba en el nombre de los botones.
+
+### Una sola lista de lo que sale de la máquina (rama `es/onboarding-fix-data2`, 2 de noviembre de 2026)
+
+Corrección H5 de la verificación de Sol sobre `es/onboarding-integration` (`f3828c7b1c`): el paso «Datos y permisos» decía «Nada sale de esta máquina salvo dos cosas», mientras el diálogo «Cómo se tratan tus datos» listaba siete salidas. Ahora `apps/web/src/editorial/onboarding/dataOutbound.ts` (`DATA_OUTBOUND`) es la única lista: id, qué sale, a dónde, cuándo y si es del producto o heredado de T3 Code, con el archivo de código de cada entrada. El paso destaca las dos del producto (captura y redacción) y nombra el resto en una línea («Además, la app consulta: …»); el diálogo muestra la lista completa, en dos grupos. `policyHash` cubre `DATA_OUTBOUND` y la línea del paso. Una prueba de navegador comprueba que paso y diálogo renderizan los mismos ids. Cero archivos de upstream modificados.
