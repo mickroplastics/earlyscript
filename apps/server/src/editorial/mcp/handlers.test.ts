@@ -101,6 +101,8 @@ it.effect("checks the thread's script and reports uncited claims", () =>
         unknownCitations: [],
         truncated: false,
         dossier: { dossierId: "dossier-1", compared: false },
+        // Not approved while the dossier could not be compared.
+        warning: "the dossier of this thread is unavailable; citations were not checked",
       });
     }).pipe(Effect.provide(layerEditorialServer())),
   ),
@@ -114,6 +116,7 @@ it.effect("compares citations with the dossier evidence when it is available", (
       expect(result.structuredContent).toMatchObject({
         unknownCitations: [{ id: "itm_gh_2" }],
         dossier: { dossierId: "dossier-1", compared: true },
+        warning: null,
       });
       const other = yield* callTool("script_check", { path: SCRIPT_PATH, dossierId: "dossier-2" });
       expect(errorText(other)).toContain("dossier is dossier-1");
@@ -286,6 +289,27 @@ it.effect("dossier_read answers at once when the dossier file is a FIFO", () =>
       NodeChildProcess.execFileSync("mkfifo", [NodePath.join(workspace, DOSSIER_PATH)]);
       const result = (yield* callTool("dossier_read", {})).structuredContent;
       expect(result).toMatchObject({ dossier: null });
+    }).pipe(Effect.provide(layerEditorialServer())),
+  ),
+);
+
+it.effect("script_check never reads as approved when the dossier could not be compared", () =>
+  withVideoWorkspace(({ write }) =>
+    Effect.gen(function* () {
+      yield* write(
+        SCRIPT_PATH,
+        "# Hook\n\nIBM opened its roadmap [itm_hn_1].\n\n# Block 1\n\nIt is cheaper [itm_hn_1].\n\n# Close\n\nSee you [itm_hn_1].\n",
+      );
+      const without = (yield* callTool("script_check", { path: SCRIPT_PATH })).structuredContent;
+      expect(without).toMatchObject({
+        ok: false,
+        diagnostics: [],
+        dossier: { compared: false },
+        warning: "the dossier of this thread is unavailable; citations were not checked",
+      });
+      yield* write(DOSSIER_PATH, dossierFile());
+      const compared = (yield* callTool("script_check", { path: SCRIPT_PATH })).structuredContent;
+      expect(compared).toMatchObject({ ok: true, dossier: { compared: true }, warning: null });
     }).pipe(Effect.provide(layerEditorialServer())),
   ),
 );

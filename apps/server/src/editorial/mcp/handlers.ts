@@ -57,6 +57,8 @@ const readDossierFile = Effect.fn("EditorialMcp.readDossierFile")(function* (thr
     : Option.none<string>();
 });
 
+const UNCOMPARED_WARNING = "the dossier of this thread is unavailable; citations were not checked";
+
 const OUTSIDE_FOLDER = "script_check only reads files inside this thread's folder.";
 
 /**
@@ -122,6 +124,8 @@ export const layer = McpToolAccess.toLayer(EditorialToolkit, {
             return yield* invalid(`Script file ${path} is too large to check.`);
           case "no-workspace":
             return yield* invalid("This video thread has no workspace to read the script from.");
+          case "stopped":
+            return yield* invalid(`Script file ${path} could not be read.`);
           case "not-a-file":
             return yield* invalid(`Script path ${path} is not a file.`);
           case "outside":
@@ -151,9 +155,10 @@ export const layer = McpToolAccess.toLayer(EditorialToolkit, {
         // checkScript throws only on a malformed dossier.
         catch: () => invalid("The thread's dossier evidence could not be read."),
       });
+      const uncompared = thread.dossierId !== null && Option.isNone(dossier);
       return {
         path,
-        ok: report.ok,
+        ok: report.ok && !uncompared,
         counts: report.counts,
         diagnostics: report.diagnostics.slice(0, MAX_DIAGNOSTICS).map((diagnostic) => ({
           code: diagnostic.code,
@@ -171,6 +176,7 @@ export const layer = McpToolAccess.toLayer(EditorialToolkit, {
           thread.dossierId === null
             ? null
             : { dossierId: thread.dossierId, compared: Option.isSome(dossier) },
+        warning: uncompared ? UNCOMPARED_WARNING : null,
       } satisfies ScriptCheckResult;
     }),
   ),

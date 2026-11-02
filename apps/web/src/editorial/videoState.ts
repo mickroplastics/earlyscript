@@ -78,6 +78,11 @@ export const editorialVideoEnvironment = {
     label: "environment-data:editorial:video-purge",
     tag: EDITORIAL_VIDEO_WS_METHODS.purge,
   }),
+  /** Writes what is missing of a thread's folder; "Abrir hilo de video" calls it. */
+  prepare: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-prepare",
+    tag: EDITORIAL_VIDEO_WS_METHODS.prepare,
+  }),
 };
 
 /**

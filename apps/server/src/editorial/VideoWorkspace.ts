@@ -9,13 +9,16 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import type { VideoThread } from "./persistence/EditorialModel.ts";
 import { threadWorkspaceRoot } from "./threadWorkspace.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import {
   createVideoFileIfMissing,
+  type MayWrite,
   readVideoFile,
   type VideoFileOutcome,
   type VideoFileRefusal,
@@ -125,6 +128,29 @@ const make = Effect.gen(function* () {
   );
   const workspaceRootOf = (thread: VideoThread) =>
     rootOf(thread.threadId).pipe(Effect.orElseSucceed(() => null));
+  // Absent in tests that mount no editorial storage; their threads are never decided.
+  const sql = yield* Effect.serviceOption(EditorialSql);
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+
+  /**
+   * Asked before every write of the folder: a decided thread is never written, even by a
+   * preparation its caller stopped waiting for. One SELECT, so it sees a decision whole or not
+   * at all; a failed read stops the write.
+   */
+  const undecided = (threadId: string): MayWrite =>
+    Option.isNone(sql)
+      ? async () => true
+      : () =>
+          runPromise(
+            sql.value<{ readonly decided: number }>`
+              SELECT EXISTS (
+                SELECT 1 FROM editorial_decisions WHERE thread_id = ${threadId}
+              ) AS decided
+            `.pipe(
+              Effect.map((rows) => rows[0]?.decided === 0),
+              Effect.orElseSucceed(() => false),
+            ),
+          );
 
   const prepare: EditorialVideoWorkspace["Service"]["prepare"] = Effect.fn(
     "EditorialVideoWorkspace.prepare",
@@ -142,13 +168,14 @@ const make = Effect.gen(function* () {
             dossierHash: thread.dossierHash,
             trendKey: thread.trendKey,
           });
+    const mayWrite = undecided(thread.threadId);
     return yield* Effect.tryPromise(async (): Promise<VideoWorkspaceResult> => {
       const script = scriptOutcome(
-        await createVideoFileIfMissing(root, scriptPath, SCRIPT_TEMPLATE),
+        await createVideoFileIfMissing(root, scriptPath, SCRIPT_TEMPLATE, mayWrite),
       );
       let written: VideoWorkspaceResult["dossier"] = "none";
       if (contents !== null && dossierPath !== null) {
-        const outcome = await writeReadOnlyVideoFile(root, dossierPath, contents);
+        const outcome = await writeReadOnlyVideoFile(root, dossierPath, contents, mayWrite);
         if (outcome.ok) written = outcome.value;
       }
       return { workspaceRoot: root, dossier: written, script };

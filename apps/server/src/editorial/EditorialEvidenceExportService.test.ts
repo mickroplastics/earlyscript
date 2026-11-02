@@ -160,6 +160,7 @@ const FROZEN_EVENT_PATHS: Readonly<Record<string, ReadonlyArray<string>>> = {
   ],
   "video-thread.registered": ["mode", "runId", "trendKey"],
   "video-thread.t3-deleted": [],
+  "video-thread.folder-prepared": [],
   "work.paused": ["stage"],
   "work.recovery-needed": ["stage", "startedAt"],
   "work.resolved": ["endedAt"],

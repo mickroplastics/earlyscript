@@ -7,7 +7,22 @@ import * as NodePath from "node:path";
 // the real workspace root (`videos`, the video's folder, the file) must be a plain folder or a
 // regular file: a symbolic link anywhere is refused before anything is created, read or chmod-ed.
 
-export type VideoFileRefusal = "outside" | "link" | "not-a-file" | "not-found" | "too-large";
+export type VideoFileRefusal =
+  | "outside"
+  | "link"
+  | "not-a-file"
+  | "not-found"
+  | "too-large"
+  | "stopped";
+
+/**
+ * Asked right before each folder, file or rename is written; false stops the write with
+ * `stopped`. `VideoWorkspace.ts` stops once the thread is decided, so a preparation that
+ * outlived its caller never writes into a decided thread.
+ */
+export type MayWrite = () => Promise<boolean>;
+
+const alwaysWrite: MayWrite = async () => true;
 
 export type VideoFileOutcome<A> =
   | { readonly ok: true; readonly value: A }
@@ -54,6 +69,7 @@ async function walkFolders(
   root: string,
   folders: ReadonlyArray<string>,
   create: boolean,
+  mayWrite: MayWrite = alwaysWrite,
 ): Promise<VideoFileOutcome<string>> {
   let current = await NodeFSP.realpath(root);
   for (const name of folders) {
@@ -64,6 +80,7 @@ async function walkFolders(
     });
     if (stat === null) {
       if (!create) return refuse("not-found");
+      if (!(await mayWrite())) return refuse("stopped");
       await NodeFSP.mkdir(next).catch((error: unknown) => {
         if (codeOf(error) !== "EEXIST") throw error;
       });
@@ -149,10 +166,11 @@ export async function writeReadOnlyVideoFile(
   root: string,
   relativePath: string,
   contents: string,
+  mayWrite: MayWrite = alwaysWrite,
 ): Promise<VideoFileOutcome<"written" | "unchanged">> {
   const path = split(relativePath);
   if (path === null) return refuse("outside");
-  const folder = await walkFolders(root, path.folders, true);
+  const folder = await walkFolders(root, path.folders, true, mayWrite);
   if (!folder.ok) return folder;
   const target = NodePath.join(folder.value, path.name);
   const opened = await openNoFollow(target);
@@ -172,8 +190,13 @@ export async function writeReadOnlyVideoFile(
     }
   }
   const temporary = NodePath.join(folder.value, `.${path.name}.${process.pid}.tmp`);
+  if (!(await mayWrite())) return refuse("stopped");
   await NodeFSP.rm(temporary, { force: true });
   await NodeFSP.writeFile(temporary, contents, { flag: "wx", mode: 0o444 });
+  if (!(await mayWrite())) {
+    await NodeFSP.rm(temporary, { force: true });
+    return refuse("stopped");
+  }
   await NodeFSP.rename(temporary, target);
   return accept("written");
 }
@@ -186,12 +209,14 @@ export async function createVideoFileIfMissing(
   root: string,
   relativePath: string,
   contents: string,
+  mayWrite: MayWrite = alwaysWrite,
 ): Promise<VideoFileOutcome<"created" | "exists">> {
   const path = split(relativePath);
   if (path === null) return refuse("outside");
-  const folder = await walkFolders(root, path.folders, true);
+  const folder = await walkFolders(root, path.folders, true, mayWrite);
   if (!folder.ok) return folder;
   const target = NodePath.join(folder.value, path.name);
+  if (!(await mayWrite())) return refuse("stopped");
   try {
     await NodeFSP.writeFile(target, contents, { flag: "wx" });
     return accept("created");

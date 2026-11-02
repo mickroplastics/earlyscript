@@ -38,7 +38,8 @@ import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
+import { appendEvent, EditorialEventLog } from "./persistence/EditorialEventLog.ts";
+import { nowIso } from "./persistence/support.ts";
 import type { DecisionAction, VideoThread } from "./persistence/EditorialModel.ts";
 import { ScriptVersionService } from "./ScriptVersionService.ts";
 import { EditorialVideoProject } from "./VideoProject.ts";
@@ -62,6 +63,7 @@ export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
   [EDITORIAL_VIDEO_WS_METHODS.capture]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.purge]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.prepare]: "editorial",
 } as const;
 
 type VideoRpcs = RpcGroup.Rpcs<typeof EditorialVideoRpcGroup>;
@@ -103,6 +105,7 @@ export class EditorialVideoRpcHandlers extends Context.Reference<EditorialVideoH
       [EDITORIAL_VIDEO_WS_METHODS.capture]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.purge]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.prepare]: () => Effect.fail(unavailable),
     }),
   },
 ) {}
@@ -398,39 +401,60 @@ const makeHandlers = Effect.gen(function* () {
     threads.getVideoThread(threadId).pipe(Effect.map(Option.getOrNull));
 
   /**
-   * Opening a video thread writes its folder when something is missing: a thread created
-   * before dossier files, or one whose dossier file is gone or not its own. Undecided threads
-   * only, so a decided script is never recreated. Never fails the subscription.
+   * Writes what is missing of a thread's folder: the studio's instructions when the thread
+   * lives there, then its script and dossier file (`prepareIfNeeded`). Undecided threads only;
+   * `VideoWorkspace.ts` checks that again before every write. When something was written, an
+   * event makes every open subscription read the view again. True when something was written.
    */
-  const prepareOnOpen = Effect.fn("EditorialVideoRpc.prepareOnOpen")(
-    function* (threadId: string) {
-      if (Option.isNone(workspace)) return;
-      const thread = yield* findThread(threadId);
-      if (thread === null) return;
-      const decided = yield* sql<{ readonly n: number }>`
-        SELECT COUNT(*) AS n FROM editorial_decisions WHERE thread_id = ${threadId}
-      `.pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
-      if (decided) return;
-      // The studio's instructions too, when the thread lives there and they were deleted.
-      if (Option.isSome(studio) && Option.isSome(threadManagement)) {
-        const shell = yield* threadManagement.value.getThreadShell(ThreadId.make(threadId));
-        if (shell !== null) yield* studio.value.ensureInstructions(shell.projectId);
-      }
-      yield* workspace.value.prepareIfNeeded({
-        thread,
-        getDossier: Option.isSome(reader) ? reader.value.getDossier : null,
-      });
-    },
-    (effect, threadId) =>
-      effect.pipe(
-        // The view must arrive whatever the folder does: a stuck file system call is left
-        // behind, not waited for.
-        Effect.timeout(PREPARE_ON_OPEN_TIMEOUT),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Cannot prepare the video thread folder on open", { threadId, cause }),
+  const prepareFolder = Effect.fn("EditorialVideoRpc.prepareFolder")(function* (threadId: string) {
+    if (Option.isNone(workspace)) return false;
+    const thread = yield* findThread(threadId);
+    if (thread === null) return false;
+    const decided = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM editorial_decisions WHERE thread_id = ${threadId}
+    `.pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
+    if (decided) return false;
+    if (Option.isSome(studio) && Option.isSome(threadManagement)) {
+      const shell = yield* threadManagement.value.getThreadShell(ThreadId.make(threadId));
+      if (shell !== null) yield* studio.value.ensureInstructions(shell.projectId);
+    }
+    const result = yield* workspace.value.prepareIfNeeded({
+      thread,
+      getDossier: Option.isSome(reader) ? reader.value.getDossier : null,
+    });
+    const wrote = result !== null && (result.dossier === "written" || result.script === "created");
+    if (!wrote) return false;
+    yield* log.transact(
+      "editorial.videoFolderPrepared",
+      Effect.gen(function* () {
+        const event = yield* appendEvent(sql, {
+          type: "video-thread.folder-prepared",
+          aggregateKind: "video_thread",
+          aggregateId: threadId,
+          actor: "system",
+          payload: { dossier: result.dossier, script: result.script },
+          createdAt: yield* nowIso,
+        });
+        return { result: undefined, events: [event] };
+      }),
+    );
+    return true;
+  });
+
+  /**
+   * The folder preparation of an open or a "prepare", never failing and never holding the view
+   * back: after the limit the caller goes on, and the guard in `VideoWorkspace.ts` keeps a late
+   * write out of a thread decided meanwhile.
+   */
+  const prepareSafely = (threadId: string) =>
+    prepareFolder(threadId).pipe(
+      Effect.timeout(PREPARE_ON_OPEN_TIMEOUT),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Cannot prepare the video thread folder", { threadId, cause }).pipe(
+          Effect.as(false),
         ),
       ),
-  );
+    );
 
   const requireThread = (threadId: string) =>
     findThread(threadId).pipe(
@@ -681,7 +705,7 @@ const makeHandlers = Effect.gen(function* () {
     [EDITORIAL_VIDEO_WS_METHODS.subscribe]: ({ threadId }) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          yield* prepareOnOpen(threadId);
+          yield* prepareSafely(threadId);
           // Subscribed before the first read, so no commit in between is lost.
           const subscription = yield* log.subscribe;
           const first = yield* view(threadId);
@@ -726,6 +750,12 @@ const makeHandlers = Effect.gen(function* () {
       openVersion(threadId, contentHash),
     [EDITORIAL_VIDEO_WS_METHODS.createManual]: (input) => createManual(input),
     [EDITORIAL_VIDEO_WS_METHODS.purge]: ({ threadId }) => purge(threadId),
+    [EDITORIAL_VIDEO_WS_METHODS.prepare]: ({ threadId }) =>
+      requireThread(threadId).pipe(
+        Effect.mapError(toVideoError),
+        Effect.andThen(prepareSafely(threadId)),
+        Effect.map((prepared) => ({ prepared })),
+      ),
     [EDITORIAL_VIDEO_WS_METHODS.capture]: ({ threadId, url, title, note }) =>
       onThread(threadId, (thread) =>
         commands.saveCapture({

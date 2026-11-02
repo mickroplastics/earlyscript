@@ -20,6 +20,11 @@ export const ScriptCheckResult = Schema.Struct({
   truncated: Schema.Boolean,
   /** The thread's dossier, and whether its evidence ids were compared. */
   dossier: Schema.NullOr(Schema.Struct({ dossierId: Schema.String, compared: Schema.Boolean })),
+  /**
+   * Set when the thread has a dossier that could not be read: citations were not checked and
+   * `ok` is false, so the result never reads as approved.
+   */
+  warning: Schema.NullOr(Schema.String),
 });
 export type ScriptCheckResult = typeof ScriptCheckResult.Type;
 

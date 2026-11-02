@@ -34,6 +34,7 @@ import {
   renderDossierMarkdown,
   videoFolderOf,
 } from "./videoWorkspaceFormat.ts";
+import { createVideoFileIfMissing, writeReadOnlyVideoFile } from "./videoFolderFiles.ts";
 
 const item = (id: number) => ({
   itemId: `itm_hn_${id}`,
@@ -578,5 +579,42 @@ describe("special files in the video folder", () => {
     assert.isFalse(isDossierFileOf(markdown.replace("Item 2 title", "Invented title"), own));
     assert.isFalse(isDossierFileOf(markdown.replace(/\nbody_hash: [0-9a-f]+/, ""), own));
     assert.isNull(dossierEvidenceOf(markdown.replace("[itm_hn_2]", "[itm_hn_777]"), own));
+  });
+});
+
+describe("the write guard", () => {
+  it("stops a write when the thread is decided between its folders and its file", async () => {
+    const root = makeTempDir();
+    try {
+      // Sol's timeout-late-write.mjs: the decision lands after the folders, before the file.
+      let calls = 0;
+      const decidedAfterFolders = async () => {
+        calls += 1;
+        return calls <= 2;
+      };
+      const script = await createVideoFileIfMissing(
+        root,
+        "videos/late/guion.md",
+        SCRIPT_TEMPLATE,
+        decidedAfterFolders,
+      );
+      assert.deepStrictEqual(script, { ok: false, reason: "stopped" });
+      assert.isFalse(NodeFS.existsSync(NodePath.join(root, "videos", "late", "guion.md")));
+
+      // The dossier: stopped before the temporary file, and between it and the rename.
+      for (const allowed of [0, 1]) {
+        let left = allowed;
+        const outcome = await writeReadOnlyVideoFile(
+          root,
+          "videos/late/expediente.md",
+          "contents\n",
+          async () => left-- > 0,
+        );
+        assert.deepStrictEqual(outcome, { ok: false, reason: "stopped" });
+        assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(root, "videos", "late")), []);
+      }
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

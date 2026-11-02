@@ -1877,3 +1877,22 @@ Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda2.md
 - Integridad del cuerpo. El `dossier_hash` del frontmatter identifica el expediente original, pero no certifica los bytes del Markdown. Por eso el frontmatter lleva también `body_hash`, el SHA-256 de todo lo que sigue al frontmatter. `isDossierFileOf` lo verifica, así que `dossier_read` y `script_check` rechazan un cuerpo cambiado bajo un frontmatter válido, y al abrir el hilo se reescribe.
 - Un archivo de una ronda anterior no tiene `body_hash`; se reescribe la primera vez que se abre su hilo.
 - `body_hash` no es una firma: quien puede escribir el archivo puede recalcularlo. Detecta ediciones y copias, no a un atacante con acceso al workspace, por la misma razón de arriba.
+
+### Correcciones tras la tercera verificación de Sol (NO APTO sobre `949d354402`)
+
+Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda3.md`. R2 y R3 quedaron cerrados.
+
+**R1, reabrir sin recargar no preparaba nada.** La preparación al suscribirse no basta: el átomo de la suscripción (`videoState.ts`) se comparte y vive cinco minutos sin consumidores, así que volver al hilo desde Tendencias no abre otra.
+
+- RPC nueva `editorial.video.prepare` (`{ threadId }` → `{ prepared }`, scope `orchestration:operate`, en `packages/contracts/src/editorialVideo.ts`). Escribe las instrucciones del Estudio, el guion y el expediente que falten (`prepareFolder` en `videoRpc.ts`, la misma rutina de la suscripción, que se mantiene). Es idempotente y no hace nada en un hilo decidido.
+- Cuando escribe algo, añade el evento `video-thread.folder-prepared` (payload `dossier` y `script`; en `share` no sale ningún campo). El evento hace que toda suscripción abierta vuelva a leer la vista.
+- «Abrir hilo de video» la llama sin esperar respuesta, en la ficha (`TrendDossierPage.tsx`, `onClick` del enlace) y en el menú de la lista (`TrendInbox.tsx`), a través de `useTrendActions().prepareVideo`.
+
+**R4, escritura tardía tras el límite de 5 s.** El límite se mantiene para que la vista llegue siempre, y la escritura tardía se corta con una guarda.
+
+- `videoFolderFiles.ts` recibe una guarda (`MayWrite`) y la consulta antes de cada `mkdir`, del archivo temporal, del `rename` y de la creación del guion; si responde que no, devuelve `stopped`.
+- `VideoWorkspace.ts` la construye con una sola consulta (`EXISTS` en `editorial_decisions`): ve la decisión entera o nada, y un fallo de lectura detiene la escritura.
+- La protección no depende de quién llame: creación, suscripción, `prepare` o una preparación que quedó corriendo tras el límite.
+- Queda la ventana de microsegundos entre la consulta y la llamada al sistema, del mismo tipo que la de R3.
+
+**`script_check` con el expediente no disponible.** Si el hilo tiene expediente pero no se pudo comparar, devuelve `ok: false` y `warning: "the dossier of this thread is unavailable; citations were not checked"`, para que el agente no lo tome por aprobado.

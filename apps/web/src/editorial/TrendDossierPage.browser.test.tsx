@@ -316,6 +316,39 @@ describe("TrendDossierView", () => {
     await expect.element(dialog).not.toBeInTheDocument();
   });
 
+  it("prepares the thread's folder when «Abrir hilo de video» opens it", async () => {
+    setup();
+    const inProduction: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        isNew: false,
+        inbox: {
+          isNew: false,
+          seenRunId: RUN_ID,
+          seenAt: AT,
+          snoozed: null,
+          dismissed: null,
+          production: { threadId: "thread-video", linkedAt: AT },
+        },
+      },
+    };
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={inProduction}
+        evidence={inProduction}
+        onEvidencePage={() => {}}
+      />,
+    );
+    // The thread's subscription may be alive from an earlier visit; the link asks anyway.
+    await userEvent.click(screen.getByRole("link", { name: "Abrir hilo de video" }));
+    expect(state.commands).toContainEqual([
+      "environment-data:editorial:video-prepare",
+      { threadId: "thread-video" },
+    ]);
+  });
+
   it("offers the way back of each state and links a trend in production to its thread", async () => {
     setup();
     const withState = (patch: Partial<EditorialTrendInboxState>): EditorialTrendDossier => ({

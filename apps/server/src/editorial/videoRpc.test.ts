@@ -417,6 +417,91 @@ describe("editorial video RPC, opening a thread", () => {
     evidenceRange: { from: "2026-10-30T10:00:00.000Z", to: "2026-10-30T10:00:00.000Z" },
   } as unknown as EditorialTrendDossier;
 
+  const withDossierReader = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provide(
+        videoRpcLayer.pipe(
+          Layer.provide(
+            Layer.mock(EditorialReadService)({ getDossier: () => Effect.succeed(dossier) }),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+  it.effect("prepare writes the folder of an open thread and its live view follows", () =>
+    withVideoWorkspace(({ workspace }) =>
+      withDossierReader(
+        Effect.gen(function* () {
+          const client = yield* operator;
+          const views = yield* Queue.unbounded<EditorialVideoView>();
+          // The subscription stays alive, as the client's shared atom keeps it for minutes.
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+            Stream.runForEach((view) => Queue.offer(views, view)),
+            Effect.forkScoped,
+          );
+          assert.isTrue((yield* Queue.take(views)).video?.script.exists);
+          // Deleted while the subscription lives on: only "Abrir hilo de video" can repair it.
+          NodeFS.rmSync(`${workspace}/videos`, { recursive: true, force: true });
+          NodeFS.rmSync(`${workspace}/${SCRIPT_PATH}`, { force: true });
+
+          const prepared = yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD });
+          assert.deepStrictEqual(prepared, { prepared: true });
+          assert.isTrue(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+          assert.include(
+            NodeFS.readFileSync(`${workspace}/videos/quantum/expediente.md`, "utf8"),
+            "dossier_id: dossier-1\n",
+          );
+          // The event of the preparation makes the live view read the folder again.
+          assert.isTrue((yield* Queue.take(views)).video?.script.exists);
+          const events = yield* (yield* EditorialEventLog).readSince(0);
+          assert.include(
+            events.map((event) => event.type),
+            "video-thread.folder-prepared",
+          );
+          // Nothing missing: idempotent, no new event.
+          assert.deepStrictEqual(
+            yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD }),
+            { prepared: false },
+          );
+          assert.strictEqual(yield* Queue.size(views), 0);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("prepare writes nothing into a decided thread", () =>
+    withVideoWorkspace(({ workspace }) =>
+      withDossierReader(
+        Effect.gen(function* () {
+          const client = yield* operator;
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+            threadId: THREAD,
+            action: "reject",
+            utility: 1,
+            reason: "Off topic",
+            scriptVersionHash: null,
+            operationId: "decision-prepare",
+          });
+          assert.deepStrictEqual(
+            yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD }),
+            { prepared: false },
+          );
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          assert.isFalse(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+          assert.isFalse(NodeFS.existsSync(`${workspace}/videos/quantum`));
+          const failure = yield* Effect.flip(
+            client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: ThreadId.make("thread-none") }),
+          );
+          assert.strictEqual(reasonOf(failure), "not-found");
+        }),
+      ),
+    ),
+  );
+
   it.effect("writes the folder of a thread created before dossier files when it is opened", () =>
     withVideoWorkspace(({ workspace }) =>
       Effect.gen(function* () {

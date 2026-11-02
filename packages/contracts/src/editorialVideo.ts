@@ -33,6 +33,7 @@ export const EDITORIAL_VIDEO_WS_METHODS = {
   capture: "editorial.video.capture",
   removeCapture: "editorial.video.removeCapture",
   purge: "editorial.video.purge",
+  prepare: "editorial.video.prepare",
 } as const;
 
 export const EditorialVideoClockState = Schema.Union([
@@ -252,6 +253,13 @@ export type EditorialVideoOpenVersionInput = typeof EditorialVideoOpenVersionInp
 export const EditorialVideoOpenVersionResult = Schema.Struct({ path: Schema.String });
 export type EditorialVideoOpenVersionResult = typeof EditorialVideoOpenVersionResult.Type;
 
+export const EditorialVideoPrepareInput = Schema.Struct({ threadId: ThreadId });
+export type EditorialVideoPrepareInput = typeof EditorialVideoPrepareInput.Type;
+
+/** `prepared`: something of the thread's folder was missing or not its own and was written. */
+export const EditorialVideoPrepareResult = Schema.Struct({ prepared: Schema.Boolean });
+export type EditorialVideoPrepareResult = typeof EditorialVideoPrepareResult.Type;
+
 export const EditorialVideoSaveResultInput = Schema.Struct({
   threadId: ThreadId,
   views: Schema.optionalKey(NonNegativeInt),
@@ -441,6 +449,17 @@ const EditorialVideoPurgeRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.purge, {
   error: videoError,
 });
 
+/**
+ * Writes what is missing of a video thread's folder (script, dossier file, the studio's
+ * instructions) without replacing anything that is there. Idempotent; nothing for a decided
+ * thread. "Abrir hilo de video" calls it, since the thread's subscription may already be live.
+ */
+const EditorialVideoPrepareRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.prepare, {
+  payload: EditorialVideoPrepareInput,
+  success: EditorialVideoPrepareResult,
+  error: videoError,
+});
+
 /** Merged into `WsRpcGroup` next to the editorial and Results groups. */
 export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoGetRpc,
@@ -454,6 +473,7 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoCaptureRpc,
   EditorialVideoRemoveCaptureRpc,
   EditorialVideoPurgeRpc,
+  EditorialVideoPrepareRpc,
 );
 
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
@@ -468,4 +488,5 @@ export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_VIDEO_WS_METHODS.capture]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.purge]: AuthOrchestrationOperateScope,
+  [EDITORIAL_VIDEO_WS_METHODS.prepare]: AuthOrchestrationOperateScope,
 } as const;
