@@ -8,12 +8,9 @@ import {
   type SourceRetention,
   type SourceReviewStatus,
 } from "@earlyscript/editorial-contracts/sourceCatalog";
-import {
-  PRESENTATION_EVIDENCE_LIMIT,
-  PRESENTATION_EXCERPT_CHARS,
-  type EditorialSourceEntry,
-  type EditorialSourcesCorpus,
-} from "@t3tools/contracts";
+import { type EditorialSourceEntry, type EditorialSourcesCorpus } from "@t3tools/contracts";
+
+import { DATA_OUTBOUND, otherOutboundLine } from "./dataOutbound";
 
 // The "Datos y permisos" step: what Earlyscript collects, from where, under which terms, how
 // long it keeps it, how it is deleted and what leaves the machine. Every sentence was checked
@@ -35,7 +32,6 @@ const shortDayFormat = new Intl.DateTimeFormat("es", {
 const toDate = (day: string) => new Date(`${day}T00:00:00Z`);
 const formatLongDay = (day: string) => longDayFormat.format(toDate(day));
 const formatShortDay = (day: string) => shortDayFormat.format(toDate(day));
-const formatCount = (count: number) => count.toLocaleString("es");
 
 /**
  * Review date of the frozen corpus's retention: Miguel's decision of 31 October 2026
@@ -51,11 +47,10 @@ const RETENTION_REVIEW_DAY = "2026-11-27";
 export const DATA_CONSENT_POLICY = {
   intro:
     "Earlyscript reúne publicaciones públicas de las fuentes que actives para encontrar tendencias que puedan convertirse en videos. Lo capturado se guarda en el equipo donde corre Earlyscript. Nada se publica solo: cada presentación, guion y decisión pasa por ti.",
+  // The entries themselves live in dataOutbound.ts, shared with «Cómo se tratan tus datos».
   outbound: [
-    "Nada sale de esta máquina salvo dos cosas:",
-    "Las peticiones a cada fuente activada para capturar. Earlyscript deja una pausa mínima entre peticiones (de 0,25 s en Hacker News a 6,5 s en GitHub), se detiene ante sus límites de cuota y comprueba el robots.txt del sitio antes de cada petición, salvo en las API de Hacker News y GitHub; arXiv tiene una excepción documentada por los términos de su API.",
-    `Los textos de las tendencias que pidas redactar. Al proveedor de modelos que elijas (Claude o Codex, con tu cuenta y bajo sus condiciones) van el perfil editorial del canal, las cifras del motor para esa tendencia y como máximo ${formatCount(PRESENTATION_EVIDENCE_LIMIT)} ítems de evidencia con su fuente, fecha, enlace, título y un extracto recortado a ${formatCount(PRESENTATION_EXCERPT_CHARS)} caracteres. En un hilo de video, ese proveedor recibe además lo que escribas y lo que su agente lea del espacio de trabajo.`,
-    "Sin telemetría: las trazas, la analítica de producto y la búsqueda de actualizaciones heredadas de T3 Code están apagadas. La descarga del modelo local de embeddings pide el archivo, sin enviar tus datos.",
+    "Esto sale de esta máquina, y nada más:",
+    "Sin telemetría: las trazas, la analítica de producto y la búsqueda de actualizaciones heredadas de T3 Code están apagadas.",
     "Esto describe cómo funciona el sistema; no es una política legal.",
   ],
   retention: [
@@ -371,6 +366,8 @@ export const catalogHash = (
  */
 const acceptedTexts = () => ({
   policy: DATA_CONSENT_POLICY,
+  outbound: DATA_OUTBOUND,
+  otherOutboundLine: otherOutboundLine(),
   commonStored: COMMON_STORED_FIELDS,
   commonStoredLine: COMMON_STORED_LINE,
   stored: STORED_FIELDS,

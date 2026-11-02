@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { CONNECTION_LOST, failureText, UNREACHABLE } from "../settings/sourcesText";
+import { DATA_OUTBOUND, HIGHLIGHTED_OUTBOUND, otherOutboundLine } from "./dataOutbound";
 import {
   buildAcceptance,
   canonicalJson,
@@ -233,6 +234,16 @@ describe("buildAcceptance", () => {
       Object.assign(STORED_FIELDS, { rss });
     }
     expect(await policyHash()).toBe(policy);
+    // What leaves the machine counts too (Sol, H5 of the integration).
+    const favicons = DATA_OUTBOUND.find((entry) => entry.id === "favicons")!;
+    const where = favicons.where;
+    Object.assign(favicons, { where: "otro sitio" });
+    try {
+      expect(await policyHash()).not.toBe(policy);
+    } finally {
+      Object.assign(favicons, { where });
+    }
+    expect(await policyHash()).toBe(policy);
   });
 
   it("hashes key order away", () => {
@@ -271,7 +282,7 @@ describe("what goes to the model provider (Sol, H4)", () => {
   it("quotes the server's own limits", () => {
     expect(PRESENTATION_EVIDENCE_LIMIT).toBe(12);
     expect(PRESENTATION_EXCERPT_CHARS).toBe(500);
-    expect(DATA_CONSENT_POLICY.outbound[2]).toContain(
+    expect(DATA_OUTBOUND.find((entry) => entry.id === "drafting")?.detail).toContain(
       "como máximo 12 ítems de evidencia con su fuente, fecha, enlace, título y un extracto recortado a 500 caracteres",
     );
   });
@@ -310,5 +321,16 @@ describe("the server's lock (Sol, H6)", () => {
   it("keeps the catalog's own words when the server agrees", () => {
     const [lobsters] = consentSourceRows([entry("lobsters", { collectBlocked: "blocked" })]);
     expect(lobsters?.termsLine).toMatch(/^Bloqueada: Su robots\.txt/);
+  });
+});
+
+describe("what leaves the machine (Sol, H5 of the integration)", () => {
+  it("explains the product's two at length and names every other one in one line", () => {
+    expect(HIGHLIGHTED_OUTBOUND.map((entry) => entry.id)).toEqual(["captures", "drafting"]);
+    expect(otherOutboundLine()).toBe(
+      "Además, la app consulta: el modelo de embeddings (huggingface.co); las versiones de los CLI de los proveedores (registry.npmjs.org); el uso de tu cuenta de Anthropic (api.anthropic.com); el catálogo de modelos (GitHub, del proyecto T3 Code); la tabla de precios de los modelos (GitHub, del proyecto LiteLLM); los iconos de los sitios enlazados (www.google.com, que recibe sus dominios).",
+    );
+    expect(new Set(DATA_OUTBOUND.map((entry) => entry.id)).size).toBe(DATA_OUTBOUND.length);
+    expect(DATA_CONSENT_POLICY.outbound.join(" ")).not.toContain("dos cosas");
   });
 });

@@ -8,6 +8,8 @@ import { render } from "../../../test/render";
 import { Dialog } from "../../components/ui/dialog";
 import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
 import { COMMON_STORED_LINE, DATA_CONSENT_POLICY } from "./dataConsent.logic";
+import { DATA_OUTBOUND, otherOutboundLine } from "./dataOutbound";
+import { DataHandlingDialog } from "./DataHandlingDialog";
 import { DataConsentView, type DataConsentViewProps } from "./DataConsentStep";
 import { ONBOARDING_STAGES } from "./steps";
 
@@ -143,6 +145,45 @@ const acceptBox = () => page.getByRole("checkbox", { name: DATA_CONSENT_POLICY.a
 const continueButton = () => page.getByRole("button", { name: "Continuar" });
 
 describe("DataConsentStep", () => {
+  it.each([
+    [1280, 800, "claro"],
+    [390, 844, "claro"],
+    [1280, 800, "oscuro"],
+    [390, 844, "oscuro"],
+  ] as const)(
+    "lists in the step and in the privacy dialog the same outbound entries (%ix%i, %s)",
+    async (width, height, theme) => {
+      using _theme = theme === "oscuro" ? darkTheme() : null;
+      await using _viewport = await viewport(width, height);
+      const ids = (root: ParentNode) =>
+        [...root.querySelectorAll<HTMLElement>("[data-outbound-id]")].map(
+          (node) => node.dataset.outboundId,
+        );
+      const tag = `${width}x${height}-${theme}`;
+      {
+        await using _screen = await render(
+          <InWizard>
+            <DataConsentView {...props()} />
+          </InWizard>,
+        );
+        const block = page.getByRole("region", { name: "Qué sale de esta máquina" });
+        await expect.element(block).toBeVisible();
+        expect(ids(block.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
+        expect(page.getByTestId("consent-other-outbound").element().textContent).toBe(
+          otherOutboundLine(),
+        );
+        block.element().scrollIntoView({ block: "start" });
+        await shot(`40-paso-que-sale-${tag}`);
+      }
+      await using _dialog = await render(<DataHandlingDialog trigger={<button type="button" />} />);
+      await userEvent.click(page.getByRole("button", { name: "Cómo se tratan tus datos" }));
+      const dialog = page.getByRole("dialog", { name: "Cómo se tratan tus datos" });
+      await expect.element(dialog).toBeVisible();
+      expect(ids(dialog.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
+      await shot(`41-dialogo-datos-${tag}`);
+    },
+  );
+
   it("lists capturable sources apart from the ones without permission", async () => {
     await using _viewport = await viewport(1280, 800);
     await using _screen = await render(
