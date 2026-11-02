@@ -13,8 +13,18 @@ export const EDITORIAL_SETTINGS_NAV_GROUP = {
 
 export const EDITORIAL_SOURCES_SECTION_ID = "editorial-sources";
 export const EDITORIAL_NIGHTLY_SECTION_ID = "editorial-nightly";
+export const EDITORIAL_PROFILE_SECTION_ID = "editorial-profile";
 
 export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
+  {
+    id: EDITORIAL_PROFILE_SECTION_ID,
+    title: "Perfil del estudio",
+    to: EDITORIAL_SETTINGS_PATH,
+    searchTerms: [
+      "perfil profile estudio studio canal channel audiencia audience temas topics",
+      "incluir include excluir exclude versión version pesos weights puntuación scoring",
+    ],
+  },
   {
     id: EDITORIAL_SOURCES_SECTION_ID,
     title: "Fuentes",

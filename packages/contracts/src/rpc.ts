@@ -39,6 +39,7 @@ import { EditorialPresentationRpcGroup } from "./editorialPresentation.ts";
 import { EditorialVideoRpcGroup } from "./editorialVideo.ts";
 import { EditorialSourcesRpcGroup } from "./editorialSources.ts";
 import { EditorialJobsRpcGroup } from "./editorialJobs.ts";
+import { EditorialProfileRpcGroup } from "./editorialProfile.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -2150,4 +2151,5 @@ export const WsRpcGroup = RpcGroup.make(
   .merge(EditorialVideoRpcGroup)
   .merge(EditorialSourcesRpcGroup)
   .merge(EditorialJobsRpcGroup)
+  .merge(EditorialProfileRpcGroup)
   .middleware(RpcScopeAuthorization);
