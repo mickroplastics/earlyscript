@@ -212,39 +212,76 @@ const DONE_JOB_DRAFTED = makeJob({
 });
 
 describe("draftingProblem", () => {
-  const drafted = (ready: number, code: "presentations_pending" | "presentations_unavailable") =>
+  type DraftingCode =
+    | "presentations_pending"
+    | "presentations_unavailable"
+    | "presentations_provider_disabled"
+    | "presentations_budget";
+  const drafted = (ready: number, code: DraftingCode, total = 10, skipped = false) =>
     makeJob({
       status: "done",
       artifacts: {
-        phases: phasesWith(() => "done"),
+        phases: phasesWith((index) => (skipped && index === 4 ? "skipped" : "done")),
         runId: "run_x",
-        dossiers: 10,
-        presentations: { ready, failed: 10 - ready, total: 10 },
-        notices: [{ code, ready, total: 10 }],
+        dossiers: total,
+        presentations: skipped ? null : { ready, failed: total - ready, total },
+        notices: [
+          code === "presentations_budget"
+            ? { code, ready, total, used: 600, limit: 600 }
+            : { code, ready, total },
+        ],
       },
     });
 
-  it("says no text model is available and where to connect one", () => {
-    expect(draftingProblem(drafted(0, "presentations_unavailable"))?.short).toBe(
-      "Tendencias sin redactar: no hay un proveedor de modelos disponible.",
-    );
+  it("words each of the four reasons, with where to fix it", () => {
+    const cases = [
+      [
+        drafted(0, "presentations_provider_disabled", 11, true),
+        "Tendencias sin redactar: el proveedor de modelos está desactivado.",
+        "El proveedor de modelos elegido para redactar está desactivado: 11 tendencias quedaron en la bandeja sin redactar. Actívalo en Ajustes › Proveedores o elige otro modelo en Ajustes › Editorial › Redacción.",
+        { label: "Abrir Ajustes › Proveedores", to: "/settings/providers" },
+      ],
+      [
+        drafted(4, "presentations_budget"),
+        "Tope mensual alcanzado: 6 tendencias sin redactar.",
+        "Tope mensual de redacción alcanzado (600 de 600): 6 tendencias quedaron sin redactar. Sube el tope en Ajustes › Editorial › Redacción o espera al mes siguiente.",
+        {
+          label: "Abrir Ajustes › Editorial › Redacción",
+          to: "/settings/editorial",
+          hash: "editorial-drafting",
+        },
+      ],
+      [
+        drafted(0, "presentations_unavailable"),
+        "Tendencias sin redactar: no hay un proveedor de modelos disponible.",
+        "No hay un proveedor de modelos disponible: las tendencias están en la bandeja sin redactar. Conecta uno en Ajustes › Proveedores y redáctalas desde la bandeja.",
+        { label: "Abrir Ajustes › Proveedores", to: "/settings/providers" },
+      ],
+      [
+        drafted(0, "presentations_pending"),
+        "Tendencias sin redactar: el proveedor de modelos no respondió.",
+        "El proveedor de modelos no redactó ninguna de las 10 tendencias (sin sesión o sin acceso al modelo): están en la bandeja sin redactar. Revisa la sesión en Ajustes › Proveedores y redáctalas desde la bandeja.",
+        { label: "Abrir Ajustes › Proveedores", to: "/settings/providers" },
+      ],
+    ] as const;
+    for (const [job, short, message, link] of cases) {
+      expect(draftingProblem(job)).toEqual({ short, message, link });
+      // The wizard says it once, in these words, not the job list's generic notice.
+      expect(firstRunView({ active: null, latest: job, emptyRun: false })).toMatchObject({
+        kind: "done",
+        messages: [message],
+      });
+      expect(firstRunPhaseRows(job)[4]?.warning).toBe(true);
+    }
+    // Skipped for a disabled provider: the row says so with the warning mark.
+    expect(firstRunPhaseRows(cases[0][0])[4]).toMatchObject({ status: "skipped", warning: true });
   });
 
   it("tells a provider that drafted nothing from one that drafted some", () => {
-    const none = drafted(0, "presentations_pending");
-    expect(draftingProblem(none)?.short).toBe(
-      "Tendencias sin redactar: el proveedor de modelos no respondió.",
-    );
-    expect(firstRunView({ active: null, latest: none, emptyRun: false })).toMatchObject({
-      kind: "done",
-      messages: [
-        "El proveedor de modelos no redactó ninguna de las 10 tendencias (sin sesión o sin acceso al modelo): están en la bandeja sin redactar. Revisa la sesión en Ajustes › Proveedores y redáctalas desde la bandeja.",
-      ],
-    });
-    expect(firstRunPhaseRows(none)[4]).toMatchObject({ status: "done", warning: true });
     expect(draftingProblem(drafted(6, "presentations_pending"))?.short).toBe(
       "Faltan 4 de 10 tendencias por redactar.",
     );
     expect(draftingProblem(DONE_JOB_DRAFTED)).toBeNull();
+    expect(firstRunPhaseRows(DONE_JOB_DRAFTED)[4]?.warning).toBe(false);
   });
 });

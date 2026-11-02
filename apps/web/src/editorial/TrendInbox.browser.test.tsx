@@ -338,43 +338,62 @@ describe("TrendInbox", () => {
     registry.set(listAtom, AsyncResult.success({ jobs: [] }));
   });
 
-  it("says over the list why the run's trends were left undrafted", async () => {
-    setup();
-    const registry = AtomRegistry.make();
-    const run02 = inboxOf("02", ["alpha", "beta"]);
-    registry.set(readAtom, AsyncResult.success(run02));
-    registry.set(liveAtom, AsyncResult.success({ seq: 1, inbox: run02 }));
-    registry.set(activityAtom, AsyncResult.success({ active: null }));
-    registry.set(
-      listAtom,
-      AsyncResult.success({
-        jobs: [
-          {
-            ...EMPTY_JOB,
-            artifacts: {
-              ...EMPTY_JOB.artifacts,
-              runId: run02.run!.runId,
-              dossiers: 2,
-              presentations: { ready: 0, failed: 2, total: 2 },
-              notices: [{ code: "presentations_pending", ready: 0, total: 2 }],
+  it.each([
+    [
+      { code: "presentations_provider_disabled", ready: 0, total: 2 } as const,
+      "Tendencias sin redactar: el proveedor de modelos está desactivado.",
+      "Abrir Ajustes › Proveedores",
+      "/settings/providers",
+    ],
+    [
+      { code: "presentations_budget", ready: 0, total: 2, used: 600, limit: 600 } as const,
+      "Tope mensual alcanzado: 2 tendencias sin redactar.",
+      "Abrir Ajustes › Editorial › Redacción",
+      "/settings/editorial#editorial-drafting",
+    ],
+    [
+      { code: "presentations_pending", ready: 0, total: 2 } as const,
+      "Tendencias sin redactar: el proveedor de modelos no respondió.",
+      "Abrir Ajustes › Proveedores",
+      "/settings/providers",
+    ],
+  ])(
+    "says over the list why the run's trends were left undrafted (%o)",
+    async (notice, text, link, href) => {
+      setup();
+      const registry = AtomRegistry.make();
+      const run02 = inboxOf("02", ["alpha", "beta"]);
+      registry.set(readAtom, AsyncResult.success(run02));
+      registry.set(liveAtom, AsyncResult.success({ seq: 1, inbox: run02 }));
+      registry.set(activityAtom, AsyncResult.success({ active: null }));
+      registry.set(
+        listAtom,
+        AsyncResult.success({
+          jobs: [
+            {
+              ...EMPTY_JOB,
+              artifacts: {
+                ...EMPTY_JOB.artifacts,
+                runId: run02.run!.runId,
+                dossiers: 2,
+                presentations: null,
+                notices: [notice],
+              },
             },
-          },
-        ],
-      }),
-    );
-    await using screen = await render(
-      <RegistryContext.Provider value={registry}>
-        <SidebarProvider defaultOpen>
-          <TrendInbox environmentId={ENVIRONMENT_ID} activeDossierId={null} />
-        </SidebarProvider>
-      </RegistryContext.Provider>,
-    );
-    await expect
-      .element(screen.getByText("Tendencias sin redactar: el proveedor de modelos no respondió."))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("link", { name: "Abrir Ajustes › Proveedores" }))
-      .toHaveAttribute("href", "/settings/providers");
-    registry.set(listAtom, AsyncResult.success({ jobs: [] }));
-  });
+          ],
+        }),
+      );
+      await using screen = await render(
+        <RegistryContext.Provider value={registry}>
+          <SidebarProvider defaultOpen>
+            <TrendInbox environmentId={ENVIRONMENT_ID} activeDossierId={null} />
+          </SidebarProvider>
+        </RegistryContext.Provider>,
+      );
+      await expect.element(screen.getByTestId("drafting-notice")).toBeVisible();
+      await expect.element(screen.getByText(text)).toBeVisible();
+      await expect.element(screen.getByRole("link", { name: link })).toHaveAttribute("href", href);
+      registry.set(listAtom, AsyncResult.success({ jobs: [] }));
+    },
+  );
 });

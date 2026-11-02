@@ -1,11 +1,13 @@
 import {
   EDITORIAL_JOB_PHASES,
   type EditorialJob,
+  type EditorialJobNotice,
   type EditorialJobPhaseName,
   type EditorialJobPhaseStatus,
 } from "@t3tools/contracts";
 
 import { PHASE_LABEL, durationText, jobMessages } from "./jobsState";
+import { EDITORIAL_DRAFTING_SECTION_ID } from "./settings/settingsEntry";
 
 /**
  * What the first-run card shows, from the job in flight, the newest job and the read of the
@@ -122,49 +124,90 @@ function firstRunMessages(job: EditorialJob): ReadonlyArray<string> {
   const drafting = draftingProblem(job);
   const notices = job.artifacts.notices.filter(
     (notice) =>
-      notice.code !== "missed_days" &&
-      (drafting === null ||
-        (notice.code !== "presentations_pending" && notice.code !== "presentations_unavailable")),
+      notice.code !== "missed_days" && (drafting === null || !DRAFTING_CODES.has(notice.code)),
   );
   const messages = jobMessages({ ...job, artifacts: { ...job.artifacts, notices } });
   return drafting === null ? messages : [...messages, drafting.message];
 }
+
+/** The notices that leave a finished job's trends without their drafted text. */
+const DRAFTING_CODES: ReadonlySet<EditorialJobNotice["code"]> = new Set([
+  "presentations_provider_disabled",
+  "presentations_budget",
+  "presentations_unavailable",
+  "presentations_pending",
+]);
 
 export interface DraftingProblem {
   /** For the wizard and the job: what happened and where to look. */
   readonly message: string;
   /** For the inbox header: one short line. */
   readonly short: string;
+  /** Where the operator fixes it. */
+  readonly link: {
+    readonly label: string;
+    readonly to: "/settings/providers" | "/settings/editorial";
+    readonly hash?: string;
+  };
 }
+
+const PROVIDERS_LINK = {
+  label: "Abrir Ajustes › Proveedores",
+  to: "/settings/providers",
+} as const satisfies DraftingProblem["link"];
+
+const DRAFTING_LINK = {
+  label: "Abrir Ajustes › Editorial › Redacción",
+  to: "/settings/editorial",
+  hash: EDITORIAL_DRAFTING_SECTION_ID,
+} as const satisfies DraftingProblem["link"];
 
 /**
  * Why a finished job left trends without their drafted title and summary, or null. The
- * engine's work is in the inbox either way; only the text model is missing or failing.
+ * engine's work is in the inbox either way; only the text model is off, missing, failing or
+ * over the monthly cap.
  */
 export function draftingProblem(job: EditorialJob): DraftingProblem | null {
-  const notice = job.artifacts.notices.find(
-    (entry) => entry.code === "presentations_unavailable" || entry.code === "presentations_pending",
-  );
+  const notice = job.artifacts.notices.find((entry) => DRAFTING_CODES.has(entry.code));
   if (notice === undefined) return null;
   const total = notice.total ?? job.artifacts.presentations?.total ?? job.artifacts.dossiers ?? 0;
   const ready = notice.ready ?? job.artifacts.presentations?.ready ?? 0;
-  if (notice.code === "presentations_unavailable") {
-    return {
-      message:
-        "No hay un proveedor de modelos disponible: las tendencias están en la bandeja sin redactar. Conecta uno en Ajustes › Proveedores y redáctalas desde la bandeja.",
-      short: "Tendencias sin redactar: no hay un proveedor de modelos disponible.",
-    };
+  const left = Math.max(0, total - ready);
+  const trends = (count: number) =>
+    `${countFormat(count)} ${count === 1 ? "tendencia" : "tendencias"}`;
+  switch (notice.code) {
+    case "presentations_provider_disabled":
+      return {
+        message: `El proveedor de modelos elegido para redactar está desactivado: ${trends(left)} quedaron en la bandeja sin redactar. Actívalo en Ajustes › Proveedores o elige otro modelo en Ajustes › Editorial › Redacción.`,
+        short: "Tendencias sin redactar: el proveedor de modelos está desactivado.",
+        link: PROVIDERS_LINK,
+      };
+    case "presentations_budget":
+      return {
+        message: `Tope mensual de redacción alcanzado (${countFormat(notice.used ?? 0)} de ${countFormat(notice.limit ?? 0)}): ${trends(left)} quedaron sin redactar. Sube el tope en Ajustes › Editorial › Redacción o espera al mes siguiente.`,
+        short: `Tope mensual alcanzado: ${trends(left)} sin redactar.`,
+        link: DRAFTING_LINK,
+      };
+    case "presentations_unavailable":
+      return {
+        message:
+          "No hay un proveedor de modelos disponible: las tendencias están en la bandeja sin redactar. Conecta uno en Ajustes › Proveedores y redáctalas desde la bandeja.",
+        short: "Tendencias sin redactar: no hay un proveedor de modelos disponible.",
+        link: PROVIDERS_LINK,
+      };
+    default:
+      return ready === 0
+        ? {
+            message: `El proveedor de modelos no redactó ninguna de las ${trends(total)} (sin sesión o sin acceso al modelo): están en la bandeja sin redactar. Revisa la sesión en Ajustes › Proveedores y redáctalas desde la bandeja.`,
+            short: "Tendencias sin redactar: el proveedor de modelos no respondió.",
+            link: PROVIDERS_LINK,
+          }
+        : {
+            message: `Se redactaron ${countFormat(ready)} de ${trends(total)}; las demás están en la bandeja sin redactar. Revisa el proveedor en Ajustes › Proveedores y redáctalas desde la bandeja.`,
+            short: `Faltan ${countFormat(left)} de ${trends(total)} por redactar.`,
+            link: PROVIDERS_LINK,
+          };
   }
-  if (ready === 0) {
-    return {
-      message: `El proveedor de modelos no redactó ninguna de las ${countFormat(total)} tendencias (sin sesión o sin acceso al modelo): están en la bandeja sin redactar. Revisa la sesión en Ajustes › Proveedores y redáctalas desde la bandeja.`,
-      short: "Tendencias sin redactar: el proveedor de modelos no respondió.",
-    };
-  }
-  return {
-    message: `Se redactaron ${countFormat(ready)} de ${countFormat(total)} tendencias; las demás están en la bandeja sin redactar. Revisa el proveedor en Ajustes › Proveedores y redáctalas desde la bandeja.`,
-    short: `Faltan ${countFormat(total - ready)} de ${countFormat(total)} tendencias por redactar.`,
-  };
 }
 
 export type FirstRunPhaseStatus = EditorialJobPhaseStatus;
@@ -271,12 +314,16 @@ export function firstRunPhaseRows(
         status,
         detail: [produced, duration].filter((part) => part !== null).join(" · ") || null,
         compactDetail: produced ?? duration,
-        warning:
-          phase === "presentations" &&
-          job.artifacts.presentations !== null &&
-          job.artifacts.presentations.ready < job.artifacts.presentations.total,
+        warning: phase === "presentations" && draftingProblem(job) !== null,
       };
     }
-    return { phase, label, status, detail: null, compactDetail: null, warning: false };
+    return {
+      phase,
+      label,
+      status,
+      detail: null,
+      compactDetail: null,
+      warning: status === "skipped" && phase === "presentations" && draftingProblem(job) !== null,
+    };
   });
 }
