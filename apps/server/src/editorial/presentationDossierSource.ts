@@ -119,7 +119,7 @@ export const loadPresentationDossiers = Effect.fn("loadPresentationDossiers")(fu
  * surrogate pair: a String.prototype.slice on UTF-16 units could leave a lone high surrogate
  * and hand the provider malformed text.
  */
-export function cutExcerpt(excerpt: string): string {
+function cutExcerpt(excerpt: string): string {
   if (excerpt.length <= PRESENTATION_EXCERPT_CHARS) return excerpt;
   return Array.from(excerpt).slice(0, PRESENTATION_EXCERPT_CHARS).join("");
 }
