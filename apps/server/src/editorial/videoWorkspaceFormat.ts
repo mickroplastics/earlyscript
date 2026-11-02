@@ -42,6 +42,27 @@ const oneLine = (value: string) => value.replaceAll(/\s+/g, " ").trim();
 /** A frontmatter value that stays one plain line, so the file parses the same everywhere. */
 const frontmatterValue = (value: string | null) => (value === null ? "null" : oneLine(value));
 
+/** Engine codes in the operator's words; an unknown code is shown as it is. */
+const STAGE_TEXT: Readonly<Record<string, string>> = {
+  growing: "en crecimiento",
+  steady: "estable",
+  fading: "en declive",
+  unclassified: "sin clasificar",
+};
+const CORROBORATION_TEXT: Readonly<Record<string, string>> = {
+  multi_source: "varias fuentes",
+  single_source: "una sola fuente",
+};
+const labelOf = (table: Readonly<Record<string, string>>, code: string) =>
+  Object.hasOwn(table, code) ? table[code]! : code;
+
+/** `weighted_sum.v0.01` → `suma ponderada, v0.01`; the version stays for traceability. */
+const rankMethodText = (method: string) => {
+  const match = /^weighted_sum(?:\.(v[\d.]+))?$/.exec(method);
+  if (match === null) return method;
+  return match[1] === undefined ? "suma ponderada" : `suma ponderada, ${match[1]}`;
+};
+
 const dayOrUnknown = (iso: string | null) => utcDay(iso) ?? "sin fecha";
 
 const quote = (text: string) =>
@@ -98,10 +119,10 @@ export function renderDossierMarkdown(input: {
     "",
     `- Etiqueta: ${oneLine(trend.label)}`,
     `- Términos: ${trend.terms.length === 0 ? "ninguno" : trend.terms.map(oneLine).join(", ")}`,
-    `- Etapa: ${trend.stage} · corroboración: ${trend.corroboration}`,
+    `- Etapa: ${labelOf(STAGE_TEXT, trend.stage)} · corroboración: ${labelOf(CORROBORATION_TEXT, trend.corroboration)}`,
     `- Elementos en 7 días: ${trend.items7d} · en 28 días: ${trend.items28d} · autores en 7 días: ${trend.authors7d}`,
     `- Crecimiento: ${formatDecimal(trend.growth)} · afinidad con el canal: ${formatDecimal(trend.affinity)} (umbral ${formatDecimal(dossier.affinityThreshold)})`,
-    `- Puesto en la corrida: ${trend.scoreRank} por puntuación (${dossier.rankMethod}), ${trend.volumeRank} por volumen`,
+    `- Puesto en la corrida: ${trend.scoreRank} por puntuación (${rankMethodText(dossier.rankMethod)}), ${trend.volumeRank} por volumen`,
     `- Fuentes: ${trend.sources.length === 0 ? "ninguna" : trend.sources.join(", ")}`,
     "",
     "## Ventana temporal",
@@ -153,20 +174,47 @@ export function renderDossierMarkdown(input: {
 }
 
 const EVIDENCE_HEADING = /^### \[(itm_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+)\]/gm;
-const DOSSIER_ID_LINE = /^dossier_id: (.+)$/m;
+
+/** The simple `key: value` lines of a dossier file's frontmatter; null when it has none. */
+const frontmatterOf = (markdown: string): ReadonlyMap<string, string> | null => {
+  if (!markdown.startsWith(`---\nschema: ${DOSSIER_FILE_SCHEMA}\n`)) return null;
+  const end = markdown.indexOf("\n---\n", 4);
+  if (end === -1) return null;
+  const fields = new Map<string, string>();
+  for (const line of markdown.slice(4, end).split("\n")) {
+    const match = /^([a-z_]+): (.*)$/.exec(line);
+    if (match !== null && !fields.has(match[1]!)) fields.set(match[1]!, match[2]!);
+  }
+  return fields;
+};
 
 /**
- * The evidence of a dossier file in the shape `checkScript` compares against, when the file
- * belongs to `dossierId`; none otherwise. Used by `script_check` when the run cannot be read.
+ * Whether a dossier file is the one the server writes for this thread: its frontmatter names
+ * the thread's dossier and hash. Anything else (another thread's dossier, an edited copy, a
+ * file of another format) is not this thread's evidence.
+ */
+export function isDossierFileOf(
+  markdown: string,
+  thread: { readonly dossierId: string | null; readonly dossierHash: string | null },
+): boolean {
+  if (thread.dossierId === null) return false;
+  const fields = frontmatterOf(markdown);
+  return (
+    fields !== null &&
+    fields.get("dossier_id") === thread.dossierId &&
+    fields.get("dossier_hash") === frontmatterValue(thread.dossierHash)
+  );
+}
+
+/**
+ * The evidence of the thread's own dossier file in the shape `checkScript` compares against;
+ * null for any other file. Used by `script_check` when the run cannot be read.
  */
 export function dossierEvidenceOf(
   markdown: string,
-  dossierId: string,
+  thread: { readonly dossierId: string | null; readonly dossierHash: string | null },
 ): { readonly evidence: ReadonlyArray<{ readonly item_id: string }> } | null {
-  if (!markdown.startsWith(`---\nschema: ${DOSSIER_FILE_SCHEMA}\n`)) return null;
-  const frontmatterEnd = markdown.indexOf("\n---\n", 4);
-  if (frontmatterEnd === -1) return null;
-  if (DOSSIER_ID_LINE.exec(markdown.slice(0, frontmatterEnd))?.[1] !== dossierId) return null;
+  if (!isDossierFileOf(markdown, thread)) return null;
   const ids = new Set<string>();
   for (const match of markdown.matchAll(EVIDENCE_HEADING)) ids.add(match[1]!);
   return { evidence: [...ids].map((item_id) => ({ item_id })) };

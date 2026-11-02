@@ -28,7 +28,7 @@ import {
   selectTrendDossier,
   snoozeMetricValue,
 } from "./runIndex.ts";
-import { EditorialVideoWorkspace, readWholeDossier } from "./VideoWorkspace.ts";
+import { EditorialVideoWorkspace, loadThreadDossier } from "./VideoWorkspace.ts";
 
 /**
  * Default "keep watching" threshold: the trend comes back when its items of the last 7 days
@@ -119,13 +119,7 @@ const make = Effect.gen(function* () {
     thread: VideoThread,
   ) {
     if (Option.isNone(workspace)) return;
-    const dossier =
-      thread.mode === "assisted" && thread.runId !== null && thread.dossierId !== null
-        ? yield* readWholeDossier(read.getDossier, {
-            runId: thread.runId,
-            dossierId: thread.dossierId,
-          }).pipe(Effect.orElseSucceed(() => null))
-        : null;
+    const dossier = yield* loadThreadDossier(read.getDossier, thread);
     yield* workspace.value.prepare({ thread, dossier });
   });
 

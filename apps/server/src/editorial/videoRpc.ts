@@ -241,7 +241,8 @@ const makeHandlers = Effect.gen(function* () {
   const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // Whether the T3 thread still exists; without the service (a test), every thread does.
   const threadManagement = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
-  // Writes a new manual thread's script from the template; absent in tests without a workspace.
+  // Writes a new manual thread's script from the template and completes a thread's folder when
+  // it is opened; absent in tests without a workspace.
   const workspace = yield* Effect.serviceOption(EditorialVideoWorkspace);
 
   const scriptCounts = boundedCache<{ claims: number; cited: number } | null>();
@@ -390,6 +391,33 @@ const makeHandlers = Effect.gen(function* () {
 
   const findThread = (threadId: string) =>
     threads.getVideoThread(threadId).pipe(Effect.map(Option.getOrNull));
+
+  /**
+   * Opening a video thread writes its folder when something is missing: a thread created
+   * before dossier files, or one whose dossier file is gone or not its own. Undecided threads
+   * only, so a decided script is never recreated. Never fails the subscription.
+   */
+  const prepareOnOpen = Effect.fn("EditorialVideoRpc.prepareOnOpen")(
+    function* (threadId: string) {
+      if (Option.isNone(workspace)) return;
+      const thread = yield* findThread(threadId);
+      if (thread === null) return;
+      const decided = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM editorial_decisions WHERE thread_id = ${threadId}
+      `.pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
+      if (decided) return;
+      yield* workspace.value.prepareIfNeeded({
+        thread,
+        getDossier: Option.isSome(reader) ? reader.value.getDossier : null,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Cannot prepare the video thread folder on open", { threadId, cause }),
+        ),
+      ),
+  );
 
   const requireThread = (threadId: string) =>
     findThread(threadId).pipe(
@@ -640,6 +668,7 @@ const makeHandlers = Effect.gen(function* () {
     [EDITORIAL_VIDEO_WS_METHODS.subscribe]: ({ threadId }) =>
       Stream.unwrap(
         Effect.gen(function* () {
+          yield* prepareOnOpen(threadId);
           // Subscribed before the first read, so no commit in between is lost.
           const subscription = yield* log.subscribe;
           const first = yield* view(threadId);

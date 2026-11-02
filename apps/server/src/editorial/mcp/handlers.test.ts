@@ -120,7 +120,7 @@ it.effect("compares citations with the dossier evidence when it is available", (
   ),
 );
 
-it.effect("refuses script paths outside the workspace, symlinks included", () =>
+it.effect("reads only files of the thread's folder, never through a link", () =>
   withVideoWorkspace(({ workspace, outside, write }) =>
     Effect.gen(function* () {
       yield* write(SCRIPT_PATH, SCRIPT);
@@ -129,15 +129,34 @@ it.effect("refuses script paths outside the workspace, symlinks included", () =>
         NodePath.join(outside, "secret.md"),
         NodePath.join(workspace, "videos", "link.md"),
       );
+      // Sol's adversarial-mcp.mjs: `arbitrary` and `other`.
+      yield* write("outside-video.md", "# Hook\n\nA claim [itm_hn_999].\n\n# Close\n");
+      yield* write("videos/other/expediente.md", "# OTHER THREAD PRIVATE DOSSIER\n");
+      yield* write("videos/quantum/notes.md", "# Hook\n\nNotes of this video.\n");
+      NodeFS.symlinkSync(
+        NodePath.join(outside, "secret.md"),
+        NodePath.join(workspace, "videos", "quantum", "linked.md"),
+      );
       for (const path of [
         NodePath.join(outside, "secret.md"),
         "../outside/secret.md",
         "videos/link.md",
+        "outside-video.md",
+        "videos/other/expediente.md",
+        "videos/quantum/../other/expediente.md",
+        "videos/quantum/linked.md",
       ]) {
         const text = errorText(yield* callTool("script_check", { path }));
-        expect(text).toContain("not inside the thread workspace");
+        expect(text, path).toContain("script_check only reads files inside this thread's folder.");
         expect(text).not.toContain("Outside.");
+        expect(text).not.toContain("OTHER THREAD");
       }
+      // A file inside the folder is read.
+      const notes = yield* callTool("script_check", { path: "videos/quantum/notes.md" });
+      expect(notes.structuredContent).toMatchObject({ path: "videos/quantum/notes.md" });
+      expect(
+        errorText(yield* callTool("script_check", { path: "videos/quantum/missing.md" })),
+      ).toContain("does not exist in this thread's folder");
     }).pipe(Effect.provide(layerEditorialServer())),
   ),
 );
@@ -181,7 +200,9 @@ it.effect("dossier_read says what to do when the dossier file is not written yet
     Effect.gen(function* () {
       const result = yield* callTool("dossier_read", {});
       expect(result.structuredContent).toMatchObject({ dossier: null, dossierPath: DOSSIER_PATH });
-      expect((result.structuredContent as { note: string }).note).toContain("Crear hilo de video");
+      expect((result.structuredContent as { note: string }).note).toContain(
+        "El expediente de este hilo no está disponible",
+      );
       expect(errorText(yield* callTool("dossier_read", {}, "thread-upstream"))).toContain(
         "video threads only",
       );
@@ -209,4 +230,40 @@ it.effect("script_check compares with the dossier file when the run is not reada
       });
     }).pipe(Effect.provide(layerEditorialServer())),
   ),
+);
+
+it.effect(
+  "dossier_read gives nothing for a link to another thread's dossier or an edited one",
+  () =>
+    withVideoWorkspace(({ workspace, write }) =>
+      Effect.gen(function* () {
+        // Sol's adversarial-mcp.mjs: `symlink`.
+        yield* write("videos/other/expediente.md", dossierFile());
+        NodeFS.mkdirSync(NodePath.join(workspace, "videos", "quantum"), { recursive: true });
+        NodeFS.symlinkSync(
+          NodePath.join(workspace, "videos", "other", "expediente.md"),
+          NodePath.join(workspace, DOSSIER_PATH),
+        );
+        const linked = (yield* callTool("dossier_read", {})).structuredContent;
+        expect(linked).toMatchObject({ dossier: null, trendTitle: null, dossierId: "dossier-1" });
+        expect((linked as { note: string }).note).toContain("no está disponible");
+
+        // The same file at the right place, with another hash or dossier in its frontmatter.
+        NodeFS.rmSync(NodePath.join(workspace, DOSSIER_PATH));
+        for (const forged of [
+          dossierFile().replace("dossier_hash: sha256:dossier", "dossier_hash: sha256:other"),
+          dossierFile("dossier-9"),
+          "# Quantum error correction\n\nNo frontmatter.\n",
+        ]) {
+          yield* write(DOSSIER_PATH, forged);
+          const result = (yield* callTool("dossier_read", {})).structuredContent;
+          expect(result).toMatchObject({ dossier: null, trendTitle: null });
+          // script_check does not take its evidence from such a file either.
+          yield* write(SCRIPT_PATH, SCRIPT);
+          expect(
+            (yield* callTool("script_check", { path: SCRIPT_PATH })).structuredContent,
+          ).toMatchObject({ dossier: { dossierId: "dossier-1", compared: false } });
+        }
+      }).pipe(Effect.provide(layerEditorialServer())),
+    ),
 );

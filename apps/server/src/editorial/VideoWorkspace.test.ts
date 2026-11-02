@@ -19,9 +19,15 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import type { VideoThread } from "./persistence/EditorialModel.ts";
 import { makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
-import { EditorialVideoWorkspace, layer, readWholeDossier } from "./VideoWorkspace.ts";
+import {
+  EditorialVideoWorkspace,
+  layer,
+  loadThreadDossier,
+  readWholeDossier,
+} from "./VideoWorkspace.ts";
 import {
   dossierEvidenceOf,
+  isDossierFileOf,
   dossierPathOf,
   renderDossierMarkdown,
   videoFolderOf,
@@ -59,7 +65,7 @@ const DOSSIER: EditorialTrendDossier = {
       generatedAt: "2026-10-31T12:00:00.000Z",
     },
     stage: "emerging",
-    corroboration: "multi-source",
+    corroboration: "multi_source",
     items7d: 12,
     items28d: 20,
     authors7d: 9,
@@ -208,12 +214,36 @@ describe("renderDossierMarkdown", () => {
     assert.notInclude(bare, "Resumen redactado");
   });
 
-  it("gives script_check the evidence ids of its own dossier only", () => {
-    assert.deepStrictEqual(dossierEvidenceOf(markdown, "dos_terra"), {
+  it("gives script_check the evidence ids of its own dossier and hash only", () => {
+    const own = { dossierId: "dos_terra", dossierHash: "sha256:one" };
+    assert.deepStrictEqual(dossierEvidenceOf(markdown, own), {
       evidence: [{ item_id: "itm_hn_1" }, { item_id: "itm_hn_2" }],
     });
-    assert.isNull(dossierEvidenceOf(markdown, "dos_other"));
-    assert.isNull(dossierEvidenceOf("# Hook\n\n### [itm_hn_9] x\n", "dos_terra"));
+    assert.isTrue(isDossierFileOf(markdown, own));
+    assert.isNull(dossierEvidenceOf(markdown, { ...own, dossierId: "dos_other" }));
+    assert.isFalse(isDossierFileOf(markdown, { ...own, dossierHash: "sha256:two" }));
+    assert.isFalse(isDossierFileOf(markdown, { ...own, dossierId: null }));
+    // A frontmatter edited to name this thread but another hash is not its file either.
+    assert.isFalse(
+      isDossierFileOf(markdown.replace("dossier_hash: sha256:one", "dossier_hash: forged"), own),
+    );
+    assert.isNull(dossierEvidenceOf("# Hook\n\n### [itm_hn_9] x\n", own));
+  });
+
+  it("names the engine's codes in Spanish and keeps unknown ones", () => {
+    const text = renderDossierMarkdown({
+      dossier: {
+        ...DOSSIER,
+        rankMethod: "weighted_sum.v0.01",
+        trend: { ...DOSSIER.trend, stage: "growing", corroboration: "single_source" },
+      },
+      dossierHash: "sha256:one",
+      trendKey: null,
+    });
+    assert.include(text, "- Etapa: en crecimiento · corroboración: una sola fuente");
+    assert.include(text, "1 por puntuación (suma ponderada, v0.01)");
+    assert.include(markdown, "- Etapa: emerging · corroboración: varias fuentes");
+    assert.include(markdown, "1 por puntuación (weighted)");
   });
 });
 
@@ -334,7 +364,7 @@ describe("EditorialVideoWorkspace.prepare", () => {
     ),
   );
 
-  it.effect("writes nothing outside the workspace, through a path or a symlinked folder", () =>
+  it.effect("creates nothing outside the workspace, through a path or a linked folder", () =>
     withWorkspace((workspace, root) =>
       Effect.gen(function* () {
         const outside = NodePath.join(root, "outside");
@@ -344,12 +374,69 @@ describe("EditorialVideoWorkspace.prepare", () => {
         for (const scriptPath of [
           "../outside/guion.md",
           "videos/escape/guion.md",
+          "videos/escape/new-folder/guion.md",
           NodePath.join(outside, "x.md"),
+          "videos\\x\\guion.md",
         ]) {
           const result = yield* prepare({ thread: thread({ scriptPath }), dossier: DOSSIER });
           assert.deepStrictEqual([result.dossier, result.script], ["none", "none"], scriptPath);
         }
         assert.deepStrictEqual(NodeFS.readdirSync(outside), []);
+      }),
+    ),
+  );
+
+  // Sol's adversarial.mjs: `workspace/videos` itself is a link to a folder outside.
+  it.effect("creates no folder outside when `videos` is a link", () =>
+    withWorkspace((workspace, root) =>
+      Effect.gen(function* () {
+        const outside = NodePath.join(root, "outside");
+        NodeFS.mkdirSync(outside);
+        NodeFS.symlinkSync(outside, NodePath.join(workspace, "videos"));
+        const result = yield* prepare({
+          thread: thread({ scriptPath: "videos/escaped-created/guion.md" }),
+          dossier: DOSSIER,
+        });
+        assert.deepStrictEqual([result.dossier, result.script], ["none", "none"]);
+        assert.deepStrictEqual(NodeFS.readdirSync(outside), []);
+      }),
+    ),
+  );
+
+  it.effect("never reads, writes or chmods a file through a link at the file's name", () =>
+    withWorkspace((workspace, root) =>
+      Effect.gen(function* () {
+        const outside = NodePath.join(root, "outside");
+        NodeFS.mkdirSync(outside);
+        yield* prepare({ thread: thread(), dossier: DOSSIER });
+        const folder = NodePath.join(workspace, "videos", "gpt-6-1-terra-threadte");
+        const dossierFile = NodePath.join(folder, "expediente.md");
+        const scriptFile = NodePath.join(folder, "guion.md");
+        // The same bytes outside, at 0644, behind a link where the dossier was.
+        const foreign = NodePath.join(outside, "foreign.md");
+        NodeFS.writeFileSync(foreign, NodeFS.readFileSync(dossierFile), { mode: 0o644 });
+        NodeFS.chmodSync(foreign, 0o644);
+        NodeFS.chmodSync(folder, 0o755);
+        NodeFS.rmSync(dossierFile, { force: true });
+        NodeFS.symlinkSync(foreign, dossierFile);
+        const foreignScript = NodePath.join(outside, "script.md");
+        NodeFS.writeFileSync(foreignScript, "outside script\n", { mode: 0o644 });
+        NodeFS.rmSync(scriptFile);
+        NodeFS.symlinkSync(foreignScript, scriptFile);
+
+        const result = yield* prepare({ thread: thread(), dossier: DOSSIER });
+        assert.deepStrictEqual([result.dossier, result.script], ["none", "none"]);
+        assert.strictEqual(modeOf(foreign), 0o644);
+        assert.strictEqual(NodeFS.readFileSync(foreignScript, "utf8"), "outside script\n");
+        assert.isTrue(NodeFS.lstatSync(dossierFile).isSymbolicLink());
+
+        const read = yield* EditorialVideoWorkspace.use((service) =>
+          service.readFile({
+            thread: thread(),
+            path: "videos/gpt-6-1-terra-threadte/expediente.md",
+          }),
+        );
+        assert.deepStrictEqual(read, { ok: false, reason: "link" });
       }),
     ),
   );
@@ -363,6 +450,88 @@ describe("EditorialVideoWorkspace.prepare", () => {
           assert.deepStrictEqual(NodeFS.readdirSync(workspace), []);
         }),
       { deleted: true },
+    ),
+  );
+
+  it.effect("reads a regular file of the folder and refuses paths that leave it", () =>
+    withWorkspace((workspace) =>
+      Effect.gen(function* () {
+        yield* prepare({ thread: thread(), dossier: DOSSIER });
+        const read = (path: string) =>
+          EditorialVideoWorkspace.use((service) => service.readFile({ thread: thread(), path }));
+        const ok = yield* read("videos/gpt-6-1-terra-threadte/guion.md");
+        assert.deepStrictEqual(ok, { ok: true, value: SCRIPT_TEMPLATE });
+        assert.deepStrictEqual(yield* read("../outside.md"), { ok: false, reason: "outside" });
+        assert.deepStrictEqual(yield* read("videos/missing/guion.md"), {
+          ok: false,
+          reason: "not-found",
+        });
+        assert.deepStrictEqual(yield* read("videos"), { ok: false, reason: "not-a-file" });
+        assert.isTrue(NodeFS.existsSync(workspace));
+      }),
+    ),
+  );
+});
+
+describe("EditorialVideoWorkspace.prepareIfNeeded", () => {
+  const getDossier = () => Effect.succeed(DOSSIER);
+  const prepareIfNeeded = (
+    input: Parameters<EditorialVideoWorkspace["Service"]["prepareIfNeeded"]>[0],
+  ) => EditorialVideoWorkspace.use((service) => service.prepareIfNeeded(input));
+
+  it.effect("completes a thread created before dossier files when it is opened", () =>
+    withWorkspace((workspace) =>
+      Effect.gen(function* () {
+        // The flat script path of the first video threads, with no file and no folder.
+        const old = thread({ scriptPath: "videos/quantum-1a2b3c4d.md" });
+        const first = yield* prepareIfNeeded({ thread: old, getDossier });
+        assert.deepStrictEqual(first && [first.dossier, first.script], ["written", "created"]);
+        const dossierFile = NodePath.join(workspace, "videos", "quantum-1a2b3c4d", "expediente.md");
+        assert.include(NodeFS.readFileSync(dossierFile, "utf8"), "dossier_id: dos_terra\n");
+        assert.strictEqual(
+          NodeFS.readFileSync(NodePath.join(workspace, "videos", "quantum-1a2b3c4d.md"), "utf8"),
+          SCRIPT_TEMPLATE,
+        );
+        // Nothing missing: opening it again writes nothing.
+        assert.isNull(yield* prepareIfNeeded({ thread: old, getDossier }));
+
+        // A dossier file that is not this thread's (edited frontmatter) is written back.
+        NodeFS.chmodSync(dossierFile, 0o644);
+        NodeFS.writeFileSync(
+          dossierFile,
+          NodeFS.readFileSync(dossierFile, "utf8").replace(
+            "dossier_hash: sha256:one",
+            "dossier_hash: x",
+          ),
+        );
+        const again = yield* prepareIfNeeded({ thread: old, getDossier });
+        assert.strictEqual(again?.dossier, "written");
+        assert.include(NodeFS.readFileSync(dossierFile, "utf8"), "dossier_hash: sha256:one\n");
+      }),
+    ),
+  );
+
+  it.effect("gives a manual thread only its missing script, and loads no dossier for it", () =>
+    withWorkspace((workspace) =>
+      Effect.gen(function* () {
+        const manual = thread({
+          mode: "manual",
+          dossierId: null,
+          dossierHash: null,
+          scriptPath: "videos/manual-threadma/guion.md",
+        });
+        let loads = 0;
+        const counting = () => {
+          loads += 1;
+          return Effect.succeed(DOSSIER);
+        };
+        const result = yield* prepareIfNeeded({ thread: manual, getDossier: counting });
+        assert.deepStrictEqual(result && [result.dossier, result.script], ["none", "created"]);
+        assert.isNull(yield* prepareIfNeeded({ thread: manual, getDossier: counting }));
+        assert.strictEqual(loads, 0);
+        assert.isNull(yield* loadThreadDossier(counting, manual));
+        assert.isTrue(NodeFS.existsSync(NodePath.join(workspace, "videos", "manual-threadma")));
+      }),
     ),
   );
 });

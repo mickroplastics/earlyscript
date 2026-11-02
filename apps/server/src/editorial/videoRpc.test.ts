@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import { checkScript } from "@earlyscript/editorial-script";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  type EditorialTrendDossier,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES,
@@ -29,6 +30,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import { EditorialReadService } from "./EditorialReadService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -350,6 +352,102 @@ describe("editorial video RPC", () => {
         assert.strictEqual(yield* Queue.size(views), 0);
         yield* Fiber.interrupt(fiber);
       }),
+    ),
+  );
+});
+
+describe("editorial video RPC, opening a thread", () => {
+  /** The testkit thread's dossier as the read side gives it: one evidence item. */
+  const dossier = {
+    trend: {
+      dossierId: "dossier-1",
+      runId: "run-1",
+      label: "quantum error correction",
+      terms: ["quantum"],
+      subtitle: null,
+      stage: "growing",
+      corroboration: "single_source",
+      items7d: 3,
+      items28d: 5,
+      authors7d: 3,
+      volumeRank: 1,
+      scoreRank: 1,
+      score: 1,
+      growth: 2,
+      affinity: 0.7,
+      sourceCount: 1,
+      sources: ["hn"],
+      sparkline: [],
+      isNew: false,
+    },
+    run: {
+      runId: "run-1",
+      cutoffAt: "2026-10-31T00:00:00.000Z",
+      finishedAt: null,
+      status: "complete",
+      configVersion: null,
+      sources: ["hn"],
+      dossierCount: 1,
+    },
+    rankMethod: "weighted_sum.v0.01",
+    rankComponents: [],
+    affinityThreshold: 0.6,
+    curve: [],
+    coverage: [],
+    evidence: [
+      {
+        itemId: "itm_hn_1",
+        source: "hn",
+        title: "IBM roadmap",
+        excerpt: "",
+        author: null,
+        publishedAt: "2026-10-30T10:00:00.000Z",
+        permalink: "https://news.ycombinator.com/item?id=1",
+        externalUrl: null,
+      },
+    ],
+    evidenceTotal: 1,
+    evidenceOffset: 0,
+    evidenceRange: { from: "2026-10-30T10:00:00.000Z", to: "2026-10-30T10:00:00.000Z" },
+  } as unknown as EditorialTrendDossier;
+
+  it.effect("writes the folder of a thread created before dossier files when it is opened", () =>
+    withVideoWorkspace(({ workspace }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        // The testkit thread predates folders: flat script path, no file, no dossier file.
+        assert.isFalse(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+        const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({
+          threadId: THREAD,
+        }).pipe(Stream.take(1), Stream.runHead);
+        const view = first._tag === "Some" ? first.value : null;
+        assert.isTrue(view?.video?.script.exists);
+        assert.strictEqual(view?.video?.script.dossierPath, "videos/quantum/expediente.md");
+        const text = NodeFS.readFileSync(`${workspace}/videos/quantum/expediente.md`, "utf8");
+        assert.include(text, "dossier_id: dossier-1\ndossier_hash: sha256:dossier\n");
+        assert.include(text, "### [itm_hn_1] IBM roadmap");
+        assert.include(text, "- Etapa: en crecimiento · corroboración: una sola fuente");
+        const mtime = NodeFS.statSync(`${workspace}/videos/quantum/expediente.md`).mtimeMs;
+
+        // Opening it again finds nothing missing and writes nothing.
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.strictEqual(
+          NodeFS.statSync(`${workspace}/videos/quantum/expediente.md`).mtimeMs,
+          mtime,
+        );
+      }).pipe(
+        Effect.provide(
+          videoRpcLayer.pipe(
+            Layer.provide(
+              Layer.mock(EditorialReadService)({ getDossier: () => Effect.succeed(dossier) }),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
     ),
   );
 });

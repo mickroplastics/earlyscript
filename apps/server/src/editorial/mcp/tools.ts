@@ -4,7 +4,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as EditorialThreadService from "../EditorialThreadService.ts";
-import * as ScriptVersionService from "../ScriptVersionService.ts";
+import * as VideoWorkspace from "../VideoWorkspace.ts";
 
 const Position = { line: Schema.Int, column: Schema.Int };
 
@@ -28,7 +28,8 @@ const ScriptCheckTool = Tool.make("script_check", {
     "Check this video thread's script file without changing it: Hook, numbered Blocks, Close and optional Sources headings, claims without a citation, and citations missing from the thread's dossier evidence. It counts detectable citations; it does not verify that a source supports a claim.",
   parameters: Schema.Struct({
     path: TrimmedNonEmptyString.annotate({
-      description: "Script file relative to this thread's workspace, e.g. videos/quantum.md.",
+      description:
+        "Script file relative to this thread's workspace, inside its video folder, e.g. videos/quantum-1a2b3c4d/guion.md.",
     }),
     dossierId: Schema.optional(
       TrimmedNonEmptyString.annotate({
@@ -42,7 +43,7 @@ const ScriptCheckTool = Tool.make("script_check", {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     EditorialThreadService.EditorialThreadService,
-    ScriptVersionService.ScriptVersionService,
+    VideoWorkspace.EditorialVideoWorkspace,
   ],
 })
   .annotate(Tool.Title, "Check the video script")
@@ -76,7 +77,7 @@ const DossierReadTool = Tool.make("dossier_read", {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     EditorialThreadService.EditorialThreadService,
-    ScriptVersionService.ScriptVersionService,
+    VideoWorkspace.EditorialVideoWorkspace,
   ],
 })
   .annotate(Tool.Title, "Read the video dossier")

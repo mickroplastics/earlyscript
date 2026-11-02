@@ -1841,3 +1841,24 @@ Decisiones reversibles:
 - `AGENTS.md` vive en el Estudio. Un hilo de video abierto en otro proyecto (el cliente elige el proyecto usado más recientemente) no lo ve, pero `dossier_read` le da lo mismo por hilo.
 
 Fuera de alcance, observado en la prueba real: T3 renombra el hilo tras el primer mensaje («Video: anthropic ipo filing valuation» pasó a «Opinar sobre una noticia»). Las escrituras del agente en el guion no crean versiones; las versiones siguen saliendo del editor y de «Guardar versión».
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `065acde8e6`)
+
+Informe y arneses de Sol en Gertrudis, `~/earlyscript-data/verify-video-context/` (`informe.md`, `adversarial.mjs`, `adversarial-mcp.mjs`). Ningún archivo de upstream nuevo.
+
+**H1, escrituras fuera del workspace por enlaces.** Archivo nuevo `videoFolderFiles.ts`. Recorre la ruta componente a componente desde el `realpath` del workspace y comprueba cada carpeta existente con `lstat` antes de crear nada; las que faltan las crea de una en una. Un enlace simbólico en cualquier componente (`videos`, la carpeta del video, `expediente.md`, `guion.md`) se rechaza. El archivo final se abre con `O_NOFOLLOW`; Windows no lo tiene y hace un `lstat` antes. La lectura, la comparación y el `chmod` usan el descriptor abierto. La escritura del expediente sigue yendo por archivo temporal y `rename`, que reemplaza la entrada y no sigue un enlace. El guion se crea con `wx`. Las rutas con `..`, absolutas, con `~`, con barra invertida o con NUL se rechazan.
+
+**H2, `dossier_read` con el expediente de otro hilo.** `EditorialVideoWorkspace.readFile` lee con la misma política y `dossier_read` solo devuelve un archivo cuyo frontmatter trae el `dossier_id` y el `dossier_hash` del hilo (`isDossierFileOf`). En cualquier otro caso devuelve `dossier: null` y la nota «El expediente de este hilo no está disponible. Pide al operador que vuelva a abrir el hilo: al abrirlo, Earlyscript lo escribe de nuevo desde la tendencia.» Cambia el texto propuesto («vuelve a crearlo desde la tendencia») porque, tras H5, la acción que lo repara es abrir el hilo. `script_check` usa la misma comprobación para tomar la evidencia del archivo.
+
+**H3, `AGENTS.md` borrado no volvía.** `VideoProject.resolve` también escribe `AGENTS.md` y `CLAUDE.md`, solo si faltan, cuando el proyecto recibido es el Estudio (misma carpeta real). A un proyecto distinto no le escribe nada.
+
+**H4, `script_check` fuera de la carpeta del video.** Solo lee el guion registrado del hilo o un archivo dentro de `videos/<carpeta del hilo>/`, sin enlaces. En otro caso responde «script_check only reads files inside this thread's folder.» La herramienta deja de depender de `ScriptVersionService` y pasa a depender de `EditorialVideoWorkspace`, montado en la misma capa (`videoThreadLayer.ts`).
+
+**H5, sin forma de completar un hilo anterior.** Al suscribirse a un hilo de video, que es lo que hace el cliente al abrirlo (también desde «Abrir hilo de video» en la ficha o en la lista), `videoRpc.ts` llama a `prepareIfNeeded` antes de la primera vista. Se ejecuta si falta el guion, o si el hilo es asistido con expediente y su archivo falta o no es el suyo. Lee el expediente con `EditorialReadService` y escribe la carpeta. No hace nada en un hilo ya decidido y nunca hace fallar la suscripción. Elegí esta vía y no un botón «Preparar expediente» porque no añade interfaz y cubre a la vez a los hilos creados antes de esta rama y a los expedientes borrados.
+
+Además:
+
+- El expediente traduce los códigos del motor: etapa (`growing` → «en crecimiento», `steady`, `fading`, `unclassified`), corroboración (`single_source` → «una sola fuente», `multi_source`) y método de ranking (`weighted_sum.v0.01` → «suma ponderada, v0.01»). Un código desconocido queda tal cual.
+- `EditorialEvidenceExportService.test.ts` compara las dos rutas con `realpath`; fallaba en macOS por `/var` frente a `/private/var` y ya fallaba en la base.
+
+Queda igual: el `AGENTS.md` ya escrito en una instalación no se actualiza si cambia su plantilla, porque solo se escribe cuando falta.

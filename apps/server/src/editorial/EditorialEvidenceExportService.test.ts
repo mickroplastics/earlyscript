@@ -984,7 +984,8 @@ describe("EditorialEvidenceExportService", () => {
             mode: "share",
             directory: NodePath.join(root, "evidencia", "nueva"),
           });
-          assert.isTrue(ok.directory!.startsWith(NodeFS.realpathSync(root)));
+          // Both sides resolved: on macOS a temporary root is `/var/…`, really `/private/var/…`.
+          assert.isTrue(NodeFS.realpathSync(ok.directory!).startsWith(NodeFS.realpathSync(root)));
           // The CLI path (no root) may still write anywhere real.
           const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
           const free = NodePath.join(outside, "cli");

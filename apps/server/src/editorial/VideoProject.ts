@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
@@ -55,6 +56,18 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const writeInstructions = Effect.andThen(
+    writeIfMissing(STUDIO_AGENTS_FILE, STUDIO_AGENTS_MD),
+    writeIfMissing(STUDIO_CLAUDE_FILE, STUDIO_CLAUDE_MD),
+  );
+
+  /** Same folder as the studio's, through links (`/var` and `/private/var` on macOS). */
+  const isStudioFolder = (root: string) =>
+    Effect.all([fileSystem.realPath(root), fileSystem.realPath(workspaceRoot)]).pipe(
+      Effect.map(([candidate, studioRoot]) => candidate === studioRoot),
+      Effect.orElseSucceed(() => path.resolve(root) === path.resolve(workspaceRoot)),
+    );
+
   const studio = lock.withPermits(1)(
     Effect.gen(function* () {
       // `bootstrap` looks the folder up before creating anything, and a missing one fails it.
@@ -68,8 +81,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* writeIfMissing(STUDIO_AGENTS_FILE, STUDIO_AGENTS_MD);
-      yield* writeIfMissing(STUDIO_CLAUDE_FILE, STUDIO_CLAUDE_MD);
+      yield* writeInstructions;
       const { project } = yield* projects.bootstrap({
         commandId: CommandId.make(`editorial:video-project:${yield* newId}`),
         projectId: ProjectId.make(yield* newId),
@@ -83,7 +95,16 @@ const make = Effect.gen(function* () {
   const resolve: EditorialVideoProject["Service"]["resolve"] = Effect.fn(
     "EditorialVideoProject.resolve",
   )(function* (projectId) {
-    return projectId ?? (yield* studio);
+    if (projectId === undefined) return yield* studio;
+    // After the first thread the client sends the studio's id itself; its instructions are
+    // still written back when missing.
+    const project = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(project) && (yield* isStudioFolder(project.value.workspaceRoot))) {
+      yield* writeInstructions;
+    }
+    return projectId;
   });
 
   return EditorialVideoProject.of({ resolve });

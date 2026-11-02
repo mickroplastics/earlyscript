@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - writes the read-only dossier file with its mode.
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-
 import { SCRIPT_TEMPLATE } from "@earlyscript/editorial-script";
 import {
   EditorialDossierId,
@@ -18,7 +14,15 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import type { VideoThread } from "./persistence/EditorialModel.ts";
 import { threadWorkspaceRoot } from "./threadWorkspace.ts";
-import { dossierPathOf, renderDossierMarkdown } from "./videoWorkspaceFormat.ts";
+import {
+  createVideoFileIfMissing,
+  readVideoFile,
+  type VideoFileOutcome,
+  type VideoFileRefusal,
+  videoFileExists,
+  writeReadOnlyVideoFile,
+} from "./videoFolderFiles.ts";
+import { dossierPathOf, isDossierFileOf, renderDossierMarkdown } from "./videoWorkspaceFormat.ts";
 
 /** What preparing a thread's folder did, for the log and the tests. */
 export interface VideoWorkspaceResult {
@@ -28,11 +32,17 @@ export interface VideoWorkspaceResult {
   readonly script: "created" | "exists" | "none";
 }
 
+/** A file of a thread's workspace, or why it was not read. */
+export type VideoFileRead = VideoFileOutcome<string> | { ok: false; reason: "no-workspace" };
+
+type DossierLoader = (
+  input: EditorialGetDossierInput,
+) => Effect.Effect<EditorialTrendDossier, EditorialReadError>;
+
 /**
- * Prepares the folder of a video thread in its workspace: the dossier as read-only Markdown
- * (`videos/<slug>/expediente.md`) and the script from the template, so the agent and the
- * operator start from the same files. Never fails: the thread is already created, and a folder
- * that cannot be written leaves "Abrir guion" to create the script as before.
+ * A video thread's folder: the read-only dossier (`videos/<slug>/expediente.md`) and the
+ * script from the template. No read or write follows a link below the workspace root
+ * (`videoFolderFiles.ts`). Never fails; "Abrir guion" still creates the script.
  */
 export class EditorialVideoWorkspace extends Context.Service<
   EditorialVideoWorkspace,
@@ -46,6 +56,20 @@ export class EditorialVideoWorkspace extends Context.Service<
       readonly thread: VideoThread;
       readonly dossier: EditorialTrendDossier | null;
     }) => Effect.Effect<VideoWorkspaceResult>;
+    /**
+     * Prepares the folder of a thread opened again when its script is missing, or when it has
+     * a dossier and its dossier file is missing or is not this thread's (`isDossierFileOf`).
+     * Threads created before dossier files get theirs this way. Null when nothing was needed.
+     */
+    readonly prepareIfNeeded: (input: {
+      readonly thread: VideoThread;
+      readonly getDossier: DossierLoader | null;
+    }) => Effect.Effect<VideoWorkspaceResult | null>;
+    /** A workspace-relative text file of the thread, read without following links. */
+    readonly readFile: (input: {
+      readonly thread: VideoThread;
+      readonly path: string;
+    }) => Effect.Effect<VideoFileRead>;
   }
 >()("t3/editorial/VideoWorkspace/EditorialVideoWorkspace") {}
 
@@ -80,71 +104,34 @@ export const readWholeDossier = Effect.fn("EditorialVideoWorkspace.readWholeDoss
   return { ...first, evidence, evidenceOffset: 0 } satisfies EditorialTrendDossier;
 });
 
-/** Workspace-relative and inside it, by syntax; symlinks are checked when writing. */
-const isInside = (root: string, target: string) => {
-  const relative = NodePath.relative(root, target);
-  return relative.length > 0 && !relative.startsWith("..") && !NodePath.isAbsolute(relative);
-};
+/** The whole dossier of an assisted thread, or null when it has none or the run is unreadable. */
+export const loadThreadDossier = (getDossier: DossierLoader | null, thread: VideoThread) =>
+  getDossier === null ||
+  thread.mode !== "assisted" ||
+  thread.runId === null ||
+  thread.dossierId === null
+    ? Effect.succeed(null)
+    : readWholeDossier(getDossier, { runId: thread.runId, dossierId: thread.dossierId }).pipe(
+        Effect.orElseSucceed(() => null),
+      );
 
-const isMissing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
-
-/**
- * The real folder of `relativeFile`'s parent, created if missing, or null when it leaves the
- * workspace (an absolute path, `..`, or a symlinked folder pointing out).
- */
-const folderInside = async (root: string, relativeFile: string): Promise<string | null> => {
-  if (NodePath.isAbsolute(relativeFile) || relativeFile.includes("\0")) return null;
-  const target = NodePath.resolve(root, relativeFile);
-  if (!isInside(root, target)) return null;
-  const folder = NodePath.dirname(target);
-  await NodeFSP.mkdir(folder, { recursive: true });
-  const [realRoot, realFolder] = await Promise.all([
-    NodeFSP.realpath(root),
-    NodeFSP.realpath(folder),
-  ]);
-  return realFolder === realRoot || isInside(realRoot, realFolder) ? realFolder : null;
-};
-
-/** Written through a temporary file and a rename, so a reader never sees half a dossier. */
-const writeReadOnly = async (folder: string, name: string, contents: string) => {
-  const target = NodePath.join(folder, name);
-  const current = await NodeFSP.readFile(target, "utf8").catch((error: unknown) => {
-    if (isMissing(error)) return null;
-    throw error;
-  });
-  if (current === contents) {
-    await NodeFSP.chmod(target, 0o444);
-    return "unchanged" as const;
-  }
-  const temporary = NodePath.join(folder, `.${name}.${process.pid}.tmp`);
-  await NodeFSP.rm(temporary, { force: true });
-  await NodeFSP.writeFile(temporary, contents, { flag: "wx", mode: 0o444 });
-  await NodeFSP.rename(temporary, target);
-  return "written" as const;
-};
-
-/** `wx`: a script that exists, written by the agent or the operator, is never replaced. */
-const createIfMissing = async (folder: string, name: string, contents: string) =>
-  NodeFSP.writeFile(NodePath.join(folder, name), contents, { flag: "wx" }).then(
-    () => "created" as const,
-    (error: NodeJS.ErrnoException) => {
-      if (error.code === "EEXIST") return "exists" as const;
-      throw error;
-    },
-  );
+const scriptOutcome = (outcome: VideoFileOutcome<"created" | "exists">) =>
+  outcome.ok ? outcome.value : "none";
 
 const make = Effect.gen(function* () {
   const rootOf = threadWorkspaceRoot(
     yield* ThreadManagement.ThreadManagementService,
     yield* ProjectService.ProjectService,
   );
+  const workspaceRootOf = (thread: VideoThread) =>
+    rootOf(thread.threadId).pipe(Effect.orElseSucceed(() => null));
 
   const prepare: EditorialVideoWorkspace["Service"]["prepare"] = Effect.fn(
     "EditorialVideoWorkspace.prepare",
   )(function* ({ thread, dossier }) {
     const none: VideoWorkspaceResult = { workspaceRoot: null, dossier: "none", script: "none" };
     const scriptPath = thread.scriptPath;
-    const root = yield* rootOf(thread.threadId).pipe(Effect.orElseSucceed(() => null));
+    const root = yield* workspaceRootOf(thread);
     if (root === null || scriptPath === null) return none;
     const dossierPath = dossierPathOf(thread);
     const contents =
@@ -156,17 +143,13 @@ const make = Effect.gen(function* () {
             trendKey: thread.trendKey,
           });
     return yield* Effect.tryPromise(async (): Promise<VideoWorkspaceResult> => {
-      const scriptFolder = await folderInside(root, scriptPath);
-      const script =
-        scriptFolder === null
-          ? "none"
-          : await createIfMissing(scriptFolder, NodePath.basename(scriptPath), SCRIPT_TEMPLATE);
+      const script = scriptOutcome(
+        await createVideoFileIfMissing(root, scriptPath, SCRIPT_TEMPLATE),
+      );
       let written: VideoWorkspaceResult["dossier"] = "none";
       if (contents !== null && dossierPath !== null) {
-        const dossierFolder = await folderInside(root, dossierPath);
-        if (dossierFolder !== null) {
-          written = await writeReadOnly(dossierFolder, NodePath.basename(dossierPath), contents);
-        }
+        const outcome = await writeReadOnlyVideoFile(root, dossierPath, contents);
+        if (outcome.ok) written = outcome.value;
       }
       return { workspaceRoot: root, dossier: written, script };
     }).pipe(
@@ -182,7 +165,42 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return EditorialVideoWorkspace.of({ prepare });
+  const readFile: EditorialVideoWorkspace["Service"]["readFile"] = Effect.fn(
+    "EditorialVideoWorkspace.readFile",
+  )(function* ({ thread, path }) {
+    const root = yield* workspaceRootOf(thread);
+    if (root === null) return { ok: false, reason: "no-workspace" } as const;
+    return yield* Effect.tryPromise(() => readVideoFile(root, path)).pipe(
+      Effect.orElseSucceed(
+        () => ({ ok: false, reason: "not-a-file" as VideoFileRefusal }) as const,
+      ),
+    );
+  });
+
+  /** Whether opening the thread should write its folder again. */
+  const needsPreparation = Effect.fn("EditorialVideoWorkspace.needsPreparation")(function* (
+    thread: VideoThread,
+  ) {
+    const root = yield* workspaceRootOf(thread);
+    if (root === null || thread.scriptPath === null) return false;
+    const scriptPath = thread.scriptPath;
+    if (!(yield* Effect.promise(() => videoFileExists(root, scriptPath).catch(() => true)))) {
+      return true;
+    }
+    const dossierPath = dossierPathOf(thread);
+    if (thread.mode !== "assisted" || dossierPath === null) return false;
+    const dossier = yield* readFile({ thread, path: dossierPath });
+    return !dossier.ok || !isDossierFileOf(dossier.value, thread);
+  });
+
+  const prepareIfNeeded: EditorialVideoWorkspace["Service"]["prepareIfNeeded"] = Effect.fn(
+    "EditorialVideoWorkspace.prepareIfNeeded",
+  )(function* ({ thread, getDossier }) {
+    if (!(yield* needsPreparation(thread))) return null;
+    return yield* prepare({ thread, dossier: yield* loadThreadDossier(getDossier, thread) });
+  });
+
+  return EditorialVideoWorkspace.of({ prepare, prepareIfNeeded, readFile });
 });
 
 export const layer = Layer.effect(EditorialVideoWorkspace, make);
