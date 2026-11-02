@@ -1,5 +1,6 @@
 import { SettingsPageContainer } from "../../components/settings/settingsLayout";
 import { NightlyRunSettings } from "./NightlyRunSettings";
+import { OnboardingSettings } from "./OnboardingSettings";
 import { SourcesSettings } from "./SourcesSettings";
 
 /** Settings › Editorial. Channel profile and connectors join here as sections of their own. */
@@ -8,6 +9,7 @@ export function EditorialSettingsPanel() {
     <SettingsPageContainer>
       <SourcesSettings />
       <NightlyRunSettings />
+      <OnboardingSettings />
     </SettingsPageContainer>
   );
 }

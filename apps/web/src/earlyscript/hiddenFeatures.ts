@@ -56,6 +56,8 @@ const SETTINGS_PATH_FLAGS: Readonly<Record<string, EarlyscriptFlagName>> = {
 const SETTINGS_ITEM_FLAGS: Readonly<Record<string, EarlyscriptFlagName>> = {
   "linked-environments-beta": "remoteAccess",
   "guest-links": "relay",
+  // Upstream's policy row is replaced by PrivacySettingsRow; Editorial has its own entry.
+  "privacy-policy": "marketing",
 };
 
 function settingsPathVisible(path: string, flags: EarlyscriptFlags = earlyscriptFlags): boolean {

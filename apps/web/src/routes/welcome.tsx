@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
 import { NoProjectsHero } from "../components/NoProjectsHero";
-import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
+import { EarlyscriptWizard as WelcomeWizard } from "../editorial/onboarding/EarlyscriptWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);

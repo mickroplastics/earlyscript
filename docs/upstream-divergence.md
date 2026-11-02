@@ -1798,3 +1798,37 @@ Informe en `~/earlyscript-data/shell-es-verify/informe-3.md`; R5 cerrado.
 Consecuencias aceptadas: un nodo que sale de un ámbito conserva el valor que tenía al salir. Si nadie lo adopta, o si lo adopta otro ámbito cuando ya está en español, queda traducido después de los desmontajes, en lugar de volver a su inglés original. Un nodo que sale del DOM y vuelve es nuevo para el ámbito: si vuelve con la traducción propia, el ámbito no puede distinguirla de un español de upstream y la conserva; si vuelve con inglés, lo traduce y lo restaura al desmontar.
 
 Regresiones en `locale/ShellLocale.browser.test.tsx` («a scope restores only what it still observes»), con dos `useScopedLocale` reales sobre las opciones de `SIDEBAR_LOCALE` y `THREAD_LOCALE`: la secuencia de Sol A → B → `body` con «Borrar» de upstream en texto, `title` y `aria-label` tras ambos desmontajes; un portal que nadie adopta, intacto y sin escrituras posteriores; un nodo que sale del DOM y vuelve, primero con la traducción y después con inglés. Con el `scopedLocale.ts` anterior fallan las tres.
+
+## Asistente de primer arranque: carcasa (rama `es/onboarding-shell`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). El asistente de T3 Code (Connect / Agents / Projects, en inglés y con un pie que decía que se recogían datos de uso anónimos con enlace a `t3.codes`) se sustituye en `/welcome` por el de Earlyscript: cuatro pasos de `apps/web/src/editorial/onboarding/steps.ts`, cada aceptación registrada en el servidor con fecha y versión (observación 9 del Comité). `WelcomeWizard.tsx` sigue en el árbol, sin montar.
+
+Archivos de upstream tocados (enganches de una línea):
+
+| Archivo                                               | Líneas       | Cambio                                                                                                                                                                    |
+| ----------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/routes/welcome.tsx`                     | 8            | Importa `EarlyscriptWizard as WelcomeWizard`: el montaje de la línea 39 queda igual y monta el nuestro.                                                                   |
+| `apps/web/src/components/settings/SettingsPanels.tsx` | 4, 2007      | El import de `PRIVACY_POLICY_URL` pasa a ser el de `PrivacySettingsRow`, que sustituye la fila «Privacy policy» de Acerca de › Legal (texto falso y enlace a `t3.codes`). |
+| `packages/contracts/src/index.ts` y `rpc.ts`          | 77; 42, 2154 | Exportación y `.merge(EditorialOnboardingRpcGroup)`.                                                                                                                      |
+| `apps/server/src/ws.ts`                               | 249, 1883    | Handlers del grupo, como §18 y §22.                                                                                                                                       |
+| `apps/server/src/server.ts`                           | 57, 645      | `EditorialOnboardingRpc.layer` junto a `EditorialSourcesRpc.layer`.                                                                                                       |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 9, 55        | Ámbitos del grupo.                                                                                                                                                        |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 14, 27       | Agregados del grupo.                                                                                                                                                      |
+
+`apps/server/src/editorial/persistence/Migrations.ts` (propio) registra la 012 y la marca como repetible. `apps/web/src/earlyscript/hiddenFeatures.ts` (propio) oculta la entrada «privacy-policy» del buscador de Ajustes con la bandera `marketing`; la búsqueda encuentra en su lugar «Cómo se tratan tus datos» y «Asistente de inicio» (`settingsEntry.ts`). `settingsSearch.ts` y `legalLinks.ts` no se tocan: `PRIVACY_POLICY_URL` solo lo usa `WelcomeWizard.tsx`, que ya no se monta.
+
+Archivos nuevos:
+
+- `packages/contracts/src/editorialOnboarding.ts`: grupo `editorial.onboarding.*`. `record` y `complete` con `orchestration:operate`; `list` y `status` con `orchestration:read`. Pasos `datos`, `proveedores`, `estudio`, `motor` (los de `steps.ts`; `contractStep` en la web no compila si divergen). Carga de hasta 16 KiB de JSON.
+- `apps/server/src/editorial/EditorialOnboardingService.ts`, `onboardingRpc.ts`, `EditorialOnboardingService.test.ts` y `persistence/Migrations/012_EditorialOnboarding.ts`: tablas `editorial_onboarding_acceptances` (id, paso, `accepted_at`, carga JSON validada con `json_valid`, `app_version` del servidor) y `editorial_onboarding_completions` (cuándo se terminaron los cuatro pasos). Solo se insertan filas; reabrir el asistente añade otras.
+- `apps/web/src/editorial/onboarding/`: `EarlyscriptWizard.tsx` (contenedor: RPC, `completeOnboarding()` de upstream y cierre), `EarlyscriptWizardView.tsx` (vista con los pasos, cabecera de upstream `WizardSteps` y pie de privacidad), `wizardNavigation.ts` y su prueba, `onboardingState.ts` (consultas y órdenes), `DataHandlingDialog.tsx` («Cómo se tratan tus datos» y el pie) y `EarlyscriptWizardView.browser.test.tsx`.
+- `apps/web/src/editorial/settings/OnboardingSettings.tsx` (Ajustes › Editorial › Asistente de inicio: reabrir, decisiones registradas y el diálogo de datos) y `PrivacySettingsRow.tsx`.
+
+Decisiones reversibles:
+
+- Sin X en el primer arranque, con X al reabrir desde Ajustes (`onboardingCompletedAt` ya fijado al montar). En el primer arranque la X de upstream daba el asistente por terminado y saltaba el consentimiento de datos; nadie queda encerrado porque la compuerta solo lleva a `/welcome` desde `/`. La X y «Entrar sin configurar» llaman `completeOnboarding()` del cliente, sin registrar un completado en el servidor; si no, la compuerta volvería a abrir `/welcome`.
+- Un paso solo avanza cuando el servidor guardó su aceptación; si falla, el paso queda en pantalla con el motivo en español. Terminar registra el completado en el servidor y después marca el cliente.
+- Sin servidor local (`localAvailable` falso o sin entorno primario) el asistente lo dice y ofrece «Entrar sin configurar»; no bloquea.
+- Navegación: la cabecera abre cualquier paso ya alcanzado; los pasos reciben `onBack` (nulo en el primero). Volver y aceptar de nuevo añade otra fila.
+- `aria-label` en español de `WizardSteps` («Progreso del asistente», «…, paso N») y del cierre («Cerrar») con `useScopedLocale`, limitado al popup del asistente y solo a `aria-label`. En móvil `WizardSteps` oculta las etiquetas: la carcasa añade «Paso N de 4: …» bajo la cabecera.
+- Texto de privacidad: «sin telemetría ni analítica»; no dice que nada salga de la máquina. El diálogo lista lo que sí sale: capturas de las fuentes activas, textos al proveedor de modelos elegido al redactar, descarga del modelo de embeddings desde Hugging Face, y consultas heredadas sin bandera (catálogo de modelos y precios de litellm desde GitHub, iconos de sitios desde Google). Los datos viven en `~/.earlyscript` y `~/earlyscript-data`.

@@ -54,6 +54,7 @@ import * as EditorialResultsRpc from "./editorial/resultsRpc.ts";
 import * as EditorialVideoRpc from "./editorial/videoRpc.ts";
 import * as EditorialSourcesRpc from "./editorial/sourcesRpc.ts";
 import * as EditorialJobsRpc from "./editorial/jobsRpc.ts";
+import * as EditorialOnboardingRpc from "./editorial/onboardingRpc.ts";
 import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
 import * as EditorialPresentation from "./editorial/EditorialPresentationService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -641,6 +642,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(EditorialResultsRpc.layer),
   Layer.provideMerge(EditorialVideoRpc.layer),
   Layer.provideMerge(EditorialSourcesRpc.layer),
+  Layer.provideMerge(EditorialOnboardingRpc.layer),
   Layer.provideMerge(EditorialLayer.layer),
   Layer.provideMerge(
     EditorialRuntime.aroundOrchestration(layerOrchestrationApplication, EditorialPersistence.layer),
