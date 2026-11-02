@@ -1841,3 +1841,4 @@ Decisiones reversibles: estado por tamaños y no por hash; el error queda en el 
 - **H3, rutas temporales de macOS.** La prueba del servicio usa `realpathSync` sobre su directorio temporal.
 - **H4, descarga ya hecha.** `prepareModel` no lanza nada si el último estado conocido es `ready` sin error.
 - **H5, paréntesis huérfano.** «Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models».
+- **H6 (reverificación de Sol sobre `8e0604f1bc`), sin permiso de descarga no se borra nada.** `prepareModel(dir, false)` ya no barre parciales: falla con `Model file missing` y deja intactos los huérfanos, que el siguiente `prepareModel(dir, true)` adopta y reanuda con `Range`. El barrido (el mayor parcial abandonado por archivo se conserva, los demás se borran, el de un proceso vivo se respeta) ocurre solo antes de descargar. Cambia lo descrito en §26 para `allowDownload` falso.

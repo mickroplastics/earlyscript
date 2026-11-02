@@ -190,6 +190,31 @@ describe("prepareModel", () => {
     expect(await modelStatus(dir, files)).toMatchObject({ status: "ready", bytesPresent: total });
   });
 
+  it("keeps a resumable partial through a call that may not download", async () => {
+    const dir = tempDir("model-offline-partial");
+    const served = await mirror();
+    NodeFS.mkdirSync(NodePath.join(dir, "onnx"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dir, "config.json"), contents["config.json"]!);
+    const partial = NodePath.join(
+      dir,
+      "onnx",
+      `model_quantized.onnx.${NodeCrypto.randomUUID()}.partial`,
+    );
+    NodeFS.writeFileSync(partial, contents["onnx/model_quantized.onnx"]!.subarray(0, 5 * MiB));
+
+    await expect(prepareModel(dir, false, { files })).rejects.toThrow(/Model file missing/);
+    expect(NodeFS.statSync(partial).size).toBe(5 * MiB);
+    expect(await modelStatus(dir, files)).toMatchObject({
+      status: "partial",
+      bytesPresent: files[0]!.bytes + 5 * MiB,
+    });
+
+    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    const onnx = served.requests.filter((request) => request.file === "onnx/model_quantized.onnx");
+    expect(onnx.map((request) => request.range)).toEqual([`bytes=${5 * MiB}-`]);
+    expect(await modelStatus(dir, files)).toMatchObject({ status: "ready", bytesPresent: total });
+  });
+
   it("still refuses a corrupt finished file when it may not download", async () => {
     const dir = tempDir("model-corrupt-offline");
     await prepareModel(dir, true, { files, baseUrl: (await mirror()).baseUrl });

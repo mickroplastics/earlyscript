@@ -91,14 +91,13 @@ const fileDirs = (root: string, files: ReadonlyArray<ModelFile>) =>
   new Set(files.map(({ file }) => NodePath.dirname(NodePath.join(root, file))));
 
 /**
- * Removes partial downloads left by a process that died mid-download, or untouched for an
- * hour, and returns the largest of them per file, kept so a download resumes from it. A
- * live download of the same file by another process keeps its partial.
+ * Before a download: of the partials left by a process that died mid-download, or untouched
+ * for an hour, keeps the largest per file to resume from and removes the rest. A live
+ * download of the same file by another process keeps its partial.
  */
 async function sweepPartials(
   root: string,
   files: ReadonlyArray<ModelFile>,
-  keepForResume: boolean,
 ): Promise<Map<string, PartialFile>> {
   const nowMs = Date.now();
   const resumable = new Map<string, PartialFile>();
@@ -106,7 +105,7 @@ async function sweepPartials(
     for (const partial of await listPartials(dir, nowMs)) {
       if (!partial.abandoned) continue;
       const kept = resumable.get(partial.destination);
-      if (keepForResume && (kept === undefined || kept.size < partial.size)) {
+      if (kept === undefined || kept.size < partial.size) {
         resumable.set(partial.destination, partial);
         if (kept !== undefined) await NodeFSP.rm(kept.path, { force: true });
       } else {
@@ -148,7 +147,11 @@ export async function prepareModel(
   const files = options.files ?? QWEN_FILES;
   const baseUrl = (options.baseUrl ?? MODEL_BASE_URL).replace(/\/+$/, "");
   const bytesTotal = files.reduce((sum, { bytes }) => sum + bytes, 0);
-  const resumable = await sweepPartials(root, files, allowDownload);
+  // Without leave to download nothing on disk is touched: a resumable partial is worth
+  // hundreds of megabytes to the next call that may download.
+  const resumable = allowDownload
+    ? await sweepPartials(root, files)
+    : new Map<string, PartialFile>();
   let bytesBefore = 0;
   let sessionBytes = 0;
   const report = (file: string, bytesDone: number) =>
