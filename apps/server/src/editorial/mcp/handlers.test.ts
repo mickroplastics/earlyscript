@@ -12,6 +12,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import { DossierEvidence } from "../DossierEvidence.ts";
+import { DOSSIER_FILE_SCHEMA } from "../videoWorkspaceFormat.ts";
 import {
   SCRIPT,
   SCRIPT_PATH,
@@ -63,16 +64,19 @@ const errorText = (result: McpSchema.CallToolResult) => {
   return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
 };
 
-it("the editorial catalog has script_check only, read-only", () => {
-  expect(Object.keys(EditorialToolkit.tools)).toEqual(["script_check"]);
+it("the editorial catalog has dossier_read and script_check, both read-only", () => {
+  expect(Object.keys(EditorialToolkit.tools)).toEqual(["dossier_read", "script_check"]);
 });
 
-it.effect("registers script_check alone and refuses tool names it does not register", () =>
+it.effect("registers its two tools and refuses tool names it does not register", () =>
   withVideoWorkspace(() =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
-      expect(server.tools.map((entry) => entry.tool.name)).toEqual(["script_check"]);
-      expect(server.tools[0]?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(server.tools.map((entry) => entry.tool.name)).toEqual([
+        "dossier_read",
+        "script_check",
+      ]);
+      for (const entry of server.tools) expect(entry.tool.annotations?.readOnlyHint).toBe(true);
       for (const name of ["script_write", "editorial_decide", "trend_score"]) {
         const error = yield* Effect.flip(callTool(name, { path: SCRIPT_PATH }));
         expect(error).toMatchObject({ _tag: "InvalidParams", message: `Tool '${name}' not found` });
@@ -143,6 +147,66 @@ it.effect("works in video threads only", () =>
     Effect.gen(function* () {
       const result = yield* callTool("script_check", { path: SCRIPT_PATH }, "thread-upstream");
       expect(errorText(result)).toContain("video threads only");
+    }).pipe(Effect.provide(layerEditorialServer())),
+  ),
+);
+
+/** A dossier file as the server writes it, for the thread's `dossier-1`. */
+const DOSSIER_PATH = "videos/quantum/expediente.md";
+const dossierFile = (dossierId = "dossier-1") =>
+  `---\nschema: ${DOSSIER_FILE_SCHEMA}\ndossier_id: ${dossierId}\ndossier_hash: sha256:dossier\nrun_id: run-1\ntrend_key: null\n---\n\n# Quantum error correction\n\n## Evidencia (1)\n\n### [itm_hn_1] IBM roadmap\n\n- URL: https://news.ycombinator.com/item?id=1\n`;
+
+it.effect("dossier_read gives the thread's trend, folder, script and dossier file", () =>
+  withVideoWorkspace(({ write }) =>
+    Effect.gen(function* () {
+      yield* write(DOSSIER_PATH, dossierFile());
+      const result = yield* callTool("dossier_read", {});
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toEqual({
+        mode: "assisted",
+        trendTitle: "Quantum error correction",
+        folder: "videos/quantum",
+        scriptPath: SCRIPT_PATH,
+        dossierPath: DOSSIER_PATH,
+        dossierId: "dossier-1",
+        dossier: dossierFile(),
+        note: null,
+      });
+    }).pipe(Effect.provide(layerEditorialServer())),
+  ),
+);
+
+it.effect("dossier_read says what to do when the dossier file is not written yet", () =>
+  withVideoWorkspace(() =>
+    Effect.gen(function* () {
+      const result = yield* callTool("dossier_read", {});
+      expect(result.structuredContent).toMatchObject({ dossier: null, dossierPath: DOSSIER_PATH });
+      expect((result.structuredContent as { note: string }).note).toContain("Crear hilo de video");
+      expect(errorText(yield* callTool("dossier_read", {}, "thread-upstream"))).toContain(
+        "video threads only",
+      );
+    }).pipe(Effect.provide(layerEditorialServer())),
+  ),
+);
+
+it.effect("script_check compares with the dossier file when the run is not readable", () =>
+  withVideoWorkspace(({ write }) =>
+    Effect.gen(function* () {
+      yield* write(SCRIPT_PATH, SCRIPT);
+      yield* write(DOSSIER_PATH, dossierFile());
+      const result = yield* callTool("script_check", { path: SCRIPT_PATH });
+      expect(result.structuredContent).toMatchObject({
+        unknownCitations: [{ id: "itm_gh_2" }],
+        dossier: { dossierId: "dossier-1", compared: true },
+      });
+      // A dossier file of another dossier is not this thread's evidence.
+      yield* write(DOSSIER_PATH, dossierFile("dossier-9"));
+      expect(
+        (yield* callTool("script_check", { path: SCRIPT_PATH })).structuredContent,
+      ).toMatchObject({
+        unknownCitations: [],
+        dossier: { dossierId: "dossier-1", compared: false },
+      });
     }).pipe(Effect.provide(layerEditorialServer())),
   ),
 );

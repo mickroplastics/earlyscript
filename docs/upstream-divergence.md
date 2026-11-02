@@ -1798,3 +1798,46 @@ Informe en `~/earlyscript-data/shell-es-verify/informe-3.md`; R5 cerrado.
 Consecuencias aceptadas: un nodo que sale de un ámbito conserva el valor que tenía al salir. Si nadie lo adopta, o si lo adopta otro ámbito cuando ya está en español, queda traducido después de los desmontajes, en lugar de volver a su inglés original. Un nodo que sale del DOM y vuelve es nuevo para el ámbito: si vuelve con la traducción propia, el ámbito no puede distinguirla de un español de upstream y la conserva; si vuelve con inglés, lo traduce y lo restaura al desmontar.
 
 Regresiones en `locale/ShellLocale.browser.test.tsx` («a scope restores only what it still observes»), con dos `useScopedLocale` reales sobre las opciones de `SIDEBAR_LOCALE` y `THREAD_LOCALE`: la secuencia de Sol A → B → `body` con «Borrar» de upstream en texto, `title` y `aria-label` tras ambos desmontajes; un portal que nadie adopta, intacto y sin escrituras posteriores; un nodo que sale del DOM y vuelve, primero con la traducción y después con inglés. Con el `scopedLocale.ts` anterior fallan las tres.
+
+## 29. Contexto del hilo de video (rama `es/video-context`, 2 de noviembre de 2026)
+
+Base: `17dbc59eb8`. Problema observado por Miguel en la app instalada: un hilo de video asistido no sabía de qué tendencia trataba («hola, qué opinas de esta noticia» → «Pásame el enlace»). El hilo guardaba `dossierId` y `dossierHash`, pero el agente no recibía ni el expediente ni instrucciones de su papel. Crear el hilo sigue sin arrancar un agente (§10): el contexto vive en archivos y en una herramienta MCP, y el primer mensaje lo envía el operador.
+
+Archivos de upstream tocados:
+
+| Archivo                 | Líneas    | Alcance                                                                                                                                     |
+| ----------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/package.json` | 88        | Dependencia de desarrollo `@earlyscript/editorial-script`: el cliente toma la plantilla del guion del paquete en vez de mantener una copia. |
+| `pnpm-lock.yaml`        | 1220-1222 | El enlace del workspace que añade la línea anterior.                                                                                        |
+
+Ninguno en `provider-core` ni en los adaptadores. Se descartó pasar un bloque `<earlyscript_video_thread>` por `buildRuntimeInstructions`: esa función es pura y sin hilo, `ClaudeAdapterV2.ts` arma el `systemPrompt` en una función que no conoce servicios, y Codex manda `additionalContext` desde otro punto. Meter el contexto por hilo exigía editar dentro de ambos adaptadores, no un enganche de una línea. En su lugar, la herramienta `dossier_read` y el `AGENTS.md` del Estudio, que le dice al agente que la llame primero. En la prueba real Codex la llamó sin que el mensaje la nombrara.
+
+Archivos nuevos en `apps/server/src/editorial/`:
+
+- `videoWorkspaceFormat.ts`: carpeta del video (`videoFolderOf`: `videos/<slug>-<id>/`; un guion antiguo `videos/<slug>.md` usa `videos/<slug>/`), `dossierPathOf`, `renderDossierMarkdown` (frontmatter con esquema, expediente, hash, corrida y tendencia; resumen redactado si existe; resumen del motor; ventana; cobertura por fuente con `markdownTable`; cada evidencia como `### [itm_…] título` con fuente, fecha, autor, URL y extracto citado con `>`) y `dossierEvidenceOf` (ids de evidencia del archivo si su `dossier_id` es el del hilo).
+- `VideoWorkspace.ts`: servicio `EditorialVideoWorkspace.prepare({ thread, dossier })` y `readWholeDossier` (toda la evidencia por páginas de 50, tope 200). Escribe `expediente.md` con modo 0444 por archivo temporal y `rename`, solo si el texto cambia; crea el guion desde `SCRIPT_TEMPLATE` con `wx`, así que nunca pisa lo que escribió el agente o el operador. Rechaza rutas absolutas, `..` y carpetas enlazadas fuera del workspace. Nunca hace fallar la creación del hilo: registra el error y «Abrir guion» sigue creando el guion como antes.
+- `threadWorkspace.ts`: `threadWorkspaceRoot` (worktree del hilo, si no el checkout del proyecto), extraído de `ScriptVersionService.ts` para compartirlo.
+- `studioInstructions.ts`: texto de `AGENTS.md` del Estudio y `CLAUDE.md` (`@AGENTS.md`), porque Claude Code lee `CLAUDE.md` y Codex `AGENTS.md`.
+- Pruebas: `VideoWorkspace.test.ts`.
+
+Archivos propios tocados:
+
+- `EditorialThreadService.ts`: ruta por defecto del guion `videos/<slug>-<id>/guion.md` (antes `videos/<slug>-<id>.md`). Los hilos ya creados conservan su ruta.
+- `EditorialInboxCommands.ts`: tras `createVideo` (asistido o manual desde la ficha) llama a `prepare`; el asistido lee antes el expediente completo. Un segundo clic en «Crear hilo de video» de una tendencia en producción reanuda la operación y vuelve a escribir el expediente si cambió: así se completa un hilo creado antes de esta rama.
+- `videoRpc.ts`: `createManual` crea el guion del hilo manual; la vista lleva `script.dossierPath`.
+- `VideoProject.ts`: al resolver el Estudio escribe `AGENTS.md` y `CLAUDE.md` con `wx`. Un archivo editado no se toca; uno borrado vuelve en la siguiente creación. No escribe nada en un proyecto que eligió el cliente.
+- `videoThreadLayer.ts`: monta `EditorialVideoWorkspace`. `EditorialInboxCommands` y `videoRpc` lo toman con `Effect.serviceOption`, como otros servicios opcionales de esas capas.
+- `mcp/tools.ts`, `mcp/handlers.ts`: herramienta `dossier_read` sin parámetros (modo, título, carpeta, guion, ruta y contenido del expediente, o una nota en español si falta), de solo lectura como `script_check`. `script_check` compara además las citas con los ids de `expediente.md` cuando `DossierEvidence` no da el expediente. Hasta ahora `DossierEvidence` no se proveía en ningún sitio y `script_check` siempre respondía `compared: false`.
+- `packages/contracts/src/editorialVideo.ts`: `EditorialVideoScript.dossierPath`, opcional para servidores anteriores.
+- `packages/editorial-script/src/script.ts`: `SCRIPT_TEMPLATE`, la plantilla que antes vivía en `videoCommands.ts`.
+- Cliente, `apps/web/src/editorial/`: `VideoThreadSections.tsx` (botón «Pedir un borrador del guion» en un hilo asistido sin turnos ni mensajes; «Abrir expediente», que abre la ruta absoluta y por eso de solo lectura en el panel de archivos; la ruta del guion se corta por el principio para que se vea el nombre del archivo), `videoCommands.ts` (`placeComposerMessage`, que rellena el composer con `useComposerDraftStore.setPrompt` y, si ya hay un borrador escrito, pide confirmación con «Reemplazar»; `openDossier`), `videoThread.logic.ts` (`draftRequestPrompt`, `draftRequestPaths`).
+
+Decisiones reversibles:
+
+- Citas: el `AGENTS.md` y el mensaje piden el id de la evidencia entre corchetes en el texto y la URL en `# Sources`, no la URL en línea, porque `@earlyscript/editorial-script` solo reconoce `[itm_…]` como cita.
+- Hilo manual: recibe el guion, pero no el expediente. `createManualVideo` no adjunta expediente a propósito (§24, condición de la comparación por pares): darle al hilo manual el material del motor contaminaría la condición de control. El encargo pedía escribirlo también en modo manual; esto queda para que Miguel lo decida.
+- El expediente es de solo lectura para el panel de archivos y por permisos (0444). Un agente con shell podría cambiar los permisos; `AGENTS.md` se lo prohíbe y `dossierEvidenceOf` solo acepta el archivo de su propio expediente.
+- El botón solo rellena el composer; no envía nada. Desaparece cuando el hilo tiene un turno o un mensaje.
+- `AGENTS.md` vive en el Estudio. Un hilo de video abierto en otro proyecto (el cliente elige el proyecto usado más recientemente) no lo ve, pero `dossier_read` le da lo mismo por hilo.
+
+Fuera de alcance, observado en la prueba real: T3 renombra el hilo tras el primer mensaje («Video: anthropic ipo filing valuation» pasó a «Opinar sobre una noticia»). Las escrituras del agente en el guion no crean versiones; las versiones siguen saliendo del editor y de «Guardar versión».

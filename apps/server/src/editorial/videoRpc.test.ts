@@ -117,6 +117,7 @@ describe("editorial video RPC", () => {
         assert.deepStrictEqual(before.video?.script, {
           path: SCRIPT_PATH,
           exists: false,
+          dossierPath: "videos/quantum/expediente.md",
           head: null,
           versionCount: 0,
         });

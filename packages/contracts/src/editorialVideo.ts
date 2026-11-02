@@ -93,6 +93,12 @@ export const EditorialVideoScript = Schema.Struct({
   path: Schema.NullOr(Schema.String),
   /** Whether the server could read the file when this view was built. */
   exists: Schema.Boolean,
+  /**
+   * The read-only Markdown copy of the dossier the server writes next to the script
+   * (`videos/<slug>/expediente.md`); null for a thread without a dossier. Absent from older
+   * servers.
+   */
+  dossierPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The version a decision must name: the latest one saved. */
   head: Schema.NullOr(EditorialVideoScriptVersion),
   versionCount: NonNegativeInt,

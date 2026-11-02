@@ -41,6 +41,8 @@ import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type { DecisionAction, VideoThread } from "./persistence/EditorialModel.ts";
 import { ScriptVersionService } from "./ScriptVersionService.ts";
+import { EditorialVideoWorkspace } from "./VideoWorkspace.ts";
+import { dossierPathOf } from "./videoWorkspaceFormat.ts";
 import { WorkClockService } from "./WorkClockService.ts";
 
 /** Trace and metric aggregate of each video thread method, merged into `RpcInstrumentation`. */
@@ -239,6 +241,8 @@ const makeHandlers = Effect.gen(function* () {
   const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // Whether the T3 thread still exists; without the service (a test), every thread does.
   const threadManagement = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
+  // Writes a new manual thread's script from the template; absent in tests without a workspace.
+  const workspace = yield* Effect.serviceOption(EditorialVideoWorkspace);
 
   const scriptCounts = boundedCache<{ claims: number; cited: number } | null>();
   const trendTitles = boundedCache<string>();
@@ -369,7 +373,13 @@ const makeHandlers = Effect.gen(function* () {
         definitive: clock.definitive,
         asOf: clock.asOf,
       },
-      script: { path: thread.scriptPath, exists, head, versionCount },
+      script: {
+        path: thread.scriptPath,
+        exists,
+        dossierPath: dossierPathOf(thread),
+        head,
+        versionCount,
+      },
       decision,
       results,
       captures,
@@ -619,6 +629,9 @@ const makeHandlers = Effect.gen(function* () {
       creationSource: "web",
       trendKey: input.trendKey,
     });
+    if (Option.isSome(workspace)) {
+      yield* workspace.value.prepare({ thread: created.thread, dossier: null });
+    }
     return { threadId: ThreadId.make(created.thread.threadId), created: created.created };
   }, Effect.mapError(toVideoError));
 

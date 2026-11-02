@@ -47,6 +47,12 @@ export interface ScriptCheckReport {
   readonly claimsMap: readonly Claim[];
 }
 
+/**
+ * The empty script a video thread starts from: the headings `checkScript` expects, in order.
+ * Scripts are written in English.
+ */
+export const SCRIPT_TEMPLATE = "# Hook\n\n# Block 1\n\n# Close\n\n# Sources\n";
+
 const ABBREVIATION = /(?:^|[^\p{L}.])(?:Inc|Dr|vs|e\.g|i\.e|U\.S)$/u;
 // URLs keep their trailing sentence punctuation outside the match.
 const URL = /\b[a-z][a-z0-9+.-]*:\/\/\S*?(?=[.!?"'”’»)*_~`]*(?:\s|$))/gi;
