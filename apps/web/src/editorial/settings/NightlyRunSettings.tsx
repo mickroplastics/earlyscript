@@ -70,7 +70,7 @@ const cutoffFormat = new Intl.DateTimeFormat("es", {
   year: "numeric",
 });
 
-function nextRunText(settings: EditorialNightlySettings): string {
+export function nextRunText(settings: EditorialNightlySettings): string {
   if (!settings.enabled || settings.nextRunAt === null) {
     return "Desactivada. «Ejecutar ahora» sigue disponible.";
   }
@@ -271,7 +271,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   "invalid-settings": "El ajuste no es válido.",
 };
 
-function failureText(result: AtomCommandResult<unknown, unknown>): string {
+export function failureText(result: AtomCommandResult<unknown, unknown>): string {
   if (result._tag === "Success") return "";
   if (isAtomCommandInterrupted(result)) return "Se canceló.";
   const error = squashAtomCommandFailure(result);

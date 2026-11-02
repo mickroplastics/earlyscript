@@ -105,6 +105,15 @@ const dayFormat = new Intl.DateTimeFormat("es", {
 const formatDays = (days: ReadonlyArray<string>) =>
   days.map((day) => dayFormat.format(new Date(`${day}T00:00:00Z`))).join(", ");
 
+/** What the trend engine was doing when it exited with an error; its log has the detail. */
+const ENGINE_FAILED_TEXT: Readonly<Record<EditorialJobPhaseName, string>> = {
+  collect: "El motor de tendencias terminó con error al capturar las fuentes.",
+  run: "El motor de tendencias terminó con error al agrupar las publicaciones.",
+  check: "El motor de tendencias terminó con error al comprobar la corrida.",
+  import: "El motor de tendencias terminó con error al importar la corrida.",
+  presentations: "El motor de tendencias terminó con error al redactar las tendencias.",
+};
+
 /** The operator's wording of a notice; the technical detail stays on the server. */
 function noticeText(notice: EditorialJobNotice): string {
   switch (notice.code) {
@@ -127,7 +136,7 @@ function noticeText(notice: EditorialJobNotice): string {
     case "engine_missing":
       return "No se encontró el motor de tendencias en esta instalación. Reinstala Earlyscript o revisa EARLYSCRIPT_ENGINE_CLI.";
     case "engine_failed":
-      return `Falló el motor en la fase de ${PHASE_LABEL[notice.phase ?? "run"]}.`;
+      return ENGINE_FAILED_TEXT[notice.phase ?? "run"];
     case "check_failed":
       return "La comprobación no reprodujo la corrida.";
     case "import_failed":

@@ -177,7 +177,7 @@ describe("NightlyRunSettings", () => {
     });
     await using _screen = screen;
     for (const text of [
-      "Falló el motor en la fase de motor. Se reintentará más tarde.",
+      "El motor de tendencias terminó con error al agrupar las publicaciones. Se reintentará más tarde.",
       "Sin corrida los días 28 oct, 29 oct: se capturaron ahora y cuentan desde este corte.",
       "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.",
       "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.",

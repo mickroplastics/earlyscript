@@ -1980,3 +1980,31 @@ Informe en Beatriz, `/home/mick/earlyscript-data/verify-onb-data/informe.md`. Ce
 - **H5, inglés en errores.** `settings/sourcesText.ts` traduce los fallos de conexión (`isTransportConnectionErrorMessage` de `@t3tools/client-runtime/errors`, más «timed out», «not reachable» y «unreachable») a una frase en español. Cualquier otro mensaje se sustituye por «No se pudo contactar con el servidor.» y su detalle va a la consola. Afecta también a Ajustes › Fuentes.
 - **H6, bloqueo del servidor.** Cuando `collectBlocked` del servidor no coincide con el estado de la ficha local, la fila toma el estado del servidor y dice «Bloqueada en esta instalación: el servidor no permite capturarla.» (o su equivalente pendiente); el servidor no da motivo.
 - `apps/web/src/editorial/onboarding/README.md` pasado por `vp fmt` (venía sin formato desde la base).
+
+## N. Paso «Motor y nocturna» y primera corrida desde Tendencias (rama `es/onboarding-engine-run`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). No toca archivos de upstream.
+
+Archivos propios nuevos, en `apps/web/src/editorial/`:
+
+- `onboarding/EngineStep.tsx` (reemplaza el stub) y `onboarding/engineStep.logic.ts`: modelo local (`ModelDownloadCard`, sin editar), interruptor y hora de la corrida nocturna con la zona del servidor en palabras, primera corrida con sus fases. Guarda cada cambio con `editorial.jobs.updateSettings` en el momento, como Ajustes › Editorial; `onContinue` entrega `{ nightlyEnabled, timeOfDay, timezone, firstRunStarted, modelReady }`.
+- `FirstRunCard.tsx` (`FirstRunPanel`, `NightlyNote`, `useFirstRun`, `FirstRunCard`) y `firstRun.logic.ts` (`firstRunView`, `firstRunPhaseRows`): la primera corrida como tarjeta, compartida por el paso y por la bandeja. Sigue el job de `editorial.jobs.watch`, el que contestó `runNow` y el más reciente de `editorial.jobs.list`; los avisos se redactan con `jobMessages` de `jobsState.ts`. Las cinco fases son filas de altura fija; la fase en curso muestra el conteo del motor o, mientras el motor no informa (lo hace cada 1024 textos), el tiempo transcurrido por minuto. En el panel estrecho cada fase terminada muestra solo lo que produjo.
+- Pruebas: `firstRun.logic.test.ts`, `onboarding/engineStep.logic.test.ts`, `FirstRunCard.browser.test.tsx`, `onboarding/EngineStep.browser.test.tsx`, `TrendsEmptyPage.browser.test.tsx` y dos casos nuevos en `TrendInbox.browser.test.tsx`; datos en `firstRun.fixture.ts`.
+
+Archivos propios modificados:
+
+- `TrendInbox.tsx`: una bandeja sin corrida, o con una corrida sin tendencias, muestra `FirstRunCard` centrada en el panel en lugar de «Todavía no hay corridas del motor.»; el menú de orden y el indicador de la cabecera («Corriendo: …») se ocultan mientras no hay tendencias, porque la tarjeta ya muestra las fases.
+- `TrendDossierPage.tsx`: `TrendsEmptyPage`, que la ruta `_chat.editorial.$environmentId.trends.tsx` monta en lugar de «Elige una tendencia» cuando no hay corridas (o «Corrida en curso» mientras corre una); con la barra lateral oculta (móvil o plegada) ofrece «Abrir la bandeja». También el estado vacío de una ficha sin corridas.
+- `EditorialPage.tsx`: `EditorialEmptyPage` acepta `children` (una acción bajo la descripción).
+- `settings/NightlyRunSettings.tsx`: exporta `nextRunText` y `failureText` para reutilizarlas.
+
+Decisiones reversibles: los ajustes del paso se guardan al cambiar, no al pulsar «Continuar»; la nocturna conserva su estado del servidor (desactivada por defecto) y el paso no la activa solo; una corrida terminada sin tendencias no ofrece volver a correr, porque `runNow` devolvería el mismo job del día.
+
+Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `0113697eb1`):
+
+- H1: el tiempo transcurrido usaba `Date.parse` sobre el reloj por minuto de `useNowMinute` (`YYYY-MM-DDTHH:mm`, UTC sin `Z`), que JavaScript lee como hora local: en America/Guayaquil salía «4 h 59 min» al empezar. `minuteClockMs` lo lee como UTC y `firstRunPhaseRows` trabaja en milisegundos; la prueba fija `TZ=America/Guayaquil`.
+- H2: el paso guardaba sin retener el guardado y «Continuar» podía entregar ajustes anteriores al cambio. Ahora muestra el cambio mientras viaja, deshabilita «Continuar» («Guardando…») hasta que el servidor confirma y construye la aceptación con lo confirmado; un fallo se muestra junto al control con «Reintentar» y no deja avanzar.
+- H3: una corrida importada vacía sin job de este servidor dice que no hay registro de su ejecución y ofrece «Ejecutar una corrida» (`runNow` crea el job del día, que no existe). Mientras la lista de jobs carga no se afirma ni se ofrece nada.
+- Redacción sin proveedor o sin sesión (comprobación pendiente de Sol): el job termina `done` con `presentations_pending` o `presentations_unavailable` y la tarjeta ya no se ve, porque la bandeja tiene tendencias. `DraftingNotice` (en `FirstRunCard.tsx`) avisa arriba de la lista, con enlace a Ajustes › Proveedores, mientras queden tendencias de esa corrida sin redactar; el paso marca la fase de redacción con aviso y explica qué falta (`draftingProblem` en `firstRun.logic.ts`).
+- `jobsState.ts`: `engine_failed` dice qué hacía el motor («terminó con error al agrupar las publicaciones») en lugar de «Falló el motor en la fase de motor».
+- Los `Spinner` propios van envueltos en `aria-hidden`: su `aria-label="Loading"` (inglés) entraba en el nombre de los botones.
