@@ -81,10 +81,12 @@ function StepHarness({
   view,
   saveDraft,
   onContinue,
+  canEdit,
 }: {
   readonly view: EditorialProfileView | null;
   readonly saveDraft: ProfileSaveDraft;
   readonly onContinue: (acceptance: StudioAcceptance) => void;
+  readonly canEdit: boolean;
 }) {
   const editor = useProfileForm({
     view,
@@ -92,6 +94,7 @@ function StepHarness({
     retry: () => {},
     saveDraft,
     formId: FORM_ID,
+    canEdit,
   });
   return (
     <div className="min-h-screen bg-background p-4 text-foreground sm:p-10">
@@ -111,6 +114,7 @@ const renderStep = async (
   options: {
     readonly view?: EditorialProfileView | null;
     readonly saveDraft?: ProfileSaveDraft;
+    readonly canEdit?: boolean;
   } = {},
 ) => {
   const onContinue = vi.fn<(acceptance: StudioAcceptance) => void>();
@@ -122,6 +126,7 @@ const renderStep = async (
       view={options.view === undefined ? VIEW : options.view}
       saveDraft={saveDraft}
       onContinue={onContinue}
+      canEdit={options.canEdit ?? true}
     />,
     { router: false },
   );
@@ -245,6 +250,25 @@ describe("StudioStep", () => {
     expect(onContinue).not.toHaveBeenCalled();
   });
 
+  it("shows a read-only session the profile without letting it edit, and still continues", async () => {
+    await page.viewport(390, 844);
+    const { screen, onContinue, saveDraft } = await renderStep({ canEdit: false });
+    await using _screen = screen;
+    await expect
+      .element(page.getByText("Solo lectura: tu sesión no puede cambiar el perfil."))
+      .toBeVisible();
+    await expect.element(field("Nombre del canal")).toBeDisabled();
+    await expect.element(field("Audiencia")).toBeDisabled();
+    await expect.element(field("Temas que cubre: tema nuevo")).toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: `Quitar «${V1.include[0]}»` }))
+      .toBeDisabled();
+    await capture("step-readonly-mobile");
+    await userEvent.click(page.getByRole("button", { name: "Continuar" }));
+    expect(saveDraft).not.toHaveBeenCalled();
+    expect(onContinue).toHaveBeenCalledWith({ profileVersion: 1, profileHash: V1.hash });
+  });
+
   it("waits for the profile before offering to continue", async () => {
     for (const [size, width, height] of [
       ["desktop", 1280, 800],
@@ -269,6 +293,7 @@ function SettingsHarness(
     loadError: null,
     retry: () => {},
     formId: FORM_ID,
+    canEdit: true,
     saveDraft: async (draft) => {
       const active = { ...V2, ...draft };
       setView({ ...view, active });

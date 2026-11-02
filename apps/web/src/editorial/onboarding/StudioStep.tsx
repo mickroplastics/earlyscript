@@ -67,6 +67,7 @@ export function StudioStepView({ editor, formId, onBack, onContinue }: StudioSte
                 version={view.active}
                 edited={editor.edited}
                 disabled={editor.saving}
+                readOnly={editor.readOnly}
               />
               <EngineScoringPanel
                 scoring={view.scoring}

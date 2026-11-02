@@ -8,6 +8,7 @@ import type {
   EditorialProfileView,
   EnvironmentId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -18,6 +19,7 @@ import {
   issuesByField,
   profileFormChanged,
   profileFormIssues,
+  PROFILE_READ_ONLY_TEXT,
   profileSaveFailure,
   type ProfileFormValues,
 } from "./profileForm.logic";
@@ -39,6 +41,8 @@ export interface ProfileEditor {
   readonly edited: boolean;
   readonly errors: ReturnType<typeof issuesByField>;
   readonly saving: boolean;
+  /** The session cannot write the profile: fields and saving are off, the reason shown. */
+  readonly readOnly: boolean;
   readonly failure: string | null;
   /**
    * Validates, then saves when the fields changed; an unchanged form answers the active version
@@ -64,12 +68,14 @@ export function useProfileForm({
   retry,
   saveDraft,
   formId,
+  canEdit,
 }: {
   readonly view: EditorialProfileView | null;
   readonly loadError: string | null;
   readonly retry: () => void;
   readonly saveDraft: ProfileSaveDraft;
   readonly formId: string;
+  readonly canEdit: boolean;
 }): ProfileEditor {
   const [typed, setTyped] = useState<ProfileFormValues | null>(null);
   const [showErrors, setShowErrors] = useState(false);
@@ -97,6 +103,10 @@ export function useProfileForm({
       return { _tag: "invalid" };
     }
     if (!profileFormChanged(values, active)) return { _tag: "saved", active };
+    if (!canEdit) {
+      setFailure(PROFILE_READ_ONLY_TEXT);
+      return { _tag: "failed" };
+    }
     setSaving(true);
     const result = await saveDraft(draftFromForm(values));
     setSaving(false);
@@ -130,6 +140,7 @@ export function useProfileForm({
     edited: values !== null && active !== null && profileFormChanged(values, active),
     errors,
     saving,
+    readOnly: !canEdit,
     failure,
     save,
     discard: () => {
@@ -145,7 +156,9 @@ export function useProfileForm({
 export function useProfileEditor(environmentId: EnvironmentId, formId: string): ProfileEditor {
   const query = useEnvironmentQuery(editorialProfileEnvironment.get({ environmentId, input: {} }));
   const update = useAtomCommand(editorialProfileEnvironment.update, { reportFailure: false });
+  const canEdit = useAtomValue(editorialProfileEnvironment.update.permissionAtom(environmentId));
   return useProfileForm({
+    canEdit,
     view: query.data,
     loadError: query.error,
     retry: query.refresh,

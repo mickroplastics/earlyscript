@@ -1835,3 +1835,16 @@ Decisiones reversibles:
 - Lista de temas: un renglón por tema que se ajusta a su texto, con número y botón «Quitar», y un renglón vacío al final para añadir. Enter crea el siguiente, Retroceso en un tema vacío lo quita y pegar varias líneas crea un tema por línea. Reemplazó a un `textarea` de un tema por línea porque los temas largos se partían en dos renglones y en 390 px no se distinguía dónde acababa cada uno. `field-sizing: content` no existe en Safari antiguo; ahí cada renglón se ve con altura de una línea y desplazamiento interno.
 - Audiencia: `textarea` de un solo párrafo (Enter no hace salto), para que no se trunque en móvil.
 - Aceptación del paso: `{ profileVersion, profileHash }`, sin textos.
+
+### Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `15b605cbde`)
+
+Informe en Beatriz `/home/mick/earlyscript-data/verify-onb-studio/informe.md`.
+
+- **H1, redacciones visibles tras guardar.** El `onSuccess` de `editorial.profile.update` (`apps/web/src/editorial/profile/profileState.ts`) llama también a `bumpInbox` (`editorial/state.ts`): la bandeja y los expedientes ya consultados vuelven a leer y muestran «Desactualizado» sin recargar. Regresión en `profile/profileSave.browser.test.tsx`: con los átomos reales de perfil, bandeja y expediente, y Ajustes real, y solo el transporte simulado por un servidor que marca `stale` las redacciones cuando cambia la versión, se lee un expediente, se abre Ajustes, se guarda la v2 y al volver el expediente y la bandeja dicen «Desactualizado». Sin el `bumpInbox` la prueba falla con «Redacción vigente».
+- **H2, guarda de permisos en el cliente.** `packages/contracts/src/editorialProfile.ts` exporta `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` (`update` con `orchestration:operate`), y un archivo de upstream gana dos líneas:
+
+| Archivo                                          | Líneas | Alcance                                                                                                 |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/clientRpcPermissions.ts` | 15, 70 | Importa `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` y lo esparce al final de `CLIENT_GUARDED_RPC_SCOPES`. |
+
+Con eso `permissionAtom` del comando exige la sesión con `orchestration:operate`. `useProfileEditor` lo lee; sin el permiso, `ProfileForm` desactiva campos, renglones y «Quitar» y muestra «Solo lectura: tu sesión no puede cambiar el perfil.»; en Ajustes se desactivan «Guardar versión N» y «Descartar cambios»; el paso «Estudio» sigue permitiendo «Continuar» con la versión activa, sin guardar. Pruebas: caso de solo lectura en `onboarding/StudioStep.browser.test.tsx` y en `profile/profileSave.browser.test.tsx` (permiso denegado, ningún `update`). Mientras se carga la sesión el átomo vale `false`, así que el aviso puede verse un instante al abrir.

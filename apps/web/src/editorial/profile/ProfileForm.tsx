@@ -3,7 +3,7 @@ import type {
   EditorialProfileField,
   EditorialProfileVersion,
 } from "@t3tools/contracts";
-import { ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, LockIcon, XIcon } from "lucide-react";
 import { useId, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { cn } from "../../lib/utils";
 import {
+  PROFILE_READ_ONLY_TEXT,
   profileVersionLabel,
   scoringRows,
   topicCount,
@@ -209,6 +210,8 @@ export interface ProfileFormProps {
   /** True once the fields differ from that version. */
   readonly edited: boolean;
   readonly disabled?: boolean;
+  /** The session cannot write: every field is off and the notice says why. */
+  readonly readOnly?: boolean;
 }
 
 /** Channel name, audience and topic lists of the studio profile. */
@@ -219,13 +222,24 @@ export function ProfileForm({
   errors,
   version,
   edited,
-  disabled = false,
+  disabled: busy = false,
+  readOnly = false,
 }: ProfileFormProps) {
+  const disabled = busy || readOnly;
   const id = (field: EditorialProfileField) => profileFieldId(formId, field);
   const describedBy = (field: EditorialProfileField) =>
     errors[field] ? `${id(field)}-error` : `${id(field)}-hint`;
   return (
     <div className="space-y-4">
+      {readOnly ? (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm text-foreground"
+        >
+          <LockIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          {PROFILE_READ_ONLY_TEXT}
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground" data-testid="profile-version">
         {profileVersionLabel(version)}
         {edited ? <span className="text-foreground"> · con cambios sin guardar</span> : null}

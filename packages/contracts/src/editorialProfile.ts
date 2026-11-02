@@ -217,3 +217,11 @@ export const EDITORIAL_PROFILE_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_PROFILE_WS_METHODS.history]: AuthOrchestrationReadScope,
   [EDITORIAL_PROFILE_WS_METHODS.update]: AuthOrchestrationOperateScope,
 } as const;
+
+/**
+ * The write the client checks before it offers the form, spread into `CLIENT_GUARDED_RPC_SCOPES`
+ * (`clientRpcPermissions.ts`); the server checks it again.
+ */
+export const EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES = {
+  [EDITORIAL_PROFILE_WS_METHODS.update]: AuthOrchestrationOperateScope,
+} as const;

@@ -62,6 +62,7 @@ export function StudioProfileSettingsView({
             version={view.active}
             edited={editor.edited}
             disabled={editor.saving}
+            readOnly={editor.readOnly}
           />
           {editor.failure ? (
             <p className="text-sm text-destructive-foreground" role="alert">
@@ -72,12 +73,16 @@ export function StudioProfileSettingsView({
             <Button
               size="sm"
               variant="ghost"
-              disabled={!editor.edited || editor.saving}
+              disabled={!editor.edited || editor.saving || editor.readOnly}
               onClick={editor.discard}
             >
               Descartar cambios
             </Button>
-            <Button size="sm" disabled={!editor.edited || editor.saving} onClick={onSave}>
+            <Button
+              size="sm"
+              disabled={!editor.edited || editor.saving || editor.readOnly}
+              onClick={onSave}
+            >
               {editor.saving ? <Spinner size="sm" /> : null}
               Guardar versión {view.active.version + 1}
             </Button>

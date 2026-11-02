@@ -10,6 +10,9 @@ import {
   type EditorialProfileVersion,
 } from "@t3tools/contracts";
 
+/** Shown when the session lacks `orchestration:operate`; the server would refuse the save. */
+export const PROFILE_READ_ONLY_TEXT = "Solo lectura: tu sesión no puede cambiar el perfil.";
+
 /** The form as typed: one entry per topic row, blank while it is being edited. */
 export interface ProfileFormValues {
   readonly name: string;
