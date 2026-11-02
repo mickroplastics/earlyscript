@@ -1925,6 +1925,8 @@ Archivos nuevos:
 Decisiones reversibles:
 
 - Sin X en el primer arranque, con X al reabrir desde Ajustes (`onboardingCompletedAt` ya fijado al montar). En el primer arranque la X de upstream daba el asistente por terminado y saltaba el consentimiento de datos; nadie queda encerrado porque la compuerta solo lleva a `/welcome` desde `/`. La X y «Entrar sin configurar» llaman `completeOnboarding()` del cliente, sin registrar un completado en el servidor; si no, la compuerta volvería a abrir `/welcome`.
+- Salida (H2 de la verificación de la integración): terminar, la X y «Entrar sin configurar» llevan a `/editorial/<entorno>/trends` y guardan `trends` como espacio del entorno en `spaceStore`, así la siguiente sesión aterriza ahí (`EditorialLanding`). La landing de esta sesión ya se decidió antes de abrir el asistente, así que volver a `/` mostraba los Hilos de upstream. Sin servidor local se usa el `onDone` de `welcome.tsx` (`/`). Lógica en `onboarding/wizardExit.ts`, con prueba.
+- Cada cambio de paso, también el regreso al primero, deja el popup arriba y el foco en el título del paso (H3).
 - Un paso solo avanza cuando el servidor guardó su aceptación; si falla, el paso queda en pantalla con el motivo en español. Terminar registra el completado en el servidor y después marca el cliente.
 - Sin servidor local (`localAvailable` falso o sin entorno primario) el asistente lo dice y ofrece «Entrar sin configurar»; no bloquea.
 - Navegación: la cabecera abre cualquier paso ya alcanzado; los pasos reciben `onBack` (nulo en el primero). Volver y aceptar de nuevo añade otra fila.

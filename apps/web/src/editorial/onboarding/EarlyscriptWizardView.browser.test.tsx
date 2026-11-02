@@ -126,6 +126,33 @@ describe("EarlyscriptWizardView", () => {
     await expect.element(page.getByRole("button", { name: "Atrás" })).not.toBeInTheDocument();
   });
 
+  it("opens the previous step at its top, title focused, when going back", async () => {
+    const TallStep = ({ onBack }: OnboardingStepProps) => (
+      <div className="flex flex-col gap-4">
+        <p style={{ height: 3000 }}>Paso «proveedores» largo.</p>
+        <button type="button" onClick={onBack ?? undefined}>
+          Atrás
+        </button>
+      </div>
+    );
+    const { element } = setup({ steps: { ...STUB_STEPS, proveedores: TallStep } });
+    await using _screen = await render(element);
+    await userEvent.click(continueButton());
+    await expect.element(page.getByText("Paso «proveedores» largo.")).toBeVisible();
+    const viewport = stepTitle()
+      .element()
+      .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    // The panel animates its height after a step change; scroll once there is room to.
+    await vi.waitFor(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight });
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+    });
+    await userEvent.click(page.getByRole("button", { name: "Atrás" }));
+    await expect.element(stepTitle()).toHaveTextContent("Paso 1 de 4: Datos y permisos");
+    await expect.element(stepTitle()).toHaveFocus();
+    expect(viewport.scrollTop).toBe(0);
+  });
+
   it("stays on the step and says so when the decision is not recorded", async () => {
     const { element } = setup({
       onRecord: async () => ({ ok: false, error: "La base editorial no respondió." }),
