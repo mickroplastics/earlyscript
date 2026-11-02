@@ -41,8 +41,10 @@ import {
   killProcess,
   lastJsonLine,
   LOCK_TOKEN_FLAG,
+  modelsArgs,
   processesWithToken,
   resolveEngineLocation,
+  resolveModelsDir,
   runEngineCommand,
   type EngineLocation,
   type EngineNotFound,
@@ -71,7 +73,6 @@ const NEXT_RUN_LOOKAHEAD = 7;
 /** A capture lock older than this outlived its process; a newer one may still be working. */
 const STALE_COLLECT_LOCK_MS = 60 * 60_000;
 const EMBEDDINGS_CACHE_ENV = "EARLYSCRIPT_EDITORIAL_EMBEDDINGS_CACHE";
-const MODELS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_MODELS_DIR";
 
 export interface EditorialJobsOptions {
   /** Found once at startup; without it every job reports `engine_missing` in its first phase. */
@@ -1209,7 +1210,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       String(ctx.workers),
       "--cache",
       options.cacheFile,
-      ...(options.modelsDir === null ? [] : ["--models", options.modelsDir]),
+      ...modelsArgs(options.modelsDir),
     ];
     const output = yield* engineRun(ctx, "run", args, (line) =>
       Option.match(Option.flatMap(decodeJsonOption(line), decodeEmbedProgress), {
@@ -1406,7 +1407,6 @@ const resolveOptions = Effect.gen(function* () {
   );
   if (Result.isFailure(engine)) yield* Effect.logWarning(engine.failure.message);
   const cache = yield* Config.String(EMBEDDINGS_CACHE_ENV).pipe(Config.option);
-  const models = yield* Config.String(MODELS_DIR_ENV).pipe(Config.option);
   return {
     engine,
     jobsDir: path.join(stateDir, "editorial-jobs"),
@@ -1417,7 +1417,7 @@ const resolveOptions = Effect.gen(function* () {
         path.join(NodeOS.homedir(), "earlyscript-data", "embeddings", "embeddings.sqlite"),
       onSome: (file) => path.resolve(file),
     }),
-    modelsDir: Option.match(models, { onNone: () => null, onSome: (dir) => path.resolve(dir) }),
+    modelsDir: yield* resolveModelsDir,
     ...DEFAULT_JOB_TIMING,
   } satisfies EditorialJobsOptions;
 });

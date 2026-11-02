@@ -14,26 +14,32 @@ export const QWEN_REVISION = "c25a394dd583836952667c12f008335071b3f43d";
 /** What the worker runs; the local embedder refuses any other spec. */
 export const QWEN_DTYPE = "q8";
 export const QWEN_POOLING = "last_token";
+/** Each pinned file with its hash and size; the size lets a status check skip hashing. */
 export const QWEN_FILES = [
   {
     file: "config.json",
     sha256: "66a10929782f3c9a3cd5dec90e2a95c60e05736134a63cd54479eeae80bed175",
+    bytes: 1576,
   },
   {
     file: "tokenizer.json",
     sha256: "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+    bytes: 11423705,
   },
   {
     file: "tokenizer_config.json",
     sha256: "977648852447cb6587327ff3205b0a84cf2fc9f05621d6c8e88a497caafab2e1",
+    bytes: 9731,
   },
   {
     file: "special_tokens_map.json",
     sha256: "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd",
+    bytes: 613,
   },
   {
     file: "onnx/model_quantized.onnx",
     sha256: "87cd124e0ef1fd1f223ebc283efccbaeac386d0b08344701c46975d0657b591f",
+    bytes: 613527631,
   },
 ] as const;
 

@@ -7,6 +7,7 @@ import {
   type EDITORIAL_WS_METHODS,
   type EDITORIAL_VIDEO_WS_METHODS,
   type EDITORIAL_JOBS_WS_METHODS,
+  type EDITORIAL_ENGINE_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -77,7 +78,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalObserve
   | typeof EDITORIAL_WS_METHODS.subscribe
   | typeof EDITORIAL_VIDEO_WS_METHODS.subscribe
-  | typeof EDITORIAL_JOBS_WS_METHODS.watch;
+  | typeof EDITORIAL_JOBS_WS_METHODS.watch
+  | typeof EDITORIAL_ENGINE_WS_METHODS.watchModel;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

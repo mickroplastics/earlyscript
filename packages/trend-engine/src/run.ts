@@ -26,6 +26,7 @@ import { readCorpus } from "./corpus.ts";
 import { dayOf, daysBefore } from "./days.ts";
 import { dossierId, logicalHash, topTerms } from "./dossier.ts";
 import { createLocalEmbedder } from "./embed/local.ts";
+import { defaultModelDir } from "./embed/model.ts";
 import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
 import { HOST } from "./host.ts";
@@ -128,8 +129,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
     createLocalEmbedder(spec, {
       cacheFile:
         options.cacheFile ?? NodePath.join(DEFAULT_DATA_DIR, "embeddings/embeddings.sqlite"),
-      modelDir:
-        options.modelDir ?? NodePath.join(DEFAULT_DATA_DIR, "models", config.embedder.revision),
+      modelDir: options.modelDir ?? defaultModelDir(DEFAULT_DATA_DIR, config.embedder.revision),
       workers: options.workers ?? 2,
       allowDownload: true,
       ...(options.log ? { log: options.log } : {}),
