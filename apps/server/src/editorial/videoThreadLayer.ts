@@ -14,7 +14,9 @@ import * as VideoWorkspace from "./VideoWorkspace.ts";
 export const layer = Layer.merge(ScriptVersionService.layer, VideoWorkspace.layer).pipe(
   Layer.provideMerge(
     EditorialThreadService.layer.pipe(
-      Layer.provide(Layer.mergeAll(VideoProject.layer, ManualThreadLauncher.layer)),
+      Layer.provide(ManualThreadLauncher.layer),
+      // Also mounted for `videoRpc.ts`, which restores the studio's instructions on open.
+      Layer.provideMerge(VideoProject.layer),
     ),
   ),
 );

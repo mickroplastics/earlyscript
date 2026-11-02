@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - the review tests read the version copy.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import { checkScript } from "@earlyscript/editorial-script";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EditorialReadError,
   type EditorialTrendDossier,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -19,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -29,8 +32,11 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../config.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
+import { EditorialVideoProject } from "./VideoProject.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -450,6 +456,56 @@ describe("editorial video RPC, opening a thread", () => {
       ),
     ),
   );
+});
+
+describe("editorial video RPC, opening a thread whose folder misbehaves", () => {
+  // Windows has no FIFOs.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "sends the view at once when the dossier file is a FIFO, and restores the instructions",
+    () =>
+      withVideoWorkspace(({ workspace, write }) =>
+        Effect.gen(function* () {
+          const client = yield* operator;
+          // Sol's fifo-rpc.mjs: a regular script and a FIFO with no writer as the dossier.
+          yield* write(SCRIPT_PATH, SCRIPT);
+          NodeFS.mkdirSync(`${workspace}/videos/quantum`, { recursive: true });
+          NodeChildProcess.execFileSync("mkfifo", [`${workspace}/videos/quantum/expediente.md`]);
+          const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({
+            threadId: THREAD,
+          }).pipe(Stream.take(1), Stream.runHead);
+          assert.strictEqual(first._tag, "Some");
+          assert.isTrue(NodeFS.lstatSync(`${workspace}/videos/quantum/expediente.md`).isFIFO());
+          // The thread's project was offered its instructions back.
+          assert.deepStrictEqual(ensured, ["project:mcp-test"]);
+        }).pipe(
+          Effect.provide(
+            videoRpcLayer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(EditorialReadService)({
+                    // The run is not readable: the dossier stays as it is, a FIFO.
+                    getDossier: () =>
+                      Effect.fail(
+                        new EditorialReadError({ reason: "unreadable", message: "test" }),
+                      ),
+                  }),
+                  Layer.mock(EditorialVideoProject)({
+                    ensureInstructions: (projectId) =>
+                      Effect.sync(() => void ensured.push(projectId)),
+                  }),
+                  Layer.mock(ThreadManagement.ThreadManagementService)({
+                    getThreadShell: (threadId) =>
+                      Effect.succeed({ ...liveThreadShell(threadId), worktreePath: workspace }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+          Effect.scoped,
+        ),
+      ),
+  );
+  const ensured: Array<string> = [];
 });
 
 describe("editorial video RPC, review of 76967e71c6", () => {

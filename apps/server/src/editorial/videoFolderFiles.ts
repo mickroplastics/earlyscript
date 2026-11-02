@@ -16,8 +16,10 @@ export type VideoFileOutcome<A> =
 const refuse = (reason: VideoFileRefusal) => ({ ok: false, reason }) as const;
 const accept = <A>(value: A) => ({ ok: true, value }) as const;
 
-/** Linux and macOS have it; Windows does not, and gets an lstat check before the open. */
+/** Linux and macOS have them; Windows does not, and relies on the lstat before the open. */
 const NO_FOLLOW = NodeFS.constants.O_NOFOLLOW ?? 0;
+/** A FIFO swapped in after the lstat opens at once instead of waiting for a writer. */
+const NON_BLOCK = NodeFS.constants.O_NONBLOCK ?? 0;
 
 /** Largest file read back: far above any script or dossier. */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -74,22 +76,37 @@ async function walkFolders(
   return accept(current);
 }
 
-/** Opens a file for reading without following a link; null when it does not exist. */
+/**
+ * Opens a regular file for reading without following a link or waiting on it; null when it
+ * does not exist. A link, FIFO, socket or device is refused by lstat before the open, and by
+ * fstat after it in case the entry was replaced in between (`O_NONBLOCK` keeps a FIFO from
+ * blocking the open itself).
+ */
 async function openNoFollow(path: string): Promise<VideoFileOutcome<NodeFSP.FileHandle | null>> {
-  if (NO_FOLLOW === 0) {
-    const stat = await NodeFSP.lstat(path).catch(() => null);
-    if (stat?.isSymbolicLink()) return refuse("link");
-  }
+  const before = await NodeFSP.lstat(path).catch((error: unknown) => {
+    if (codeOf(error) === "ENOENT") return null;
+    throw error;
+  });
+  if (before === null) return accept(null);
+  if (before.isSymbolicLink()) return refuse("link");
+  if (!before.isFile()) return refuse("not-a-file");
+  let handle: NodeFSP.FileHandle;
   try {
-    return accept(await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NO_FOLLOW));
+    handle = await NodeFSP.open(path, NodeFS.constants.O_RDONLY | NO_FOLLOW | NON_BLOCK);
   } catch (error) {
     const code = codeOf(error);
     if (code === "ENOENT") return accept(null);
-    // ELOOP on Linux and macOS, EMLINK on FreeBSD: the final component is a link.
+    // ELOOP on Linux and macOS, EMLINK on FreeBSD: the final component became a link.
     if (code === "ELOOP" || code === "EMLINK") return refuse("link");
-    if (code === "EISDIR") return refuse("not-a-file");
+    if (code === "EISDIR" || code === "ENXIO") return refuse("not-a-file");
     throw error;
   }
+  const after = await handle.stat().catch(() => null);
+  if (after === null || !after.isFile()) {
+    await handle.close();
+    return refuse("not-a-file");
+  }
+  return accept(handle);
 }
 
 async function readOpen(handle: NodeFSP.FileHandle): Promise<VideoFileOutcome<string>> {

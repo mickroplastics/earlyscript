@@ -41,9 +41,13 @@ import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import type { DecisionAction, VideoThread } from "./persistence/EditorialModel.ts";
 import { ScriptVersionService } from "./ScriptVersionService.ts";
+import { EditorialVideoProject } from "./VideoProject.ts";
 import { EditorialVideoWorkspace } from "./VideoWorkspace.ts";
 import { dossierPathOf } from "./videoWorkspaceFormat.ts";
 import { WorkClockService } from "./WorkClockService.ts";
+
+/** Longest wait for a thread's folder before its view is sent anyway. */
+const PREPARE_ON_OPEN_TIMEOUT = "5 seconds";
 
 /** Trace and metric aggregate of each video thread method, merged into `RpcInstrumentation`. */
 export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
@@ -241,6 +245,7 @@ const makeHandlers = Effect.gen(function* () {
   const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   // Whether the T3 thread still exists; without the service (a test), every thread does.
   const threadManagement = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
+  const studio = yield* Effect.serviceOption(EditorialVideoProject);
   // Writes a new manual thread's script from the template and completes a thread's folder when
   // it is opened; absent in tests without a workspace.
   const workspace = yield* Effect.serviceOption(EditorialVideoWorkspace);
@@ -406,6 +411,11 @@ const makeHandlers = Effect.gen(function* () {
         SELECT COUNT(*) AS n FROM editorial_decisions WHERE thread_id = ${threadId}
       `.pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
       if (decided) return;
+      // The studio's instructions too, when the thread lives there and they were deleted.
+      if (Option.isSome(studio) && Option.isSome(threadManagement)) {
+        const shell = yield* threadManagement.value.getThreadShell(ThreadId.make(threadId));
+        if (shell !== null) yield* studio.value.ensureInstructions(shell.projectId);
+      }
       yield* workspace.value.prepareIfNeeded({
         thread,
         getDossier: Option.isSome(reader) ? reader.value.getDossier : null,
@@ -413,6 +423,9 @@ const makeHandlers = Effect.gen(function* () {
     },
     (effect, threadId) =>
       effect.pipe(
+        // The view must arrive whatever the folder does: a stuck file system call is left
+        // behind, not waited for.
+        Effect.timeout(PREPARE_ON_OPEN_TIMEOUT),
         Effect.catchCause((cause) =>
           Effect.logWarning("Cannot prepare the video thread folder on open", { threadId, cause }),
         ),

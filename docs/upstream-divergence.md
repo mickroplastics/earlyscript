@@ -1862,3 +1862,18 @@ Además:
 - `EditorialEvidenceExportService.test.ts` compara las dos rutas con `realpath`; fallaba en macOS por `/var` frente a `/private/var` y ya fallaba en la base.
 
 Queda igual: el `AGENTS.md` ya escrito en una instalación no se actualiza si cambia su plantilla, porque solo se escribe cuando falta.
+
+### Correcciones tras la reverificación de Sol (NO APTO sobre `fdfbea7a68`)
+
+Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda2.md`. H1 a H5 quedaron cerrados para los ataques originales.
+
+**R1, reabrir el hilo no recuperaba `AGENTS.md`.** `EditorialVideoProject` gana `ensureInstructions(projectId)`: escribe `AGENTS.md` y `CLAUDE.md`, solo si faltan, cuando el proyecto es el Estudio (misma carpeta real), y no toca otro proyecto. `resolve` lo usa al crear y `prepareOnOpen` (`videoRpc.ts`) al abrir, con el proyecto del hilo que da `ThreadManagementService`. `videoThreadLayer.ts` monta ahora `VideoProject.layer` con `provideMerge`, para que `videoRpc.ts` lo tome con `Effect.serviceOption`.
+
+**R2, una FIFO en `expediente.md` bloqueaba la apertura.** `openNoFollow` (`videoFolderFiles.ts`) hace primero un `lstat` y rechaza todo lo que no sea un archivo regular: enlace, FIFO, socket o dispositivo. Después abre con `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`, para que una FIFO puesta en su lugar entre medias no bloquee la apertura, y comprueba con `fstat` que lo abierto es un archivo regular. Además, `prepareOnOpen` tiene un límite de 5 s: si la carpeta no responde, la vista se envía igual y el expediente queda como no disponible (`dossier_read` devuelve `dossier: null` con la nota).
+
+**R3, riesgos residuales, aceptados.**
+
+- Si un ancestro (por ejemplo `videos`) se sustituye entre el `lstat` y el `mkdir` u `open` siguiente, se puede escribir o leer fuera del workspace. Node no ofrece `openat` de forma simple y portable, así que no se cierra con descriptores. Es un servidor local de un solo usuario; un proceso concurrente con permisos de escritura en el workspace ya puede leer y escribir directamente.
+- Integridad del cuerpo. El `dossier_hash` del frontmatter identifica el expediente original, pero no certifica los bytes del Markdown. Por eso el frontmatter lleva también `body_hash`, el SHA-256 de todo lo que sigue al frontmatter. `isDossierFileOf` lo verifica, así que `dossier_read` y `script_check` rechazan un cuerpo cambiado bajo un frontmatter válido, y al abrir el hilo se reescribe.
+- Un archivo de una ronda anterior no tiene `body_hash`; se reescribe la primera vez que se abre su hilo.
+- `body_hash` no es una firma: quien puede escribir el archivo puede recalcularlo. Detecta ediciones y copias, no a un atacante con acceso al workspace, por la misma razón de arriba.

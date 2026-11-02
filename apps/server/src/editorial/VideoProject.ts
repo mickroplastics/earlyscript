@@ -32,6 +32,11 @@ export class EditorialVideoProject extends Context.Service<
     readonly resolve: (
       projectId: ProjectId | undefined,
     ) => Effect.Effect<ProjectId, ProjectService.ProjectServiceError>;
+    /**
+     * Writes the studio's `AGENTS.md` and `CLAUDE.md` back when missing, if `projectId` is the
+     * studio; any other project is left alone. Opening a video thread calls it too.
+     */
+    readonly ensureInstructions: (projectId: ProjectId) => Effect.Effect<void>;
   }
 >()("t3/editorial/VideoProject/EditorialVideoProject") {}
 
@@ -92,22 +97,27 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const resolve: EditorialVideoProject["Service"]["resolve"] = Effect.fn(
-    "EditorialVideoProject.resolve",
+  const ensureInstructions: EditorialVideoProject["Service"]["ensureInstructions"] = Effect.fn(
+    "EditorialVideoProject.ensureInstructions",
   )(function* (projectId) {
-    if (projectId === undefined) return yield* studio;
-    // After the first thread the client sends the studio's id itself; its instructions are
-    // still written back when missing.
     const project = yield* projects
       .getById(projectId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
     if (Option.isSome(project) && (yield* isStudioFolder(project.value.workspaceRoot))) {
       yield* writeInstructions;
     }
+  });
+
+  const resolve: EditorialVideoProject["Service"]["resolve"] = Effect.fn(
+    "EditorialVideoProject.resolve",
+  )(function* (projectId) {
+    if (projectId === undefined) return yield* studio;
+    // After the first thread the client sends the studio's id itself.
+    yield* ensureInstructions(projectId);
     return projectId;
   });
 
-  return EditorialVideoProject.of({ resolve });
+  return EditorialVideoProject.of({ resolve, ensureInstructions });
 });
 
 export const layer = Layer.effect(EditorialVideoProject, make);

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -11,6 +12,7 @@ import {
   type EditorialGetDossierInput,
   type EditorialTrendDossier,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -179,7 +181,7 @@ describe("renderDossierMarkdown", () => {
     );
     assert.include(
       markdown,
-      "dossier_hash: sha256:one\nrun_id: run_terra\ntrend_key: trend-terra\n---",
+      "dossier_hash: sha256:one\nrun_id: run_terra\ntrend_key: trend-terra\nbody_hash: ",
     );
     assert.include(markdown, "\n# GPT-6.1 Terra appears in testing\n");
     assert.include(markdown, "- Qué pasó: A new model showed up.");
@@ -534,4 +536,47 @@ describe("EditorialVideoWorkspace.prepareIfNeeded", () => {
       }),
     ),
   );
+});
+
+describe("special files in the video folder", () => {
+  const FOLDER = "videos/gpt-6-1-terra-threadte";
+  const mkfifo = (path: string) => NodeChildProcess.execFileSync("mkfifo", [path]);
+
+  // Windows has no FIFOs.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a FIFO without waiting for a writer, and opens nothing in its place",
+    () =>
+      withWorkspace((workspace) =>
+        Effect.gen(function* () {
+          NodeFS.mkdirSync(NodePath.join(workspace, FOLDER), { recursive: true });
+          mkfifo(NodePath.join(workspace, FOLDER, "expediente.md"));
+          mkfifo(NodePath.join(workspace, FOLDER, "guion.md"));
+          const read = yield* EditorialVideoWorkspace.use((service) =>
+            service.readFile({ thread: thread(), path: `${FOLDER}/expediente.md` }),
+          );
+          assert.deepStrictEqual(read, { ok: false, reason: "not-a-file" });
+          const prepared = yield* prepare({ thread: thread(), dossier: DOSSIER });
+          assert.deepStrictEqual([prepared.dossier, prepared.script], ["none", "none"]);
+          // Still the FIFOs: nothing replaced them.
+          assert.isTrue(
+            NodeFS.lstatSync(NodePath.join(workspace, FOLDER, "expediente.md")).isFIFO(),
+          );
+          assert.isTrue(NodeFS.lstatSync(NodePath.join(workspace, FOLDER, "guion.md")).isFIFO());
+        }),
+      ),
+  );
+
+  it("refuses a dossier file whose body was changed under a valid frontmatter", () => {
+    const own = { dossierId: "dos_terra", dossierHash: "sha256:one" };
+    const markdown = renderDossierMarkdown({
+      dossier: DOSSIER,
+      dossierHash: "sha256:one",
+      trendKey: "trend-terra",
+    });
+    assert.match(markdown, /\ntrend_key: trend-terra\nbody_hash: [0-9a-f]{64}\n---\n/);
+    assert.isTrue(isDossierFileOf(markdown, own));
+    assert.isFalse(isDossierFileOf(markdown.replace("Item 2 title", "Invented title"), own));
+    assert.isFalse(isDossierFileOf(markdown.replace(/\nbody_hash: [0-9a-f]+/, ""), own));
+    assert.isNull(dossierEvidenceOf(markdown.replace("[itm_hn_2]", "[itm_hn_777]"), own));
+  });
 });

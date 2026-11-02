@@ -200,6 +200,45 @@ describe("EditorialVideoProject", () => {
     ),
   );
 
+  it.effect("restores the instructions of the studio when a thread opens, never over edits", () =>
+    withVideoProject((baseDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.join(baseDir, VIDEO_PROJECT_FOLDER);
+        const studioId = yield* EditorialVideoProject.use((video) => video.resolve(undefined));
+        yield* fs.remove(path.join(root, "AGENTS.md"));
+        yield* fs.remove(path.join(root, "CLAUDE.md"));
+        yield* EditorialVideoProject.use((video) => video.ensureInstructions(studioId));
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, "AGENTS.md")),
+          STUDIO_AGENTS_MD,
+        );
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, "CLAUDE.md")),
+          STUDIO_CLAUDE_MD,
+        );
+
+        yield* fs.writeFileString(path.join(root, "AGENTS.md"), "# Mis reglas\n");
+        yield* EditorialVideoProject.use((video) => video.ensureInstructions(studioId));
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(root, "AGENTS.md")),
+          "# Mis reglas\n",
+        );
+
+        // Another project, or one that does not exist, gets nothing and fails nothing.
+        yield* createProject("project:other", "Otro", path.join(baseDir, "other"));
+        yield* EditorialVideoProject.use((video) =>
+          video.ensureInstructions(ProjectId.make("project:other")),
+        );
+        yield* EditorialVideoProject.use((video) =>
+          video.ensureInstructions(ProjectId.make("project:missing")),
+        );
+        assert.isFalse(yield* fs.exists(path.join(baseDir, "other", "AGENTS.md")));
+      }),
+    ),
+  );
+
   it.effect("writes no instructions into a project the client chose", () =>
     withVideoProject((baseDir) =>
       Effect.gen(function* () {

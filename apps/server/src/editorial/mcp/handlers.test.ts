@@ -1,9 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -172,8 +175,11 @@ it.effect("works in video threads only", () =>
 
 /** A dossier file as the server writes it, for the thread's `dossier-1`. */
 const DOSSIER_PATH = "videos/quantum/expediente.md";
-const dossierFile = (dossierId = "dossier-1") =>
-  `---\nschema: ${DOSSIER_FILE_SCHEMA}\ndossier_id: ${dossierId}\ndossier_hash: sha256:dossier\nrun_id: run-1\ntrend_key: null\n---\n\n# Quantum error correction\n\n## Evidencia (1)\n\n### [itm_hn_1] IBM roadmap\n\n- URL: https://news.ycombinator.com/item?id=1\n`;
+const DOSSIER_BODY =
+  "\n# Quantum error correction\n\n## Evidencia (1)\n\n### [itm_hn_1] IBM roadmap\n\n- URL: https://news.ycombinator.com/item?id=1\n";
+const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+const dossierFile = (dossierId = "dossier-1", body = DOSSIER_BODY) =>
+  `---\nschema: ${DOSSIER_FILE_SCHEMA}\ndossier_id: ${dossierId}\ndossier_hash: sha256:dossier\nrun_id: run-1\ntrend_key: null\nbody_hash: ${sha256(body)}\n---\n${body}`;
 
 it.effect("dossier_read gives the thread's trend, folder, script and dossier file", () =>
   withVideoWorkspace(({ write }) =>
@@ -254,6 +260,9 @@ it.effect(
           dossierFile().replace("dossier_hash: sha256:dossier", "dossier_hash: sha256:other"),
           dossierFile("dossier-9"),
           "# Quantum error correction\n\nNo frontmatter.\n",
+          // Right id and hashes in the frontmatter, another body: Sol's adversarial-extra.mjs.
+          dossierFile().replace("[itm_hn_1] IBM roadmap", "[itm_hn_777] Invented item"),
+          dossierFile().replace(/\nbody_hash: [0-9a-f]+/, ""),
         ]) {
           yield* write(DOSSIER_PATH, forged);
           const result = (yield* callTool("dossier_read", {})).structuredContent;
@@ -266,4 +275,17 @@ it.effect(
         }
       }).pipe(Effect.provide(layerEditorialServer())),
     ),
+);
+
+it.effect("dossier_read answers at once when the dossier file is a FIFO", () =>
+  withVideoWorkspace(({ workspace }) =>
+    Effect.gen(function* () {
+      // Windows has no FIFOs.
+      if (HostProcess.Platform.defaultValue() === "win32") return;
+      NodeFS.mkdirSync(NodePath.join(workspace, "videos", "quantum"), { recursive: true });
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(workspace, DOSSIER_PATH)]);
+      const result = (yield* callTool("dossier_read", {})).structuredContent;
+      expect(result).toMatchObject({ dossier: null });
+    }).pipe(Effect.provide(layerEditorialServer())),
+  ),
 );

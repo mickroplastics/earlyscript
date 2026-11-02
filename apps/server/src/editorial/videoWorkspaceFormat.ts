@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import type { EditorialTrendDossier } from "@t3tools/contracts";
 
-import { formatDecimal, markdownTable, utcDay } from "./evidenceFormat.ts";
+import { formatDecimal, markdownTable, sha256Hex, utcDay } from "./evidenceFormat.ts";
 
 // Pure half of a video thread's folder: where its files go and what the dossier file says.
 // `VideoWorkspace.ts` writes them into the thread's workspace.
@@ -170,39 +170,54 @@ export function renderDossierMarkdown(input: {
     lines.push("");
     if (item.excerpt.trim().length > 0) lines.push(quote(item.excerpt), "");
   }
-  return `${lines.join("\n").trimEnd()}\n`;
+  return sealDossierFile(`${lines.join("\n").trimEnd()}\n`);
 }
 
 const EVIDENCE_HEADING = /^### \[(itm_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+)\]/gm;
 
-/** The simple `key: value` lines of a dossier file's frontmatter; null when it has none. */
-const frontmatterOf = (markdown: string): ReadonlyMap<string, string> | null => {
+const FRONTMATTER_END = "\n---\n";
+
+/**
+ * Adds `body_hash`, the SHA-256 of everything after the frontmatter, as its last key. The
+ * dossier hash says which dossier the file was written from; the body hash says its Markdown
+ * is still the bytes the server wrote.
+ */
+const sealDossierFile = (text: string) => {
+  const end = text.indexOf(FRONTMATTER_END, 4);
+  return `${text.slice(0, end)}\nbody_hash: ${sha256Hex(text.slice(end + FRONTMATTER_END.length))}${text.slice(end)}`;
+};
+
+/** The simple `key: value` lines of a dossier file's frontmatter and its body; null without one. */
+const parseDossierFile = (
+  markdown: string,
+): { readonly fields: ReadonlyMap<string, string>; readonly body: string } | null => {
   if (!markdown.startsWith(`---\nschema: ${DOSSIER_FILE_SCHEMA}\n`)) return null;
-  const end = markdown.indexOf("\n---\n", 4);
+  const end = markdown.indexOf(FRONTMATTER_END, 4);
   if (end === -1) return null;
   const fields = new Map<string, string>();
   for (const line of markdown.slice(4, end).split("\n")) {
     const match = /^([a-z_]+): (.*)$/.exec(line);
     if (match !== null && !fields.has(match[1]!)) fields.set(match[1]!, match[2]!);
   }
-  return fields;
+  return { fields, body: markdown.slice(end + FRONTMATTER_END.length) };
 };
 
 /**
  * Whether a dossier file is the one the server writes for this thread: its frontmatter names
- * the thread's dossier and hash. Anything else (another thread's dossier, an edited copy, a
- * file of another format) is not this thread's evidence.
+ * the thread's dossier and hash, and its body matches `body_hash`. Anything else (another
+ * thread's dossier, an edited copy, a file of another format) is not this thread's evidence.
  */
 export function isDossierFileOf(
   markdown: string,
   thread: { readonly dossierId: string | null; readonly dossierHash: string | null },
 ): boolean {
   if (thread.dossierId === null) return false;
-  const fields = frontmatterOf(markdown);
+  const file = parseDossierFile(markdown);
   return (
-    fields !== null &&
-    fields.get("dossier_id") === thread.dossierId &&
-    fields.get("dossier_hash") === frontmatterValue(thread.dossierHash)
+    file !== null &&
+    file.fields.get("dossier_id") === thread.dossierId &&
+    file.fields.get("dossier_hash") === frontmatterValue(thread.dossierHash) &&
+    file.fields.get("body_hash") === sha256Hex(file.body)
   );
 }
 
