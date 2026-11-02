@@ -575,6 +575,11 @@ function TrendDecision({
                       environmentId,
                       threadId: ThreadId.make(state.production.threadId),
                     }}
+                    onClick={() => {
+                      if (state?.production) {
+                        actions.prepareVideo(ThreadId.make(state.production.threadId));
+                      }
+                    }}
                   />
                 }
               >

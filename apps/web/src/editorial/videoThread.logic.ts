@@ -296,3 +296,37 @@ export function resolvedEndIso(
     interval.recoveredAt === null ? Number.POSITIVE_INFINITY : Date.parse(interval.recoveredAt);
   return new Date(Math.min(Math.max(typed, start), end)).toISOString();
 }
+
+/**
+ * The first message an operator can send to an assisted thread's agent, placed in the composer
+ * and never sent by itself. Citations follow `@earlyscript/editorial-script`: the evidence id in
+ * brackets, its URL under Sources.
+ */
+export function draftRequestPrompt(paths: {
+  readonly dossierPath: string;
+  readonly scriptPath: string;
+}): string {
+  return `Lee ${paths.dossierPath} y propón un primer borrador del guion en ${paths.scriptPath} siguiendo la plantilla. Cita cada afirmación con el id de su evidencia entre corchetes y pon su URL en # Sources. Termina con script_check.`;
+}
+
+/**
+ * The dossier and script paths of an assisted thread whose agent has not been asked anything
+ * yet; null once the thread has a run or a message, is decided or deleted, or lacks a dossier.
+ */
+export function draftRequestPaths(
+  video: EditorialVideoState,
+  thread: {
+    readonly latestRun: object | null;
+    readonly latestUserMessageAt: string | null;
+  } | null,
+): { readonly dossierPath: string; readonly scriptPath: string } | null {
+  if (video.thread.mode !== "assisted" || video.thread.deleted || video.decision !== null) {
+    return null;
+  }
+  if (thread === null || thread.latestRun !== null || thread.latestUserMessageAt !== null) {
+    return null;
+  }
+  const { path: scriptPath, dossierPath } = video.script;
+  if (scriptPath === null || dossierPath === undefined || dossierPath === null) return null;
+  return { dossierPath, scriptPath };
+}

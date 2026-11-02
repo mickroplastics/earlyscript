@@ -143,7 +143,7 @@ describe("EditorialThreadService.createVideo", () => {
           );
           assert.match(
             created.thread.scriptPath ?? "",
-            /^videos\/computacion-cuantica-ibm-abre-su-hoja-de-ruta-[a-z0-9]{8}\.md$/,
+            /^videos\/computacion-cuantica-ibm-abre-su-hoja-de-ruta-[a-z0-9]{8}\/guion\.md$/,
           );
           assert.deepStrictEqual(
             created.clock.state._tag === "running" && created.clock.state.stage,

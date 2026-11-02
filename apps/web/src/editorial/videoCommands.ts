@@ -1,3 +1,4 @@
+import { SCRIPT_TEMPLATE } from "@earlyscript/editorial-script";
 import {
   executeAtomQuery,
   isAtomCommandInterrupted,
@@ -15,6 +16,7 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 
+import { useComposerDraftStore } from "../composerDraftStore";
 import { flushFileSaveSession, type FileSaveTarget } from "../components/files/fileSaveSessions";
 import { toastManager } from "../components/ui/toast";
 import { randomUUID } from "../lib/utils";
@@ -133,9 +135,6 @@ export function flushScriptWrites(target: FileSaveTarget): Promise<boolean> {
   ]);
 }
 
-/** Headings `@earlyscript/editorial-script` expects, in order. Scripts are written in English. */
-const SCRIPT_TEMPLATE = "# Hook\n\n# Block 1\n\n# Close\n\n# Sources\n";
-
 /**
  * Creates the script from the template when it does not exist yet, after asking the server
  * again, so a file the agent or another tab just wrote is never overwritten by a stale view.
@@ -234,4 +233,44 @@ export function useScriptAutoVersion(input: {
       }
     };
   }, [enabled, environmentId, workspaceRoot, scriptPath]);
+}
+
+/**
+ * Puts a message in the thread's composer without sending it: starting the agent stays the
+ * operator's decision (docs/upstream-divergence.md §10). A draft already typed is replaced only
+ * when the operator says so.
+ */
+export function placeComposerMessage(threadRef: ScopedThreadRef, message: string): void {
+  const store = useComposerDraftStore.getState();
+  const existing = store.getComposerDraft(threadRef)?.prompt ?? "";
+  if (existing.trim().length === 0 || existing === message) {
+    store.setPrompt(threadRef, message);
+    return;
+  }
+  const id = toastManager.add({
+    type: "info",
+    title: "Ya hay un mensaje a medio escribir",
+    description: "¿Lo reemplazo por la petición del borrador?",
+    timeout: 0,
+    actionProps: {
+      children: "Reemplazar",
+      onClick: () => {
+        toastManager.close(id);
+        useComposerDraftStore.getState().setPrompt(threadRef, message);
+      },
+    },
+  });
+}
+
+/** Opens the dossier file by its host path, which the file surface shows without editing. */
+export function openDossier(
+  threadRef: ScopedThreadRef,
+  workspaceRoot: string,
+  dossierPath: string,
+): void {
+  const separator = workspaceRoot.includes("\\") && !workspaceRoot.includes("/") ? "\\" : "/";
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  useRightPanelStore
+    .getState()
+    .openFile(threadRef, `${root}${separator}${dossierPath.split("/").join(separator)}`);
 }

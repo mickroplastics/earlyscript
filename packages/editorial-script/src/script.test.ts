@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "vite-plus/test";
-import { checkScript, parseScript } from "./script.ts";
+import { checkScript, parseScript, SCRIPT_TEMPLATE } from "./script.ts";
 
 const fixture = (name: string) =>
   NodeFS.readFileSync(new URL(`../fixtures/${name}.md`, import.meta.url), "utf8");
@@ -30,6 +30,21 @@ describe("script checking", () => {
       [3, 1],
       [7, 1],
       [11, 1],
+    ]);
+  });
+
+  it("starts from a template whose only problems are its empty sections", () => {
+    const report = checkScript(SCRIPT_TEMPLATE);
+    expect(report.structure.map(({ code }) => code)).toEqual([
+      "empty-section",
+      "empty-section",
+      "empty-section",
+    ]);
+    expect(parseScript(SCRIPT_TEMPLATE).sections.map(({ kind }) => kind)).toEqual([
+      "hook",
+      "block",
+      "close",
+      "sources",
     ]);
   });
 

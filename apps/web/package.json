@@ -85,6 +85,7 @@
   },
   "devDependencies": {
     "@earlyscript/editorial-contracts": "workspace:*",
+    "@earlyscript/editorial-script": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@tailwindcss/vite": "^4.0.0",

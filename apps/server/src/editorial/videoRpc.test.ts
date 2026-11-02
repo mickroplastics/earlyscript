@@ -1,9 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - the review tests read the version copy.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import { checkScript } from "@earlyscript/editorial-script";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EditorialReadError,
+  type EditorialTrendDossier,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES,
@@ -18,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -28,7 +32,11 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../config.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { EditorialReadService } from "./EditorialReadService.ts";
+import { EditorialVideoProject } from "./VideoProject.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -117,6 +125,7 @@ describe("editorial video RPC", () => {
         assert.deepStrictEqual(before.video?.script, {
           path: SCRIPT_PATH,
           exists: false,
+          dossierPath: "videos/quantum/expediente.md",
           head: null,
           versionCount: 0,
         });
@@ -351,6 +360,237 @@ describe("editorial video RPC", () => {
       }),
     ),
   );
+});
+
+describe("editorial video RPC, opening a thread", () => {
+  /** The testkit thread's dossier as the read side gives it: one evidence item. */
+  const dossier = {
+    trend: {
+      dossierId: "dossier-1",
+      runId: "run-1",
+      label: "quantum error correction",
+      terms: ["quantum"],
+      subtitle: null,
+      stage: "growing",
+      corroboration: "single_source",
+      items7d: 3,
+      items28d: 5,
+      authors7d: 3,
+      volumeRank: 1,
+      scoreRank: 1,
+      score: 1,
+      growth: 2,
+      affinity: 0.7,
+      sourceCount: 1,
+      sources: ["hn"],
+      sparkline: [],
+      isNew: false,
+    },
+    run: {
+      runId: "run-1",
+      cutoffAt: "2026-10-31T00:00:00.000Z",
+      finishedAt: null,
+      status: "complete",
+      configVersion: null,
+      sources: ["hn"],
+      dossierCount: 1,
+    },
+    rankMethod: "weighted_sum.v0.01",
+    rankComponents: [],
+    affinityThreshold: 0.6,
+    curve: [],
+    coverage: [],
+    evidence: [
+      {
+        itemId: "itm_hn_1",
+        source: "hn",
+        title: "IBM roadmap",
+        excerpt: "",
+        author: null,
+        publishedAt: "2026-10-30T10:00:00.000Z",
+        permalink: "https://news.ycombinator.com/item?id=1",
+        externalUrl: null,
+      },
+    ],
+    evidenceTotal: 1,
+    evidenceOffset: 0,
+    evidenceRange: { from: "2026-10-30T10:00:00.000Z", to: "2026-10-30T10:00:00.000Z" },
+  } as unknown as EditorialTrendDossier;
+
+  const withDossierReader = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provide(
+        videoRpcLayer.pipe(
+          Layer.provide(
+            Layer.mock(EditorialReadService)({ getDossier: () => Effect.succeed(dossier) }),
+          ),
+        ),
+      ),
+      Effect.scoped,
+    );
+
+  it.effect("prepare writes the folder of an open thread and its live view follows", () =>
+    withVideoWorkspace(({ workspace }) =>
+      withDossierReader(
+        Effect.gen(function* () {
+          const client = yield* operator;
+          const views = yield* Queue.unbounded<EditorialVideoView>();
+          // The subscription stays alive, as the client's shared atom keeps it for minutes.
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+            Stream.runForEach((view) => Queue.offer(views, view)),
+            Effect.forkScoped,
+          );
+          assert.isTrue((yield* Queue.take(views)).video?.script.exists);
+          // Deleted while the subscription lives on: only "Abrir hilo de video" can repair it.
+          NodeFS.rmSync(`${workspace}/videos`, { recursive: true, force: true });
+          NodeFS.rmSync(`${workspace}/${SCRIPT_PATH}`, { force: true });
+
+          const prepared = yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD });
+          assert.deepStrictEqual(prepared, { prepared: true });
+          assert.isTrue(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+          assert.include(
+            NodeFS.readFileSync(`${workspace}/videos/quantum/expediente.md`, "utf8"),
+            "dossier_id: dossier-1\n",
+          );
+          // The event of the preparation makes the live view read the folder again.
+          assert.isTrue((yield* Queue.take(views)).video?.script.exists);
+          const events = yield* (yield* EditorialEventLog).readSince(0);
+          assert.include(
+            events.map((event) => event.type),
+            "video-thread.folder-prepared",
+          );
+          // Nothing missing: idempotent, no new event.
+          assert.deepStrictEqual(
+            yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD }),
+            { prepared: false },
+          );
+          assert.strictEqual(yield* Queue.size(views), 0);
+        }),
+      ),
+    ),
+  );
+
+  it.effect("prepare writes nothing into a decided thread", () =>
+    withVideoWorkspace(({ workspace }) =>
+      withDossierReader(
+        Effect.gen(function* () {
+          const client = yield* operator;
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.decide]({
+            threadId: THREAD,
+            action: "reject",
+            utility: 1,
+            reason: "Off topic",
+            scriptVersionHash: null,
+            operationId: "decision-prepare",
+          });
+          assert.deepStrictEqual(
+            yield* client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: THREAD }),
+            { prepared: false },
+          );
+          yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+            Stream.take(1),
+            Stream.runDrain,
+          );
+          assert.isFalse(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+          assert.isFalse(NodeFS.existsSync(`${workspace}/videos/quantum`));
+          const failure = yield* Effect.flip(
+            client[EDITORIAL_VIDEO_WS_METHODS.prepare]({ threadId: ThreadId.make("thread-none") }),
+          );
+          assert.strictEqual(reasonOf(failure), "not-found");
+        }),
+      ),
+    ),
+  );
+
+  it.effect("writes the folder of a thread created before dossier files when it is opened", () =>
+    withVideoWorkspace(({ workspace }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        // The testkit thread predates folders: flat script path, no file, no dossier file.
+        assert.isFalse(NodeFS.existsSync(`${workspace}/${SCRIPT_PATH}`));
+        const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({
+          threadId: THREAD,
+        }).pipe(Stream.take(1), Stream.runHead);
+        const view = first._tag === "Some" ? first.value : null;
+        assert.isTrue(view?.video?.script.exists);
+        assert.strictEqual(view?.video?.script.dossierPath, "videos/quantum/expediente.md");
+        const text = NodeFS.readFileSync(`${workspace}/videos/quantum/expediente.md`, "utf8");
+        assert.include(text, "dossier_id: dossier-1\ndossier_hash: sha256:dossier\n");
+        assert.include(text, "### [itm_hn_1] IBM roadmap");
+        assert.include(text, "- Etapa: en crecimiento · corroboración: una sola fuente");
+        const mtime = NodeFS.statSync(`${workspace}/videos/quantum/expediente.md`).mtimeMs;
+
+        // Opening it again finds nothing missing and writes nothing.
+        yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({ threadId: THREAD }).pipe(
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.strictEqual(
+          NodeFS.statSync(`${workspace}/videos/quantum/expediente.md`).mtimeMs,
+          mtime,
+        );
+      }).pipe(
+        Effect.provide(
+          videoRpcLayer.pipe(
+            Layer.provide(
+              Layer.mock(EditorialReadService)({ getDossier: () => Effect.succeed(dossier) }),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
+    ),
+  );
+});
+
+describe("editorial video RPC, opening a thread whose folder misbehaves", () => {
+  // Windows has no FIFOs.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "sends the view at once when the dossier file is a FIFO, and restores the instructions",
+    () =>
+      withVideoWorkspace(({ workspace, write }) =>
+        Effect.gen(function* () {
+          const client = yield* operator;
+          // Sol's fifo-rpc.mjs: a regular script and a FIFO with no writer as the dossier.
+          yield* write(SCRIPT_PATH, SCRIPT);
+          NodeFS.mkdirSync(`${workspace}/videos/quantum`, { recursive: true });
+          NodeChildProcess.execFileSync("mkfifo", [`${workspace}/videos/quantum/expediente.md`]);
+          const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.subscribe]({
+            threadId: THREAD,
+          }).pipe(Stream.take(1), Stream.runHead);
+          assert.strictEqual(first._tag, "Some");
+          assert.isTrue(NodeFS.lstatSync(`${workspace}/videos/quantum/expediente.md`).isFIFO());
+          // The thread's project was offered its instructions back.
+          assert.deepStrictEqual(ensured, ["project:mcp-test"]);
+        }).pipe(
+          Effect.provide(
+            videoRpcLayer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(EditorialReadService)({
+                    // The run is not readable: the dossier stays as it is, a FIFO.
+                    getDossier: () =>
+                      Effect.fail(
+                        new EditorialReadError({ reason: "unreadable", message: "test" }),
+                      ),
+                  }),
+                  Layer.mock(EditorialVideoProject)({
+                    ensureInstructions: (projectId) =>
+                      Effect.sync(() => void ensured.push(projectId)),
+                  }),
+                  Layer.mock(ThreadManagement.ThreadManagementService)({
+                    getThreadShell: (threadId) =>
+                      Effect.succeed({ ...liveThreadShell(threadId), worktreePath: workspace }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+          Effect.scoped,
+        ),
+      ),
+  );
+  const ensured: Array<string> = [];
 });
 
 describe("editorial video RPC, review of 76967e71c6", () => {

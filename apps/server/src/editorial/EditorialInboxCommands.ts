@@ -19,7 +19,7 @@ import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
-import type { SnoozeReturnCondition } from "./persistence/EditorialModel.ts";
+import type { SnoozeReturnCondition, VideoThread } from "./persistence/EditorialModel.ts";
 import {
   isReadableRun,
   selectDossier,
@@ -28,6 +28,7 @@ import {
   selectTrendDossier,
   snoozeMetricValue,
 } from "./runIndex.ts";
+import { EditorialVideoWorkspace, loadThreadDossier } from "./VideoWorkspace.ts";
 
 /**
  * Default "keep watching" threshold: the trend comes back when its items of the last 7 days
@@ -107,6 +108,20 @@ const make = Effect.gen(function* () {
   const commands = yield* EditorialCommandService;
   const read = yield* EditorialReadService;
   const threads = yield* EditorialThreadService;
+  // Absent in tests that mount no workspace; the thread then opens without its folder.
+  const workspace = yield* Effect.serviceOption(EditorialVideoWorkspace);
+
+  /**
+   * Writes the thread's dossier file (an assisted thread with a dossier) and its script from
+   * the template. A dossier that cannot be read still leaves the script.
+   */
+  const prepareFolder = Effect.fn("EditorialInboxCommands.prepareFolder")(function* (
+    thread: VideoThread,
+  ) {
+    if (Option.isNone(workspace)) return;
+    const dossier = yield* loadThreadDossier(read.getDossier, thread);
+    yield* workspace.value.prepare({ thread, dossier });
+  });
 
   const operator = (session: EditorialSession) =>
     ({ actor: "operator", actorSessionId: session.sessionId }) as const;
@@ -259,6 +274,7 @@ const make = Effect.gen(function* () {
         runId: input.runId,
       })
       .pipe(Effect.mapError(fromCommandFailure));
+    yield* prepareFolder(created.thread);
     const { state } = yield* respond(input.trendKey);
     return {
       trendKey: input.trendKey,
@@ -313,6 +329,7 @@ const make = Effect.gen(function* () {
         trendKey: input.trendKey,
       })
       .pipe(Effect.mapError(fromCommandFailure));
+    yield* prepareFolder(created.thread);
     const { state } = yield* respond(input.trendKey);
     return {
       trendKey: input.trendKey,

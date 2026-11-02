@@ -32,7 +32,12 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as Stream from "effect/Stream";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import { SCRIPT_TEMPLATE } from "@earlyscript/editorial-script";
+
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { purgeVideoRecord } from "./EditorialPurge.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
@@ -41,7 +46,10 @@ import { withEditorial } from "./editorialLayer.testkit.ts";
 import { subscribeInbox, SUBSCRIBE_MAX_REPLAY } from "./inboxStream.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
+import { makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
 import { EditorialRpcHandlers } from "./rpc.ts";
+import * as VideoWorkspace from "./VideoWorkspace.ts";
+import { dossierPathOf } from "./videoWorkspaceFormat.ts";
 
 const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
 const QUANTUM = EditorialDossierId.make("dos_bbb80d57481e");
@@ -427,6 +435,81 @@ describe("editorial RPC authorization", () => {
     });
     assert.deepStrictEqual(offenders, []);
   });
+});
+
+describe("video thread folder", () => {
+  /** The folder service over threads whose worktree is one temporary folder. */
+  const withThreadWorkspace = <A, E, R>(body: (workspace: string) => Effect.Effect<A, E, R>) => {
+    const workspace = makeTempDir();
+    return body(workspace).pipe(
+      Effect.provide(
+        VideoWorkspace.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: (threadId) =>
+                  Effect.succeed({ ...liveThreadShell(threadId), worktreePath: workspace }),
+              }),
+              Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+            ),
+          ),
+        ),
+      ),
+      Effect.ensuring(removeDir(workspace)),
+    );
+  };
+
+  it.effect("a trend's video thread starts with its dossier file and its script", () =>
+    Effect.gen(function* () {
+      const launch = yield* makeLaunchDouble;
+      yield* withThreadWorkspace((workspace) =>
+        withEditorial(
+          () =>
+            Effect.gen(function* () {
+              yield* (yield* EditorialImportService).sync;
+              const inbox = yield* EditorialInboxCommands;
+              const threads = yield* EditorialThreadService;
+              const created = yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              const thread = Option.getOrThrow(yield* threads.getVideoThread(created.threadId));
+              const dossierPath = dossierPathOf(thread)!;
+              assert.match(dossierPath, /^videos\/[a-z0-9-]+\/expediente\.md$/);
+              const dossierFile = NodePath.join(workspace, dossierPath);
+              const text = NodeFS.readFileSync(dossierFile, "utf8");
+              assert.include(text, `dossier_id: ${QUANTUM}\n`);
+              assert.include(text, `dossier_hash: ${thread.dossierHash}\n`);
+              assert.include(text, `run_id: ${RUN_ID}\n`);
+              const handlers = (yield* EditorialRpcHandlers).forSession(SESSION);
+              const read = yield* handlers[EDITORIAL_WS_METHODS.getDossier]({
+                runId: RUN_ID,
+                dossierId: QUANTUM,
+                evidenceLimit: 50,
+              });
+              // Every evidence item, not the first page the dossier page shows.
+              assert.strictEqual(text.match(/^### \[itm_/gm)?.length, read.evidenceTotal);
+              assert.strictEqual(NodeFS.statSync(dossierFile).mode & 0o777, 0o444);
+              assert.strictEqual(
+                NodeFS.readFileSync(NodePath.join(workspace, thread.scriptPath!), "utf8"),
+                SCRIPT_TEMPLATE,
+              );
+
+              // A second click resumes the same thread and leaves both files as they are.
+              const before = NodeFS.statSync(dossierFile).mtimeMs;
+              yield* inbox.createVideo(SESSION, VIDEO_INPUT);
+              assert.strictEqual(NodeFS.statSync(dossierFile).mtimeMs, before);
+
+              // A manual thread on the same trend gets its script and no dossier.
+              const manual = yield* inbox.createVideo(SESSION, { ...VIDEO_INPUT, mode: "manual" });
+              const manualThread = Option.getOrThrow(
+                yield* threads.getVideoThread(manual.threadId),
+              );
+              const folder = NodePath.dirname(NodePath.join(workspace, manualThread.scriptPath!));
+              assert.deepStrictEqual(NodeFS.readdirSync(folder), ["guion.md"]);
+            }).pipe(Effect.scoped),
+          { launch: launch.layer },
+        ),
+      );
+    }),
+  );
 });
 
 describe("editorial.subscribe", () => {

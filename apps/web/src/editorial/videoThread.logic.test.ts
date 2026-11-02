@@ -1,10 +1,12 @@
 import { EditorialVideoError } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DECIDED, WRITING } from "./videoThread.fixture";
+import { DECIDED, JUST_CREATED, MANUAL_EXPLORING, WRITING } from "./videoThread.fixture";
 import {
   EMPTY_DECISION_DRAFT,
   decisionBlockState,
+  draftRequestPaths,
+  draftRequestPrompt,
   emptyResultDraft,
   formatClock,
   formatStageDuration,
@@ -212,5 +214,44 @@ describe("video result draft", () => {
     expect(
       parseResultDraft({ metrics: { ...empty.metrics, views: "3" }, observedOn: "" }),
     ).toMatchObject({ problem: "Indica la fecha de la observación." });
+  });
+});
+
+describe("draft request", () => {
+  const FRESH = { latestRun: null, latestUserMessageAt: null };
+  const PATHS = {
+    dossierPath: "videos/computacion-cuantica-threadvi/expediente.md",
+    scriptPath: "videos/computacion-cuantica-threadvi/guion.md",
+  };
+
+  it("names the dossier, the script, the citation form and script_check", () => {
+    expect(draftRequestPrompt(PATHS)).toBe(
+      "Lee videos/computacion-cuantica-threadvi/expediente.md y propón un primer borrador del guion en videos/computacion-cuantica-threadvi/guion.md siguiendo la plantilla. Cita cada afirmación con el id de su evidencia entre corchetes y pon su URL en # Sources. Termina con script_check.",
+    );
+  });
+
+  it("is offered only in an assisted thread with a dossier that has not asked anything yet", () => {
+    expect(draftRequestPaths(JUST_CREATED, FRESH)).toEqual(PATHS);
+    expect(draftRequestPaths(JUST_CREATED, null)).toBeNull();
+    expect(draftRequestPaths(JUST_CREATED, { ...FRESH, latestRun: { runId: "run-1" } })).toBeNull();
+    expect(
+      draftRequestPaths(JUST_CREATED, { ...FRESH, latestUserMessageAt: "2026-10-31T13:09:00Z" }),
+    ).toBeNull();
+    expect(draftRequestPaths({ ...JUST_CREATED, decision: DECIDED.decision }, FRESH)).toBeNull();
+    expect(
+      draftRequestPaths(
+        { ...JUST_CREATED, thread: { ...JUST_CREATED.thread, deleted: true } },
+        FRESH,
+      ),
+    ).toBeNull();
+    expect(draftRequestPaths(MANUAL_EXPLORING, FRESH)).toBeNull();
+    // A thread from before dossier files, or without a dossier.
+    expect(draftRequestPaths(WRITING, FRESH)).toBeNull();
+    expect(
+      draftRequestPaths(
+        { ...JUST_CREATED, script: { ...JUST_CREATED.script, dossierPath: null } },
+        FRESH,
+      ),
+    ).toBeNull();
   });
 });

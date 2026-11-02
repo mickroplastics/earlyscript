@@ -38,6 +38,7 @@ import {
 } from "./persistence/Errors.ts";
 import { makeNewId, nowIso } from "./persistence/support.ts";
 import { EditorialVideoProject } from "./VideoProject.ts";
+import { SCRIPT_FILE } from "./videoWorkspaceFormat.ts";
 import { type WorkClockError, WorkClockService } from "./WorkClockService.ts";
 
 export interface RegisterVideoThreadInput {
@@ -88,7 +89,7 @@ export interface CreateVideoInput {
   /** The immutable dossier attached to the thread, with its hash. */
   readonly dossierId?: string | undefined;
   readonly dossierHash?: string | undefined;
-  /** Relative to the thread workspace; `videos/<slug>-<id>.md` when omitted. */
+  /** Relative to the thread workspace; `videos/<slug>-<id>/guion.md` when omitted. */
   readonly scriptPath?: string | undefined;
 }
 
@@ -233,10 +234,14 @@ const slugify = (title: string) =>
     .slice(0, MAX_SLUG_LENGTH)
     .replace(/-+$/g, "");
 
+/**
+ * `videos/<slug>-<id>/guion.md`: each video gets its own folder, where the server also writes
+ * the dossier file (`videoWorkspaceFormat.ts`) and the agent keeps its work.
+ */
 export const defaultScriptPath = (title: string, threadId: string) => {
   const slug = slugify(title);
   const suffix = threadId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
-  return `videos/${slug.length === 0 ? "video" : slug}-${suffix}.md`;
+  return `videos/${slug.length === 0 ? "video" : slug}-${suffix}/${SCRIPT_FILE}`;
 };
 
 const make = Effect.gen(function* () {

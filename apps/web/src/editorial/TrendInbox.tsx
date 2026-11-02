@@ -168,6 +168,7 @@ export function TrendInbox({
         return;
       case "open-video":
         if (trend.inbox?.production) {
+          actions.prepareVideo(ThreadId.make(trend.inbox.production.threadId));
           void navigate({
             to: "/$environmentId/$threadId",
             params: { environmentId, threadId: ThreadId.make(trend.inbox.production.threadId) },
