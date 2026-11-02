@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { modelIsReady } from "../engineState";
 import { ModelDownloadCardView, type ModelDownloadCardViewProps } from "./ModelDownloadCard";
 
 const MiB = 1024 * 1024;
@@ -104,7 +105,31 @@ describe("ModelDownloadCardView", () => {
     await using screen = await mount({ state: STATES.ready! });
     await expect
       .element(screen.getByRole("status"))
-      .toHaveTextContent("Listo (revisión c25a394d, 596 MiB en ~/earlyscript-data/models)");
+      .toHaveTextContent("Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models");
+  });
+
+  it("is ready for the wizard only on disk, idle and without an error", () => {
+    expect(modelIsReady(STATES.ready!)).toBe(true);
+    expect(modelIsReady(null)).toBe(false);
+    expect(modelIsReady(STATES.missing!)).toBe(false);
+    expect(modelIsReady(STATES.downloading!)).toBe(false);
+    // Sizes match but the hash did not: not ready, whatever the status says.
+    expect(
+      modelIsReady({
+        ...STATES.ready!,
+        error: { code: "hash", message: "Model hash mismatch: config.json" },
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the ready line's last part off a line of its own at 390 px", async () => {
+    await page.viewport(390, 844);
+    await using screen = await mount({ state: STATES.ready! });
+    const path = screen.getByText("~/earlyscript-data/models").element() as HTMLElement;
+    const status = screen.getByRole("status").element() as HTMLElement;
+    // The path is the last thing on the line; nothing wraps after it.
+    expect(status.textContent?.trim().endsWith("~/earlyscript-data/models")).toBe(true);
+    expect(path.getBoundingClientRect().right).toBeLessThanOrEqual(390);
   });
 
   it("resumes a partial download instead of starting over", async () => {

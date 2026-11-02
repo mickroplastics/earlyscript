@@ -117,6 +117,16 @@ export type ModelCardPhase =
       readonly location: string;
     };
 
+/**
+ * Whether the wizard may go on: on disk by sizes, no download in flight and no failure.
+ * A hash error can come with a `ready` status (sizes match, bytes do not).
+ */
+export function modelIsReady(state: EditorialModelState | null): boolean {
+  return (
+    state !== null && state.status === "ready" && state.download === null && state.error === null
+  );
+}
+
 /** What the card shows for a state; `null` while the first state has not arrived. */
 export function modelCardPhase(state: EditorialModelState | null): ModelCardPhase {
   if (state === null) return { _tag: "checking" };

@@ -76,6 +76,8 @@ const ProgressLine = Schema.Struct({
   file: Schema.String,
   bytesDone: Schema.Number,
   bytesTotal: Schema.Number,
+  /** Bytes received by this process; `bytesDone` also counts what was on disk already. */
+  sessionBytes: Schema.optionalKey(Schema.Number),
 });
 const ErrorLine = Schema.Struct({
   error: Schema.Struct({ code: Schema.String, message: Schema.String }),
@@ -92,6 +94,8 @@ export function parsePrepareLine(line: string):
       readonly file: string;
       readonly bytesDone: number;
       readonly bytesTotal: number;
+      /** Null from an engine that does not report it: then no speed is shown. */
+      readonly sessionBytes: number | null;
     }
   | { readonly _tag: "error"; readonly error: EditorialModelError }
   | null {
@@ -105,7 +109,13 @@ export function parsePrepareLine(line: string):
       error: { code: isModelErrorCode(code) ? code : "other", message: value.error.message },
     };
   }
-  return { _tag: "progress", ...value };
+  return {
+    _tag: "progress",
+    file: value.file,
+    bytesDone: value.bytesDone,
+    bytesTotal: value.bytesTotal,
+    sessionBytes: value.sessionBytes ?? null,
+  };
 }
 
 /** Bytes per second between the oldest and newest sample of the window; null below a second. */
@@ -215,27 +225,36 @@ const makeWith = Effect.fn("EditorialEngineService.make")(function* (
       }));
     }
     const at = yield* Clock.currentTimeMillis;
-    const window = yield* Ref.updateAndGet(samples, (current) =>
-      [...current, { at, bytes: parsed.bytesDone }].filter(
-        (sample) => at - sample.at <= SPEED_WINDOW_MS,
-      ),
-    );
-    yield* SubscriptionRef.update(state, (current) => ({
-      ...current,
-      status: parsed.bytesDone > 0 && current.status === "missing" ? "partial" : current.status,
-      bytesPresent: parsed.bytesDone,
-      bytesExpected: parsed.bytesTotal,
-      download:
-        current.download === null
-          ? null
-          : {
-              ...current.download,
-              file: parsed.file,
-              bytesDone: parsed.bytesDone,
-              bytesTotal: parsed.bytesTotal,
-              bytesPerSecond: windowSpeed(window),
-            },
-    }));
+    // Speed counts only what this process received: the files it verified and the partial
+    // it adopted reach `bytesDone` in one jump and are not a transfer.
+    const sessionBytes = parsed.sessionBytes;
+    const window =
+      sessionBytes === null
+        ? []
+        : yield* Ref.updateAndGet(samples, (current) =>
+            [...current, { at, bytes: sessionBytes }].filter(
+              (sample) => at - sample.at <= SPEED_WINDOW_MS,
+            ),
+          );
+    yield* SubscriptionRef.update(state, (current) => {
+      if (current.download === null) return current;
+      // The engine counts from zero while it re-checks the finished files; the bar stays
+      // where the disk already was until the count passes it.
+      const bytesDone = Math.max(current.download.bytesDone, parsed.bytesDone);
+      return {
+        ...current,
+        status: bytesDone > 0 && current.status === "missing" ? "partial" : current.status,
+        bytesPresent: bytesDone,
+        bytesExpected: parsed.bytesTotal,
+        download: {
+          ...current.download,
+          file: parsed.file,
+          bytesDone,
+          bytesTotal: parsed.bytesTotal,
+          bytesPerSecond: windowSpeed(window),
+        },
+      };
+    });
   });
 
   const download = Effect.fn("EditorialEngineService.download")(
@@ -271,8 +290,9 @@ const makeWith = Effect.fn("EditorialEngineService.make")(function* (
     const engine = options.engine.success;
     const startedAt = DateTime.formatIso(yield* DateTime.now);
     // One download at a time: the claim and the state that shows it are a single update.
+    // A model already known ready, without an error, needs no download at all.
     const claimed = yield* SubscriptionRef.modify(state, (current) =>
-      current.download !== null
+      current.download !== null || (current.status === "ready" && current.error === null)
         ? [false, current]
         : [
             true,

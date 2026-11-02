@@ -17,6 +17,7 @@ import {
   editorialEngineEnvironment,
   formatMiB,
   modelCardPhase,
+  modelIsReady,
   remainingText,
   speedText,
 } from "../engineState";
@@ -160,12 +161,12 @@ export function ModelDownloadCardView({
       case "ready":
         return (
           <StatusLine icon={<CheckCircle2Icon className="size-4 text-success-foreground" />}>
-            Listo (revisión {phase.revision},{" "}
-            <span className="whitespace-nowrap">{formatMiB(phase.bytes)} MiB</span> en{" "}
+            {/* Middle dots instead of a parenthesis: no closing mark can end up alone on a line. */}
+            Listo · <span className="whitespace-nowrap">revisión {phase.revision}</span> ·{" "}
+            <span className="whitespace-nowrap">{formatMiB(phase.bytes)} MiB</span> ·{" "}
             <span className="inline-block max-w-full font-mono [overflow-wrap:anywhere]">
               {phase.location}
             </span>
-            )
           </StatusLine>
         );
     }
@@ -216,7 +217,7 @@ export function ModelDownloadCard({
     state === null && AsyncResult.isFailure(result)
       ? "no se pudo leer el estado del modelo en el servidor."
       : null;
-  const ready = state?.status === "ready" && state.download === null;
+  const ready = modelIsReady(state);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the wizard learns from the pushed model state whether it may continue.
   useEffect(() => {
     onReady(ready);

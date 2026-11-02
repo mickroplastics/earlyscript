@@ -1833,3 +1833,11 @@ Servidor:
 Interfaz: `onboarding/ModelDownloadCard.tsx` (firma `{ environmentId, onReady }` conservada, más `bare` para Ajustes) con estados comprobando, falta (o descarga a medias, con «Continuar descarga»), descargando con barra, velocidad y tiempo restante, comprobando archivos, error con «Reintentar» y listo. `engineState.ts` tiene el átomo de suscripción y el texto en español. Ajustes › Editorial › Corrida nocturna (`NightlyRunSettings.tsx`) muestra la fila «Modelo del motor» con la misma tarjeta.
 
 Decisiones reversibles: estado por tamaños y no por hash; el error queda en el estado hasta la siguiente descarga (no se persiste: tras reiniciar el servidor, la tarjeta muestra «Descarga a medias»); el detalle técnico del error no se muestra (queda en `model.log`); la nocturna sigue pudiendo descargar el modelo por su cuenta si nadie usó la tarjeta.
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `b27cfe9794`)
+
+- **H1, archivo final corrupto.** `prepareModel` borra y vuelve a descargar un archivo final con tamaño distinto o hash incorrecto cuando puede descargar (sin descarga, sigue fallando con `hash mismatch`). `modelStatus` cuenta los bytes de un archivo final truncado y lo da por `partial`. Un archivo del mismo tamaño con un byte cambiado sigue `ready` por tamaños; lo arregla el siguiente `prepare`, que también hace la corrida. `modelIsReady` (`engineState.ts`) exige además `error === null`, y la tarjeta lo usa para `onReady`.
+- **H2, velocidad al reanudar.** Cada línea de progreso lleva `sessionBytes`, los bytes recibidos por ese proceso; la velocidad se mide sobre ellos y no sobre `bytesDone`, que salta sobre los archivos comprobados y el parcial adoptado. El servidor no publica nunca un `bytesDone` menor que el último de la misma descarga.
+- **H3, rutas temporales de macOS.** La prueba del servicio usa `realpathSync` sobre su directorio temporal.
+- **H4, descarga ya hecha.** `prepareModel` no lanza nada si el último estado conocido es `ready` sin error.
+- **H5, paréntesis huérfano.** «Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models».

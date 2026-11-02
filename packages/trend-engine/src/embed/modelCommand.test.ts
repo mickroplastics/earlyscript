@@ -91,6 +91,7 @@ describe("prepareModel", () => {
       file: "onnx/model_quantized.onnx",
       bytesDone: total,
       bytesTotal: total,
+      sessionBytes: total,
     });
   });
 
@@ -141,10 +142,60 @@ describe("prepareModel", () => {
     const live = partialOf(NodeProcess.pid);
     NodeFS.writeFileSync(live, Buffer.alloc(1 * MiB));
 
-    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    const seen: Array<ModelProgress> = [];
+    await prepareModel(dir, true, {
+      files,
+      baseUrl: served.baseUrl,
+      onProgress: (progress) => seen.push(progress),
+    });
     const onnx = served.requests.filter((request) => request.file === "onnx/model_quantized.onnx");
     expect(onnx.map((request) => request.range)).toEqual([`bytes=${5 * MiB}-`]);
     expect(partials(dir)).toEqual([NodePath.basename(live)]);
+    // The adopted 5 MiB count as done but not as transferred: speed is measured on the rest.
+    const first = seen.find((progress) => progress.file === "onnx/model_quantized.onnx")!;
+    expect(first.bytesDone - first.sessionBytes).toBeGreaterThanOrEqual(5 * MiB);
+    expect(seen.at(-1)?.sessionBytes).toBe(total - 5 * MiB);
+  });
+
+  it("downloads again a finished file that a byte flip corrupted", async () => {
+    const dir = tempDir("model-corrupt-final");
+    const served = await mirror();
+    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    const config = NodePath.join(dir, "config.json");
+    const bytes = NodeFS.readFileSync(config);
+    bytes[0] = bytes[0]! ^ 0xff;
+    NodeFS.writeFileSync(config, bytes);
+    // Same size: by sizes it still looks ready; only the hash in prepare can tell.
+    expect(await modelStatus(dir, files)).toMatchObject({ status: "ready" });
+
+    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    expect(NodeFS.readFileSync(config).equals(contents["config.json"]!)).toBe(true);
+    expect(served.requests.filter((request) => request.file === "config.json")).toHaveLength(2);
+    expect(await modelStatus(dir, files)).toMatchObject({ status: "ready", bytesPresent: total });
+  });
+
+  it("counts a truncated finished file as half there and downloads it again", async () => {
+    const dir = tempDir("model-truncated-final");
+    const served = await mirror();
+    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    const onnx = NodePath.join(dir, "onnx", "model_quantized.onnx");
+    NodeFS.truncateSync(onnx, 3 * MiB);
+    expect(await modelStatus(dir, files)).toMatchObject({
+      status: "partial",
+      bytesPresent: files[0]!.bytes + 3 * MiB,
+    });
+
+    await prepareModel(dir, true, { files, baseUrl: served.baseUrl });
+    expect(NodeFS.readFileSync(onnx).equals(contents["onnx/model_quantized.onnx"]!)).toBe(true);
+    expect(await modelStatus(dir, files)).toMatchObject({ status: "ready", bytesPresent: total });
+  });
+
+  it("still refuses a corrupt finished file when it may not download", async () => {
+    const dir = tempDir("model-corrupt-offline");
+    await prepareModel(dir, true, { files, baseUrl: (await mirror()).baseUrl });
+    NodeFS.writeFileSync(NodePath.join(dir, "config.json"), Buffer.alloc(files[0]!.bytes));
+    await expect(prepareModel(dir, false, { files })).rejects.toThrow(/hash mismatch/);
+    expect(NodeFS.existsSync(NodePath.join(dir, "config.json"))).toBe(true);
   });
 
   it("starts over when an adopted partial does not hash to the pinned file", async () => {

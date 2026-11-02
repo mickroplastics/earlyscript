@@ -33,6 +33,11 @@ export interface ModelProgress {
   readonly file: string;
   readonly bytesDone: number;
   readonly bytesTotal: number;
+  /**
+   * Bytes received over the network by this call. `bytesDone` also jumps over files that
+   * were already on disk and over an adopted partial, so speed is measured on this one.
+   */
+  readonly sessionBytes: number;
 }
 
 export interface PrepareModelOptions {
@@ -145,14 +150,22 @@ export async function prepareModel(
   const bytesTotal = files.reduce((sum, { bytes }) => sum + bytes, 0);
   const resumable = await sweepPartials(root, files, allowDownload);
   let bytesBefore = 0;
+  let sessionBytes = 0;
+  const report = (file: string, bytesDone: number) =>
+    options.onProgress?.({ file, bytesDone, bytesTotal, sessionBytes });
   for (const { file, sha256, bytes } of files) {
     const destination = NodePath.join(root, file);
     if (NodeFS.existsSync(destination)) {
-      if ((await fileHash(destination)) !== sha256)
-        throw new Error(`Model hash mismatch: ${destination}`);
-      bytesBefore += bytes;
-      options.onProgress?.({ file, bytesDone: bytesBefore, bytesTotal });
-      continue;
+      const size = (await NodeFSP.stat(destination)).size;
+      if (size === bytes && (await fileHash(destination)) === sha256) {
+        bytesBefore += bytes;
+        report(file, bytesBefore);
+        continue;
+      }
+      // A finished file that is truncated or corrupt blocks every later run: when this call
+      // may download, it goes and is fetched again, as a bad partial is.
+      if (!allowDownload) throw new Error(`Model hash mismatch: ${destination}`);
+      await NodeFSP.rm(destination, { force: true });
     }
     if (!allowDownload) throw new Error(`Model file missing: ${destination}`);
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
@@ -177,11 +190,12 @@ export async function prepareModel(
         const count = new NodeStream.Transform({
           transform(chunk: Buffer, _encoding, callback) {
             done += chunk.length;
-            options.onProgress?.({ file, bytesDone: bytesBefore + done, bytesTotal });
+            sessionBytes += chunk.length;
+            report(file, bytesBefore + done);
             callback(null, chunk);
           },
         });
-        options.onProgress?.({ file, bytesDone: bytesBefore + done, bytesTotal });
+        report(file, bytesBefore + done);
         await NodeStreamPromises.pipeline(
           response.body,
           count,
@@ -202,7 +216,7 @@ export async function prepareModel(
       if (!released) await NodeFSP.rm(partial, { force: true });
     }
     bytesBefore += bytes;
-    options.onProgress?.({ file, bytesDone: bytesBefore, bytesTotal });
+    report(file, bytesBefore);
   }
   return root;
 }
@@ -238,8 +252,9 @@ export async function modelStatus(
       bytesPresent += bytes;
       continue;
     }
+    // A truncated finished file counts its bytes too: the model is half there, not absent.
     const largest = Math.max(
-      0,
+      size ?? 0,
       ...partials.filter((partial) => partial.destination === destination).map((p) => p.size),
     );
     bytesPresent += Math.min(largest, bytes);
