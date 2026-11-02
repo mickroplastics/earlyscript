@@ -2,7 +2,6 @@ import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useId } from "react";
 
 import { Button } from "../../components/ui/button";
-import { ScrollArea } from "../../components/ui/scroll-area";
 import { Spinner } from "../../components/ui/spinner";
 import { EngineScoringPanel, ProfileForm } from "../profile/ProfileForm";
 import { useProfileEditor, type ProfileEditor } from "../profile/useProfileEditor";
@@ -37,46 +36,42 @@ export function StudioStepView({ editor, formId, onBack, onContinue }: StudioSte
         Earlywindow; cada cambio guardado crea una versión nueva.
       </p>
 
-      <ScrollArea scrollFade className="mt-4 h-auto max-h-[min(34rem,58dvh)]">
-        <div className="space-y-5 pr-3 pb-1">
-          {view === null || values === null ? (
-            editor.loadError ? (
-              <div className="space-y-2 py-6 text-sm" role="alert">
-                <p className="text-foreground">No se pudo leer el perfil del estudio.</p>
-                <p className="text-xs text-muted-foreground">{editor.loadError}</p>
-                <Button size="xs" variant="outline" onClick={editor.retry}>
-                  Reintentar
-                </Button>
-              </div>
-            ) : (
-              <p
-                className="flex items-center gap-2 py-6 text-sm text-muted-foreground"
-                role="status"
-              >
-                <Spinner size="sm" />
-                Leyendo el perfil del estudio…
-              </p>
-            )
+      {/* No scroll of its own: the step grows inside the wizard dialog's single scroll. */}
+      <div className="mt-4 space-y-5">
+        {view === null || values === null ? (
+          editor.loadError ? (
+            <div className="space-y-2 py-6 text-sm" role="alert">
+              <p className="text-foreground">No se pudo leer el perfil del estudio.</p>
+              <p className="text-xs text-muted-foreground">{editor.loadError}</p>
+              <Button size="xs" variant="outline" onClick={editor.retry}>
+                Reintentar
+              </Button>
+            </div>
           ) : (
-            <>
-              <ProfileForm
-                formId={formId}
-                values={values}
-                onChange={editor.setValues}
-                errors={editor.errors}
-                version={view.active}
-                edited={editor.edited}
-                disabled={editor.saving}
-                readOnly={editor.readOnly}
-              />
-              <EngineScoringPanel
-                scoring={view.scoring}
-                note="Se ajustan en Ajustes › Editorial tras el análisis de sensibilidad."
-              />
-            </>
-          )}
-        </div>
-      </ScrollArea>
+            <p className="flex items-center gap-2 py-6 text-sm text-muted-foreground" role="status">
+              <Spinner size="sm" />
+              Leyendo el perfil del estudio…
+            </p>
+          )
+        ) : (
+          <>
+            <ProfileForm
+              formId={formId}
+              values={values}
+              onChange={editor.setValues}
+              errors={editor.errors}
+              version={view.active}
+              edited={editor.edited}
+              disabled={editor.saving}
+              readOnly={editor.readOnly}
+            />
+            <EngineScoringPanel
+              scoring={view.scoring}
+              note="Se ajustan en Ajustes › Editorial tras el análisis de sensibilidad."
+            />
+          </>
+        )}
+      </div>
 
       {editor.failure ? (
         <p className="mt-3 text-sm text-destructive-foreground" role="alert">

@@ -5,12 +5,15 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { Dialog } from "../../components/ui/dialog";
+import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
 import { useProfileForm, type ProfileSaveDraft } from "../profile/useProfileEditor";
 import {
   StudioProfileSettingsView,
   type StudioProfileSettingsViewProps,
 } from "../settings/StudioProfileSettings";
 import { StudioStepView, type StudioAcceptance } from "./StudioStep";
+import { ONBOARDING_STAGES } from "./steps";
 
 const V1: EditorialProfileVersion = {
   version: 1,
@@ -96,18 +99,53 @@ function StepHarness({
     formId: FORM_ID,
     canEdit,
   });
+  // The wizard's own dialog, as `EarlyscriptWizardView` mounts the steps.
   return (
-    <div className="min-h-screen bg-background p-4 text-foreground sm:p-10">
-      <div className="mx-auto max-w-xl rounded-xl border bg-popover p-4 shadow-lg sm:p-6">
-        <StudioStepView
-          editor={editor}
-          formId={FORM_ID}
-          onBack={() => {}}
-          onContinue={onContinue}
-        />
-      </div>
-    </div>
+    <Dialog open disablePointerDismissal>
+      <WizardPopup size="wide" bottomStickOnMobile={false}>
+        <WizardHeader title="Configurar Earlyscript">
+          <WizardSteps
+            steps={ONBOARDING_STAGES.map((stage) => stage.label)}
+            currentStep={ONBOARDING_STAGES.findIndex((stage) => stage.id === "estudio")}
+          />
+        </WizardHeader>
+        <WizardPanel>
+          <StudioStepView
+            editor={editor}
+            formId={FORM_ID}
+            onBack={() => {}}
+            onContinue={onContinue}
+          />
+        </WizardPanel>
+      </WizardPopup>
+    </Dialog>
   );
+}
+
+/** Every scrollable ancestor of `element`, by its `data-slot`. */
+const scrollableAncestors = (element: Element): ReadonlyArray<string> => {
+  const found: Array<string> = [];
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") found.push(node.dataset.slot ?? node.tagName);
+  }
+  return found;
+};
+
+/** Scrolls the dialog's single scroll to its end and checks the step's buttons are in view. */
+async function scrollDialogToBottom() {
+  const viewport = document.querySelector<HTMLElement>(
+    "[role=dialog] [data-slot=scroll-area-viewport]",
+  );
+  if (!viewport) throw new Error("wizard scroll area not found");
+  const button = page.getByRole("button", { name: /Continuar/ }).element();
+  // WizardPanel animates its height, so this retries until the last control is inside.
+  await vi.waitFor(() => {
+    viewport.scrollTop = viewport.scrollHeight;
+    expect(button.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      viewport.getBoundingClientRect().bottom,
+    );
+  });
 }
 
 const renderStep = async (
@@ -151,13 +189,22 @@ describe.each([
     await expect.element(field("Temas que cubre: tema nuevo")).toHaveValue("");
     await expect.element(page.getByText("5 temas")).toBeVisible();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    // One scroll for the whole dialog: neither the step nor the topic list scrolls on its own.
+    const topics = page.getByRole("list", { name: "Temas que cubre" }).element();
+    expect(scrollableAncestors(topics)).toEqual(["scroll-area-viewport"]);
+    expect(
+      page
+        .getByTestId("studio-step")
+        .element()
+        .querySelectorAll("[data-slot=scroll-area-viewport]"),
+    ).toHaveLength(0);
     await capture(`step-ready-${size}`);
     await userEvent.click(page.getByRole("button", { name: /Pesos de la puntuación/ }));
     await expect.element(page.getByText("Afinidad mínima con los temas")).toBeVisible();
     await expect
       .element(page.getByText(/Se ajustan en Ajustes › Editorial tras el análisis/))
       .toBeVisible();
-    document.querySelector("[data-slot=collapsible-panel]")?.scrollIntoView({ block: "end" });
+    await scrollDialogToBottom();
     await capture(`step-scoring-${size}`);
     await userEvent.click(page.getByRole("button", { name: "Continuar" }));
     expect(saveDraft).not.toHaveBeenCalled();
