@@ -248,15 +248,18 @@ const BUDGET_ERROR_TEXT: Readonly<Record<string, string>> = {
   "storage-failed": "La base editorial no respondió.",
 };
 
-function failureText(result: AtomCommandResult<unknown, unknown>): string {
-  if (result._tag === "Success") return "";
-  if (isAtomCommandInterrupted(result)) return "Se canceló.";
-  const error = squashAtomCommandFailure(result);
+function errorText(error: unknown): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
     const text = BUDGET_ERROR_TEXT[String(error.reason)];
     if (text) return text;
   }
   return error instanceof Error ? error.message : "Error desconocido.";
+}
+
+function failureText(result: AtomCommandResult<unknown, unknown>): string {
+  if (result._tag === "Success") return "";
+  if (isAtomCommandInterrupted(result)) return "Se canceló.";
+  return errorText(squashAtomCommandFailure(result));
 }
 
 /** Saving the drafting model and the monthly cap, shared by Settings and the wizard. */
@@ -271,7 +274,14 @@ export function useDraftingSettings(environmentId: EnvironmentId) {
     providers: providers ?? null,
     saved: config?.settings.textGenerationModelSelection ?? null,
     budget: budget.data,
-    budgetError: budget.error,
+    /** In the operator's words; the query's own text is the transport's, in English. */
+    budgetError:
+      budget.error === null
+        ? null
+        : budget.failure === null
+          ? "El servidor no respondió."
+          : errorText(budget.failure),
+    retryBudget: budget.refresh,
     /** Resolves to an error text, or null once saved. */
     saveModel: async (selection: ModelSelection) => {
       const result = await updateSettings({

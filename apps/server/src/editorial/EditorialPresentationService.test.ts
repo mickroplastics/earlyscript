@@ -386,6 +386,34 @@ describe("EditorialPresentationService", () => {
     ),
   );
 
+  it.effect("a result that cannot be stored frees its unit of the cap", () =>
+    withDrafting(() =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const sql = yield* EditorialSql;
+        yield* service.updateBudget(1);
+        yield* sql.unsafe(
+          "CREATE TRIGGER refuse_ready BEFORE UPDATE OF status ON editorial_presentations WHEN NEW.status = 'ready' BEGIN SELECT RAISE(FAIL, 'injected write failure'); END",
+        );
+        const failure = yield* service
+          .ensure({ runId: RUN_ID, dossierId: QUANTUM })
+          .pipe(Effect.flip);
+        yield* sql.unsafe("DROP TRIGGER refuse_ready");
+
+        assert.strictEqual(failure.reason, "storage-failed");
+        const rows = yield* presentationRows;
+        assert.deepStrictEqual(
+          rows.map((row) => row.status),
+          ["failed"],
+        );
+        assert.include(rows[0]?.error ?? "", "markReady");
+        assert.strictEqual((yield* service.getBudget).usedThisMonth, 0);
+        const next = yield* service.ensure({ runId: RUN_ID, dossierId: CHINA });
+        assert.isFalse(next.reused);
+      }),
+    ),
+  );
+
   it.effect("ensureAll stops at the cap and leaves the rest undrafted, without failed rows", () =>
     withDrafting((generator) =>
       Effect.gen(function* () {

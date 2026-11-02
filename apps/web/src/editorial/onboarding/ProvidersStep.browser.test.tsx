@@ -10,22 +10,30 @@ import {
   SETTINGS_FIXTURE,
   signedOut,
 } from "./providersStep.fixture";
-import { ProvidersStepView, type ProvidersStepViewProps } from "./ProvidersStep";
+import {
+  commitProvidersChoice,
+  ProvidersStepView,
+  type ProvidersStepViewProps,
+} from "./ProvidersStep";
 
 const HAIKU = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-haiku-5-5" };
 
 const renderStep = (props: Partial<ProvidersStepViewProps>) => {
   const onContinue = vi.fn();
   const onRecheck = vi.fn();
+  const onRetryBudget = vi.fn();
   return {
     onContinue,
     onRecheck,
+    onRetryBudget,
     screen: render(
       <ProvidersStepView
         providers={[providerFixture("claudeAgent"), providerFixture("codex", signedOut)]}
         settings={SETTINGS_FIXTURE}
         os="linux"
         budget={{ monthlyLimit: 600, usedThisMonth: 12, month: "2026-11" }}
+        budgetError={null}
+        onRetryBudget={onRetryBudget}
         checking={false}
         saving={false}
         error={null}
@@ -93,6 +101,44 @@ describe("ProvidersStepView", () => {
     await expect
       .element(screen.getByRole("button", { name: "Continuar", exact: true }))
       .toBeDisabled();
+  });
+
+  it("waits for the saved cap instead of proposing the default over it", async () => {
+    const { screen: rendered, onContinue } = renderStep({ budget: null });
+    await using screen = await rendered;
+    await expect.element(screen.getByText("Cargando el tope…")).toBeVisible();
+    const proceed = screen.getByRole("button", { name: "Continuar", exact: true });
+    await expect.element(proceed).toBeDisabled();
+    await userEvent.click(proceed, { force: true });
+    expect(onContinue).not.toHaveBeenCalled();
+  });
+
+  it("says the cap could not be read, retries, and leaves it unwritten on continue", async () => {
+    const {
+      screen: rendered,
+      onContinue,
+      onRetryBudget,
+    } = renderStep({
+      budget: null,
+      budgetError: "La base editorial no respondió.",
+    });
+    await using screen = await rendered;
+    await expect.element(screen.getByText("No se pudo leer el tope mensual")).toBeVisible();
+    await expect.element(screen.getByText(/^La base editorial no respondió\./)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(onRetryBudget).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole("button", { name: "Continuar", exact: true }));
+    expect(onContinue).toHaveBeenCalledWith(
+      expect.objectContaining({ draftingModel: HAIKU, monthlyDraftLimit: null }),
+    );
+
+    const saveLimit = vi.fn(async () => null);
+    const saved = await commitProvidersChoice(onContinue.mock.calls[0]![0], {
+      saveModel: async () => null,
+      saveLimit,
+    });
+    expect(saveLimit).not.toHaveBeenCalled();
+    expect(saved).toMatchObject({ ok: true, acceptance: { monthlyDraftLimit: null } });
   });
 
   it("refuses a cap that is not a whole number and accepts 0 as no cap", async () => {

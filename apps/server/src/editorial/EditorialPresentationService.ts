@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import type { TrendPresentationGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -116,6 +117,8 @@ const storageFailed = (operation: string) => (cause: unknown) =>
     reason: "storage-failed",
     message: `Editorial presentation storage failed in ${operation}${cause instanceof Error ? `: ${cause.message}` : "."}`,
   });
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const dossierNotFound = (target: EditorialPresentationTarget) =>
   new EditorialPresentationError({
@@ -285,26 +288,51 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    const markFailed = (error: string) =>
+    // The pending row holds a unit of the monthly cap, so it is resolved on every exit: failed
+    // with the reason, or deleted when even that write fails. Covers storing the result too.
+    const resolvePending = (error: string) =>
       sql`
         UPDATE editorial_presentations SET status = 'failed', error = ${error}
-        WHERE presentation_id = ${presentationId}
-      `.pipe(Effect.mapError(storageFailed("markFailed")));
-
-    const [duration, generated] = yield* textGeneration.generateTrendPresentation(input).pipe(
-      Effect.timed,
-      Effect.onInterrupt(() => markFailed("interrupted").pipe(Effect.ignore)),
-      Effect.catch((cause) =>
-        markFailed(cause.message).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new EditorialPresentationError({
-                reason: "generation-failed",
-                message: cause.message,
-              }),
-            ),
+        WHERE presentation_id = ${presentationId} AND status = 'pending'
+      `.pipe(
+        Effect.catch(
+          () =>
+            sql`
+            DELETE FROM editorial_presentations
+            WHERE presentation_id = ${presentationId} AND status = 'pending'
+          `,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("editorial: a pending presentation could not be resolved").pipe(
+            Effect.annotateLogs({ presentationId, cause: Cause.pretty(cause) }),
           ),
         ),
+      );
+
+    return yield* storeGeneration(dossier, input, presentationId).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : resolvePending(
+              Cause.hasInterruptsOnly(exit.cause)
+                ? "interrupted"
+                : errorMessage(Cause.squash(exit.cause)),
+            ),
+      ),
+    );
+  });
+
+  /** Calls the provider and writes the result over the pending row `generate` inserted. */
+  const storeGeneration = Effect.fn("EditorialPresentationService.storeGeneration")(function* (
+    dossier: PresentationDossier,
+    input: TrendPresentationGenerationInput,
+    presentationId: string,
+  ) {
+    const [duration, generated] = yield* textGeneration.generateTrendPresentation(input).pipe(
+      Effect.timed,
+      Effect.mapError(
+        (cause) =>
+          new EditorialPresentationError({ reason: "generation-failed", message: cause.message }),
       ),
     );
     yield* Effect.logInfo("editorial: trend presentation generated").pipe(

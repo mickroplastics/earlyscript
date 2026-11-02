@@ -200,6 +200,9 @@ export interface ProvidersStepViewProps {
   readonly settings: ServerSettings | null;
   readonly os: ExecutionEnvironmentPlatformOs;
   readonly budget: EditorialDraftBudget | null;
+  /** The cap could not be read: the step says so and leaves the saved cap untouched. */
+  readonly budgetError: string | null;
+  readonly onRetryBudget: () => void;
   readonly checking: boolean;
   readonly saving: boolean;
   readonly error: string | null;
@@ -208,7 +211,8 @@ export interface ProvidersStepViewProps {
   readonly onContinue: (choice: {
     readonly rows: ReadonlyArray<DraftingProviderRow>;
     readonly draftingModel: ModelSelection | null;
-    readonly monthlyDraftLimit: number;
+    /** Null when the saved cap is unknown; nothing is written then. */
+    readonly monthlyDraftLimit: number | null;
   }) => void;
 }
 
@@ -217,6 +221,8 @@ export function ProvidersStepView({
   settings,
   os,
   budget,
+  budgetError,
+  onRetryBudget,
   checking,
   saving,
   error,
@@ -237,8 +243,11 @@ export function ProvidersStepView({
       : initialDraftingModel({ providers, saved, isDefault: isDefaultDraftingModel(saved) });
   const model = choice !== null && isUsableSelection(providers, choice) ? choice : proposed;
   const anyReady = rows.some((row) => row.state === "ready");
-  // Nothing is decided before the server has said which providers it has.
-  const loading = providers === null;
+  // Nothing is decided before the server has said which providers it has and what cap it keeps;
+  // a cap that failed to load is left as saved instead of being overwritten with a guess.
+  const loadingBudget = budget === null && budgetError === null;
+  const loading = providers === null || loadingBudget;
+  const capKnown = budget !== null;
   const savedLimit = budget?.monthlyLimit ?? EDITORIAL_DRAFT_BUDGET_DEFAULT;
   const limit = limitText === null ? savedLimit : parseMonthlyLimit(limitText);
   const setupRow = rows.find((row) => row.key === setupKey);
@@ -311,12 +320,14 @@ export function ProvidersStepView({
             min={0}
             step={1}
             className="w-28"
-            disabled={saving}
-            aria-invalid={limit === null}
-            value={limitText ?? String(savedLimit)}
+            disabled={saving || !capKnown}
+            aria-invalid={capKnown && limit === null}
+            value={capKnown ? (limitText ?? String(savedLimit)) : ""}
             onChange={(event) => setLimitText(event.target.value)}
           />
-          {limit === null ? (
+          {loadingBudget ? (
+            <span className="text-muted-foreground text-sm">Cargando el tope…</span>
+          ) : capKnown && limit === null ? (
             <span className="text-destructive-foreground text-sm">
               Escribe un número entero; 0 quita el tope.
             </span>
@@ -330,6 +341,21 @@ export function ProvidersStepView({
           )}
           <span>{DRAFT_USAGE_NO_TOKENS}</span>
         </div>
+        {budgetError === null ? null : (
+          <Alert variant="error">
+            <TriangleAlertIcon />
+            <AlertTitle>No se pudo leer el tope mensual</AlertTitle>
+            <AlertDescription>
+              <p>
+                {budgetError} Al continuar se conserva el tope guardado; puedes cambiarlo después en
+                Ajustes › Editorial.
+              </p>
+              <Button size="xs" variant="outline" className="mt-2" onClick={onRetryBudget}>
+                Reintentar
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
       </section>
 
       {error === null ? null : (
@@ -349,10 +375,14 @@ export function ProvidersStepView({
         )}
         <Button
           autoFocus
-          disabled={saving || limit === null || loading}
+          disabled={saving || loading || (capKnown && limit === null)}
           onClick={() => {
-            if (limit === null) return;
-            onContinue({ rows, draftingModel: anyReady ? model : null, monthlyDraftLimit: limit });
+            if (capKnown && limit === null) return;
+            onContinue({
+              rows,
+              draftingModel: anyReady ? model : null,
+              monthlyDraftLimit: capKnown ? limit : null,
+            });
           }}
         >
           {saving ? <Spinner size="sm" /> : null}
@@ -371,6 +401,42 @@ export function ProvidersStepView({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Saves what the step decided, then returns the acceptance the shell records. The cap is written
+ * only when the step knew the saved one; an unknown cap stays as it is.
+ */
+export async function commitProvidersChoice(
+  choice: Parameters<ProvidersStepViewProps["onContinue"]>[0],
+  save: {
+    readonly saveModel: (selection: ModelSelection) => Promise<string | null>;
+    readonly saveLimit: (limit: number) => Promise<string | null>;
+  },
+): Promise<
+  | {
+      readonly ok: true;
+      readonly acceptance: {
+        readonly providers: ReadonlyArray<{ readonly id: string; readonly ready: boolean }>;
+        readonly draftingModel: ModelSelection | null;
+        readonly monthlyDraftLimit: number | null;
+      };
+    }
+  | { readonly ok: false; readonly error: string }
+> {
+  const { rows, draftingModel, monthlyDraftLimit } = choice;
+  const modelError = draftingModel === null ? null : await save.saveModel(draftingModel);
+  const error =
+    modelError ?? (monthlyDraftLimit === null ? null : await save.saveLimit(monthlyDraftLimit));
+  if (error !== null) return { ok: false, error };
+  return {
+    ok: true,
+    acceptance: {
+      providers: rows.map((row) => ({ id: row.key, ready: row.state === "ready" })),
+      draftingModel,
+      monthlyDraftLimit,
+    },
+  };
 }
 
 /** Step 2 of the first-run wizard: who drafts, with which model, and how much per month. */
@@ -398,29 +464,21 @@ export function ProvidersStep({ environmentId, onContinue, onBack }: OnboardingS
       settings={config?.settings ?? null}
       os={config?.environment.platform.os ?? "linux"}
       budget={drafting.budget}
+      budgetError={drafting.budgetError}
+      onRetryBudget={drafting.retryBudget}
       checking={checking}
       saving={saving}
       error={error}
       onRecheck={recheck}
       onBack={onBack}
-      onContinue={({ rows, draftingModel, monthlyDraftLimit }) => {
+      onContinue={(choice) => {
         setSaving(true);
         setError(null);
-        void (async () => {
-          const modelError =
-            draftingModel === null ? null : await drafting.saveModel(draftingModel);
-          const limitError = modelError ?? (await drafting.saveLimit(monthlyDraftLimit));
+        void commitProvidersChoice(choice, drafting).then((result) => {
           setSaving(false);
-          if (limitError !== null) {
-            setError(`No se guardó: ${limitError}`);
-            return;
-          }
-          onContinue({
-            providers: rows.map((row) => ({ id: row.key, ready: row.state === "ready" })),
-            draftingModel,
-            monthlyDraftLimit,
-          });
-        })();
+          if (result.ok) onContinue(result.acceptance);
+          else setError(`No se guardó: ${result.error}`);
+        });
       }}
     />
   );
