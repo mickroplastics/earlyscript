@@ -1798,3 +1798,22 @@ Informe en `~/earlyscript-data/shell-es-verify/informe-3.md`; R5 cerrado.
 Consecuencias aceptadas: un nodo que sale de un ámbito conserva el valor que tenía al salir. Si nadie lo adopta, o si lo adopta otro ámbito cuando ya está en español, queda traducido después de los desmontajes, en lugar de volver a su inglés original. Un nodo que sale del DOM y vuelve es nuevo para el ámbito: si vuelve con la traducción propia, el ámbito no puede distinguirla de un español de upstream y la conserva; si vuelve con inglés, lo traduce y lo restaura al desmontar.
 
 Regresiones en `locale/ShellLocale.browser.test.tsx` («a scope restores only what it still observes»), con dos `useScopedLocale` reales sobre las opciones de `SIDEBAR_LOCALE` y `THREAD_LOCALE`: la secuencia de Sol A → B → `body` con «Borrar» de upstream en texto, `title` y `aria-label` tras ambos desmontajes; un portal que nadie adopta, intacto y sin escrituras posteriores; un nodo que sale del DOM y vuelve, primero con la traducción y después con inglés. Con el `scopedLocale.ts` anterior fallan las tres.
+
+## N. Paso «Motor y nocturna» y primera corrida desde Tendencias (rama `es/onboarding-engine-run`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). No toca archivos de upstream.
+
+Archivos propios nuevos, en `apps/web/src/editorial/`:
+
+- `onboarding/EngineStep.tsx` (reemplaza el stub) y `onboarding/engineStep.logic.ts`: modelo local (`ModelDownloadCard`, sin editar), interruptor y hora de la corrida nocturna con la zona del servidor en palabras, primera corrida con sus fases. Guarda cada cambio con `editorial.jobs.updateSettings` en el momento, como Ajustes › Editorial; `onContinue` entrega `{ nightlyEnabled, timeOfDay, timezone, firstRunStarted, modelReady }`.
+- `FirstRunCard.tsx` (`FirstRunPanel`, `NightlyNote`, `useFirstRun`, `FirstRunCard`) y `firstRun.logic.ts` (`firstRunView`, `firstRunPhaseRows`): la primera corrida como tarjeta, compartida por el paso y por la bandeja. Sigue el job de `editorial.jobs.watch`, el que contestó `runNow` y el más reciente de `editorial.jobs.list`; los avisos se redactan con `jobMessages` de `jobsState.ts`. Las cinco fases son filas de altura fija; la fase en curso muestra el conteo del motor o, mientras el motor no informa (lo hace cada 1024 textos), el tiempo transcurrido por minuto. En el panel estrecho cada fase terminada muestra solo lo que produjo.
+- Pruebas: `firstRun.logic.test.ts`, `onboarding/engineStep.logic.test.ts`, `FirstRunCard.browser.test.tsx`, `onboarding/EngineStep.browser.test.tsx`, `TrendsEmptyPage.browser.test.tsx` y dos casos nuevos en `TrendInbox.browser.test.tsx`; datos en `firstRun.fixture.ts`.
+
+Archivos propios modificados:
+
+- `TrendInbox.tsx`: una bandeja sin corrida, o con una corrida sin tendencias, muestra `FirstRunCard` centrada en el panel en lugar de «Todavía no hay corridas del motor.»; el menú de orden y el indicador de la cabecera («Corriendo: …») se ocultan mientras no hay tendencias, porque la tarjeta ya muestra las fases.
+- `TrendDossierPage.tsx`: `TrendsEmptyPage`, que la ruta `_chat.editorial.$environmentId.trends.tsx` monta en lugar de «Elige una tendencia» cuando no hay corridas (o «Corrida en curso» mientras corre una); con la barra lateral oculta (móvil o plegada) ofrece «Abrir la bandeja». También el estado vacío de una ficha sin corridas.
+- `EditorialPage.tsx`: `EditorialEmptyPage` acepta `children` (una acción bajo la descripción).
+- `settings/NightlyRunSettings.tsx`: exporta `nextRunText` y `failureText` para reutilizarlas.
+
+Decisiones reversibles: los ajustes del paso se guardan al cambiar, no al pulsar «Continuar»; la nocturna conserva su estado del servidor (desactivada por defecto) y el paso no la activa solo; una corrida terminada sin tendencias no ofrece volver a correr, porque `runNow` devolvería el mismo job del día.

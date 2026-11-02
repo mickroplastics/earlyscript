@@ -66,10 +66,13 @@ export function EditorialEmptyPage({
   space,
   title,
   description,
+  children,
 }: {
   readonly space: string;
   readonly title: string;
   readonly description: string;
+  /** Under the description: an action that leads out of the empty state. */
+  readonly children?: ReactNode;
 }) {
   return (
     <SidebarInset
@@ -87,6 +90,7 @@ export function EditorialEmptyPage({
               <EmptyTitle>{title}</EmptyTitle>
               <EmptyDescription>{description}</EmptyDescription>
             </EmptyHeader>
+            {children}
           </div>
         </Empty>
       </div>
