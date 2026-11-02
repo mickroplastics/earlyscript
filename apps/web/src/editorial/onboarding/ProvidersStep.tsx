@@ -48,6 +48,7 @@ import {
   type DraftingProviderRow,
   type ProviderReadiness,
 } from "./providersStep.logic";
+import { StepFooter } from "./StepFooter";
 import type { OnboardingStepProps } from "./steps";
 
 const STATE_TEXT: Readonly<Record<ProviderReadiness, string>> = {
@@ -257,21 +258,25 @@ export function ProvidersStepView({
   const setupCommand = setupRow === undefined ? null : providerSetupCommand(setupRow, settings, os);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6" data-testid="providers-step">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Proveedores</h1>
+        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+          Earlyscript redacta las tendencias con tu suscripción de Claude o Codex, desde esta
+          máquina. Basta con uno.
+        </p>
+      </div>
+
       <section aria-labelledby={`${id}-providers`} className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
-          <h3 id={`${id}-providers`} className="font-medium text-foreground text-sm">
-            Proveedores
-          </h3>
+          <h2 id={`${id}-providers`} className="text-sm font-semibold text-foreground">
+            En esta máquina
+          </h2>
           <Button size="xs" variant="ghost-muted" disabled={checking} onClick={onRecheck}>
             {checking ? <Spinner size="sm" /> : null}
             Volver a comprobar
           </Button>
         </div>
-        <p className="text-muted-foreground text-sm">
-          Earlyscript redacta las tendencias con tu suscripción de Claude o Codex, desde esta
-          máquina. Basta con uno.
-        </p>
         <ul className="flex flex-col gap-1.5">
           {rows.map((row) => (
             <ProviderRow
@@ -296,9 +301,9 @@ export function ProvidersStepView({
       </section>
 
       <section className="flex flex-col gap-2" aria-labelledby={`${id}-model`}>
-        <h3 id={`${id}-model`} className="font-medium text-foreground text-sm">
+        <h2 id={`${id}-model`} className="text-sm font-semibold text-foreground">
           Modelo de redacción
-        </h3>
+        </h2>
         <p className="text-muted-foreground text-sm">{DRAFTING_MODEL_EXPLANATION}</p>
         {savedDisabledText === null ? null : (
           <Alert variant="warning">
@@ -315,9 +320,9 @@ export function ProvidersStepView({
       </section>
 
       <section className="flex flex-col gap-2" aria-labelledby={`${id}-limit`}>
-        <h3 id={`${id}-limit`} className="font-medium text-foreground text-sm">
+        <h2 id={`${id}-limit`} className="text-sm font-semibold text-foreground">
           Tope mensual de redacciones
-        </h3>
+        </h2>
         <p className="text-muted-foreground text-sm">{DRAFT_BUDGET_EXPLANATION}</p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Input
@@ -374,30 +379,21 @@ export function ProvidersStepView({
         </Alert>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {onBack === null ? (
-          <span />
-        ) : (
-          <Button variant="ghost" onClick={onBack} disabled={saving}>
-            Atrás
-          </Button>
-        )}
-        <Button
-          autoFocus
-          disabled={saving || loading || (capKnown && limit === null)}
-          onClick={() => {
-            if (capKnown && limit === null) return;
-            onContinue({
-              rows,
-              draftingModel: anyReady ? model : null,
-              monthlyDraftLimit: capKnown ? limit : null,
-            });
-          }}
-        >
-          {saving ? <Spinner size="sm" /> : null}
-          {anyReady || loading ? "Continuar" : "Continuar sin proveedor"}
-        </Button>
-      </div>
+      <StepFooter
+        onBack={onBack}
+        autoFocus
+        saving={saving}
+        disabled={loading || (capKnown && limit === null)}
+        label={anyReady || loading ? "Continuar" : "Continuar sin proveedor"}
+        onContinue={() => {
+          if (capKnown && limit === null) return;
+          onContinue({
+            rows,
+            draftingModel: anyReady ? model : null,
+            monthlyDraftLimit: capKnown ? limit : null,
+          });
+        }}
+      />
 
       {setupRow !== undefined && setupCommand !== null ? (
         <ProviderSetupDialog
