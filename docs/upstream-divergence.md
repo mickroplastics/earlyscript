@@ -1904,3 +1904,47 @@ Informe en Beatriz `/home/mick/earlyscript-data/verify-onb-studio/informe.md`.
 | `packages/contracts/src/clientRpcPermissions.ts` | 15, 70 | Importa `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` y lo esparce al final de `CLIENT_GUARDED_RPC_SCOPES`. |
 
 Con eso `permissionAtom` del comando exige la sesión con `orchestration:operate`. `useProfileEditor` lo lee; sin el permiso, `ProfileForm` desactiva campos, renglones y «Quitar» y muestra «Solo lectura: tu sesión no puede cambiar el perfil.»; en Ajustes se desactivan «Guardar versión N» y «Descartar cambios»; el paso «Estudio» sigue permitiendo «Continuar» con la versión activa, sin guardar. Pruebas: caso de solo lectura en `onboarding/StudioStep.browser.test.tsx` y en `profile/profileSave.browser.test.tsx` (permiso denegado, ningún `update`). Mientras se carga la sesión el átomo vale `false`, así que el aviso puede verse un instante al abrir.
+
+## Modelo del motor desde la app (rama `es/onboarding-engine-model`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). Antes, el modelo local de embeddings (Qwen3-Embedding-0.6B q8, revisión `c25a394d…`, 596 MiB) se descargaba solo en la primera corrida del motor, sin que el operador lo viera. Ahora el estado y la descarga tienen una orden del CLI, un grupo RPC y una tarjeta en la interfaz.
+
+Archivos de upstream modificados (enganches de una línea, al final de cada lista, como §22):
+
+| Archivo                                               | Líneas    | Cambio                                                            | Motivo                                                     |
+| ----------------------------------------------------- | --------- | ----------------------------------------------------------------- | ---------------------------------------------------------- |
+| `packages/contracts/src/index.ts`                     | 77        | `export * from "./editorialEngine.ts"`.                           | Exportación del grupo.                                     |
+| `packages/contracts/src/rpc.ts`                       | 42, 2154  | Import y `.merge(EditorialEngineRpcGroup)`.                       | Grupo en `WsRpcGroup`.                                     |
+| `apps/server/src/auth/RpcAuthorization.ts`            | 9, 55     | `EDITORIAL_ENGINE_RPC_REQUIRED_SCOPES`.                           | Ámbitos del grupo.                                         |
+| `apps/server/src/observability/RpcInstrumentation.ts` | 14, 27    | `EDITORIAL_ENGINE_RPC_AGGREGATES`.                                | Agregados de trazas.                                       |
+| `apps/server/src/ws.ts`                               | 249, 1883 | `EditorialEngineRpcHandlers`.                                     | Handlers.                                                  |
+| `apps/server/src/server.ts`                           | 57, 640   | `EditorialEngineRpc.layer` tras `EditorialJobsRpc.layer`.         | Servicio montado.                                          |
+| `packages/client-runtime/src/rpc/client.ts`           | 10, 82    | `editorial.engine.watchModel` en `EnvironmentSubscriptionRpcTag`. | Stream como suscripción, igual que `editorial.jobs.watch`. |
+
+Archivos nuevos: `packages/contracts/src/editorialEngine.ts`; `apps/server/src/editorial/{EditorialEngineService.ts,engineRpc.ts}` y su prueba; `packages/trend-engine/src/embed/modelCommand.ts`, `testkit/modelMirror.ts` y `embed/modelCommand.test.ts`; `apps/web/src/editorial/engineState.ts` y la prueba de navegador de `onboarding/ModelDownloadCard.tsx`.
+
+Motor (`packages/trend-engine`):
+
+- `engine model status [--models <dir>]` imprime `{ status: "ready" | "missing" | "partial", revision, path, bytesPresent, bytesExpected }`. Mira tamaños, no hashes (hashear 596 MiB en cada consulta tarda segundos; `prepareModel` hashea antes de que una corrida use los archivos). Un parcial cuenta sus bytes. `QWEN_FILES` lleva ahora el tamaño de cada archivo.
+- `engine model prepare [--models <dir>]` descarga con `prepareModel` e imprime una línea JSON `{ file, bytesDone, bytesTotal }` cada 500 ms u 8 MiB (y al empezar cada archivo y al terminar), luego `{ done: true, path }`; si falla, `{ error: { code, message } }` con `network`, `http`, `hash`, `disk` u `other`, y sale con 1. Los bytes cuentan el modelo entero.
+- `--models` es el directorio de la revisión, como en `run`; sin él, `defaultModelDir(DEFAULT_DATA_DIR)` (`~/earlyscript-data/models/<revisión>`), la misma función que usan ahora `run.ts` y `backtest.ts`. `EARLYSCRIPT_MODEL_BASE_URL` apunta a un espejo con la estructura de Hugging Face (pruebas, proxy).
+- `prepareModel(dir, allowDownload, options?)`: tercer parámetro opcional (`onProgress`, `baseUrl`, `files`); el contrato anterior no cambia. Reanudación: una conexión que se corta deja el parcial sin dueño (`<archivo>.<uuid>.partial`) en lugar de borrarlo, y el siguiente intento lo adopta y pide el resto con `Range: bytes=<n>-`; un servidor que ignora el rango (200) vuelve a empezar. Se adopta también el parcial de un proceso muerto (el mayor por archivo; los demás se borran). Un hash que no coincide borra los bytes. Con `allowDownload` falso, los parciales abandonados se borran como antes (§26).
+
+Servidor:
+
+- `EditorialEngineService` lanza `engine model status|prepare` con `runEngineCommand` (`engineProcess.ts`, que gana `onStdoutLine`). El estado vive en un `SubscriptionRef`; la descarga se reclama en la misma actualización que la muestra, así que dos `prepareModel` seguidos lanzan un solo proceso. La velocidad es la media de los últimos 5 s. El proceso corre en un ámbito del servicio: al apagar el servidor se mata. Log en `<stateDir>/editorial-engine/model.log`.
+- Directorio de modelos en una sola función: `resolveModelsDir` (`engineProcess.ts`): `EARLYSCRIPT_EDITORIAL_MODELS_DIR` o null (el valor por defecto del motor). La usan la nocturna (`EditorialJobsService.ts`, que antes leía la variable por su cuenta) y este servicio.
+- RPC `editorial.engine.modelStatus` y `watchModel` con `orchestration:read`; `prepareModel` con `orchestration:operate`. Sin motor, el estado lleva `error.code = "engine_missing"` en vez de fallar la llamada.
+
+Interfaz: `onboarding/ModelDownloadCard.tsx` (firma `{ environmentId, onReady }` conservada, más `bare` para Ajustes) con estados comprobando, falta (o descarga a medias, con «Continuar descarga»), descargando con barra, velocidad y tiempo restante, comprobando archivos, error con «Reintentar» y listo. `engineState.ts` tiene el átomo de suscripción y el texto en español. Ajustes › Editorial › Corrida nocturna (`NightlyRunSettings.tsx`) muestra la fila «Modelo del motor» con la misma tarjeta.
+
+Decisiones reversibles: estado por tamaños y no por hash; el error queda en el estado hasta la siguiente descarga (no se persiste: tras reiniciar el servidor, la tarjeta muestra «Descarga a medias»); el detalle técnico del error no se muestra (queda en `model.log`); la nocturna sigue pudiendo descargar el modelo por su cuenta si nadie usó la tarjeta.
+
+### Correcciones tras la verificación de Sol (NO APTO sobre `b27cfe9794`)
+
+- **H1, archivo final corrupto.** `prepareModel` borra y vuelve a descargar un archivo final con tamaño distinto o hash incorrecto cuando puede descargar (sin descarga, sigue fallando con `hash mismatch`). `modelStatus` cuenta los bytes de un archivo final truncado y lo da por `partial`. Un archivo del mismo tamaño con un byte cambiado sigue `ready` por tamaños; lo arregla el siguiente `prepare`, que también hace la corrida. `modelIsReady` (`engineState.ts`) exige además `error === null`, y la tarjeta lo usa para `onReady`.
+- **H2, velocidad al reanudar.** Cada línea de progreso lleva `sessionBytes`, los bytes recibidos por ese proceso; la velocidad se mide sobre ellos y no sobre `bytesDone`, que salta sobre los archivos comprobados y el parcial adoptado. El servidor no publica nunca un `bytesDone` menor que el último de la misma descarga.
+- **H3, rutas temporales de macOS.** La prueba del servicio usa `realpathSync` sobre su directorio temporal.
+- **H4, descarga ya hecha.** `prepareModel` no lanza nada si el último estado conocido es `ready` sin error.
+- **H5, paréntesis huérfano.** «Listo · revisión c25a394d · 596 MiB · ~/earlyscript-data/models».
+- **H6 (reverificación de Sol sobre `8e0604f1bc`), sin permiso de descarga no se borra nada.** `prepareModel(dir, false)` ya no barre parciales: falla con `Model file missing` y deja intactos los huérfanos, que el siguiente `prepareModel(dir, true)` adopta y reanuda con `Range`. El barrido (el mayor parcial abandonado por archivo se conserva, los demás se borran, el de un proceso vivo se respeta) ocurre solo antes de descargar. Cambia lo descrito en §26 para `allowDownload` falso.

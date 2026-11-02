@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
+import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
 
 import { QWEN_FILES, QWEN_MODEL, QWEN_REVISION } from "./spec.ts";
@@ -11,8 +12,42 @@ import { QWEN_FILES, QWEN_MODEL, QWEN_REVISION } from "./spec.ts";
 /** A partial nobody has written to for this long is abandoned, whatever its owner. */
 const PARTIAL_STALE_MS = 60 * 60 * 1000;
 
+/** `<data>/models/<revision>`: where runs, backtests and `engine model` look by default. */
+export const defaultModelDir = (dataDir: string, revision: string = QWEN_REVISION): string =>
+  NodePath.join(dataDir, "models", revision);
+
+/** Where the pinned files come from; a mirror keeps the same `<model>/resolve/<rev>/<file>` layout. */
+export const MODEL_BASE_URL = "https://huggingface.co";
+
 // `<file>.<pid>.<uuid>.partial`; the pid is the downloading process.
-const PARTIAL_NAME = /^.+?\.(?:(\d+)\.)?[0-9a-f-]{36}\.partial$/;
+const PARTIAL_NAME = /^(.+?)\.(?:(\d+)\.)?[0-9a-f-]{36}\.partial$/;
+
+export interface ModelFile {
+  readonly file: string;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/** Bytes of the whole model on disk, counted while `file` downloads. */
+export interface ModelProgress {
+  readonly file: string;
+  readonly bytesDone: number;
+  readonly bytesTotal: number;
+  /**
+   * Bytes received over the network by this call. `bytesDone` also jumps over files that
+   * were already on disk and over an adopted partial, so speed is measured on this one.
+   */
+  readonly sessionBytes: number;
+}
+
+export interface PrepareModelOptions {
+  /** Called as bytes arrive; the caller throttles. */
+  readonly onProgress?: (progress: ModelProgress) => void;
+  /** Defaults to `MODEL_BASE_URL`. */
+  readonly baseUrl?: string;
+  /** The pinned Qwen files; tests pass small ones. */
+  readonly files?: ReadonlyArray<ModelFile>;
+}
 
 function processAlive(pid: number): boolean {
   try {
@@ -23,24 +58,62 @@ function processAlive(pid: number): boolean {
   }
 }
 
-/**
- * Removes partial downloads left by a process that died mid-download, or untouched for
- * an hour. A live download of the same file by another process keeps its partial.
- */
-async function removeAbandonedPartials(dir: string, nowMs: number): Promise<void> {
+interface PartialFile {
+  readonly path: string;
+  /** The file it becomes, absolute. */
+  readonly destination: string;
+  readonly size: number;
+  readonly abandoned: boolean;
+}
+
+/** Partial downloads in `dir`. Abandoned: no owner, a dead owner, or an hour unwritten. */
+async function listPartials(dir: string, nowMs: number): Promise<Array<PartialFile>> {
   const entries = await NodeFSP.readdir(dir).catch(() => []);
+  const partials: Array<PartialFile> = [];
   for (const entry of entries) {
     const match = PARTIAL_NAME.exec(entry);
     if (match === null) continue;
     const path = NodePath.join(dir, entry);
     const stat = await NodeFSP.stat(path).catch(() => null);
     if (stat === null) continue;
-    const owner = match[1] === undefined ? null : Number(match[1]);
-    const abandoned = owner === null || !processAlive(owner);
-    if (abandoned || nowMs - stat.mtimeMs > PARTIAL_STALE_MS) {
-      await NodeFSP.rm(path, { force: true });
+    const owner = match[2] === undefined ? null : Number(match[2]);
+    partials.push({
+      path,
+      destination: NodePath.join(dir, match[1] ?? entry),
+      size: stat.size,
+      abandoned: owner === null || !processAlive(owner) || nowMs - stat.mtimeMs > PARTIAL_STALE_MS,
+    });
+  }
+  return partials;
+}
+
+const fileDirs = (root: string, files: ReadonlyArray<ModelFile>) =>
+  new Set(files.map(({ file }) => NodePath.dirname(NodePath.join(root, file))));
+
+/**
+ * Before a download: of the partials left by a process that died mid-download, or untouched
+ * for an hour, keeps the largest per file to resume from and removes the rest. A live
+ * download of the same file by another process keeps its partial.
+ */
+async function sweepPartials(
+  root: string,
+  files: ReadonlyArray<ModelFile>,
+): Promise<Map<string, PartialFile>> {
+  const nowMs = Date.now();
+  const resumable = new Map<string, PartialFile>();
+  for (const dir of fileDirs(root, files)) {
+    for (const partial of await listPartials(dir, nowMs)) {
+      if (!partial.abandoned) continue;
+      const kept = resumable.get(partial.destination);
+      if (kept === undefined || kept.size < partial.size) {
+        resumable.set(partial.destination, partial);
+        if (kept !== undefined) await NodeFSP.rm(kept.path, { force: true });
+      } else {
+        await NodeFSP.rm(partial.path, { force: true });
+      }
     }
   }
+  return resumable;
 }
 
 async function fileHash(path: string): Promise<string> {
@@ -49,36 +122,151 @@ async function fileHash(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
-/** Checks every pinned file and downloads the missing ones from the pinned revision. */
-export async function prepareModel(modelDir: string, allowDownload: boolean): Promise<string> {
-  const root = NodePath.resolve(modelDir);
-  const nowMs = Date.now();
-  for (const dir of new Set(
-    QWEN_FILES.map(({ file }) => NodePath.dirname(NodePath.join(root, file))),
-  )) {
-    await removeAbandonedPartials(dir, nowMs);
+/** Takes over an abandoned partial by renaming it; 0 bytes when another process took it first. */
+async function adopt(partial: PartialFile | undefined, own: string): Promise<number> {
+  if (partial === undefined) return 0;
+  try {
+    await NodeFSP.rename(partial.path, own);
+    return (await NodeFSP.stat(own)).size;
+  } catch {
+    return 0;
   }
-  for (const { file, sha256 } of QWEN_FILES) {
+}
+
+/**
+ * Checks every pinned file and downloads the missing ones from the pinned revision. A
+ * download that broke or died midway resumes from its partial with an HTTP range request;
+ * the finished file is hashed either way, and a mismatch throws the bytes away.
+ */
+export async function prepareModel(
+  modelDir: string,
+  allowDownload: boolean,
+  options: PrepareModelOptions = {},
+): Promise<string> {
+  const root = NodePath.resolve(modelDir);
+  const files = options.files ?? QWEN_FILES;
+  const baseUrl = (options.baseUrl ?? MODEL_BASE_URL).replace(/\/+$/, "");
+  const bytesTotal = files.reduce((sum, { bytes }) => sum + bytes, 0);
+  // Without leave to download nothing on disk is touched: a resumable partial is worth
+  // hundreds of megabytes to the next call that may download.
+  const resumable = allowDownload
+    ? await sweepPartials(root, files)
+    : new Map<string, PartialFile>();
+  let bytesBefore = 0;
+  let sessionBytes = 0;
+  const report = (file: string, bytesDone: number) =>
+    options.onProgress?.({ file, bytesDone, bytesTotal, sessionBytes });
+  for (const { file, sha256, bytes } of files) {
     const destination = NodePath.join(root, file);
     if (NodeFS.existsSync(destination)) {
-      if ((await fileHash(destination)) !== sha256)
-        throw new Error(`Model hash mismatch: ${destination}`);
-      continue;
+      const size = (await NodeFSP.stat(destination)).size;
+      if (size === bytes && (await fileHash(destination)) === sha256) {
+        bytesBefore += bytes;
+        report(file, bytesBefore);
+        continue;
+      }
+      // A finished file that is truncated or corrupt blocks every later run: when this call
+      // may download, it goes and is fetched again, as a bad partial is.
+      if (!allowDownload) throw new Error(`Model hash mismatch: ${destination}`);
+      await NodeFSP.rm(destination, { force: true });
     }
     if (!allowDownload) throw new Error(`Model file missing: ${destination}`);
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
     const partial = `${destination}.${NodeProcess.pid}.${NodeCrypto.randomUUID()}.partial`;
+    // Until the hash says otherwise, the bytes are good: a broken connection leaves them
+    // for the next attempt instead of throwing away hundreds of megabytes.
+    let keepPartial = true;
     try {
-      const url = `https://huggingface.co/${QWEN_MODEL}/resolve/${QWEN_REVISION}/${file}`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(600_000) });
-      if (!response.ok || !response.body)
-        throw new Error(`Model download failed: HTTP ${response.status}`);
-      await NodeStreamPromises.pipeline(response.body, NodeFS.createWriteStream(partial));
+      let offset = await adopt(resumable.get(destination), partial);
+      const url = `${baseUrl}/${QWEN_MODEL}/resolve/${QWEN_REVISION}/${file}`;
+      // A partial as long as the file needs no request: the hash decides.
+      if (offset < bytes) {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(600_000),
+          ...(offset > 0 ? { headers: { range: `bytes=${offset}-` } } : {}),
+        });
+        if (!response.ok || !response.body)
+          throw new Error(`Model download failed: HTTP ${response.status}`);
+        // A server that ignores the range sends the whole file again.
+        if (response.status !== 206) offset = 0;
+        let done = offset;
+        const count = new NodeStream.Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            done += chunk.length;
+            sessionBytes += chunk.length;
+            report(file, bytesBefore + done);
+            callback(null, chunk);
+          },
+        });
+        report(file, bytesBefore + done);
+        await NodeStreamPromises.pipeline(
+          response.body,
+          count,
+          NodeFS.createWriteStream(partial, { flags: offset > 0 ? "a" : "w" }),
+        );
+      }
+      keepPartial = false;
       if ((await fileHash(partial)) !== sha256) throw new Error(`Model hash mismatch: ${url}`);
       await NodeFSP.rename(partial, destination);
     } finally {
-      await NodeFSP.rm(partial, { force: true });
+      // Released without an owner, so any later attempt, this process included, resumes it.
+      const released = keepPartial
+        ? await NodeFSP.rename(partial, `${destination}.${NodeCrypto.randomUUID()}.partial`).then(
+            () => true,
+            () => false,
+          )
+        : false;
+      if (!released) await NodeFSP.rm(partial, { force: true });
     }
+    bytesBefore += bytes;
+    report(file, bytesBefore);
   }
   return root;
+}
+
+export interface ModelStatus {
+  /** `partial`: some bytes are on disk, finished files or a download that stopped. */
+  readonly status: "ready" | "missing" | "partial";
+  readonly revision: string;
+  readonly path: string;
+  readonly bytesPresent: number;
+  readonly bytesExpected: number;
+}
+
+/**
+ * What is on disk, by size: hashing 600 MB on every look would take seconds, and
+ * `prepareModel` hashes before a run uses the files anyway. A partial counts its bytes.
+ */
+export async function modelStatus(
+  modelDir: string,
+  files: ReadonlyArray<ModelFile> = QWEN_FILES,
+): Promise<ModelStatus> {
+  const root = NodePath.resolve(modelDir);
+  const nowMs = Date.now();
+  const partials: Array<PartialFile> = [];
+  for (const dir of fileDirs(root, files)) partials.push(...(await listPartials(dir, nowMs)));
+  let bytesPresent = 0;
+  let complete = 0;
+  for (const { file, bytes } of files) {
+    const destination = NodePath.join(root, file);
+    const size = (await NodeFSP.stat(destination).catch(() => null))?.size ?? null;
+    if (size === bytes) {
+      complete += 1;
+      bytesPresent += bytes;
+      continue;
+    }
+    // A truncated finished file counts its bytes too: the model is half there, not absent.
+    const largest = Math.max(
+      size ?? 0,
+      ...partials.filter((partial) => partial.destination === destination).map((p) => p.size),
+    );
+    bytesPresent += Math.min(largest, bytes);
+  }
+  return {
+    status: complete === files.length ? "ready" : bytesPresent > 0 ? "partial" : "missing",
+    revision: QWEN_REVISION,
+    path: root,
+    bytesPresent,
+    bytesExpected: files.reduce((sum, { bytes }) => sum + bytes, 0),
+  };
 }

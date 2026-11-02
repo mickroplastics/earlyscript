@@ -56,6 +56,7 @@ import * as EditorialSourcesRpc from "./editorial/sourcesRpc.ts";
 import * as EditorialJobsRpc from "./editorial/jobsRpc.ts";
 import * as EditorialOnboardingRpc from "./editorial/onboardingRpc.ts";
 import * as EditorialProfileRpc from "./editorial/profileRpc.ts";
+import * as EditorialEngineRpc from "./editorial/engineRpc.ts";
 import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
 import * as EditorialPresentation from "./editorial/EditorialPresentationService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -638,6 +639,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   EditorialPresentation.layer,
   EditorialJobsRpc.layer,
+  EditorialEngineRpc.layer,
 ).pipe(
   // Read side, importer, inbox commands and Results, all over the storage aroundOrchestration mounts.
   Layer.provideMerge(EditorialResultsRpc.layer),
