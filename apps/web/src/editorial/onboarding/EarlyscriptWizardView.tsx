@@ -85,9 +85,12 @@ export function EarlyscriptWizardView({
   // opens at its top and the next Tab reaches its first control.
   const stepTitle = useRef<HTMLHeadingElement>(null);
   const stage = ONBOARDING_STAGES[position.index]!;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves keyboard focus to the title of the step that just mounted, instead of leaving it on the header or the body
+  // The step on screen when the effect last ran; the first one is focused by `initialFocus`.
+  const shownIndex = useRef(position.index);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves keyboard focus to the title of the step that just mounted, forward or back, instead of leaving it on the header or the body
   useEffect(() => {
-    if (position.index === 0) return;
+    if (shownIndex.current === position.index) return;
+    shownIndex.current = position.index;
     // A long step leaves the popup scrolled down; the next one opens at the top, header in view.
     stepTitle.current?.closest('[data-slot="scroll-area-viewport"]')?.scrollTo({ top: 0 });
     stepTitle.current?.focus({ preventScroll: true });

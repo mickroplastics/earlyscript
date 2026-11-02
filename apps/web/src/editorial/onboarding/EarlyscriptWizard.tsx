@@ -4,6 +4,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
@@ -11,7 +12,9 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSpaceStore } from "../spaceStore";
 import { EarlyscriptWizardView } from "./EarlyscriptWizardView";
+import { leaveWizard } from "./wizardExit";
 import {
   contractStep,
   editorialOnboardingEnvironment,
@@ -47,20 +50,31 @@ export function EarlyscriptWizard({
   const record = useAtomCommand(editorialOnboardingEnvironment.record, quiet);
   const complete = useAtomCommand(editorialOnboardingEnvironment.complete, quiet);
 
+  const navigate = useNavigate();
+  const setSpace = useSpaceStore((state) => state.setSpace);
+
   // The client mark keeps the first-run gate from sending the operator back to /welcome.
   const leave = async () => {
-    try {
-      await completeOnboarding();
-    } catch {
+    const left = await leaveWizard({
+      environmentId,
+      completeOnboarding,
+      setSpace,
+      openTrends: (id) =>
+        navigate({
+          to: "/editorial/$environmentId/trends",
+          params: { environmentId: id },
+          replace: true,
+        }),
+      fallback: () => onDone(),
+    });
+    if (!left) {
       toastManager.add({
         type: "error",
         title: "No se pudo cerrar el asistente",
         description: "No se guardaron los ajustes de esta ventana. Vuelve a intentarlo.",
       });
-      return false;
     }
-    await onDone();
-    return true;
+    return left;
   };
 
   return (
