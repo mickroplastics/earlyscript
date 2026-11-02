@@ -1798,3 +1798,23 @@ Informe en `~/earlyscript-data/shell-es-verify/informe-3.md`; R5 cerrado.
 Consecuencias aceptadas: un nodo que sale de un ámbito conserva el valor que tenía al salir. Si nadie lo adopta, o si lo adopta otro ámbito cuando ya está en español, queda traducido después de los desmontajes, en lugar de volver a su inglés original. Un nodo que sale del DOM y vuelve es nuevo para el ámbito: si vuelve con la traducción propia, el ámbito no puede distinguirla de un español de upstream y la conserva; si vuelve con inglés, lo traduce y lo restaura al desmontar.
 
 Regresiones en `locale/ShellLocale.browser.test.tsx` («a scope restores only what it still observes»), con dos `useScopedLocale` reales sobre las opciones de `SIDEBAR_LOCALE` y `THREAD_LOCALE`: la secuencia de Sol A → B → `body` con «Borrar» de upstream en texto, `title` y `aria-label` tras ambos desmontajes; un portal que nadie adopta, intacto y sin escrituras posteriores; un nodo que sale del DOM y vuelve, primero con la traducción y después con inglés. Con el `scopedLocale.ts` anterior fallan las tres.
+
+## Asistente de primer arranque, paso «Datos y permisos» (rama `es/onboarding-data`, 2 de noviembre de 2026)
+
+Base: `es/onboarding-base` (`f10f26fb55`). Cero archivos de upstream modificados. El paso reemplaza el stub `apps/web/src/editorial/onboarding/DataConsentStep.tsx` con la interfaz de `steps.ts`; lo monta `es/onboarding-shell`.
+
+Archivos nuestros:
+
+- `onboarding/DataConsentStep.tsx`: `DataConsentView` (sin RPC, la que prueba el navegador) y `DataConsentStep` (lee `editorial.sources.list`, escribe con `editorial.sources.update`).
+- `onboarding/dataConsent.logic.ts` y su prueba: filas, interruptores, escrituras pendientes, textos aceptados (`DATA_CONSENT_POLICY`) y aceptación.
+- `settings/sourcesText.ts`: `failureText`, la tabla de errores de `editorial.sources.*`, sacada de `SourcesSettings.tsx` para que la usen Ajustes y el paso. Suma `not-acknowledged` y `EnvironmentAuthorizationError`.
+- `packages/editorial-contracts/src/sourceCatalog.ts`: el borrado de ocho fichas decía «borrado manual; no hay borrado por ítem». Desde §19 y §21, `engine purge --source <id> (--author | --url | --feed)` borra por autor o enlace en cualquier fuente y por feed en RSS (`trend-engine/src/cli.ts`, `src/purge.ts`). Ahora cada ficha nombra la orden con su fuente; Wikipedia, sin campo de autor, solo `--url`. Cambia `catalogHash`.
+
+Comportamiento:
+
+- Lista las diez fuentes del catálogo: primero las que se pueden capturar (ficha `ready` y sin `collectBlocked` del servidor, que manda), después las pendientes y las bloqueadas en filas compactas con el interruptor desactivado. Cada fila dice el estado de sus términos en palabras (fecha larga de lectura, «Pendiente de leer sus términos» o «Bloqueada:» con la primera frase de sus notas), la licencia, qué guarda (`STORED_FIELDS`, leído de cada adaptador de `trend-engine/src/sources`) y su conservación. No ofrece «Usar en el motor»: eso se decide en Ajustes tras un backtest.
+- Los interruptores son un borrador: el paso escribe con `editorial.sources.update` solo los que cambiaron, una a la vez, al pulsar «Continuar». Si una escritura falla, el error en español queda junto al botón (`role="alert"`, `aria-describedby`) y el paso no avanza; al cambiar un interruptor el error se borra.
+- «Qué sale de esta máquina»: peticiones a las fuentes (pausas de `PAUSE_MS` en `trend-engine/src/sources/http.ts`, robots.txt salvo HN y GitHub, excepción de arXiv) y lo que va al proveedor al redactar (perfil, cifras, hasta 12 ítems de evidencia, `PRESENTATION_EVIDENCE_LIMIT` en `presentationDossierSource.ts`, con extracto de 500 caracteres, `text.excerpt_chars` de `engine.v1.json`). Sin telemetría, según las banderas por defecto de `earlyscriptFlags.ts`.
+- «Conservación y borrado»: directorio real de `corpus.directory`, revisión del 27 de noviembre de 2026 y la orden `engine purge` con ese directorio, que el paso no lanza.
+- Aceptación: casilla obligatoria; `onContinue` recibe `{ sources, acknowledgedTerms: true, catalogHash, policyHash, acceptedTermsDates }`. `catalogHash` es el SHA-256 del JSON canónico de las diez fichas; `policyHash`, el de `DATA_CONSENT_POLICY`, sin el directorio de la máquina.
+- Sin scroll propio: el paso crece dentro del único `ScrollArea` de `WizardPopup`. Un test de navegador lo comprueba (la lista solo tiene un ancestro desplazable, el viewport del diálogo) y que no haya scroll horizontal en 390 px.
