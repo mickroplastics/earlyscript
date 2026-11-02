@@ -21,7 +21,7 @@ import {
   type WizardPosition,
 } from "./wizardNavigation";
 
-const STEP_COMPONENTS: Readonly<Record<OnboardingStepId, ComponentType<OnboardingStepProps>>> = {
+const STEP_COMPONENTS: OnboardingStepComponents = {
   datos: DataConsentStep,
   proveedores: ProvidersStep,
   estudio: StudioStep,
@@ -45,6 +45,10 @@ const WIZARD_LOCALE: ScopedLocaleOptions = {
 
 export type RecordResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
+export type OnboardingStepComponents = Readonly<
+  Record<OnboardingStepId, ComponentType<OnboardingStepProps>>
+>;
+
 export interface EarlyscriptWizardViewProps {
   /** The local server's environment; null when this client has none. */
   readonly environmentId: EnvironmentId | null;
@@ -58,6 +62,8 @@ export interface EarlyscriptWizardViewProps {
   readonly onFinish: () => Promise<boolean>;
   /** Close without finishing, or enter without a local server. */
   readonly onLeave: () => void;
+  /** The step components; the real ones by default. Tests of the shell pass doubles. */
+  readonly steps?: OnboardingStepComponents;
 }
 
 export function EarlyscriptWizardView({
@@ -66,6 +72,7 @@ export function EarlyscriptWizardView({
   onRecord,
   onFinish,
   onLeave,
+  steps = STEP_COMPONENTS,
 }: EarlyscriptWizardViewProps) {
   const [position, setPosition] = useState<WizardPosition>(WIZARD_START);
   const [error, setError] = useState<string | null>(null);
@@ -74,13 +81,18 @@ export function EarlyscriptWizardView({
   const [localeAnchor, setLocaleAnchor] = useState<HTMLSpanElement | null>(null);
   useScopedLocale(localeAnchor, WIZARD_LOCALE);
 
-  const panel = useRef<HTMLDivElement>(null);
+  // Focus lands on the step's title, not on its first control (a link, a switch): the step
+  // opens at its top and the next Tab reaches its first control.
+  const stepTitle = useRef<HTMLHeadingElement>(null);
   const stage = ONBOARDING_STAGES[position.index]!;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves keyboard focus into the step that just mounted, instead of leaving it on the header or the body
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves keyboard focus to the title of the step that just mounted, instead of leaving it on the header or the body
   useEffect(() => {
-    if (position.index > 0) focusFirstControl(panel.current);
+    if (position.index === 0) return;
+    // A long step leaves the popup scrolled down; the next one opens at the top, header in view.
+    stepTitle.current?.closest('[data-slot="scroll-area-viewport"]')?.scrollTo({ top: 0 });
+    stepTitle.current?.focus({ preventScroll: true });
   }, [position.index]);
-  const Step = STEP_COMPONENTS[stage.id];
+  const Step = steps[stage.id];
 
   const onContinue = (acceptance: Readonly<Record<string, unknown>>) => {
     if (busy.current) return;
@@ -121,7 +133,7 @@ export function EarlyscriptWizardView({
         size="wide"
         bottomStickOnMobile={false}
         showCloseButton={dismissible}
-        initialFocus={() => firstControl(panel.current) ?? true}
+        initialFocus={() => stepTitle.current ?? true}
       >
         <span ref={setLocaleAnchor} hidden data-earlyscript-locale="wizard" />
         <WizardHeader
@@ -149,7 +161,10 @@ export function EarlyscriptWizardView({
           {environmentId === null ? (
             <NoLocalServer onLeave={onLeave} />
           ) : (
-            <div ref={panel} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4">
+              <h2 ref={stepTitle} tabIndex={-1} className="sr-only" data-testid="wizard-step-title">
+                Paso {position.index + 1} de {ONBOARDING_STAGES.length}: {stage.label}
+              </h2>
               {error === null ? null : (
                 <p
                   role="alert"
@@ -169,23 +184,15 @@ export function EarlyscriptWizardView({
           )}
         </WizardPanel>
 
-        <div className="px-6 py-4">
-          <PrivacyNote />
-        </div>
+        {/* «Datos y permisos» explains all of it in full; the line would repeat it there. */}
+        {stage.id === "datos" && environmentId !== null ? null : (
+          <div className="px-6 py-4">
+            <PrivacyNote />
+          </div>
+        )}
       </WizardPopup>
     </Dialog>
   );
-}
-
-const FOCUSABLE =
-  "button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex='-1'])";
-
-function firstControl(root: HTMLElement | null): HTMLElement | null {
-  return root?.querySelector<HTMLElement>(FOCUSABLE) ?? null;
-}
-
-function focusFirstControl(root: HTMLElement | null) {
-  firstControl(root)?.focus();
 }
 
 function NoLocalServer({ onLeave }: { readonly onLeave: () => void }) {
