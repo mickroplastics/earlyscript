@@ -1367,7 +1367,16 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     yield* report(progress);
     const { ready, total } = progress;
     if (ready < total) {
-      // The monthly cap stops drafting without failing the job: the rest can be drafted later.
+      // A disabled provider or the monthly cap stops drafting without failing the job: the rest
+      // can be drafted later.
+      const enabled = yield* presentations.draftingProviderEnabled.pipe(Effect.option);
+      if (Option.isSome(enabled) && !enabled.value) {
+        return yield* pending(`the drafting provider is disabled, ${ready} of ${total} drafted.`, {
+          code: "presentations_provider_disabled",
+          ready,
+          total,
+        });
+      }
       const budget = yield* presentations.getBudget.pipe(Effect.option);
       if (Option.isSome(budget) && isDraftBudgetReached(budget.value)) {
         return yield* pending(`monthly cap reached, ${ready} of ${total} drafted.`, {

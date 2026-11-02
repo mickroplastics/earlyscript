@@ -99,10 +99,13 @@ const makeGenerator = Effect.gen(function* () {
   } satisfies Generator;
 });
 
-const presentationLayer = (generator: Generator) =>
+const presentationLayer = (
+  generator: Generator,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   EditorialPresentation.layer.pipe(
     Layer.provide(textGenerationLayer(generator)),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ServerSettings.layerTest(settings)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "editorial-presentation-" })),
   );
 
@@ -115,13 +118,25 @@ const withDrafting = <A, E, R>(
     generator: Generator,
     runs: { readonly dir: string; readonly runDir: string },
   ) => Effect.Effect<A, E, R>,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
 ) =>
   withEditorial((runs) =>
     Effect.gen(function* () {
       const generator = yield* makeGenerator;
-      return yield* effect(generator, runs).pipe(Effect.provide(presentationLayer(generator)));
+      return yield* effect(generator, runs).pipe(
+        Effect.provide(presentationLayer(generator, settings)),
+      );
     }),
   );
+
+/** Every provider that settings could fall back to, switched off in Settings › Providers. */
+const ALL_PROVIDERS_DISABLED = {
+  providerInstances: Object.fromEntries(
+    ["codex", "claudeAgent", "cursor", "grok", "muse", "pi", "opencode", "antigravity"].map(
+      (driver) => [driver, { driver, enabled: false, config: {} }],
+    ),
+  ),
+} as Parameters<typeof ServerSettings.layerTest>[0];
 
 /** What each dossier of the run shows, as the read side computes it. */
 const shown = Effect.gen(function* () {
@@ -417,6 +432,25 @@ describe("EditorialPresentationService", () => {
         const next = yield* service.ensure({ runId: RUN_ID, dossierId: CHINA });
         assert.isFalse(next.reused);
       }),
+    ),
+  );
+
+  it.effect("a disabled drafting provider is never called, alone or for the whole run", () =>
+    withDrafting(
+      (generator) =>
+        Effect.gen(function* () {
+          const service = yield* EditorialPresentationService;
+          assert.isFalse(yield* service.draftingProviderEnabled);
+          const refused = yield* service
+            .ensure({ runId: RUN_ID, dossierId: QUANTUM })
+            .pipe(Effect.flip);
+          assert.strictEqual(refused.reason, "provider-disabled");
+          const progress = yield* service.ensureAll(RUN_ID, { concurrency: 2 });
+          assert.deepStrictEqual([progress.total, progress.ready, progress.failed], [3, 0, 0]);
+          assert.strictEqual((yield* Ref.get(generator.calls)).length, 0);
+          assert.deepStrictEqual(yield* presentationRows, []);
+        }),
+      ALL_PROVIDERS_DISABLED,
     ),
   );
 

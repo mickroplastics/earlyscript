@@ -66,6 +66,24 @@ describe("ProvidersStepView", () => {
     ]);
   });
 
+  it("warns when the saved model's provider is disabled and proposes the recommended one", async () => {
+    const { screen: rendered, onContinue } = renderStep({
+      providers: [
+        providerFixture("claudeAgent"),
+        providerFixture("codex", { enabled: false, status: "disabled" }),
+      ],
+    });
+    await using screen = await rendered;
+    await expect
+      .element(
+        screen.getByText(/^El modelo guardado, GPT-6-Luna · Codex, es de un proveedor desactivado/),
+      )
+      .toBeVisible();
+    await expect.element(screen.getByText("Claude Haiku 5.5 · Claude")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Continuar", exact: true }));
+    expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ draftingModel: HAIKU }));
+  });
+
   it("lets the operator go on without a provider, saying what still works", async () => {
     const { screen: rendered, onContinue } = renderStep({
       providers: [

@@ -84,6 +84,7 @@ export const EditorialJobNoticeCode = Schema.Literals([
   "storage",
   "too_many_attempts",
   "presentations_budget",
+  "presentations_provider_disabled",
 ]);
 export type EditorialJobNoticeCode = typeof EditorialJobNoticeCode.Type;
 

@@ -11,6 +11,7 @@ import {
   type EditorialTrendPresentation,
 } from "@t3tools/contracts";
 import type { TrendPresentationGenerationInput } from "@t3tools/provider-core/server/textGeneration";
+import { isModelSelectionProviderEnabled } from "@t3tools/shared/serverSettings";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -73,6 +74,11 @@ export interface EditorialPresentationServiceShape {
   readonly awaitRun: (
     runId: string,
   ) => Effect.Effect<EditorialPresentationRunProgress, EditorialPresentationError>;
+  /**
+   * False when the saved drafting model's provider is disabled or unknown: nothing drafts then.
+   * Settings already move the model to another enabled provider when one exists.
+   */
+  readonly draftingProviderEnabled: Effect.Effect<boolean, EditorialPresentationError>;
   /** The monthly cap and the trends drafted this month. */
   readonly getBudget: Effect.Effect<EditorialDraftBudget, EditorialPresentationError>;
   readonly updateBudget: (
@@ -258,11 +264,31 @@ const make = Effect.gen(function* () {
     return yield* readBudget;
   });
 
+  const draftingProviderEnabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) =>
+      isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new EditorialPresentationError({
+          reason: "generation-failed",
+          message: `Cannot read the text generation settings: ${cause.message}`,
+        }),
+    ),
+  );
+
   const generate = Effect.fn("EditorialPresentationService.generate")(function* (
     dossier: PresentationDossier,
     input: TrendPresentationGenerationInput,
     inputHash: string,
   ) {
+    // Checked here, not when reading: a stored text needs no provider.
+    if (!(yield* draftingProviderEnabled)) {
+      return yield* new EditorialPresentationError({
+        reason: "provider-disabled",
+        message: `The drafting model's provider ${input.modelSelection.instanceId} is disabled.`,
+      });
+    }
     const presentationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     yield* budgetLock.withPermits(1)(
       Effect.gen(function* () {
@@ -457,8 +483,8 @@ const make = Effect.gen(function* () {
     "EditorialPresentationService.ensureAll",
   )(function* (runId, options) {
     const run = yield* loadRun(runId);
-    // Once the monthly cap stops one dossier it stops the rest: they stay undrafted, with no
-    // failed row, for the operator to draft by hand later.
+    // Once the monthly cap or a disabled provider stops one dossier it stops the rest: they stay
+    // undrafted, with no failed row, for the operator to draft later.
     let capped = false;
     yield* Effect.forEach(
       run,
@@ -468,7 +494,7 @@ const make = Effect.gen(function* () {
           : ensureDossier(dossier).pipe(
               Effect.asVoid,
               Effect.catch((error) => {
-                if (error.reason !== "budget-reached") {
+                if (error.reason !== "budget-reached" && error.reason !== "provider-disabled") {
                   return Effect.logWarning("editorial: trend presentation failed").pipe(
                     Effect.annotateLogs({
                       runId,
@@ -479,7 +505,7 @@ const make = Effect.gen(function* () {
                 }
                 if (capped) return Effect.void;
                 capped = true;
-                return Effect.logWarning("editorial: monthly drafting cap reached").pipe(
+                return Effect.logWarning("editorial: drafting stopped for the run").pipe(
                   Effect.annotateLogs({ runId, error: error.message }),
                 );
               }),
@@ -539,6 +565,7 @@ const make = Effect.gen(function* () {
     startRun,
     runProgress,
     awaitRun,
+    draftingProviderEnabled,
     getBudget: readBudget,
     updateBudget,
   });

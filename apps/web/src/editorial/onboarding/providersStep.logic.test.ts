@@ -12,6 +12,7 @@ import {
   budgetReachedLabel,
   budgetResetText,
   cheapestModel,
+  disabledDraftingModelText,
   draftUsageText,
   draftingProviderRows,
   initialDraftingModel,
@@ -135,5 +136,25 @@ describe("draft budget texts", () => {
     ["", null],
   ] as const)("parses %o", (text, value) => {
     expect(parseMonthlyLimit(text)).toBe(value);
+  });
+});
+
+describe("disabledDraftingModelText", () => {
+  const luna = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-luna" };
+
+  it("warns about a saved model whose provider is off or gone and names the recommended one", () => {
+    const codexOff = providerFixture("codex", { enabled: false, status: "disabled" });
+    expect(disabledDraftingModelText([claude, codexOff], luna)).toBe(
+      "El modelo guardado, GPT-6-Luna · Codex, es de un proveedor desactivado: no se redactará nada con él. Recomendado: Claude Haiku 5.5 · Claude.",
+    );
+    expect(disabledDraftingModelText([providerFixture("claudeAgent", signedOut)], luna)).toBe(
+      "El modelo guardado, gpt-6-luna · codex, es de un proveedor desactivado: no se redactará nada con él. Activa un proveedor en Ajustes › Proveedores.",
+    );
+  });
+
+  it("says nothing for an enabled provider, even without a session, or before the list loads", () => {
+    expect(disabledDraftingModelText([codex], luna)).toBeNull();
+    expect(disabledDraftingModelText([providerFixture("codex", signedOut)], luna)).toBeNull();
+    expect(disabledDraftingModelText(null, luna)).toBeNull();
   });
 });

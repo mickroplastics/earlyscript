@@ -933,6 +933,8 @@ function presentationErrorText(cause: Cause.Cause<unknown>): string {
         return "la ficha de tendencia ya no está en el directorio de corridas.";
       case "storage-failed":
         return "no se pudo guardar en la base editorial.";
+      case "provider-disabled":
+        return "el proveedor del modelo de redacción está desactivado. Actívalo en Ajustes › Proveedores o elige otro modelo en Ajustes › Editorial › Redacción.";
       case "budget-reached":
         return "se alcanzó el tope mensual de redacciones. Súbelo en Ajustes › Editorial o espera al mes siguiente.";
     }
