@@ -67,7 +67,7 @@ function presentationDossierOf(
       itemId: item.itemId,
       source: item.source,
       title: item.title,
-      excerpt: item.excerpt.slice(0, PRESENTATION_EXCERPT_CHARS),
+      excerpt: cutExcerpt(item.excerpt),
       publishedAt: item.publishedAt,
       url: item.externalUrl ?? item.permalink ?? "",
     })),
@@ -108,3 +108,13 @@ export const loadPresentationDossiers = Effect.fn("loadPresentationDossiers")(fu
   const profile = yield* currentPresentationProfile(sql);
   return loaded.dossiers.map((dossier) => presentationDossierOf(runId, dossier, profile));
 });
+
+/**
+ * Cuts an excerpt to PRESENTATION_EXCERPT_CHARS Unicode code points, never splitting a
+ * surrogate pair: a String.prototype.slice on UTF-16 units could leave a lone high surrogate
+ * and hand the provider malformed text.
+ */
+export function cutExcerpt(excerpt: string): string {
+  if (excerpt.length <= PRESENTATION_EXCERPT_CHARS) return excerpt;
+  return Array.from(excerpt).slice(0, PRESENTATION_EXCERPT_CHARS).join("");
+}

@@ -386,7 +386,8 @@ describe("EditorialReadService with presentations", () => {
           evidence: Array<Record<string, unknown>>;
         };
         // An imported run may store longer excerpts than the engine's default: twenty of 1,200.
-        const long = "x".repeat(1_200);
+        // A supplementary character sits across the cut: the boundary must not split its pair.
+        const long = `${"x".repeat(499)}😀${"y".repeat(700)}`;
         const template = dossier.evidence[0]!;
         dossier.evidence = Array.from({ length: 20 }, (_, index) => ({
           ...template,
@@ -399,11 +400,11 @@ describe("EditorialReadService with presentations", () => {
         yield* (yield* EditorialPresentationService).ensure({ runId: RUN_ID, dossierId: QUANTUM });
         const input = (yield* Ref.get(generator.calls))[0]!;
         assert.strictEqual(input.evidence.length, PRESENTATION_EVIDENCE_LIMIT);
-        assert.isTrue(
-          input.evidence.every(
-            (item) => item.excerpt === long.slice(0, PRESENTATION_EXCERPT_CHARS),
-          ),
-        );
+        const expected = Array.from(long).slice(0, PRESENTATION_EXCERPT_CHARS).join("");
+        assert.isTrue(input.evidence.every((item) => item.excerpt === expected));
+        assert.isTrue(input.evidence.every((item) => item.excerpt.isWellFormed()));
+        assert.isTrue(input.evidence.every((item) => item.excerpt.endsWith("😀")));
+        assert.notStrictEqual(expected, long.slice(0, PRESENTATION_EXCERPT_CHARS));
         assert.strictEqual(PRESENTATION_EXCERPT_CHARS, 500);
       }),
     ),
