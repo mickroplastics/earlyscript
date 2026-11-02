@@ -118,6 +118,8 @@ function noticeText(notice: EditorialJobNotice): string {
       return `Redacción pendiente: ${notice.ready ?? 0} de ${notice.total ?? 0} tendencias redactadas. Revisa el modelo de texto en Ajustes.`;
     case "presentations_unavailable":
       return "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.";
+    case "presentations_budget":
+      return `Redacción detenida por el tope mensual (${notice.used ?? 0}/${notice.limit ?? 0}): ${notice.ready ?? 0} de ${notice.total ?? 0} tendencias redactadas. Sube el tope en Ajustes › Editorial o espera al mes siguiente.`;
     case "config_changed":
       return "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.";
     case "no_sources":

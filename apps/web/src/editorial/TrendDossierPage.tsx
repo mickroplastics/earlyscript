@@ -874,6 +874,8 @@ function presentationErrorText(cause: Cause.Cause<unknown>): string {
         return "la ficha de tendencia ya no está en el directorio de corridas.";
       case "storage-failed":
         return "no se pudo guardar en la base editorial.";
+      case "budget-reached":
+        return "se alcanzó el tope mensual de redacciones. Súbelo en Ajustes › Editorial o espera al mes siguiente.";
     }
   }
   return error instanceof Error ? error.message : String(error);

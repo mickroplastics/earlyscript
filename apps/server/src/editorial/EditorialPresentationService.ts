@@ -1,15 +1,21 @@
 import {
+  EDITORIAL_DRAFT_BUDGET_DEFAULT,
   EditorialDossierId,
   EditorialPresentationError,
   EditorialRunId,
+  isDraftBudgetReached,
+  type EditorialDraftBudget,
   type EditorialPresentationResult,
   type EditorialPresentationRunProgress,
   type EditorialPresentationTarget,
   type EditorialTrendPresentation,
 } from "@t3tools/contracts";
 import type { TrendPresentationGenerationInput } from "@t3tools/provider-core/server/textGeneration";
+import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -67,7 +73,37 @@ export interface EditorialPresentationServiceShape {
   readonly awaitRun: (
     runId: string,
   ) => Effect.Effect<EditorialPresentationRunProgress, EditorialPresentationError>;
+  /** The monthly cap and the trends drafted this month. */
+  readonly getBudget: Effect.Effect<EditorialDraftBudget, EditorialPresentationError>;
+  readonly updateBudget: (
+    monthlyLimit: number,
+  ) => Effect.Effect<EditorialDraftBudget, EditorialPresentationError>;
 }
+
+/**
+ * The calendar month around `nowMs` in the server's time zone, as the UTC range its
+ * `requested_at` values fall in. UTC ISO strings sort as instants, so the range compares as
+ * text.
+ */
+export function draftBudgetMonth(nowMs: number): {
+  readonly month: string;
+  readonly from: string;
+  readonly to: string;
+} {
+  const start = DateTime.startOf(
+    DateTime.makeZonedUnsafe(nowMs, { timeZone: DateTime.zoneMakeLocal() }),
+    "month",
+  );
+  return {
+    month: DateTime.formatIsoDate(start).slice(0, 7),
+    from: DateTime.formatIso(start),
+    to: DateTime.formatIso(DateTime.add(start, { months: 1 })),
+  };
+}
+
+/** Diagnostic detail of `budget-reached`; the client words the reason itself. */
+const draftBudgetReachedMessage = (budget: EditorialDraftBudget): string =>
+  `Monthly drafting cap reached (${budget.usedThisMonth}/${budget.monthlyLimit}).`;
 
 export class EditorialPresentationService extends Context.Service<
   EditorialPresentationService,
@@ -81,6 +117,8 @@ const storageFailed = (operation: string) => (cause: unknown) =>
     reason: "storage-failed",
     message: `Editorial presentation storage failed in ${operation}${cause instanceof Error ? `: ${cause.message}` : "."}`,
   });
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const dossierNotFound = (target: EditorialPresentationTarget) =>
   new EditorialPresentationError({
@@ -185,44 +223,116 @@ const make = Effect.gen(function* () {
     return dossier;
   });
 
+  const readBudget = Effect.gen(function* () {
+    const window = draftBudgetMonth(yield* Clock.currentTimeMillis);
+    const limits = yield* sql<{ readonly monthly_limit: number }>`
+      SELECT monthly_limit FROM editorial_draft_budget WHERE budget_id = 1
+    `;
+    const used = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM editorial_presentations
+      WHERE requested_at >= ${window.from} AND requested_at < ${window.to}
+        AND status IN ('ready', 'pending')
+    `;
+    return {
+      monthlyLimit: limits[0]?.monthly_limit ?? EDITORIAL_DRAFT_BUDGET_DEFAULT,
+      usedThisMonth: used[0]?.count ?? 0,
+      month: window.month,
+    } satisfies EditorialDraftBudget;
+  }).pipe(Effect.mapError(storageFailed("readBudget")));
+
+  // The count and the pending row are written under one permit, so two generations in flight
+  // never both take the last unit of the month.
+  const budgetLock = Semaphore.makeUnsafe(1);
+
+  const updateBudget: EditorialPresentationServiceShape["updateBudget"] = Effect.fn(
+    "EditorialPresentationService.updateBudget",
+  )(function* (monthlyLimit) {
+    const updatedAt = yield* nowIso;
+    yield* sql`
+      INSERT INTO editorial_draft_budget (budget_id, monthly_limit, updated_at)
+      VALUES (1, ${monthlyLimit}, ${updatedAt})
+      ON CONFLICT (budget_id) DO UPDATE SET
+        monthly_limit = excluded.monthly_limit,
+        updated_at = excluded.updated_at
+    `.pipe(Effect.mapError(storageFailed("updateBudget")));
+    return yield* readBudget;
+  });
+
   const generate = Effect.fn("EditorialPresentationService.generate")(function* (
     dossier: PresentationDossier,
     input: TrendPresentationGenerationInput,
     inputHash: string,
   ) {
     const presentationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-    const requestedAt = yield* nowIso;
-    yield* sql`
-      INSERT INTO editorial_presentations (
-        presentation_id, run_id, dossier_id, trend_key, input_hash, revision, requested_at, status
-      )
-      SELECT
-        ${presentationId}, ${dossier.runId}, ${dossier.dossierId}, ${dossier.trendKey},
-        ${inputHash}, COALESCE(MAX(revision), 0) + 1, ${requestedAt}, 'pending'
-      FROM editorial_presentations
-      WHERE run_id = ${dossier.runId} AND dossier_id = ${dossier.dossierId}
-    `.pipe(Effect.mapError(storageFailed("insertPending")));
+    yield* budgetLock.withPermits(1)(
+      Effect.gen(function* () {
+        const budget = yield* readBudget;
+        if (isDraftBudgetReached(budget)) {
+          return yield* new EditorialPresentationError({
+            reason: "budget-reached",
+            message: draftBudgetReachedMessage(budget),
+          });
+        }
+        const requestedAt = yield* nowIso;
+        yield* sql`
+          INSERT INTO editorial_presentations (
+            presentation_id, run_id, dossier_id, trend_key, input_hash, revision, requested_at,
+            status
+          )
+          SELECT
+            ${presentationId}, ${dossier.runId}, ${dossier.dossierId}, ${dossier.trendKey},
+            ${inputHash}, COALESCE(MAX(revision), 0) + 1, ${requestedAt}, 'pending'
+          FROM editorial_presentations
+          WHERE run_id = ${dossier.runId} AND dossier_id = ${dossier.dossierId}
+        `.pipe(Effect.mapError(storageFailed("insertPending")));
+      }),
+    );
 
-    const markFailed = (error: string) =>
+    // The pending row holds a unit of the monthly cap, so it is resolved on every exit: failed
+    // with the reason, or deleted when even that write fails. Covers storing the result too.
+    const resolvePending = (error: string) =>
       sql`
         UPDATE editorial_presentations SET status = 'failed', error = ${error}
-        WHERE presentation_id = ${presentationId}
-      `.pipe(Effect.mapError(storageFailed("markFailed")));
-
-    const [duration, generated] = yield* textGeneration.generateTrendPresentation(input).pipe(
-      Effect.timed,
-      Effect.onInterrupt(() => markFailed("interrupted").pipe(Effect.ignore)),
-      Effect.catch((cause) =>
-        markFailed(cause.message).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new EditorialPresentationError({
-                reason: "generation-failed",
-                message: cause.message,
-              }),
-            ),
+        WHERE presentation_id = ${presentationId} AND status = 'pending'
+      `.pipe(
+        Effect.catch(
+          () =>
+            sql`
+            DELETE FROM editorial_presentations
+            WHERE presentation_id = ${presentationId} AND status = 'pending'
+          `,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("editorial: a pending presentation could not be resolved").pipe(
+            Effect.annotateLogs({ presentationId, cause: Cause.pretty(cause) }),
           ),
         ),
+      );
+
+    return yield* storeGeneration(dossier, input, presentationId).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : resolvePending(
+              Cause.hasInterruptsOnly(exit.cause)
+                ? "interrupted"
+                : errorMessage(Cause.squash(exit.cause)),
+            ),
+      ),
+    );
+  });
+
+  /** Calls the provider and writes the result over the pending row `generate` inserted. */
+  const storeGeneration = Effect.fn("EditorialPresentationService.storeGeneration")(function* (
+    dossier: PresentationDossier,
+    input: TrendPresentationGenerationInput,
+    presentationId: string,
+  ) {
+    const [duration, generated] = yield* textGeneration.generateTrendPresentation(input).pipe(
+      Effect.timed,
+      Effect.mapError(
+        (cause) =>
+          new EditorialPresentationError({ reason: "generation-failed", message: cause.message }),
       ),
     );
     yield* Effect.logInfo("editorial: trend presentation generated").pipe(
@@ -347,17 +457,33 @@ const make = Effect.gen(function* () {
     "EditorialPresentationService.ensureAll",
   )(function* (runId, options) {
     const run = yield* loadRun(runId);
+    // Once the monthly cap stops one dossier it stops the rest: they stay undrafted, with no
+    // failed row, for the operator to draft by hand later.
+    let capped = false;
     yield* Effect.forEach(
       run,
       (dossier) =>
-        ensureDossier(dossier).pipe(
-          Effect.asVoid,
-          Effect.catch((error) =>
-            Effect.logWarning("editorial: trend presentation failed").pipe(
-              Effect.annotateLogs({ runId, dossierId: dossier.dossierId, error: error.message }),
+        capped
+          ? Effect.void
+          : ensureDossier(dossier).pipe(
+              Effect.asVoid,
+              Effect.catch((error) => {
+                if (error.reason !== "budget-reached") {
+                  return Effect.logWarning("editorial: trend presentation failed").pipe(
+                    Effect.annotateLogs({
+                      runId,
+                      dossierId: dossier.dossierId,
+                      error: error.message,
+                    }),
+                  );
+                }
+                if (capped) return Effect.void;
+                capped = true;
+                return Effect.logWarning("editorial: monthly drafting cap reached").pipe(
+                  Effect.annotateLogs({ runId, error: error.message }),
+                );
+              }),
             ),
-          ),
-        ),
       { concurrency: options?.concurrency ?? ENSURE_RUN_CONCURRENCY, discard: true },
     );
     return yield* runProgress(runId);
@@ -413,6 +539,8 @@ const make = Effect.gen(function* () {
     startRun,
     runProgress,
     awaitRun,
+    getBudget: readBudget,
+    updateBudget,
   });
 });
 
