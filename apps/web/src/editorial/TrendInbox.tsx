@@ -37,7 +37,7 @@ import {
   refreshEditorialInbox,
   withLiveInboxState,
 } from "./state";
-import { FirstRunCard } from "./FirstRunCard";
+import { DraftingNotice, FirstRunCard } from "./FirstRunCard";
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
@@ -274,6 +274,11 @@ export function TrendInbox({
         </SidebarGroup>
       ) : (
         <SidebarGroup>
+          <DraftingNotice
+            environmentId={environmentId}
+            runId={inbox.run.runId}
+            undrafted={inbox.trends.filter((trend) => trend.presentation === undefined).length}
+          />
           <SidebarMenu aria-label={runGroupLabel(inbox.run, nowMinute)}>
             {sections.visible.map((trend) => renderRow(trend))}
             {sections.folded.length > 0 ? (

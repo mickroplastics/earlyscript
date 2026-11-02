@@ -1817,3 +1817,12 @@ Archivos propios modificados:
 - `settings/NightlyRunSettings.tsx`: exporta `nextRunText` y `failureText` para reutilizarlas.
 
 Decisiones reversibles: los ajustes del paso se guardan al cambiar, no al pulsar «Continuar»; la nocturna conserva su estado del servidor (desactivada por defecto) y el paso no la activa solo; una corrida terminada sin tendencias no ofrece volver a correr, porque `runNow` devolvería el mismo job del día.
+
+Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `0113697eb1`):
+
+- H1: el tiempo transcurrido usaba `Date.parse` sobre el reloj por minuto de `useNowMinute` (`YYYY-MM-DDTHH:mm`, UTC sin `Z`), que JavaScript lee como hora local: en America/Guayaquil salía «4 h 59 min» al empezar. `minuteClockMs` lo lee como UTC y `firstRunPhaseRows` trabaja en milisegundos; la prueba fija `TZ=America/Guayaquil`.
+- H2: el paso guardaba sin retener el guardado y «Continuar» podía entregar ajustes anteriores al cambio. Ahora muestra el cambio mientras viaja, deshabilita «Continuar» («Guardando…») hasta que el servidor confirma y construye la aceptación con lo confirmado; un fallo se muestra junto al control con «Reintentar» y no deja avanzar.
+- H3: una corrida importada vacía sin job de este servidor dice que no hay registro de su ejecución y ofrece «Ejecutar una corrida» (`runNow` crea el job del día, que no existe). Mientras la lista de jobs carga no se afirma ni se ofrece nada.
+- Redacción sin proveedor o sin sesión (comprobación pendiente de Sol): el job termina `done` con `presentations_pending` o `presentations_unavailable` y la tarjeta ya no se ve, porque la bandeja tiene tendencias. `DraftingNotice` (en `FirstRunCard.tsx`) avisa arriba de la lista, con enlace a Ajustes › Proveedores, mientras queden tendencias de esa corrida sin redactar; el paso marca la fase de redacción con aviso y explica qué falta (`draftingProblem` en `firstRun.logic.ts`).
+- `jobsState.ts`: `engine_failed` dice qué hacía el motor («terminó con error al agrupar las publicaciones») en lugar de «Falló el motor en la fase de motor».
+- Los `Spinner` propios van envueltos en `aria-hidden`: su `aria-label="Loading"` (inglés) entraba en el nombre de los botones.

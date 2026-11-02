@@ -3,14 +3,13 @@ import type {
   EditorialNightlySettingsUpdateInput,
 } from "@t3tools/contracts";
 import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
-import { toastManager } from "../../components/ui/toast";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { FirstRunPanel, useFirstRun } from "../FirstRunCard";
 import { firstRunView, type FirstRunView } from "../firstRun.logic";
@@ -45,6 +44,11 @@ export interface EngineStepViewProps {
   readonly runError: string | null;
   /** True once a job was started here or one already exists. */
   readonly firstRunStarted: boolean;
+  /** A setting change is still on its way to the server: «Continuar» waits for it. */
+  readonly saving: boolean;
+  /** Why the last change was not saved; «Continuar» stays off until a change saves. */
+  readonly saveError: string | null;
+  readonly onRetrySave: () => void;
   readonly onChange: (patch: EditorialNightlySettingsUpdateInput) => void;
   readonly onRun: () => void;
   readonly onRetry: () => void;
@@ -62,12 +66,16 @@ export function EngineStepView({
   starting,
   runError,
   firstRunStarted,
+  saving,
+  saveError,
+  onRetrySave,
   onChange,
   onRun,
   onRetry,
   onBack,
   onContinue,
 }: EngineStepViewProps) {
+  const canContinue = settings !== null && !saving && saveError === null;
   return (
     <div className="flex min-h-0 flex-col" data-testid="engine-step">
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">Motor y nocturna</h1>
@@ -84,7 +92,9 @@ export function EngineStepView({
             {settings === null ? (
               loadError === null ? (
                 <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                  <Spinner size="sm" tone="muted" />
+                  <span aria-hidden className="flex">
+                    <Spinner size="sm" tone="muted" />
+                  </span>
                   Cargando la corrida nocturna…
                 </p>
               ) : (
@@ -138,8 +148,19 @@ export function EngineStepView({
                     }}
                   />
                 </div>
-                {settings.enabled ? (
+                {settings.enabled && !saving ? (
                   <p className="text-xs text-muted-foreground">{nextRunText(settings)}</p>
+                ) : null}
+                {saveError !== null ? (
+                  <div role="alert" className="flex flex-col items-start gap-2 text-xs">
+                    <p className="text-error-foreground">
+                      No se guardó la corrida nocturna: {saveError}
+                    </p>
+                    <Button size="xs" variant="outline" onClick={onRetrySave}>
+                      <RotateCwIcon aria-hidden />
+                      Reintentar
+                    </Button>
+                  </div>
                 ) : null}
               </>
             )}
@@ -183,42 +204,77 @@ export function EngineStepView({
           <span />
         )}
         <Button
-          disabled={settings === null}
+          disabled={!canContinue}
           onClick={() => {
-            if (settings !== null) {
+            if (settings !== null && canContinue) {
               onContinue(engineStepAcceptance(settings, { firstRunStarted, modelReady }));
             }
           }}
         >
-          Continuar
-          <ArrowRightIcon className="size-3.5" />
+          {saving ? (
+            <>
+              <span aria-hidden className="flex">
+                <Spinner size="sm" />
+              </span>
+              Guardando…
+            </>
+          ) : (
+            <>
+              Continuar
+              <ArrowRightIcon className="size-3.5" />
+            </>
+          )}
         </Button>
       </div>
     </div>
   );
 }
 
-/** Step 4 of the first-run wizard on the given environment, which runs the jobs. */
+/**
+ * Step 4 of the first-run wizard on the given environment, which runs the jobs. Each change
+ * saves at once; the switch and the time show it while it travels, and the acceptance is
+ * built only from what the server confirmed.
+ */
 export function EngineStep({ environmentId, onContinue, onBack }: OnboardingStepProps) {
   const update = useAtomCommand(editorialJobsEnvironment.updateSettings, { reportFailure: false });
   const firstRun = useFirstRun(environmentId);
   const settings = firstRun.settings;
   const [modelReady, setModelReady] = useState(false);
   const [startedHere, setStartedHere] = useState(false);
-  const run = firstRunView({ active: firstRun.active, latest: firstRun.latest, emptyRun: false });
-  const onChange = (patch: EditorialNightlySettingsUpdateInput) =>
+  // What the server answered last; its query refetches after each save and may lag.
+  const [confirmed, setConfirmed] = useState<EditorialNightlySettings | null>(null);
+  // Changes still in flight, merged, shown over the confirmed settings.
+  const [pending, setPending] = useState<EditorialNightlySettingsUpdateInput | null>(null);
+  const inFlight = useRef(0);
+  const [saveError, setSaveError] = useState<{
+    readonly message: string;
+    readonly patch: EditorialNightlySettingsUpdateInput;
+  } | null>(null);
+  const run = firstRunView({
+    active: firstRun.active,
+    latest: firstRun.latest,
+    emptyRun: false,
+    jobsKnown: firstRun.jobsKnown,
+  });
+  const server = confirmed ?? settings.data;
+  const shown = server === null ? null : { ...server, ...pending };
+  const save = (patch: EditorialNightlySettingsUpdateInput) => {
+    setSaveError(null);
+    setPending((current) => ({ ...current, ...patch }));
+    inFlight.current += 1;
     void update({ environmentId, input: patch }).then((result) => {
+      inFlight.current -= 1;
       if (result._tag === "Failure") {
-        toastManager.add({
-          type: "error",
-          title: "No se guardó la corrida nocturna",
-          description: failureText(result),
-        });
+        setSaveError({ message: failureText(result), patch });
+      } else {
+        setConfirmed(result.value);
       }
+      if (inFlight.current === 0) setPending(null);
     });
+  };
   return (
     <EngineStepView
-      settings={settings.data}
+      settings={shown}
       loadError={settings.error}
       model={<ModelDownloadCard environmentId={environmentId} onReady={setModelReady} />}
       modelReady={modelReady}
@@ -226,7 +282,12 @@ export function EngineStep({ environmentId, onContinue, onBack }: OnboardingStep
       starting={firstRun.starting}
       runError={firstRun.error}
       firstRunStarted={startedHere || run.kind !== "idle"}
-      onChange={onChange}
+      saving={pending !== null}
+      saveError={saveError?.message ?? null}
+      onRetrySave={() => {
+        if (saveError !== null) save(saveError.patch);
+      }}
+      onChange={save}
       onRun={() =>
         void firstRun.start().then((started) => {
           if (started) setStartedHere(true);

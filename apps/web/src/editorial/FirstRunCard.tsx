@@ -1,6 +1,16 @@
 import type { EditorialJob, EditorialNightlySettings, EnvironmentId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { CheckIcon, CircleIcon, MinusIcon, PlayIcon, RotateCwIcon, XIcon } from "lucide-react";
+import { AsyncResult } from "effect/reactivity";
+import {
+  CheckIcon,
+  CircleIcon,
+  MinusIcon,
+  PlayIcon,
+  RotateCwIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
@@ -10,8 +20,10 @@ import { cn } from "../lib/utils";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
+  draftingProblem,
   firstRunPhaseRows,
   firstRunView,
+  minuteClockMs,
   phaseRowName,
   type FirstRunPhaseRow,
   type FirstRunView,
@@ -56,7 +68,7 @@ function FirstRunPhases({
       aria-label="Fases de la corrida"
       className={cn("flex flex-col", density === "sidebar" ? "text-xs" : "text-sm")}
     >
-      {firstRunPhaseRows(job, now).map((row) => (
+      {firstRunPhaseRows(job, minuteClockMs(now)).map((row) => (
         <li
           key={row.phase}
           aria-label={phaseRowName(row)}
@@ -69,7 +81,11 @@ function FirstRunPhases({
           )}
         >
           <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
-            <PhaseIcon status={row.status} />
+            {row.warning ? (
+              <TriangleAlertIcon className="size-3.5 text-warning" />
+            ) : (
+              <PhaseIcon status={row.status} />
+            )}
           </span>
           <span className="shrink-0">{row.label}</span>
           <span className="min-w-0 flex-1 truncate text-end text-xs text-muted-foreground tabular-nums">
@@ -159,7 +175,8 @@ export function FirstRunPanel({
 }: FirstRunPanelProps) {
   const job = view.kind === "idle" ? null : view.job;
   const messages = view.kind === "idle" || view.kind === "running" ? [] : view.messages;
-  const canRun = view.kind === "idle" || view.kind === "failed";
+  const canRun =
+    view.kind === "idle" || view.kind === "failed" || (view.kind === "empty" && view.canRun);
   const sidebar = density === "sidebar";
   return (
     <div
@@ -195,7 +212,9 @@ export function FirstRunPanel({
       {view.kind === "done" ? (
         doneNote === null ? (
           <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Spinner size="xs" tone="muted" />
+            <span aria-hidden className="flex">
+              <Spinner size="xs" tone="muted" />
+            </span>
             Cargando sus tendencias…
           </p>
         ) : (
@@ -229,13 +248,19 @@ export function FirstRunPanel({
             onClick={onRun}
           >
             {starting ? (
-              <Spinner size="sm" />
+              <span aria-hidden className="flex">
+                <Spinner size="sm" />
+              </span>
             ) : view.kind === "failed" ? (
               <RotateCwIcon aria-hidden />
             ) : (
               <PlayIcon aria-hidden />
             )}
-            {view.kind === "failed" ? "Reintentar" : runLabel}
+            {view.kind === "failed"
+              ? "Reintentar"
+              : view.kind === "empty"
+                ? "Ejecutar una corrida"
+                : runLabel}
           </Button>
           {blockedReason !== null ? (
             <p className="text-xs text-muted-foreground">{blockedReason}</p>
@@ -283,7 +308,51 @@ export function useFirstRun(environmentId: EnvironmentId) {
     setAnswered(result.value);
     return true;
   };
-  return { settings, active, latest, starting, error, start };
+  return { settings, active, latest, jobsKnown: list.data !== null, starting, error, start };
+}
+
+/**
+ * Over the inbox list: the newest job imported this run but could not draft some of its
+ * trends. Gone once every trend of the run has its drafted title, or while a job runs.
+ */
+export function DraftingNotice({
+  environmentId,
+  runId,
+  undrafted,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly runId: string;
+  /** Trends of the run still without a drafted presentation. */
+  readonly undrafted: number;
+}) {
+  const list = useEnvironmentQuery(editorialJobsEnvironment.list({ environmentId, input: {} }));
+  // Read only: the inbox's own `useEditorialJobActivity` refetches when the job ends.
+  const active =
+    AsyncResult.getOrElse(
+      useAtomValue(editorialJobsEnvironment.activity({ environmentId, input: {} })),
+      () => null,
+    )?.active ?? null;
+  const latest = list.data?.jobs[0] ?? null;
+  if (active !== null || latest === null || latest.artifacts.runId !== runId || undrafted === 0) {
+    return null;
+  }
+  const problem = draftingProblem(latest);
+  if (problem === null) return null;
+  return (
+    <div
+      role="status"
+      data-testid="drafting-notice"
+      className="mx-2 mb-2 flex flex-col gap-0.5 rounded-md border border-warning/32 bg-warning-surface px-2.5 py-2 text-2xs leading-4 text-warning-foreground"
+    >
+      <span>{problem.short}</span>
+      <Link
+        to="/settings/providers"
+        className="self-start font-medium whitespace-nowrap underline underline-offset-2"
+      >
+        Abrir Ajustes › Proveedores
+      </Link>
+    </div>
+  );
 }
 
 /** The empty Tendencias inbox: the first run from the sidebar, then its live phases. */
@@ -295,7 +364,12 @@ export function FirstRunCard({
   readonly emptyRun: boolean;
 }) {
   const run = useFirstRun(environmentId);
-  const view = firstRunView({ active: run.active, latest: run.latest, emptyRun });
+  const view = firstRunView({
+    active: run.active,
+    latest: run.latest,
+    emptyRun,
+    jobsKnown: run.jobsKnown,
+  });
   return (
     <FirstRunPanel
       view={view}

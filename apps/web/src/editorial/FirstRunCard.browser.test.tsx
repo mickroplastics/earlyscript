@@ -85,7 +85,11 @@ describe("FirstRunPanel", () => {
     });
     await using _screen = screen;
     await expect.element(screen.getByRole("alert")).toHaveTextContent("La corrida falló");
-    await expect.element(screen.getByText("Falló el motor en la fase de motor.")).toBeVisible();
+    await expect
+      .element(
+        screen.getByText("El motor de tendencias terminó con error al agrupar las publicaciones."),
+      )
+      .toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(onRun).toHaveBeenCalledOnce();
   });

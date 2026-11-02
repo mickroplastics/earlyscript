@@ -8,7 +8,14 @@ import {
   makeJob,
   phasesWith,
 } from "./firstRun.fixture";
-import { firstRunPhaseRows, firstRunView, phaseRowName } from "./firstRun.logic";
+import {
+  IMPORTED_EMPTY_TEXT,
+  draftingProblem,
+  firstRunPhaseRows,
+  firstRunView,
+  minuteClockMs,
+  phaseRowName,
+} from "./firstRun.logic";
 
 describe("firstRunView", () => {
   it("offers the first run when no job exists", () => {
@@ -56,7 +63,7 @@ describe("firstRunView", () => {
     expect(view).toEqual({
       kind: "failed",
       job: FAILED_JOB,
-      messages: ["Falló el motor en la fase de motor."],
+      messages: ["El motor de tendencias terminó con error al agrupar las publicaciones."],
     });
   });
 
@@ -91,15 +98,27 @@ describe("firstRunView", () => {
       kind: "done",
       job: DONE_JOB,
       messages: [
-        "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.",
+        "No hay un proveedor de modelos disponible: las tendencias están en la bandeja sin redactar. Conecta uno en Ajustes › Proveedores y redáctalas desde la bandeja.",
       ],
     });
     // The inbox read says the run holds no trend: the job's count is not trusted over it.
     expect(firstRunView({ active: null, latest: DONE_JOB, emptyRun: true }).kind).toBe("empty");
+    // A run with no job of this server: say so and let a new run start.
     expect(firstRunView({ active: null, latest: null, emptyRun: true })).toEqual({
       kind: "empty",
       job: null,
+      messages: [IMPORTED_EMPTY_TEXT],
+      canRun: true,
+    });
+    // Until the job list arrives, nothing is claimed and nothing is offered.
+    expect(firstRunView({ active: null, latest: null, emptyRun: true, jobsKnown: false })).toEqual({
+      kind: "empty",
+      job: null,
       messages: [],
+      canRun: false,
+    });
+    expect(firstRunView({ active: null, latest: EMPTY_JOB, emptyRun: true })).toMatchObject({
+      canRun: false,
     });
   });
 });
@@ -130,12 +149,40 @@ describe("firstRunPhaseRows", () => {
         phases: phasesWith((index) => (index === 0 ? "done" : index === 1 ? "running" : "pending")),
       },
     });
-    // The engine phase started at 23:01:00.
-    expect(firstRunPhaseRows(quiet, "2026-11-02T23:01:30.000Z")[1]?.detail).toBeNull();
-    expect(firstRunPhaseRows(quiet, "2026-11-02T23:13:00.000Z")[1]?.detail).toBe("12 min");
-    expect(firstRunPhaseRows(RUNNING_JOB, "2026-11-02T23:13:00.000Z")[1]?.detail).toBe(
+    // The engine phase started at 23:01:00 UTC.
+    expect(firstRunPhaseRows(quiet, Date.parse("2026-11-02T23:01:30.000Z"))[1]?.detail).toBeNull();
+    expect(firstRunPhaseRows(quiet, Date.parse("2026-11-02T23:13:00.000Z"))[1]?.detail).toBe(
+      "12 min",
+    );
+    expect(firstRunPhaseRows(RUNNING_JOB, Date.parse("2026-11-02T23:13:00.000Z"))[1]?.detail).toBe(
       "3072 de 11.913 textos",
     );
+  });
+
+  it("reads the minute clock as UTC whatever the machine's zone", () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "America/Guayaquil";
+    try {
+      // `Date.parse` reads this form as local time: five hours off in Guayaquil.
+      expect(Date.parse("2026-11-02T23:01") - Date.parse("2026-11-02T23:01:00.000Z")).toBe(
+        5 * 3_600_000,
+      );
+      expect(minuteClockMs("2026-11-02T23:01")).toBe(Date.parse("2026-11-02T23:01:00.000Z"));
+      expect(minuteClockMs("2026-11-02T23:01:00.000Z")).toBe(
+        Date.parse("2026-11-02T23:01:00.000Z"),
+      );
+      const quiet = makeJob({
+        artifacts: {
+          phases: phasesWith((index) => (index === 0 ? "running" : "pending")),
+        },
+      });
+      // Capture started at 23:00:00 UTC; one minute later it shows "60 s", not "5 h".
+      expect(firstRunPhaseRows(quiet, minuteClockMs("2026-11-02T23:00"))[0]?.detail).toBeNull();
+      expect(firstRunPhaseRows(quiet, minuteClockMs("2026-11-02T23:01"))[0]?.detail).toBe("60 s");
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
   });
 
   it("keeps one part of a finished phase's detail for the narrow panel", () => {
@@ -156,5 +203,48 @@ describe("firstRunPhaseRows", () => {
     expect(rows[1]?.detail).toBe("1 tendencia · 40 s");
     expect(rows[3]?.detail).toBe("40 s");
     expect(rows[4]?.detail).toBe("14 de 15 redactadas · 40 s");
+  });
+});
+
+const DONE_JOB_DRAFTED = makeJob({
+  status: "done",
+  artifacts: { runId: "run_x", dossiers: 10, presentations: { ready: 10, failed: 0, total: 10 } },
+});
+
+describe("draftingProblem", () => {
+  const drafted = (ready: number, code: "presentations_pending" | "presentations_unavailable") =>
+    makeJob({
+      status: "done",
+      artifacts: {
+        phases: phasesWith(() => "done"),
+        runId: "run_x",
+        dossiers: 10,
+        presentations: { ready, failed: 10 - ready, total: 10 },
+        notices: [{ code, ready, total: 10 }],
+      },
+    });
+
+  it("says no text model is available and where to connect one", () => {
+    expect(draftingProblem(drafted(0, "presentations_unavailable"))?.short).toBe(
+      "Tendencias sin redactar: no hay un proveedor de modelos disponible.",
+    );
+  });
+
+  it("tells a provider that drafted nothing from one that drafted some", () => {
+    const none = drafted(0, "presentations_pending");
+    expect(draftingProblem(none)?.short).toBe(
+      "Tendencias sin redactar: el proveedor de modelos no respondió.",
+    );
+    expect(firstRunView({ active: null, latest: none, emptyRun: false })).toMatchObject({
+      kind: "done",
+      messages: [
+        "El proveedor de modelos no redactó ninguna de las 10 tendencias (sin sesión o sin acceso al modelo): están en la bandeja sin redactar. Revisa la sesión en Ajustes › Proveedores y redáctalas desde la bandeja.",
+      ],
+    });
+    expect(firstRunPhaseRows(none)[4]).toMatchObject({ status: "done", warning: true });
+    expect(draftingProblem(drafted(6, "presentations_pending"))?.short).toBe(
+      "Faltan 4 de 10 tendencias por redactar.",
+    );
+    expect(draftingProblem(DONE_JOB_DRAFTED)).toBeNull();
   });
 });
