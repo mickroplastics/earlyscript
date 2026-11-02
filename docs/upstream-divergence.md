@@ -1798,3 +1798,24 @@ Informe en `~/earlyscript-data/shell-es-verify/informe-3.md`; R5 cerrado.
 Consecuencias aceptadas: un nodo que sale de un ámbito conserva el valor que tenía al salir. Si nadie lo adopta, o si lo adopta otro ámbito cuando ya está en español, queda traducido después de los desmontajes, en lugar de volver a su inglés original. Un nodo que sale del DOM y vuelve es nuevo para el ámbito: si vuelve con la traducción propia, el ámbito no puede distinguirla de un español de upstream y la conserva; si vuelve con inglés, lo traduce y lo restaura al desmontar.
 
 Regresiones en `locale/ShellLocale.browser.test.tsx` («a scope restores only what it still observes»), con dos `useScopedLocale` reales sobre las opciones de `SIDEBAR_LOCALE` y `THREAD_LOCALE`: la secuencia de Sol A → B → `body` con «Borrar» de upstream en texto, `title` y `aria-label` tras ambos desmontajes; un portal que nadie adopta, intacto y sin escrituras posteriores; un nodo que sale del DOM y vuelve, primero con la traducción y después con inglés. Con el `scopedLocale.ts` anterior fallan las tres.
+
+## Proveedores y tope mensual de redacción (rama `es/onboarding-providers`, 2 de noviembre de 2026)
+
+Base: `f10f26fb55` (`es/onboarding-base`). Paso 2 del asistente de primer arranque («Proveedores»), fila «Redacción» de Ajustes › Editorial y tope mensual de tendencias redactadas.
+
+Archivos de upstream tocados: ninguno. El grupo `editorial.presentation.*` ya estaba enganchado en contratos, `ws.ts`, autorización e instrumentación (§7 y §14); los dos métodos nuevos van al final del grupo y heredan esos enganches.
+
+Archivos propios:
+
+- `packages/contracts/src/editorialPresentation.ts`: `getBudget` (`orchestration:read`) y `updateBudget` (`orchestration:operate`), `EditorialDraftBudget`, `EditorialDraftBudgetUpdate`, `isDraftBudgetReached`, motivo `budget-reached`, `EDITORIAL_DRAFT_BUDGET_DEFAULT` (600) y `EDITORIAL_DRAFT_BUDGET_MAX` (100.000). `editorialJobs.ts`: aviso `presentations_budget` al final de `EditorialJobNoticeCode`, con `used` y `limit`.
+- Servidor: migración `013_EditorialDraftBudget.ts` (tabla `editorial_draft_budget` de una fila, sin sembrar, e índice `editorial_presentations_by_requested_at`); `EditorialPresentationService` (`getBudget`, `updateBudget`, comprobación del tope antes de insertar la fila `pending`, bajo un semáforo propio); fase `presentations` de `EditorialJobsService`; `presentationRpc.ts`.
+- Web: `editorial/onboarding/{ProvidersStep.tsx,providersStep.logic.ts,providersStep.fixture.ts}` con sus pruebas, `editorial/settings/DraftingSettings.tsx` con su prueba de navegador, montaje en `EditorialSettings.tsx`, entrada de búsqueda en `settingsEntry.ts`, `presentationState.ts` (consulta y orden del tope), `TrendPresentationRunButton.tsx`, `TrendDossierPage.tsx` (texto de `budget-reached`) y `jobsState.ts` (texto del aviso).
+
+Decisiones reversibles:
+
+- La migración tiene asignado el número 13 porque `es/onboarding-shell` ocupa el 12 (`EditorialOnboarding`). En esta rama se registra con el id 12, porque el manifiesto debe ir de 1 a n; al fusionar pasa a `[13, "EditorialDraftBudget", …]`. Es repetible y figura en `REPLAYABLE_MIGRATION_NAMES`, así que una base de desarrollo que la aplicó como 12 se repara con `repair-editorial-migrations.ts`.
+- El tope cuenta tendencias redactadas, no dinero: Claude y Codex son suscripciones sin precio por llamada. Cuenta las filas `ready` y `pending` de `editorial_presentations` cuyo `requested_at` cae en el mes natural de la zona horaria del servidor. Los intentos fallidos no cuentan, para que una noche sin proveedor no agote el mes. Sin fila guardada rige el predeterminado; 0 quita el tope.
+- El tope detiene toda redacción nueva (en lote, nocturna y la de una sola tendencia) con `budget-reached`; un texto ya redactado para la misma entrada se sigue devolviendo. `ensureAll` deja de intentar tras el primer rechazo y no escribe filas `failed`. La nocturna termina `done` con el aviso `presentations_budget` cuando quedan tendencias sin redactar y el tope está alcanzado.
+- Tokens: la vía de generación de texto de Claude y Codex no devuelve consumo, y llevarlo hasta aquí exigiría tocar `ClaudeTextGeneration.ts` y el runner de `provider-core`. La interfaz dice «Tokens: el proveedor no informa el consumo.» en vez de mostrar ceros.
+- Iniciar sesión: con la bandera `terminal` apagada, el botón abre un diálogo propio con la orden exacta (`claude auth login`, `codex login` o la instalación nativa de upstream seguida del inicio de sesión) y «Volver a comprobar», que pide al servidor sondear los proveedores. No se enciende la terminal.
+- Modelo recomendado: el modelo barato de generación de texto que T3 ya usa por proveedor (`DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER`: Haiku en Claude, Luna en Codex), y Claude antes que Codex. Se respeta un modelo ya elegido por el operador si sigue disponible. Se guarda en `textGenerationModelSelection` con el RPC de ajustes de upstream.

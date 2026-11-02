@@ -19,6 +19,8 @@ export const EDITORIAL_PRESENTATION_WS_METHODS = {
   regenerate: "editorial.presentation.regenerate",
   ensureRun: "editorial.presentation.ensureRun",
   getRunProgress: "editorial.presentation.getRunProgress",
+  getBudget: "editorial.presentation.getBudget",
+  updateBudget: "editorial.presentation.updateBudget",
 } as const;
 
 export const EditorialPresentationTarget = Schema.Struct({
@@ -55,6 +57,34 @@ export const EditorialPresentationRunProgress = Schema.Struct({
 });
 export type EditorialPresentationRunProgress = typeof EditorialPresentationRunProgress.Type;
 
+/** Highest monthly cap the settings accept; 0 means no cap. */
+export const EDITORIAL_DRAFT_BUDGET_MAX = 100_000;
+/** What a database without a saved cap uses: about fifteen nightly runs of 40 trends. */
+export const EDITORIAL_DRAFT_BUDGET_DEFAULT = 600;
+
+/**
+ * Drafting runs on the operator's subscriptions, which have no per-call price, so the cap is a
+ * count: trends drafted (ready or in flight) per calendar month of the server's time zone.
+ * Failed attempts do not count, so a night without a provider never eats the month.
+ */
+export const EditorialDraftBudget = Schema.Struct({
+  /** 0: no cap. */
+  monthlyLimit: NonNegativeInt,
+  usedThisMonth: NonNegativeInt,
+  /** The month the count covers, `YYYY-MM`. */
+  month: Schema.String,
+});
+export type EditorialDraftBudget = typeof EditorialDraftBudget.Type;
+
+/** True when the cap stops the next draft. */
+export const isDraftBudgetReached = (budget: EditorialDraftBudget): boolean =>
+  budget.monthlyLimit > 0 && budget.usedThisMonth >= budget.monthlyLimit;
+
+export const EditorialDraftBudgetUpdate = Schema.Struct({
+  monthlyLimit: NonNegativeInt.check(Schema.isLessThanOrEqualTo(EDITORIAL_DRAFT_BUDGET_MAX)),
+});
+export type EditorialDraftBudgetUpdate = typeof EditorialDraftBudgetUpdate.Type;
+
 export class EditorialPresentationError extends Schema.TaggedError<EditorialPresentationError>()(
   "EditorialPresentationError",
   {
@@ -64,6 +94,7 @@ export class EditorialPresentationError extends Schema.TaggedError<EditorialPres
       "generation-failed",
       "storage-failed",
       "unavailable",
+      "budget-reached",
     ]),
     message: Schema.String,
   },
@@ -95,21 +126,38 @@ const GetRunProgressRpc = Rpc.make(EDITORIAL_PRESENTATION_WS_METHODS.getRunProgr
   error: errors,
 });
 
+const GetBudgetRpc = Rpc.make(EDITORIAL_PRESENTATION_WS_METHODS.getBudget, {
+  payload: Schema.Struct({}),
+  success: EditorialDraftBudget,
+  error: errors,
+});
+
+const UpdateBudgetRpc = Rpc.make(EDITORIAL_PRESENTATION_WS_METHODS.updateBudget, {
+  payload: EditorialDraftBudgetUpdate,
+  success: EditorialDraftBudget,
+  error: errors,
+});
+
 /** Merged into `WsRpcGroup` next to `EditorialRpcGroup`. */
 export const EditorialPresentationRpcGroup = RpcGroup.make(
   EnsureRpc,
   RegenerateRpc,
   EnsureRunRpc,
   GetRunProgressRpc,
+  GetBudgetRpc,
+  UpdateBudgetRpc,
 );
 
 /**
  * Drafting spends inference on the operator's provider, like regenerating a thread title
- * (`orchestration.dispatchCommand`), so it needs the operate scope. Progress is a read.
+ * (`orchestration.dispatchCommand`), so it needs the operate scope, and so does changing the
+ * monthly cap on it. Progress and the cap are reads.
  */
 export const EDITORIAL_PRESENTATION_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_PRESENTATION_WS_METHODS.ensure]: AuthOrchestrationOperateScope,
   [EDITORIAL_PRESENTATION_WS_METHODS.regenerate]: AuthOrchestrationOperateScope,
   [EDITORIAL_PRESENTATION_WS_METHODS.ensureRun]: AuthOrchestrationOperateScope,
   [EDITORIAL_PRESENTATION_WS_METHODS.getRunProgress]: AuthOrchestrationReadScope,
+  [EDITORIAL_PRESENTATION_WS_METHODS.getBudget]: AuthOrchestrationReadScope,
+  [EDITORIAL_PRESENTATION_WS_METHODS.updateBudget]: AuthOrchestrationOperateScope,
 } as const;

@@ -1,13 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EditorialRunId, EnvironmentId } from "@t3tools/contracts";
+import { isDraftBudgetReached, type EditorialRunId, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { SparklesIcon } from "lucide-react";
 import { useState } from "react";
 
 import { SidebarHeaderIconButton } from "../components/sidebar/SidebarThreadHeader";
 import { Spinner } from "../components/ui/spinner";
+import { toastManager } from "../components/ui/toast";
 import { useAtomCommand } from "../state/use-atom-command";
 import { runPresentationProgressText } from "./editorial.logic";
+import { budgetReachedLabel, budgetResetText } from "./onboarding/providersStep.logic";
 import { presentationEnvironment } from "./presentationState";
 
 /**
@@ -25,26 +27,47 @@ export function TrendPresentationRunButton({
     useAtomValue(presentationEnvironment.runProgress({ environmentId, input: { runId } })),
     () => null,
   );
+  const budget = AsyncResult.getOrElse(
+    useAtomValue(presentationEnvironment.budget({ environmentId, input: {} })),
+    () => null,
+  );
   const ensureRun = useAtomCommand(presentationEnvironment.ensureRun);
   const [starting, setStarting] = useState(false);
   const running = starting || progress?.status === "running";
   const complete = progress !== null && progress.total > 0 && progress.ready === progress.total;
+  // Only bulk drafting stops at the cap; a ready run still says it is complete.
+  const capped = !running && !complete && budget !== null && isDraftBudgetReached(budget);
   const label = running
     ? `Redactando las tendencias de esta corrida${progress ? `: ${runPresentationProgressText(progress)}` : ""}`
     : complete
       ? `Todas las tendencias de esta corrida están redactadas (${progress.total})`
-      : `Redactar todas las de esta corrida${progress && progress.ready + progress.failed > 0 ? ` (${runPresentationProgressText(progress)})` : ""}`;
+      : capped
+        ? `${budgetReachedLabel(budget)}. Súbelo en Ajustes › Editorial.`
+        : `Redactar todas las de esta corrida${progress && progress.ready + progress.failed > 0 ? ` (${runPresentationProgressText(progress)})` : ""}`;
   return (
     <>
       {running && progress ? (
         <span aria-hidden className="text-2xs text-sidebar-muted-foreground tabular-nums">
           {progress.ready}/{progress.total}
         </span>
+      ) : capped ? (
+        <span aria-hidden className="text-2xs text-warning-foreground tabular-nums">
+          Tope {budget.usedThisMonth}/{budget.monthlyLimit}
+        </span>
       ) : null}
       <SidebarHeaderIconButton
         label={label}
         disabled={running}
         onClick={() => {
+          // A disabled button shows no tooltip, so the cap answers the click instead.
+          if (capped) {
+            toastManager.add({
+              type: "warning",
+              title: budgetReachedLabel(budget),
+              description: `Sube el tope en Ajustes › Editorial › Redacción o espera al ${budgetResetText(budget.month)}, cuando el conteo vuelve a cero.`,
+            });
+            return;
+          }
           setStarting(true);
           void ensureRun({ environmentId, input: { runId } }).then(() => setStarting(false));
         }}

@@ -246,6 +246,8 @@ const withJobs = <A, E>(
   options: {
     readonly timing?: Partial<EditorialJobsService.EditorialJobsOptions>;
     readonly draftFails?: boolean;
+    /** The monthly drafting cap stops the run with one of its three trends drafted. */
+    readonly draftCapped?: boolean;
     /** The real importer over the fixture's runs directory, instead of a double. */
     readonly realImport?: boolean;
     readonly engine?: EditorialJobsService.EditorialJobsOptions["engine"];
@@ -303,10 +305,17 @@ const withJobs = <A, E>(
           awaitRun: (runId) => {
             draftsAwaited += 1;
             const hold = draftsAwaited === 1 ? fx.holdFirstDraft : null;
+            const progress =
+              options.draftCapped === true ? { ...progressOf(runId), ready: 1 } : progressOf(runId);
             return hold === null
-              ? Effect.succeed(progressOf(runId))
-              : Effect.promise(() => hold).pipe(Effect.as(progressOf(runId)));
+              ? Effect.succeed(progress)
+              : Effect.promise(() => hold).pipe(Effect.as(progress));
           },
+          getBudget: Effect.succeed({
+            monthlyLimit: 600,
+            usedThisMonth: options.draftCapped === true ? 600 : 0,
+            month: "2026-11",
+          }),
         }),
       ),
     ),
@@ -696,6 +705,24 @@ describe("EditorialJobsService", () => {
         assert.deepStrictEqual(done.artifacts.notices, [{ code: "presentations_unavailable" }]);
       }),
       { draftFails: true },
+    );
+  });
+
+  it.live("finishes with a budget notice when the monthly cap stops drafting", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.deepStrictEqual(done.artifacts.notices, [
+          { code: "presentations_budget", ready: 1, total: 3, used: 600, limit: 600 },
+        ]);
+      }),
+      { draftCapped: true },
     );
   });
 

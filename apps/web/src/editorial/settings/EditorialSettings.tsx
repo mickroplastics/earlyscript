@@ -1,4 +1,5 @@
 import { SettingsPageContainer } from "../../components/settings/settingsLayout";
+import { DraftingSettings } from "./DraftingSettings";
 import { NightlyRunSettings } from "./NightlyRunSettings";
 import { SourcesSettings } from "./SourcesSettings";
 
@@ -8,6 +9,7 @@ export function EditorialSettingsPanel() {
     <SettingsPageContainer>
       <SourcesSettings />
       <NightlyRunSettings />
+      <DraftingSettings />
     </SettingsPageContainer>
   );
 }

@@ -1,5 +1,6 @@
 import {
   EDITORIAL_PRESENTATION_WS_METHODS,
+  type EditorialDraftBudgetUpdate,
   EditorialPresentationError,
   type EditorialPresentationRpcGroup,
   type EditorialPresentationRunInput,
@@ -20,6 +21,8 @@ export const EDITORIAL_PRESENTATION_RPC_AGGREGATES = {
   [EDITORIAL_PRESENTATION_WS_METHODS.regenerate]: "editorial",
   [EDITORIAL_PRESENTATION_WS_METHODS.ensureRun]: "editorial",
   [EDITORIAL_PRESENTATION_WS_METHODS.getRunProgress]: "editorial",
+  [EDITORIAL_PRESENTATION_WS_METHODS.getBudget]: "editorial",
+  [EDITORIAL_PRESENTATION_WS_METHODS.updateBudget]: "editorial",
 } as const;
 
 const unavailable = Effect.fail(
@@ -51,5 +54,11 @@ export const makeHandlers = Effect.gen(function* () {
     [EDITORIAL_PRESENTATION_WS_METHODS.getRunProgress]: ({
       runId,
     }: EditorialPresentationRunInput) => call((presentations) => presentations.runProgress(runId)),
+    [EDITORIAL_PRESENTATION_WS_METHODS.getBudget]: () =>
+      call((presentations) => presentations.getBudget),
+    [EDITORIAL_PRESENTATION_WS_METHODS.updateBudget]: ({
+      monthlyLimit,
+    }: EditorialDraftBudgetUpdate) =>
+      call((presentations) => presentations.updateBudget(monthlyLimit)),
   } satisfies Record<RpcGroup.Rpcs<typeof EditorialPresentationRpcGroup>["_tag"], unknown>;
 });

@@ -16,6 +16,7 @@ import Migration0008 from "./Migrations/008_EditorialRssFeedAcknowledgement.ts";
 import Migration0009 from "./Migrations/009_EditorialManualWork.ts";
 import Migration0010 from "./Migrations/010_EditorialJobs.ts";
 import Migration0011 from "./Migrations/011_EditorialSourceBacktests.ts";
+import MigrationDraftBudget from "./Migrations/013_EditorialDraftBudget.ts";
 
 // Own numbering in editorial.sqlite, never colliding with T3's. Never renumber an
 // applied migration. Ids are 1..n: the Migrator skips ids at or below the latest
@@ -32,6 +33,9 @@ export const editorialMigrationEntries: ReadonlyArray<EditorialMigrationEntry> =
   [9, "EditorialManualWork", Migration0009],
   [10, "EditorialJobs", Migration0010],
   [11, "EditorialSourceBacktests", Migration0011],
+  // Assigned 13: es/onboarding-shell holds 12 (EditorialOnboarding). It sits at 12 until that
+  // branch merges, because the manifest must stay 1..n; replayable, so moving it is safe.
+  [12, "EditorialDraftBudget", MigrationDraftBudget],
 ];
 
 export const editorialMigrationManifest = editorialMigrationEntries.map(
@@ -48,6 +52,7 @@ const REPLAYABLE_MIGRATION_NAMES: ReadonlySet<string> = new Set([
   "EditorialRssFeedAcknowledgement",
   "EditorialManualWork",
   "EditorialSourceBacktests",
+  "EditorialDraftBudget",
 ]);
 
 /** A table name of its own, so a misrouted client never reads T3's history as ours. */

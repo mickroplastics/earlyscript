@@ -13,6 +13,7 @@ export const EDITORIAL_SETTINGS_NAV_GROUP = {
 
 export const EDITORIAL_SOURCES_SECTION_ID = "editorial-sources";
 export const EDITORIAL_NIGHTLY_SECTION_ID = "editorial-nightly";
+export const EDITORIAL_DRAFTING_SECTION_ID = "editorial-drafting";
 
 export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
   {
@@ -32,6 +33,15 @@ export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "nightly corrida nocturna diaria daily schedule horario hora ejecutar ahora run now",
       "motor engine workers procesos captura importar redactar jobs",
+    ],
+  },
+  {
+    id: EDITORIAL_DRAFTING_SECTION_ID,
+    title: "Redacción",
+    to: EDITORIAL_SETTINGS_PATH,
+    searchTerms: [
+      "redacción drafting modelo model texto text generation título resumen haiku luna",
+      "tope límite limit cap mensual monthly presupuesto budget uso usage tokens",
     ],
   },
 ] as const;
