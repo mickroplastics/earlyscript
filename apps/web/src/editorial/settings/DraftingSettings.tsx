@@ -15,6 +15,7 @@ import {
 import { useState } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
+import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import {
   Select,
@@ -35,6 +36,8 @@ import {
   DRAFT_USAGE_NO_TOKENS,
   DRAFTING_MODEL_EXPLANATION,
   cheapestModel,
+  disabledDraftingModelText,
+  draftingModelLabel,
   draftUsageText,
   isUsableSelection,
   parseMonthlyLimit,
@@ -49,15 +52,6 @@ const keyOf = (selection: { readonly instanceId: string; readonly model: string 
   `${selection.instanceId}${KEY_SEPARATOR}${selection.model}`;
 
 /** The selection's model and provider names, as the selector shows them. */
-function draftingModelLabel(
-  providers: ReadonlyArray<ServerProvider> | null,
-  selection: { readonly instanceId: string; readonly model: string },
-): string {
-  const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
-  const model = provider?.models.find((candidate) => candidate.slug === selection.model);
-  return `${model?.name ?? selection.model} · ${provider?.displayName ?? selection.instanceId}`;
-}
-
 /** Models of the providers ready to draft, by provider; the cheapest one marked. */
 export function DraftingModelSelect({
   providers,
@@ -196,17 +190,28 @@ export function DraftingSettingsView({
 }: DraftingSettingsViewProps) {
   const usable = selection !== null && isUsableSelection(providers, selection);
   const noProvider = providers !== null && readyDraftingProviders(providers).length === 0;
+  const disabledText = disabledDraftingModelText(providers, selection);
+  const recommended = recommendedDraftingModel(providers);
   return (
     <SettingsSection id={EDITORIAL_DRAFTING_SECTION_ID} title="Redacción">
       <SettingsRow
         title="Modelo de redacción"
         description={`Escribe el título y el resumen de cada tendencia. ${DRAFTING_MODEL_EXPLANATION}`}
         status={
-          noProvider
-            ? "Ningún proveedor tiene sesión iniciada. Conecta Claude o Codex en Ajustes › Proveedores; las tendencias se ven con sus términos mientras tanto."
-            : selection !== null && !usable
-              ? `${draftingModelLabel(providers, selection)} no está disponible ahora; elige otro.`
-              : undefined
+          disabledText !== null ? (
+            <span className="flex flex-col items-start gap-1.5">
+              <span className="text-warning-foreground">{disabledText}</span>
+              {recommended === null ? null : (
+                <Button size="xs" variant="outline" onClick={() => onModelChange(recommended)}>
+                  Usar el recomendado
+                </Button>
+              )}
+            </span>
+          ) : noProvider ? (
+            "Ningún proveedor tiene sesión iniciada. Conecta Claude o Codex en Ajustes › Proveedores; las tendencias se ven con sus términos mientras tanto."
+          ) : selection !== null && !usable ? (
+            `${draftingModelLabel(providers, selection)} no está disponible ahora; elige otro.`
+          ) : undefined
         }
         control={
           <DraftingModelSelect

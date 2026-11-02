@@ -105,6 +105,7 @@ export class EditorialPresentationError extends Schema.TaggedError<EditorialPres
       "storage-failed",
       "unavailable",
       "budget-reached",
+      "provider-disabled",
     ]),
     message: Schema.String,
   },

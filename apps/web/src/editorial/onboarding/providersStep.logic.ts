@@ -203,3 +203,33 @@ export function parseMonthlyLimit(text: string): number | null {
   const value = Number(trimmed);
   return value <= EDITORIAL_DRAFT_BUDGET_MAX ? value : null;
 }
+
+/** The selection's model and provider names, as the selector shows them. */
+export function draftingModelLabel(
+  providers: ReadonlyArray<ServerProvider> | null,
+  selection: { readonly instanceId: string; readonly model: string },
+): string {
+  const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
+  const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+  return `${model?.name ?? selection.model} · ${provider?.displayName ?? selection.instanceId}`;
+}
+
+/**
+ * The warning for a saved drafting model whose provider is switched off in Settings › Providers
+ * or no longer exists, naming the recommended replacement; null when the provider is enabled.
+ * The server refuses to draft with it (`provider-disabled`).
+ */
+export function disabledDraftingModelText(
+  providers: ReadonlyArray<ServerProvider> | null,
+  saved: ModelSelection | null,
+): string | null {
+  if (providers === null || saved === null) return null;
+  const provider = providers.find((candidate) => candidate.instanceId === saved.instanceId);
+  if (provider !== undefined && provider.enabled && provider.status !== "disabled") return null;
+  const recommended = recommendedDraftingModel(providers);
+  const fix =
+    recommended === null
+      ? "Activa un proveedor en Ajustes › Proveedores."
+      : `Recomendado: ${draftingModelLabel(providers, recommended)}.`;
+  return `El modelo guardado, ${draftingModelLabel(providers, saved)}, es de un proveedor desactivado: no se redactará nada con él. ${fix}`;
+}

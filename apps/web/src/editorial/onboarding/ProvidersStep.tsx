@@ -40,6 +40,7 @@ import {
   DRAFTING_MODEL_EXPLANATION,
   draftUsageText,
   draftingProviderRows,
+  disabledDraftingModelText,
   initialDraftingModel,
   isDefaultDraftingModel,
   isUsableSelection,
@@ -242,6 +243,8 @@ export function ProvidersStepView({
       ? null
       : initialDraftingModel({ providers, saved, isDefault: isDefaultDraftingModel(saved) });
   const model = choice !== null && isUsableSelection(providers, choice) ? choice : proposed;
+  // The proposal above already skips a disabled provider; this says why the saved one changed.
+  const savedDisabledText = choice === null ? disabledDraftingModelText(providers, saved) : null;
   const anyReady = rows.some((row) => row.state === "ready");
   // Nothing is decided before the server has said which providers it has and what cap it keeps;
   // a cap that failed to load is left as saved instead of being overwritten with a guess.
@@ -297,6 +300,12 @@ export function ProvidersStepView({
           Modelo de redacción
         </h3>
         <p className="text-muted-foreground text-sm">{DRAFTING_MODEL_EXPLANATION}</p>
+        {savedDisabledText === null ? null : (
+          <Alert variant="warning">
+            <TriangleAlertIcon />
+            <AlertDescription>{savedDisabledText}</AlertDescription>
+          </Alert>
+        )}
         <DraftingModelSelect
           providers={providers}
           value={model}

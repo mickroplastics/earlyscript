@@ -250,6 +250,8 @@ const withJobs = <A, E>(
     readonly draftFails?: boolean;
     /** The monthly drafting cap stops the run with one of its three trends drafted. */
     readonly draftCapped?: boolean;
+    /** The drafting model's provider is disabled; one of the three trends was drafted before. */
+    readonly draftProviderDisabled?: boolean;
     /** The real importer over the fixture's runs directory, instead of a double. */
     readonly realImport?: boolean;
     readonly engine?: EditorialJobsService.EditorialJobsOptions["engine"];
@@ -309,11 +311,14 @@ const withJobs = <A, E>(
             draftsAwaited += 1;
             const hold = draftsAwaited === 1 ? fx.holdFirstDraft : null;
             const progress =
-              options.draftCapped === true ? { ...progressOf(runId), ready: 1 } : progressOf(runId);
+              options.draftCapped === true || options.draftProviderDisabled === true
+                ? { ...progressOf(runId), ready: 1 }
+                : progressOf(runId);
             return hold === null
               ? Effect.succeed(progress)
               : Effect.promise(() => hold).pipe(Effect.as(progress));
           },
+          draftingProviderEnabled: Effect.succeed(options.draftProviderDisabled !== true),
           getBudget: Effect.succeed({
             monthlyLimit: 600,
             usedThisMonth: options.draftCapped === true ? 600 : 0,
@@ -761,6 +766,24 @@ describe("EditorialJobsService", () => {
         ]);
       }),
       { draftCapped: true },
+    );
+  });
+
+  it.live("finishes with a provider notice when the drafting provider is disabled", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const done = yield* onlyJob;
+        assert.strictEqual(done.status, "done");
+        assert.deepStrictEqual(done.artifacts.notices, [
+          { code: "presentations_provider_disabled", ready: 1, total: 3 },
+        ]);
+      }),
+      { draftProviderDisabled: true },
     );
   });
 
