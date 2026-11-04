@@ -26,6 +26,7 @@ const server = vi.hoisted(() => ({
 
 const V1: EditorialProfileVersion = {
   version: 1,
+  language: "en",
   name: "SingulariDev",
   audience: "Solo founders and developers building products with AI agents",
   include: ["AI coding agents", "local language models"],

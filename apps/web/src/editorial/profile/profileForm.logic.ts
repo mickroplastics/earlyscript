@@ -17,6 +17,7 @@ export const PROFILE_READ_ONLY_TEXT = "Solo lectura: tu sesión no puede cambiar
 export interface ProfileFormValues {
   readonly name: string;
   readonly audience: string;
+  readonly language: string;
   readonly include: ReadonlyArray<string>;
   readonly exclude: ReadonlyArray<string>;
 }
@@ -27,6 +28,7 @@ export function formFromProfile(profile: EditorialProfileDraft): ProfileFormValu
   return {
     name: profile.name,
     audience: profile.audience,
+    language: profile.language ?? "en",
     include: [...profile.include],
     exclude: [...profile.exclude],
   };
@@ -58,8 +60,13 @@ export function profileFormChanged(
 }
 
 export function topicCount(topics: ReadonlyArray<string>): number {
-  return normalizeEditorialProfileDraft({ name: "", audience: "", include: topics, exclude: [] })
-    .include.length;
+  return normalizeEditorialProfileDraft({
+    name: "",
+    audience: "",
+    language: "en",
+    include: topics,
+    exclude: [],
+  }).include.length;
 }
 
 const limits = EDITORIAL_PROFILE_LIMITS;
@@ -67,6 +74,8 @@ const limits = EDITORIAL_PROFILE_LIMITS;
 /** The operator's words for one issue. */
 function profileIssueText(issue: EditorialProfileIssue): string {
   switch (issue.field) {
+    case "language":
+      return "Escribe un código de idioma como en, es o pt-BR.";
     case "name":
       return issue.code === "required"
         ? "Escribe el nombre del canal."

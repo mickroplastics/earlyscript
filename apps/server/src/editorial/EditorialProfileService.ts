@@ -1,5 +1,6 @@
 import {
   editorialProfileIssues,
+  EditorialProfileDraft as ProfileSchema,
   EditorialProfileError,
   normalizeEditorialProfileDraft,
   sameEditorialProfile,
@@ -79,10 +80,13 @@ const decodeTopics = Schema.decodeUnknownOption(TopicsJson);
 const topicsOf = (json: string): ReadonlyArray<string> =>
   Option.getOrElse(decodeTopics(json), () => []);
 
+const decodeProfileBytes = Schema.decodeSync(Schema.fromJsonString(ProfileSchema));
+
 const versionOf = (row: ProfileRow): EditorialProfileVersion => ({
   version: row.version,
   name: row.name,
   audience: row.audience,
+  language: decodeProfileBytes(row.bytes).language,
   include: topicsOf(row.include_json),
   exclude: topicsOf(row.exclude_json),
   hash: `sha256:${row.sha256}`,
@@ -109,6 +113,7 @@ export function editorialProfileBytes(draft: EditorialProfileDraft, version: num
     name: draft.name,
     ...(version === 1 ? {} : { version }),
     audience: draft.audience,
+    ...(version === 1 ? {} : { language: draft.language ?? "en" }),
     include: draft.include,
     exclude: draft.exclude,
   };

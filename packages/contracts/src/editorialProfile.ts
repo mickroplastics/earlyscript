@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -32,6 +33,7 @@ export const EDITORIAL_PROFILE_LIMITS = {
 export const EditorialProfileDraft = Schema.Struct({
   name: Schema.String,
   audience: Schema.String,
+  language: Schema.String.pipe(Schema.withDecodingDefaultKey(Effect.succeed("en"))),
   include: Schema.Array(Schema.String),
   exclude: Schema.Array(Schema.String),
 });
@@ -44,6 +46,7 @@ export const EditorialProfileVersion = Schema.Struct({
   version: PositiveInt,
   name: Schema.String,
   audience: Schema.String,
+  language: Schema.String.pipe(Schema.withDecodingDefaultKey(Effect.succeed("en"))),
   include: Schema.Array(Schema.String),
   exclude: Schema.Array(Schema.String),
   /** `sha256:<hex>` of the file the engine reads: `profile.hash` in the dossiers it scores. */
@@ -88,10 +91,17 @@ export const EditorialProfileUpdateResult = Schema.Struct({
 });
 export type EditorialProfileUpdateResult = typeof EditorialProfileUpdateResult.Type;
 
-export const EditorialProfileField = Schema.Literals(["name", "audience", "include", "exclude"]);
+export const EditorialProfileField = Schema.Literals([
+  "name",
+  "audience",
+  "language",
+  "include",
+  "exclude",
+]);
 export type EditorialProfileField = typeof EditorialProfileField.Type;
 
 export const EditorialProfileIssueCode = Schema.Literals([
+  "invalid",
   "required",
   "too-long",
   "too-many",
@@ -113,6 +123,20 @@ export class EditorialProfileError extends Schema.TaggedError<EditorialProfileEr
     issues: Schema.optionalKey(Schema.Array(EditorialProfileIssue)),
   },
 ) {}
+
+export const CHANNEL_LANGUAGES = [
+  { code: "en", label: "Inglés" },
+  { code: "es", label: "Español" },
+  { code: "pt", label: "Portugués" },
+  { code: "fr", label: "Francés" },
+  { code: "de", label: "Alemán" },
+  { code: "it", label: "Italiano" },
+] as const;
+
+export function scriptLanguageInstruction(language = "en"): string {
+  const name = new Intl.DisplayNames(["es"], { type: "language" }).of(language) ?? language;
+  return `Idioma del guion: ${name} (${language})`;
+}
 
 const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
 
@@ -137,9 +161,19 @@ export function normalizeEditorialProfileDraft(
   return {
     name: collapse(draft.name),
     audience: collapse(draft.audience),
+    language: (draft.language ?? "en").trim().toLowerCase(),
     include: normalizeTopics(draft.include),
     exclude: normalizeTopics(draft.exclude),
   };
+}
+
+function validChannelLanguage(language: string): boolean {
+  if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(language) || language.length > 35) return false;
+  try {
+    return Intl.getCanonicalLocales(language).length === 1;
+  } catch {
+    return false;
+  }
 }
 
 /** What keeps a normalized draft from being saved; empty when it can be. */
@@ -148,6 +182,9 @@ export function editorialProfileIssues(
 ): ReadonlyArray<EditorialProfileIssue> {
   const limits = EDITORIAL_PROFILE_LIMITS;
   const issues: Array<EditorialProfileIssue> = [];
+  if (!validChannelLanguage(draft.language ?? "en")) {
+    issues.push({ field: "language", code: "invalid" });
+  }
   if (draft.name.length === 0) issues.push({ field: "name", code: "required" });
   else if (draft.name.length > limits.nameMax) issues.push({ field: "name", code: "too-long" });
   if (draft.audience.length === 0) issues.push({ field: "audience", code: "required" });
@@ -175,6 +212,7 @@ export function sameEditorialProfile(a: EditorialProfileDraft, b: EditorialProfi
     x.length === y.length && x.every((value, index) => value === y[index]);
   return (
     a.name === b.name &&
+    (a.language ?? "en") === (b.language ?? "en") &&
     a.audience === b.audience &&
     sameList(a.include, b.include) &&
     sameList(a.exclude, b.exclude)
