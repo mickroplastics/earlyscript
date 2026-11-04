@@ -491,6 +491,14 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
   EditorialVideoPrepareRpc,
 );
 
+/**
+ * The write the client checks before it sends a cohort change, spread into
+ * `CLIENT_GUARDED_RPC_SCOPES` (`clientRpcPermissions.ts`); the server checks it again.
+ */
+export const EDITORIAL_VIDEO_CLIENT_GUARDED_SCOPES = {
+  [EDITORIAL_VIDEO_WS_METHODS.setCohort]: AuthOrchestrationOperateScope,
+} as const;
+
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_VIDEO_WS_METHODS.setCohort]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.get]: AuthOrchestrationReadScope,

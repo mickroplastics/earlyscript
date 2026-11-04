@@ -14,6 +14,7 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { bumpResults } from "./resultsState";
 import { useQuietThreadShell } from "../state/entities";
 
 /** Stands in for the subscription of a route with no server thread. */
@@ -45,6 +46,8 @@ export const editorialVideoEnvironment = {
   setCohort: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-cohort",
     tag: EDITORIAL_VIDEO_WS_METHODS.setCohort,
+    // Results keeps its last summary while mounted elsewhere; a cohort change must reach it.
+    onSuccess: bumpResults,
   }),
   clock: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-clock",

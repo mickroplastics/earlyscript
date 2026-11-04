@@ -4,9 +4,17 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { EDITORIAL_RESULTS_WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type { AtomRegistry } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+
+/** Bumped when a thread changes cohort, so open Results reads (summary, any decisions page) refetch. */
+const resultsRevision = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
+
+export const bumpResults = (
+  { environmentId }: { readonly environmentId: EnvironmentId },
+  registry: AtomRegistry.AtomRegistry,
+) => Effect.sync(() => registry.update(resultsRevision(environmentId), (value) => value + 1));
 
 /** The manual baseline: a closed record, read again only after an import. */
 const baseline = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -29,11 +37,13 @@ export const editorialResultsEnvironment = {
     label: "environment-data:editorial:results-summary",
     tag: EDITORIAL_RESULTS_WS_METHODS.summary,
     staleTimeMs: 0,
+    refreshTrigger: (target) => resultsRevision(target.environmentId),
   }),
   decisions: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:editorial:results-decisions",
     tag: EDITORIAL_RESULTS_WS_METHODS.decisions,
     staleTimeMs: 0,
+    refreshTrigger: (target) => resultsRevision(target.environmentId),
   }),
   baseline,
   /** Replaces the stored manual log with the CSV's; the section reads it again on success. */

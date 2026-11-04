@@ -437,7 +437,7 @@ export function closingStrip(summary: EditorialResultsSummary) {
     },
     {
       title: "Muestra",
-      text: `${human} hilos humanos. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
     },
     {
       title: "Límites",
