@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
 
@@ -16,8 +17,11 @@ export function resolveDesktopBaseDir(input: {
   readonly joinPath: JoinPath;
   readonly t3Home: Option.Option<string>;
 }): string {
-  return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, EarlyscriptBrand.homeDirName),
+  return assertEarlyscriptDataDirectory(
+    Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
+      input.joinPath(input.homeDirectory, EarlyscriptBrand.homeDirName),
+    ),
+    { homeDirectory: input.homeDirectory },
   );
 }
 

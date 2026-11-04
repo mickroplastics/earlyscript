@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { findT3CodeDirectoryFor } from "../earlyscript/dataDirectory.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { COUNT_MAX, decisionInDomain } from "./decisionDomain.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
@@ -1039,6 +1040,13 @@ const make = Effect.gen(function* () {
       if (!inside(yield* realPath(existing))) {
         return yield* refuse(`${target} is outside ${options!.within}. Choose a folder there.`);
       }
+    }
+    // T3 Code shares the machine; its data folders are never an export destination.
+    const t3CodeDirectory = yield* findT3CodeDirectoryFor(target);
+    if (t3CodeDirectory !== undefined) {
+      return yield* refuse(
+        `${target} is inside T3 Code's data folder (${t3CodeDirectory}). Choose another folder.`,
+      );
     }
     yield* fs.makeDirectory(parent, { recursive: true }).pipe(Effect.catch(failed));
     // The destination is a real folder of its parent, never a link to somewhere else.

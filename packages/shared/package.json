@@ -355,6 +355,10 @@
       "types": "./src/earlyscriptBrand.ts",
       "import": "./src/earlyscriptBrand.ts"
     },
+    "./earlyscriptHome": {
+      "types": "./src/earlyscriptHome.ts",
+      "import": "./src/earlyscriptHome.ts"
+    },
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"

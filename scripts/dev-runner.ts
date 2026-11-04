@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -273,17 +274,22 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
   const path = yield* Path.Path;
   const configured = baseDir?.trim();
 
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const appDataDirectory = (yield* HostProcess.Environment).APPDATA;
+  const guard = (directory: string) =>
+    assertEarlyscriptDataDirectory(directory, { homeDirectory, platform, appDataDirectory });
   if (configured === "~") {
-    return yield* HostProcess.HomeDirectory;
+    return guard(homeDirectory);
   }
   if (configured?.startsWith("~/") || configured?.startsWith("~\\")) {
-    return path.join(yield* HostProcess.HomeDirectory, configured.slice(2));
+    return guard(path.join(homeDirectory, configured.slice(2)));
   }
   if (configured) {
-    return path.resolve(configured);
+    return guard(path.resolve(configured));
   }
 
-  return yield* DEFAULT_T3_HOME;
+  return guard(yield* DEFAULT_T3_HOME);
 });
 
 interface CreateDevRunnerEnvInput {

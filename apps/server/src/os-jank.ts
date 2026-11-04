@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import { guardEarlyscriptBaseDir } from "./earlyscript/dataDirectory.ts";
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -124,7 +125,9 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(yield* HostProcess.HomeDirectory, EarlyscriptBrand.homeDirName);
+    return yield* guardEarlyscriptBaseDir(
+      join(yield* HostProcess.HomeDirectory, EarlyscriptBrand.homeDirName),
+    );
   }
-  return resolve(yield* expandHomePath(raw.trim()));
+  return yield* guardEarlyscriptBaseDir(resolve(yield* expandHomePath(raw.trim())));
 });
