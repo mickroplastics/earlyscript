@@ -424,6 +424,7 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServicePrerequisiteError: reportServiceSetupFailure,
       BootServiceUpdatePendingError: reportServiceSetupFailure,
       BootServiceDowngradeRefusedError: reportServiceSetupFailure,
+      BootServiceForeignHomeError: reportServiceSetupFailure,
     }),
   );
 

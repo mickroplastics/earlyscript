@@ -33,6 +33,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { evidenceCommand } from "./editorial/evidenceCli.ts";
+import { retiredCliCommand } from "./earlyscript/cliCommands.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -82,9 +83,9 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       browserCommand,
       projectCommand,
       threadCommand,
-      serviceCommand,
-      updateCommand,
-      uninstallCommand,
+      ...retiredCliCommand(serviceCommand),
+      ...retiredCliCommand(updateCommand),
+      ...retiredCliCommand(uninstallCommand),
       serviceLauncherCommand,
       claudeHistoryCommand,
       sshHelperCommand,

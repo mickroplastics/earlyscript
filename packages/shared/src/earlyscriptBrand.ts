@@ -34,4 +34,8 @@ export const EarlyscriptBrand = {
   linuxDevWmClass: `${urlScheme}-dev`,
   linuxDesktopEntryName: "cc.biste.Earlyscript.desktop",
   linuxDevDesktopEntryName: "cc.biste.Earlyscript.Development.desktop",
+  /** systemd user unit `<name>.service`; T3 Code installs `t3code.service`. */
+  bootServiceName: "earlyscript",
+  /** launchd label of the background service; T3 Code uses `com.t3tools.t3code.service`. */
+  bootServiceLaunchdLabel: `${desktopAppId}.service`,
 } as const;

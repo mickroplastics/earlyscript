@@ -13,6 +13,7 @@ import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -32,11 +33,11 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-const BOOT_SERVICE_NAME = "t3code";
+const BOOT_SERVICE_NAME = EarlyscriptBrand.bootServiceName;
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 // `.service` suffix keeps the label distinct from the desktop app's bundle id
 // (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
+export const BOOT_SERVICE_LAUNCHD_LABEL = EarlyscriptBrand.bootServiceLaunchdLabel;
 export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
@@ -433,7 +434,7 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "service-disabled":
       return "The service is not enabled to start automatically. Run `t3 service install` to repair it.";
     case "service-stopped":
-      return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `t3 service install`.";
+      return `The service is not running. Check the service log and \`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\`, then run \`t3 service install\`.`;
     case "restart-pending":
       return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
   }
@@ -469,7 +470,18 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+/** Earlyscript: an installed unit or plist that serves another data directory is not ours to replace. */
+export class BootServiceForeignHomeError extends Schema.TaggedError<BootServiceForeignHomeError>()(
+  "BootServiceForeignHomeError",
+  { unitPath: Schema.String, installedBaseDir: Schema.String, baseDir: Schema.String },
+) {
+  override get message(): string {
+    return `Refusing to replace ${this.unitPath}: it serves ${this.installedBaseDir}, not ${this.baseDir}. Remove that service with the app that installed it first.`;
+  }
+}
+
 export type BootServiceError =
+  | BootServiceForeignHomeError
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
@@ -780,6 +792,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    if (installed) {
+      // Earlyscript: never stop or rewrite a unit that serves another home (T3 Code's `~/.t3`).
+      // An unreadable unit path keeps upstream's handling: the write below reports it.
+      const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+      const installedBaseDir = Option.map(unit, bootServiceBaseDirOf);
+      if (
+        Option.isSome(installedBaseDir) &&
+        (installedBaseDir.value === undefined ||
+          path.resolve(installedBaseDir.value) !== path.resolve(input.baseDir))
+      ) {
+        return yield* new BootServiceForeignHomeError({
+          unitPath,
+          installedBaseDir: installedBaseDir.value ?? "an unknown data directory",
+          baseDir: input.baseDir,
+        });
+      }
+    }
     // With start=false, changing startup-only files is safe except during a remote update,
     // when the launcher also writes its state file.
     const start = options?.start !== false;
