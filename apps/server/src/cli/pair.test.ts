@@ -216,7 +216,9 @@ describe("t3 pair", () => {
         assert.isString(token);
         const pairingUrl = `${origin}/pair#token=${token}`;
         assert.include(output, `Desktop link: ${buildPairingAppLink(pairingUrl, "earlyscript")}`);
-        assert.include(output, `Mobile app link: ${buildPairingAppLink(pairingUrl)}`);
+        // Earlyscript: no mobile line; its `t3code://` link would hand the token to T3 Code.
+        assert.notInclude(output, "Mobile app link");
+        assert.notInclude(output, "t3code://");
 
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),

@@ -189,7 +189,6 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     `Desktop link: ${buildPairingAppLink(accessInfo.pairingUrl, EarlyscriptBrand.urlScheme)}`,
-    `Mobile app link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",
