@@ -98,12 +98,17 @@ const SUMMARY: EditorialResultsSummary = {
   asOf: "2026-10-31T00:00:00.000Z",
 };
 
+/** Durations join numbers to units with no-break spaces; the assertions read plain ones. */
+const textOf = (element: Element | null | undefined) =>
+  element?.textContent?.replaceAll("\u00a0", " ");
+
 const decision = (overrides: Partial<EditorialResultsDecision>): EditorialResultsDecision => ({
   decisionId: "decision-1",
   threadId: "thread-assisted-1",
   environmentId: "env-1",
   mode: "assisted",
   trendKey: "trend:local-models",
+  trendLabel: "local models llama",
   runId: null,
   dossierId: null,
   action: "accept",
@@ -191,8 +196,10 @@ describe("ResultsView", () => {
     );
     await expect.element(screen.getByText("Aún no hay decisiones registradas")).toBeVisible();
     await expect
-      .element(screen.getByText("Resultados se llena con cada hilo de video que cierres."))
+      .element(screen.getByText(/Al registrar la decisión de un hilo de video/))
       .toBeVisible();
+    // The export stays reachable: runs and inbox events are evidence before any decision.
+    await expect.element(screen.getByText("Ninguna decisión registrada todavía.")).toBeVisible();
     // The inbox counters stay: reading and dismissing happen before any decision.
     await expect
       .element(screen.getByRole("heading", { name: "Bandeja de tendencias" }))
@@ -206,15 +213,15 @@ describe("ResultsView", () => {
       <ResultsView summary={SUMMARY} decisions={controls()} threadTitles={new Map()} />,
     );
     const total = screen.container.querySelector('[data-comparison="total"]');
-    expect(total?.textContent).toContain("40 min");
-    expect(total?.textContent).toContain("1 h 40 min");
-    expect(total?.textContent).toContain("Mediana manual 1 h mayor (n = 3 y 3)");
-    expect(total?.textContent).toContain("Solo hilos con todas las etapas de su modo registradas.");
+    expect(textOf(total)).toContain("40 min");
+    expect(textOf(total)).toContain("1 h 40 min");
+    expect(textOf(total)).toContain("Mediana manual 1 h mayor (n = 3 y 3).");
+    expect(textOf(total)).toContain("solo en hilos que las registraron todas");
     // The recorded total takes partial threads in, apart from the whole process, and warns.
     const recorded = screen.container.querySelector('[data-comparison="recorded"]');
-    expect(recorded?.textContent).toContain("Total de etapas registradas");
-    expect(recorded?.textContent).toContain("asistido 37 min (n = 4)");
-    expect(recorded?.textContent).toContain("Cobertura parcial: incluye 1 hilo");
+    expect(textOf(recorded)).toContain("Total de etapas registradas");
+    expect(textOf(recorded)).toContain("asistido 37 min (n = 4)");
+    expect(textOf(recorded)).toContain("Cobertura parcial: incluye 1 hilo");
     expect(recorded?.closest("[data-comparison=total]")).toBeNull();
     expect(screen.container.querySelector("#tiempos")?.textContent).not.toMatch(/%|ahorr/i);
     expect(screen.container.textContent).not.toMatch(/ahorr/i);
@@ -241,9 +248,11 @@ describe("ResultsView", () => {
     await expect.element(link).toHaveAttribute("href", "/env-1/thread-manual-1");
     const rows = screen.container.querySelectorAll("[data-decision]");
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.textContent).toContain("≥ 1 h 40 min");
-    expect(rows[0]?.textContent).toContain("sin guion");
-    expect(rows[1]?.textContent).toContain("local-models");
+    expect(textOf(rows[0])).toContain("≥ 1 h 40 min");
+    expect(textOf(rows[0])).toContain("sin guion");
+    // Without a known title the trend's dossier label names the thread, never its key.
+    expect(textOf(rows[1])).toContain("Tendencia: local models llama");
+    expect(textOf(rows[1])).not.toContain("trend:");
     expect(rows[1]?.textContent).toContain("reemplazada");
     expect(rows[1]?.textContent).toContain("4 de 4");
     expect(rows[1]?.textContent).toContain("1240");

@@ -99,6 +99,7 @@ interface DecisionRow {
   readonly environment_id: string;
   readonly mode: EditorialResultsMode;
   readonly trend_key: string | null;
+  readonly trend_label: string | null;
   readonly run_id: string | null;
   readonly dossier_id: string | null;
   readonly action: EditorialResultsDecision["action"];
@@ -133,6 +134,12 @@ const selectDecisions = (
 ) => sql<DecisionRow>`
   SELECT
     d.decision_id, d.thread_id, t.environment_id, t.mode, t.trend_key, t.run_id, t.dossier_id,
+    COALESCE(
+      (SELECT own.label FROM editorial_dossiers own
+        WHERE own.run_id = t.run_id AND own.dossier_id = t.dossier_id),
+      (SELECT latest.label FROM editorial_dossiers latest
+        WHERE latest.trend_key = t.trend_key ORDER BY latest.run_id DESC LIMIT 1)
+    ) AS trend_label,
     d.action, d.utility, d.reason, d.script_version_hash, v.snapshot,
     d.explore_ms, d.read_ms, d.write_ms, d.decide_ms, d.total_ms, d.clock_definitive,
     d.decided_at,
@@ -195,6 +202,7 @@ const make = Effect.gen(function* () {
       environmentId: row.environment_id,
       mode: row.mode,
       trendKey: row.trend_key,
+      trendLabel: row.trend_label,
       runId: row.run_id,
       dossierId: row.dossier_id,
       action: row.action,
