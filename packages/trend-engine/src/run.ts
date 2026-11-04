@@ -61,6 +61,7 @@ export interface RunOptions {
   /** Replaces the local Qwen embedder, for tests. The run disposes it. */
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
+  readonly cacheOnly?: boolean;
   readonly modelDir?: string;
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
@@ -132,6 +133,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       modelDir: options.modelDir ?? defaultModelDir(DEFAULT_DATA_DIR, config.embedder.revision),
       workers: options.workers ?? 2,
       allowDownload: true,
+      cacheOnly: options.cacheOnly ?? false,
       ...(options.log ? { log: options.log } : {}),
     });
 

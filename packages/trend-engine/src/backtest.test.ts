@@ -7,7 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Item } from "@earlyscript/editorial-contracts/item";
 import type { SourceId } from "@earlyscript/editorial-contracts/source";
 
-import { checkBacktest, parseCutoffList, runBacktest } from "./backtest.ts";
+import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "./backtest.ts";
 import { crossingLabel, labelCandidates, precisionAt, type Story } from "./backtest-label.ts";
 import { checkBacktestReport, decideVerdict } from "./backtest-report.ts";
 import { daysBetween } from "./days.ts";
@@ -83,6 +83,7 @@ const backtest = (s: Awaited<ReturnType<typeof setup>>, out: string, cutoffs: st
     cutoffs: parseCutoffList(cutoffs),
     baselineSources: ["hn", "github"],
     candidateSources: ["hn", "github", "npm"],
+    truthSources: ["hn"],
     config: testConfig(),
     embedder: fingerprintEmbedder(),
   });
@@ -155,6 +156,53 @@ describe("Earlywindow's retrospective label", () => {
   });
 });
 
+it("reuses baseline runs across a matrix without changing independent backtest results", async () => {
+  const s = await setup(npmItems("rust"));
+  const common = {
+    corpusDir: s.corpusDir,
+    profilePath: s.profilePath,
+    cutoffs: parseCutoffList("2026-09-27,2026-09-28"),
+    baselineSources: ["hn"] satisfies Array<SourceId>,
+    config: testConfig(),
+  };
+  const candidateSourceSets: Array<Array<SourceId>> = [
+    ["hn", "github", "npm"],
+    ["hn", "github"],
+  ];
+  const supplied = fingerprintEmbedder();
+  let disposed = 0;
+  const results = await runBacktestMatrix({
+    ...common,
+    candidateSourceSets,
+    outDir: NodePath.join(s.root, "matrix"),
+    embedder: {
+      ...supplied,
+      dispose: async () => {
+        disposed++;
+      },
+    },
+  });
+  expect(disposed).toBe(1);
+  const baselineIds: Array<Array<string>> = [];
+  for (const [index, result] of results.entries()) {
+    const independent = await runBacktest({
+      ...common,
+      candidateSources: candidateSourceSets[index]!,
+      outDir: NodePath.join(s.root, `independent-${index}`),
+      embedder: fingerprintEmbedder(),
+    });
+    expect(result.report.logical_hash).toBe(independent.report.logical_hash);
+    expect(checkBacktestReport(result.report).ok).toBe(true);
+    const report = JSON.parse(NodeFS.readFileSync(result.path, "utf8"));
+    baselineIds.push(
+      report.runs
+        .filter((run: { arm: string }) => run.arm === "baseline")
+        .map((run: { run_id: string }) => run.run_id),
+    );
+  }
+  expect(baselineIds[1]).toEqual(baselineIds[0]);
+});
+
 describe("decideVerdict", () => {
   const arm = (p: number | null, lead: number | null) => ({
     mean_p_at_5: p,
@@ -191,7 +239,7 @@ describe("runBacktest", () => {
       }>;
       inputs: { truth_sources: Array<string> };
     };
-    expect(logical.inputs.truth_sources).toEqual(["hn", "github"]);
+    expect(logical.inputs.truth_sources).toEqual(["hn"]);
     expect(logical.cutoffs.map((c) => [c.followup_days, c.complete])).toEqual(
       Array.from({ length: 7 }, () => [14, true]),
     );
@@ -241,6 +289,55 @@ describe("runBacktest", () => {
     });
   });
 
+  it("does not treat a partial truth capture as a fully observed follow-up day", async () => {
+    const s = await setup(npmItems("rust"));
+    await writeSyntheticCorpus(s.corpusDir, {
+      items: [...hnItems(), ...npmItems("rust")].toSorted(
+        (a, b) => a.published_at.localeCompare(b.published_at) || a.id.localeCompare(b.id),
+      ),
+      extraSources: ["npm"],
+      fromDay: FROM,
+      toDay: TO,
+      coverage: (row) =>
+        row.source === "hn" && row.day === "2026-09-30"
+          ? { ...row, status: "partial", note: "HN window incomplete" }
+          : row,
+    });
+    const result = await runBacktest({
+      corpusDir: s.corpusDir,
+      profilePath: s.profilePath,
+      outDir: NodePath.join(s.root, "partial-truth"),
+      cutoffs: ["2026-09-27"],
+      baselineSources: ["hn"],
+      candidateSources: ["hn", "npm"],
+      truthSources: ["hn"],
+      config: testConfig(),
+      embedder: fingerprintEmbedder(),
+    });
+    expect(result.total.complete.cutoffs).toBe(0);
+    expect(result.total.partial.cutoffs).toBe(1);
+    expect(result.status).toBe("provisional");
+  });
+
+  it("counts a complete cutoff where the candidate stops emitting instead of hiding it", async () => {
+    const s = await setup(npmItems("rust").filter((record) => record.published_at < "2026-09-21"));
+    const result = await runBacktest({
+      corpusDir: s.corpusDir,
+      profilePath: s.profilePath,
+      outDir: NodePath.join(s.root, "lost-emission"),
+      cutoffs: ["2026-09-21", "2026-09-28"],
+      baselineSources: ["hn"],
+      candidateSources: ["npm"],
+      truthSources: ["hn"],
+      config: testConfig(),
+      embedder: fingerprintEmbedder(),
+    });
+    expect(result.total.complete.cutoffs).toBe(1);
+    expect(result.total.complete.emission_regressions).toBe(1);
+    expect(result.verdict.verdict).toBe("worse");
+    expect(result.verdict.reasons.join(" ")).toMatch(/emits no candidates/);
+  });
+
   it("reproduces its logical hash, reruns to the same hash and refuses a tampered report", async () => {
     const s = await setup(npmItems("rust"));
     const first = await backtest(s, "first", "2026-09-27,2026-09-28");
@@ -254,6 +351,33 @@ describe("runBacktest", () => {
     });
     expect(rerun.ok).toBe(true);
     expect(rerun.rerun?.logical_hash).toBe(first.report.logical_hash);
+
+    const relocatedCorpus = NodePath.join(s.root, "moved-corpus");
+    const relocatedProfile = NodePath.join(s.root, "moved-profile.json");
+    NodeFS.renameSync(s.corpusDir, relocatedCorpus);
+    NodeFS.renameSync(s.profilePath, relocatedProfile);
+    const moved = await checkBacktest(first.path, {
+      outDir: NodePath.join(s.root, "moved-rerun"),
+      options: {
+        corpusDir: relocatedCorpus,
+        profilePath: relocatedProfile,
+        embedder: fingerprintEmbedder(),
+      },
+    });
+    expect(moved.ok).toBe(true);
+    NodeFS.writeFileSync(s.profilePath, "{}");
+    await expect(
+      checkBacktest(first.path, {
+        outDir: NodePath.join(s.root, "wrong-profile"),
+        options: {
+          corpusDir: relocatedCorpus,
+          profilePath: s.profilePath,
+          embedder: fingerprintEmbedder(),
+        },
+      }),
+    ).rejects.toThrow(/profile hash differs/);
+    NodeFS.renameSync(relocatedCorpus, s.corpusDir);
+    NodeFS.renameSync(relocatedProfile, s.profilePath);
 
     const tampered = JSON.parse(NodeFS.readFileSync(first.path, "utf8"));
     tampered.logical.total.complete.candidate.mean_p_at_5 = 0.5;

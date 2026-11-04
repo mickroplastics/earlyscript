@@ -2,7 +2,7 @@
 // @effect-diagnostics preferSchemaOverJson:off - backtest.json is hashed as parsed, then decoded by checkBacktestReport.
 
 // Records a not-worse source backtest (§23) whose arms are exactly {hn, github} and
-// {hn, github, source}, against a truth of exactly {hn, github}; a provisional one only with
+// {hn, github, source}, against a truth of exactly {hn}; a provisional one only with
 // --allow-provisional. It never switches `rank` on. Usage:
 //   node apps/server/scripts/record-source-backtest.ts --db <editorial.sqlite> --source npm --backtest <backtest.json> [--allow-provisional]
 
@@ -61,6 +61,8 @@ const fail = (reason: RecordSourceBacktestError["reason"], detail: string) =>
 
 /** The engine baseline of the catalog (hn and github): what every source is measured against. */
 const ENGINE_BASELINE = SOURCE_IDS.filter((id) => SOURCE_CATALOG[id].engineBaseline);
+// GitHub captures are popularity samples; schema 3 requires complete truth captures.
+const ENGINE_TRUTH = ["hn"];
 
 /** The same set: no repeated id in `a`, and the same members as `expected`. */
 export const exactSet = (a: ReadonlyArray<string>, expected: ReadonlyArray<string>) =>
@@ -111,10 +113,10 @@ export const runRecordSourceBacktest = Effect.fn("runRecordSourceBacktest")(func
     );
   }
   // With the candidate among the truth sources, the source would confirm its own trends.
-  if (!exactSet(inputs.truth_sources, ENGINE_BASELINE)) {
+  if (!exactSet(inputs.truth_sources, ENGINE_TRUTH)) {
     return yield* fail(
       "wrong-truth",
-      `the backtest labels against ${inputs.truth_sources.join(",")}, not ${ENGINE_BASELINE.join(",")}`,
+      `the backtest labels against ${inputs.truth_sources.join(",")}, not ${ENGINE_TRUTH.join(",")}`,
     );
   }
   if (verdict.verdict !== "not-worse") {

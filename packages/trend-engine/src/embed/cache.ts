@@ -13,11 +13,12 @@ export class EmbeddingCache {
   private readonly select;
   private readonly insert;
 
-  constructor(file: string, key: string) {
-    NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  constructor(file: string, key: string, readOnly = false) {
+    if (!readOnly) NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
     this.key = key;
-    this.db = new NodeSqlite.DatabaseSync(file);
-    this.db.exec(`
+    this.db = new NodeSqlite.DatabaseSync(file, { readOnly });
+    if (!readOnly)
+      this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS embeddings (

@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
-//   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]
+//   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]
 //   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
-//   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>]
+//   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]
 //   node src/cli.ts check --backtest <backtest.json> [--rerun --out <dir>]
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
@@ -9,7 +9,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
-import { checkBacktest, parseCutoffList, runBacktest } from "./backtest.ts";
+import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus, httpTraceWriter } from "./collect.ts";
 import { purgeCorpus } from "./purge.ts";
@@ -37,10 +37,10 @@ function sourceList(text: string): Array<SourceId> {
 }
 
 const USAGE =
-  "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
+  "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
-  "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--models <dir>] [--allow-unverified-corpus]\n" +
-  "       engine check --backtest <backtest.json> [--rerun --out <dir>]\n" +
+  "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
+  "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
@@ -100,13 +100,14 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       config: { type: "string" },
       workers: { type: "string" },
       cache: { type: "string" },
+      "cache-only": { type: "boolean" },
       models: { type: "string" },
       run: { type: "string" },
       rerun: { type: "boolean" },
       "allow-unverified-corpus": { type: "boolean" },
       cutoffs: { type: "string" },
       baseline: { type: "string" },
-      candidate: { type: "string" },
+      candidate: { type: "string", multiple: true },
       truth: { type: "string" },
       backtest: { type: "string" },
       // Ignored: the server tags the children it launches so it can tell them from a recycled pid.
@@ -157,6 +158,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     log,
     ...(values.workers ? { workers: Number(values.workers) } : {}),
     ...(values.cache ? { cacheFile: values.cache } : {}),
+    ...(values["cache-only"] ? { cacheOnly: true } : {}),
     ...(values.models ? { modelDir: values.models } : {}),
     ...(values["allow-unverified-corpus"] ? { allowUnverifiedCorpus: true } : {}),
   };
@@ -193,27 +195,32 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     values.baseline &&
     values.candidate
   ) {
-    const result = await runBacktest({
+    const options = {
       ...common,
       corpusDir: values.corpus,
       profilePath: values.profile,
       outDir: values.out,
       cutoffs: parseCutoffList(values.cutoffs),
       baselineSources: sourceList(values.baseline),
-      candidateSources: sourceList(values.candidate),
       ...(values.truth ? { truthSources: sourceList(values.truth) } : {}),
       ...(values.config ? { configPath: values.config } : {}),
-    });
-    console.log(
-      JSON.stringify({
-        path: result.path,
-        backtest_id: result.report.backtest_id,
-        logical_hash: result.report.logical_hash,
-        status: result.status,
-        total: result.total,
-        verdict: result.verdict,
-      }),
-    );
+    };
+    const candidateSourceSets = values.candidate.map(sourceList);
+    const results =
+      candidateSourceSets.length === 1
+        ? [await runBacktest({ ...options, candidateSources: candidateSourceSets[0]! })]
+        : await runBacktestMatrix({ ...options, candidateSourceSets });
+    for (const result of results)
+      console.log(
+        JSON.stringify({
+          path: result.path,
+          backtest_id: result.report.backtest_id,
+          logical_hash: result.report.logical_hash,
+          status: result.status,
+          total: result.total,
+          verdict: result.verdict,
+        }),
+      );
     return 0;
   }
   if (command === "check" && values.backtest) {
@@ -223,7 +230,16 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     }
     const result = await checkBacktest(
       values.backtest,
-      values.rerun && values.out ? { outDir: values.out, options: common } : undefined,
+      values.rerun && values.out
+        ? {
+            outDir: values.out,
+            options: {
+              ...common,
+              ...(values.corpus ? { corpusDir: values.corpus } : {}),
+              ...(values.profile ? { profilePath: values.profile } : {}),
+            },
+          }
+        : undefined,
     );
     console.log(JSON.stringify(result));
     return result.ok ? 0 : 1;

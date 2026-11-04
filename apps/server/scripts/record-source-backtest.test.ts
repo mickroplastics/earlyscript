@@ -45,16 +45,22 @@ function report(
     inputs: {
       baseline_sources: options.baseline ?? ["hn", "github"],
       candidate_sources: options.candidate ?? ["hn", "github", "npm"],
-      truth_sources: options.truth ?? ["hn", "github"],
+      truth_sources: options.truth ?? ["hn"],
       cutoffs: ["2026-10-17T00:00:00.000Z", "2026-10-30T00:00:00.000Z"],
     },
     total: {
       complete: {
         cutoffs: complete,
+        emission_regressions: 0,
         baseline: complete === 0 ? arm(null, null) : arm(0.8, 1),
         candidate: complete === 0 ? arm(null, null) : arm(candidateP5, 1),
       },
-      partial: { cutoffs: 14 - complete, baseline: arm(0.75, 1), candidate: arm(0.7, 1) },
+      partial: {
+        cutoffs: 14 - complete,
+        emission_regressions: 0,
+        baseline: arm(0.75, 1),
+        candidate: arm(0.7, 1),
+      },
     },
     verdict: {
       verdict: worse ? "worse" : "not-worse",
@@ -151,6 +157,16 @@ it.effect("records a not-worse backtest with its summary and refuses the others"
     // R2: the candidate among the truth sources would confirm its own trends.
     const leak = report({ truth: ["hn", "github", "npm"] });
     assert.strictEqual(yield* reasonOf("npm", write(dir, "leak.json", leak)), "wrong-truth");
+    const sampledTruth = report({ truth: ["hn", "github"] });
+    assert.strictEqual(
+      yield* reasonOf("npm", write(dir, "sampled-truth.json", sampledTruth)),
+      "wrong-truth",
+    );
+    const oldSchema = { ...report(), schema_version: "earlyscript.backtest/2" };
+    assert.strictEqual(
+      yield* reasonOf("npm", write(dir, "old-schema.json", oldSchema)),
+      "unreadable-backtest",
+    );
     // R3: a provisional report needs --allow-provisional; no complete cutoff is worse anyway.
     const provisionalFile = write(dir, "provisional.json", report({ complete: 1 }));
     assert.strictEqual(yield* reasonOf("npm", provisionalFile), "provisional");
