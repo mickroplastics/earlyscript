@@ -103,6 +103,20 @@ describe("statsText", () => {
 });
 
 describe("medianDifferenceText", () => {
+  it("avisa de muestra pequeña aunque solo un modo tenga hilos", () => {
+    const one = {
+      n: 1,
+      medianMs: 60_000,
+      q1Ms: 60_000,
+      q3Ms: 60_000,
+      minMs: 60_000,
+      maxMs: 60_000,
+    };
+    const none = { n: 0, medianMs: null, q1Ms: null, q3Ms: null, minMs: null, maxMs: null };
+    expect(medianDifferenceText(one, none)).toBe(
+      "Sin hilos medidos en modo manual: no hay diferencia que describir. Con tan pocos hilos describe casos sueltos, no una tendencia.",
+    );
+  });
   it("describes the difference of medians with both n, never as a saving", () => {
     const assisted = stats({ n: 3, medianMs: 40 * MINUTE });
     const manual = stats({ n: 3, medianMs: 100 * MINUTE });
@@ -132,7 +146,7 @@ describe("medianDifferenceText", () => {
 
   it("names the mode without a median", () => {
     expect(medianDifferenceText(EMPTY_STATS, stats({ n: 1, medianMs: MINUTE }))).toBe(
-      "Sin hilos medidos en modo asistido: no hay diferencia que describir.",
+      "Sin hilos medidos en modo asistido: no hay diferencia que describir. Con tan pocos hilos describe casos sueltos, no una tendencia.",
     );
     expect(medianDifferenceText(EMPTY_STATS, EMPTY_STATS)).toBe(
       "Sin hilos medidos en ningún modo: no hay diferencia que describir.",

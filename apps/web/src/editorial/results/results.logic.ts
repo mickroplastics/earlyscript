@@ -231,9 +231,15 @@ export function medianDifferenceText(
       assisted.medianMs === null ? "asistido" : null,
       manual.medianMs === null ? "manual" : null,
     ].filter((mode) => mode !== null);
-    return missing.length === 2
-      ? "Sin hilos medidos en ningún modo: no hay diferencia que describir."
-      : `Sin hilos medidos en modo ${missing[0]}: no hay diferencia que describir.`;
+    if (missing.length === 2) {
+      return "Sin hilos medidos en ningún modo: no hay diferencia que describir.";
+    }
+    const present = assisted.medianMs === null ? manual : assisted;
+    const few =
+      present.n < SMALL_SAMPLE
+        ? " Con tan pocos hilos describe casos sueltos, no una tendencia."
+        : "";
+    return `Sin hilos medidos en modo ${missing[0]}: no hay diferencia que describir.${few}`;
   }
   const difference = manual.medianMs - assisted.medianMs;
   const sizes = `n${NBSP}=${NBSP}${assisted.n}${NBSP}y${NBSP}${manual.n}`;

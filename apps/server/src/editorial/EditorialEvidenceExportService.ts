@@ -448,26 +448,14 @@ const renderSummary = (input: SummaryInput): string => {
       STAGE_LABEL[entry.stage] ?? entry.stage,
       entry.stats.n,
       formatMinutes(entry.stats.medianMs),
-      formatMinutes(entry.stats.q1Ms),
-      formatMinutes(entry.stats.q3Ms),
-      formatMinutes(
-        entry.stats.q1Ms === null || entry.stats.q3Ms === null
-          ? null
-          : entry.stats.q3Ms - entry.stats.q1Ms,
-      ),
+      ...spreadCells(entry.stats),
     ]),
     [
       MODE_LABEL[mode.mode],
       "Total registrado",
       mode.total.n,
       formatMinutes(mode.total.medianMs),
-      formatMinutes(mode.total.q1Ms),
-      formatMinutes(mode.total.q3Ms),
-      formatMinutes(
-        mode.total.q1Ms === null || mode.total.q3Ms === null
-          ? null
-          : mode.total.q3Ms - mode.total.q1Ms,
-      ),
+      ...spreadCells(mode.total),
     ],
   ]);
   const comparisonRows = comparisons.map((entry) => [
@@ -1114,3 +1102,23 @@ export const layerFromReads = Layer.effect(EditorialEvidenceExportService, make)
 export const layer = layerFromReads.pipe(
   Layer.provide(Layer.mergeAll(EditorialResultsService.layer, EditorialSourcesService.layer)),
 );
+
+/**
+ * Quartiles and their range need at least two threads; with one, the spread would be a
+ * meaningless `0,0 min`. The page applies the same rule.
+ */
+function spreadCells(stats: {
+  readonly n: number;
+  readonly q1Ms: number | null;
+  readonly q3Ms: number | null;
+}): [string, string, string] {
+  if (stats.n < 2 || stats.q1Ms === null || stats.q3Ms === null) {
+    const why = stats.n === 1 ? "un solo hilo" : "sin datos";
+    return [why, why, why];
+  }
+  return [
+    formatMinutes(stats.q1Ms),
+    formatMinutes(stats.q3Ms),
+    formatMinutes(stats.q3Ms - stats.q1Ms),
+  ];
+}
