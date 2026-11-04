@@ -391,6 +391,25 @@ describe("TrendDossierView", () => {
       .toHaveAttribute("href", "/env-1/thread-video");
     await userEvent.click(screen.getByRole("button", { name: "Volver a la bandeja" }));
 
+    const trial = withState({ trial: { threadId: "thread-trial", linkedAt: AT } });
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={trial}
+        evidence={trial}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Crear hilo de video", exact: true }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo de video" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("link", { name: "Ver el ensayo" }))
+      .toHaveAttribute("href", "/env-1/thread-trial");
+
     const dismissed = withState({ dismissed: { at: AT, reason: "Fuera de tema" } });
     await screen.rerender(
       <TrendDossierView
@@ -502,7 +521,12 @@ describe("TrendDossierView", () => {
       .element(screen.getByRole("heading", { level: 1 }))
       .toHaveTextContent("IBM abre su pila de computación cuántica");
     await expect.element(screen.getByText("Redactado por el asistente")).toBeVisible();
-    // The engine's words stay under the title.
+    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).not.toBeVisible();
+    await expect
+      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
+      .not.toBeVisible();
+    await userEvent.click(screen.getByText("Detalles técnicos", { exact: true }));
+    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).toBeVisible();
     await expect
       .element(screen.getByText("Términos del motor: quantum computing ibm open"))
       .toBeVisible();
