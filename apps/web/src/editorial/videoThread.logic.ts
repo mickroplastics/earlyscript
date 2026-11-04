@@ -302,11 +302,8 @@ export function resolvedEndIso(
  * and never sent by itself. Citations follow `@earlyscript/editorial-script`: the evidence id in
  * brackets, its URL under Sources.
  */
-export function draftRequestPrompt(paths: {
-  readonly dossierPath: string;
-  readonly scriptPath: string;
-}): string {
-  return `Lee ${paths.dossierPath} y propón un primer borrador del guion en ${paths.scriptPath} siguiendo la plantilla. Cita cada afirmación con el id de su evidencia entre corchetes y pon su URL en # Sources. Termina con script_check.`;
+export function draftRequestPrompt(): string {
+  return "Escribe el primer borrador del guion de esta tendencia.";
 }
 
 /**
