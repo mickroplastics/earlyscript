@@ -11,13 +11,13 @@ export const EVIDENCE_MODE_OPTIONS: ReadonlyArray<EvidenceModeOption> = [
     value: "share",
     label: "Para compartir",
     description:
-      "Para el informe y los revisores. Solo las columnas de la lista blanca del manifiesto: sin motivos, notas, URL ni guiones; hilos como h001 y fechas por día.",
+      "Para el informe y los revisores. Solo las columnas de la lista blanca del manifiesto: sin motivos, notas, observaciones del registro manual, URL ni guiones; hilos como h001 y fechas por día.",
   },
   {
     value: "full",
     label: "Completa",
     description:
-      "Para ti, en este equipo. Incluye motivos de descarte y de decisión, notas de captura, URL y títulos de páginas. No la publiques.",
+      "Para ti, en este equipo. Incluye motivos de descarte y de decisión, notas de captura, observaciones del registro manual, URL y títulos de páginas. No la publiques.",
   },
 ];
 

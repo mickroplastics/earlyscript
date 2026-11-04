@@ -13,6 +13,7 @@ import type {
 const RESULTS_SECTIONS = [
   { id: "tiempos", label: "Tiempo por ficha" },
   { id: "etapas", label: "Etapas" },
+  { id: "linea-base", label: "Línea base manual" },
   { id: "utilidad", label: "Utilidad y citas" },
   { id: "bandeja", label: "Bandeja" },
   { id: "video", label: "Métricas de video" },
@@ -269,12 +270,16 @@ export function hasInboxActivity(summary: EditorialResultsSummary): boolean {
   return read + observing + dismissed + production > 0;
 }
 
-/** The page sections present: without decisions, at most the inbox counters. */
+/**
+ * The page sections present: without decisions, the manual baseline (its import is there
+ * before any thread) and the inbox counters once one moved.
+ */
 export function visibleSections(summary: EditorialResultsSummary | null) {
   if (summary === null || hasDecisions(summary)) return RESULTS_SECTIONS;
-  return hasInboxActivity(summary)
-    ? RESULTS_SECTIONS.filter((section) => section.id === "bandeja")
-    : [];
+  return RESULTS_SECTIONS.filter(
+    (section) =>
+      section.id === "linea-base" || (section.id === "bandeja" && hasInboxActivity(summary)),
+  );
 }
 
 export function modeSummary(

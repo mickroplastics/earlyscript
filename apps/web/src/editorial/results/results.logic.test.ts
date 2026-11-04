@@ -155,12 +155,12 @@ describe("decision cells", () => {
 });
 
 describe("visibleSections", () => {
-  it("keeps only the inbox before the first decision, and nothing when it is quiet", () => {
+  it("keeps the manual baseline and the inbox, once it moved, before the first decision", () => {
     const quiet = summary([]);
-    expect(visibleSections(quiet)).toEqual([]);
+    expect(visibleSections(quiet).map((section) => section.id)).toEqual(["linea-base"]);
     const read = { ...quiet, inbox: { ...quiet.inbox, read: 2 } };
-    expect(visibleSections(read).map((section) => section.id)).toEqual(["bandeja"]);
-    expect(visibleSections({ ...read, decisionCount: 1 })).toHaveLength(6);
+    expect(visibleSections(read).map((section) => section.id)).toEqual(["linea-base", "bandeja"]);
+    expect(visibleSections({ ...read, decisionCount: 1 })).toHaveLength(7);
   });
 });
 

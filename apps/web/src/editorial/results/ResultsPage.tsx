@@ -35,6 +35,7 @@ import { formatDate } from "../editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
 import { EvidenceExportButton } from "./EvidenceExportButton";
+import { ManualBaselineSection } from "./ManualBaselineSection";
 import {
   COMPARISON_TEXT,
   RESULTS_MODES,
@@ -534,17 +535,21 @@ export function ResultsView({
   decisions,
   threadTitles,
   exportAction,
+  baseline,
 }: {
   readonly summary: EditorialResultsSummary;
   readonly decisions: ResultsDecisionsControls;
   readonly threadTitles: ReadonlyMap<string, string>;
   /** «Exportar evidencia»; the page mounts it, the view only places it. */
   readonly exportAction?: ReactNode;
+  /** «Línea base manual»; the page mounts it, the view only places it. */
+  readonly baseline?: ReactNode;
 }) {
   if (!hasDecisions(summary)) {
     return (
       <>
         <NoDecisions />
+        {baseline}
         {hasInboxActivity(summary) ? (
           <ResultsSection
             id="bandeja"
@@ -616,6 +621,8 @@ export function ResultsView({
         <StageChart summary={summary} />
         <StageTable summary={summary} />
       </ResultsSection>
+
+      {baseline}
 
       <ResultsSection
         id="utilidad"
@@ -780,6 +787,7 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
         summary={summary}
         threadTitles={threadTitles}
         exportAction={<EvidenceExportButton environmentId={environmentId} />}
+        baseline={<ManualBaselineSection environmentId={environmentId} summary={summary} />}
         decisions={{
           state: decisionsState,
           onRetry: retryDecisions,
