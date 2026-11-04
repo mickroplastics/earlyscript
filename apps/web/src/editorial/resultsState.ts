@@ -26,4 +26,9 @@ export const editorialResultsEnvironment = {
     label: "environment-data:editorial:results-export",
     tag: EDITORIAL_RESULTS_WS_METHODS.export,
   }),
+  /** Figures drawn here, written by the server into the folder the desktop app picked. */
+  saveFigures: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:results-save-figures",
+    tag: EDITORIAL_RESULTS_WS_METHODS.saveFigures,
+  }),
 };
