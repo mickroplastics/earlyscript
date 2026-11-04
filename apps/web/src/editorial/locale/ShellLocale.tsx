@@ -3,7 +3,13 @@ import { useRef, type RefObject } from "react";
 import { MANUAL_BROWSER_TABLE } from "../manualBrowserLocale";
 import { makeTranslator, useScopedLocale, type ScopedLocaleOptions } from "./scopedLocale";
 import { RELATIVE_TIME_TABLE } from "./shellRelativeTime";
-import { SETTINGS_TABLE, SHELL_COMMON_TABLE, SIDEBAR_TABLE, THREAD_TABLE } from "./shellText";
+import {
+  VIDEO_COMPOSER_TABLE,
+  SETTINGS_TABLE,
+  SHELL_COMMON_TABLE,
+  SIDEBAR_TABLE,
+  THREAD_TABLE,
+} from "./shellText";
 
 /**
  * The shell's three scopes. Each translates only its containers and the portals opened from
@@ -48,6 +54,7 @@ export const THREAD_LOCALE: ScopedLocaleOptions = {
   skip: [
     USER_TEXT,
     "[data-timeline-row-id]",
+    "[data-thread-map-script]",
     // Message bodies, user and agent: skipped even inside an allowed control.
     "[data-thread-find-text]",
     // The running turn's timer, rewritten every second by upstream: its «7s» stays.
@@ -82,8 +89,17 @@ export function useSidebarLocale(anchor: RefObject<Element | null>): void {
 }
 
 /** The thread area scope: header, empty states, composer, panels of an upstream thread. */
-export function useThreadAreaLocale(anchor: Element | null): void {
-  useScopedLocale(anchor, THREAD_LOCALE);
+const VIDEO_THREAD_LOCALE: ScopedLocaleOptions = {
+  ...THREAD_LOCALE,
+  translate: makeTranslator([
+    VIDEO_COMPOSER_TABLE,
+    SHELL_COMMON_TABLE,
+    THREAD_TABLE,
+    RELATIVE_TIME_TABLE,
+  ]),
+};
+export function useThreadAreaLocale(anchor: Element | null, video = false): void {
+  useScopedLocale(anchor, video ? VIDEO_THREAD_LOCALE : THREAD_LOCALE);
 }
 
 /**

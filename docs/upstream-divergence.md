@@ -2319,3 +2319,11 @@ Los bytes de perfiles existentes y la migración 014 permanecen intactos. `Edito
 La plantilla mantiene `Hook`, `Block N`, `Close` y `Sources` como identificadores estructurales en cualquier idioma. `script_check` no exige idioma para la prosa. Su excepción conservadora para invitaciones sin afirmaciones en Close ya cubre inglés y español; no cubre portugués ni los otros idiomas. Tampoco es un verificador semántico ni un segmentador universal de oraciones.
 
 Archivos propios afectados: contrato `editorialProfile.ts`; servicio del perfil; `VideoWorkspace.ts` y `videoWorkspaceFormat.ts`; herramientas MCP editoriales; `studioInstructions.ts`; formulario y lógica de perfil, pruebas de perfil y Estudio; comentario de la plantilla en `editorial-script`. Sin cambios nuevos en archivos de upstream ni dependencias.
+
+## Mapa del video (rama `es/thread-map`, 4 de noviembre de 2026)
+
+La ruta editorial monta `ThreadMapWorkspace` para los videos asistidos y conserva `ThreadRouteView` como conversación. Los hilos manuales mantienen su espacio. El mapa consume el reloj, la decisión, el editor y el RPC de expedientes existentes. Las secciones editoriales del panel de detalles quedan ocultas en los hilos asistidos.
+
+No se modificaron archivos de upstream. Los enganches existentes en `EditorialThreadRouteView` y `VideoThreadSections` bastan. `videoDeveloperTools`, en `packages/shared/src/earlyscriptFlags.ts`, permite mostrar los controles técnicos del espacio asistido. `apps/web/src/earlyscript/hiddenFeatures.ts` entrega la clase que los oculta por defecto. Las traducciones del compositor viven en `editorial/locale/shellText.ts` y se aplican solo al hilo asistido.
+
+La petición inicial se prepara en el compositor para que el operador la envíe. Las instrucciones del estudio siguen siendo responsables del expediente, las citas y la comprobación del guion.

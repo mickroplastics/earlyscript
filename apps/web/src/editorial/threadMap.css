@@ -1,0 +1,15 @@
+[data-map-conversation] > [data-slot="sidebar-inset"] {
+  height: 100%;
+  min-height: 0;
+}
+[data-map-quiet="true"] section:has(#thread-details-workspace-heading),
+[data-map-quiet="true"] section:has(#thread-details-version-control-heading),
+[data-map-quiet="true"] [aria-labelledby="thread-details-workspace-heading"],
+[data-map-quiet="true"] [aria-labelledby="thread-details-version-control-heading"] {
+  display: none;
+}
+
+[data-map-quiet="true"] [aria-label="File explorer"],
+[data-map-quiet="true"] [aria-label="Explorador de archivos"] {
+  display: none;
+}

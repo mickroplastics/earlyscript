@@ -5,6 +5,8 @@
 export const EARLYSCRIPT_FLAG_DEFAULTS = {
   /** Traces, metrics and logs: OTLP exporters (server, desktop), browser uploads to `/api/observability/v1/traces`, relay tracing. */
   telemetry: false,
+  /** Technical workspace controls inside assisted video threads. */
+  videoDeveloperTools: false,
   /** Product analytics batches the server sends to PostHog through `ingest.t3.codes`. */
   thirdPartyAnalytics: false,
   /** T3 update checks: web polls `registry.npmjs.org/t3`; desktop's electron-updater polls GitHub Releases. */

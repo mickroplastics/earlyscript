@@ -529,3 +529,10 @@ export const SETTINGS_TABLE: LocaleTable = {
   patterns: SETTINGS_PATTERNS,
 };
 export const SHELL_COMMON_TABLE: LocaleTable = { text: SHELL_COMMON_TEXT };
+
+export const VIDEO_COMPOSER_TABLE: LocaleTable = {
+  text: {
+    "Ask anything. @ files, $ skills, / commands": "Dile al asistente qué cambiar…",
+    "Pregunta lo que quieras. @ archivos, $ skills, / comandos": "Dile al asistente qué cambiar…",
+  },
+};

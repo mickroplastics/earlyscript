@@ -224,10 +224,8 @@ describe("draft request", () => {
     scriptPath: "videos/computacion-cuantica-threadvi/guion.md",
   };
 
-  it("names the dossier, the script, the citation form and script_check", () => {
-    expect(draftRequestPrompt(PATHS)).toBe(
-      "Lee videos/computacion-cuantica-threadvi/expediente.md y propón un primer borrador del guion en videos/computacion-cuantica-threadvi/guion.md siguiendo la plantilla. Cita cada afirmación con el id de su evidencia entre corchetes y pon su URL en # Sources. Termina con script_check.",
-    );
+  it("asks for a draft without repeating the studio instructions", () => {
+    expect(draftRequestPrompt()).toBe("Escribe el primer borrador del guion de esta tendencia.");
   });
 
   it("is offered only in an assisted thread with a dossier that has not asked anything yet", () => {
