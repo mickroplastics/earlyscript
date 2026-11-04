@@ -2339,3 +2339,18 @@ El panel «Hilo de video» permite marcar y quitar la marca, explica su efecto y
 La franja inicial presenta logros observados, tamaño y fechas de la muestra, y límites. Distingue falta de hilos manuales y falta de línea base. Unifica el formato de duración con la línea base, las etiquetas de búsqueda y el conteo de frases con marcador de fuente. Las fechas de decisiones muestran hora local y zona. Los archivos de figuras mantienen el día local; las etiquetas largas de series se parten dentro de su columna para no invadir las barras.
 
 Solo archivos editoriales y contratos propios; ningún componente de upstream se modifica. La barra lateral heredada no recibe insignias. Verificación y capturas en `/home/miguel/earlyscript-data/results-cohort/informe.md`. La copia de datos `results-review` no estaba disponible; la evidencia visual usa fixtures identificadas como tales.
+
+## Paradas del mapa y conversación plegable (rama `es/map-stops`, 4 de noviembre de 2026)
+
+La parada seleccionada determina el panel incluso después de decidir. `ThreadMapView.tsx`
+muestra el tema en ① y la decisión antes del guion en ④; las métricas publicadas quedan
+plegadas. Cambiar de parada reinicia el desplazamiento del panel de lectura. La conversación
+permanece montada al plegarse, recuerda la preferencia por hilo en almacenamiento local
+(opcional) y vuelve a abrirse al pedir cambios o un borrador. `ThreadMapWorkspace.tsx`
+limita el foco al compositor de esa conversación.
+
+No se modifican componentes de upstream. El mapa oculta modelo y esfuerzo mediante sus
+atributos `data-chat-provider-model-picker` y `data-composer-shortcut`; revisar esos atributos
+al fusionar upstream. La capa propia de locale permite traducir los timestamps de los mensajes,
+sin traducir sus cuerpos ni el guion. La petición nueva ya es una frase editorial; las peticiones
+históricas no se ocultan porque no identifican de forma fiable su origen automático.
