@@ -69,6 +69,7 @@ export const THREAD_LOCALE: ScopedLocaleOptions = {
     within: "[data-timeline-row-id]",
     controls: [
       "[data-timeline-row-id] h3",
+      '[data-timeline-row-id] [data-slot="tooltip-trigger"].tabular-nums',
       '[data-timeline-row-kind="turn-fold"] button',
       '[data-timeline-row-kind="working"] span',
       '[data-timeline-row-id] button[data-slot="tooltip-trigger"][aria-label]',

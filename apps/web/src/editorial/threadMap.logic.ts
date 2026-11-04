@@ -35,3 +35,11 @@ export function mapScript(contents: string, evidence: readonly EditorialEvidence
     })),
   };
 }
+
+/** The selected stop determines the panel even after a final decision. */
+export function mapPanel(stop: MapStop, active: MapStop, decided: boolean) {
+  if (stop === 1) return "topic";
+  if (stop === 4) return "decision";
+  if (stop === 2 && active <= 2 && !decided) return "empty";
+  return "script";
+}
