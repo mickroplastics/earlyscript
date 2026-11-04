@@ -17,6 +17,7 @@ import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as EditorialEvidenceExportService from "./EditorialEvidenceExportService.ts";
+import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { MANIFEST_FILE } from "./evidenceFormat.ts";
 import { writeFigures } from "./figuresWrite.ts";
@@ -26,6 +27,8 @@ export const EDITORIAL_RESULTS_RPC_AGGREGATES = {
   [EDITORIAL_RESULTS_WS_METHODS.summary]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.decisions]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.export]: "editorial",
+  [EDITORIAL_RESULTS_WS_METHODS.baseline]: "editorial",
+  [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: "editorial",
 } as const;
 
@@ -58,6 +61,8 @@ export class EditorialResultsRpcHandlers extends Context.Reference<EditorialResu
         Effect.fail(
           new EditorialEvidenceExportError({ reason: "unavailable", message: unavailable.message }),
         ),
+      [EDITORIAL_RESULTS_WS_METHODS.baseline]: () => Effect.fail(unavailable),
+      [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: () => Effect.fail(unavailable),
       [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: () =>
         Effect.fail(
           new EditorialFiguresSaveError({ reason: "unavailable", message: unavailable.message }),
@@ -78,12 +83,15 @@ export class EvidenceExportRoot extends Context.Reference<string>(
 export const makeHandlers = Effect.gen(function* () {
   const results = yield* EditorialResultsService.EditorialResultsService;
   const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+  const baseline = yield* EditorialManualBaselineService.EditorialManualBaselineService;
   const path = yield* Path.Path;
   const root = yield* EvidenceExportRoot;
   const fileSystem = yield* FileSystem.FileSystem;
   return {
     [EDITORIAL_RESULTS_WS_METHODS.summary]: () => results.summary,
     [EDITORIAL_RESULTS_WS_METHODS.decisions]: results.decisions,
+    [EDITORIAL_RESULTS_WS_METHODS.baseline]: () => baseline.read,
+    [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: (input) => baseline.importCsv(input.csv),
     // With a folder, the server writes `<folder>/<package name>`; without one, the files come
     // back and the client packs them.
     [EDITORIAL_RESULTS_WS_METHODS.export]: Effect.fn("EditorialResultsRpc.export")(
@@ -131,5 +139,11 @@ export const makeHandlers = Effect.gen(function* () {
 
 /** Mounted once in `server.ts`, over the `EditorialSql` that `persistenceLayer.ts` publishes. */
 export const layer = Layer.effect(EditorialResultsRpcHandlers, makeHandlers).pipe(
-  Layer.provide(Layer.merge(EditorialResultsService.layer, EditorialEvidenceExportService.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      EditorialResultsService.layer,
+      EditorialEvidenceExportService.layer,
+      EditorialManualBaselineService.layer,
+    ),
+  ),
 );

@@ -28,6 +28,8 @@ const EXPECTED_TABLES = [
   "editorial_decisions",
   "editorial_events",
   "editorial_jobs",
+  "editorial_manual_baseline_blocks",
+  "editorial_manual_baseline_missing_days",
   "editorial_nightly_settings",
   "editorial_rss_default_exclusions",
   "editorial_rss_feeds",

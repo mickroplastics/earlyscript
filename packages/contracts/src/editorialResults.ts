@@ -8,6 +8,14 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { IsoDateTime, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
+import {
+  EditorialBaselineImportInput,
+  EditorialBaselineImportResult,
+  EditorialBaselineInput,
+  EditorialBaselineRecord,
+} from "./editorialBaseline.ts";
+
+export * from "./editorialBaseline.ts";
 
 // Earlyscript Results space: read-only aggregates over editorial.sqlite. Descriptive only:
 // medians, quartiles and counts per mode, never a computed "saving" or a causal claim. The
@@ -17,6 +25,8 @@ export const EDITORIAL_RESULTS_WS_METHODS = {
   summary: "editorial.results.summary",
   decisions: "editorial.results.decisions",
   export: "editorial.results.export",
+  baseline: "editorial.results.baseline",
+  baselineImport: "editorial.results.baseline.import",
   saveFigures: "editorial.results.saveFigures",
 } as const;
 
@@ -226,7 +236,7 @@ export type EditorialResultsDecisionPage = typeof EditorialResultsDecisionPage.T
 export class EditorialResultsError extends Schema.TaggedError<EditorialResultsError>()(
   "EditorialResultsError",
   {
-    reason: Schema.Literals(["unavailable", "unreadable"]),
+    reason: Schema.Literals(["unavailable", "unreadable", "unwritable"]),
     message: Schema.String,
   },
 ) {}
@@ -347,6 +357,18 @@ const EditorialResultsExportRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.export, 
   error: Schema.Union([EditorialEvidenceExportError, EnvironmentAuthorizationError]),
 });
 
+const EditorialBaselineRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.baseline, {
+  payload: EditorialBaselineInput,
+  success: EditorialBaselineRecord,
+  error: Schema.Union([EditorialResultsError, EnvironmentAuthorizationError]),
+});
+
+const EditorialBaselineImportRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.baselineImport, {
+  payload: EditorialBaselineImportInput,
+  success: EditorialBaselineImportResult,
+  error: Schema.Union([EditorialResultsError, EnvironmentAuthorizationError]),
+});
+
 const EditorialResultsSaveFiguresRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.saveFigures, {
   payload: EditorialFiguresSaveInput,
   success: EditorialFiguresSaveResult,
@@ -358,6 +380,8 @@ export const EditorialResultsRpcGroup = RpcGroup.make(
   EditorialResultsSummaryRpc,
   EditorialResultsDecisionsRpc,
   EditorialResultsExportRpc,
+  EditorialBaselineRpc,
+  EditorialBaselineImportRpc,
   EditorialResultsSaveFiguresRpc,
 );
 
@@ -367,15 +391,20 @@ export const EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES = {
   // Writes files on the server's machine (or returns the private record), so it needs the
   // same scope as the other editorial writes.
   [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.baseline]: AuthOrchestrationReadScope,
+  // Replaces the stored manual log, like any other editorial write.
+  [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: AuthOrchestrationOperateScope,
   // Writes files on the server's machine.
   [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
 } as const;
 
 /**
- * The writes the client checks before it opens a folder dialog or draws the figures, spread
- * into `CLIENT_GUARDED_RPC_SCOPES` (`clientRpcPermissions.ts`); the server checks them again.
+ * The writes the client checks before it opens a folder dialog, draws the figures or sends
+ * the CSV, spread into `CLIENT_GUARDED_RPC_SCOPES` (`clientRpcPermissions.ts`); the server
+ * checks them again.
  */
 export const EDITORIAL_RESULTS_CLIENT_GUARDED_SCOPES = {
   [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
   [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: AuthOrchestrationOperateScope,
 } as const;

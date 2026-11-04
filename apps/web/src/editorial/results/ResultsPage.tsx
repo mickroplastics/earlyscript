@@ -35,6 +35,7 @@ import { formatDate } from "../editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
 import { EvidenceExportButton } from "./EvidenceExportButton";
+import { ManualBaselineSection } from "./ManualBaselineSection";
 import { FigureFrame, FiguresProvider } from "./FigureFrame";
 import { FiguresExportButton } from "./FiguresExportButton";
 import {
@@ -575,12 +576,15 @@ export function ResultsView({
   decisions,
   threadTitles,
   exportAction,
+  baseline,
 }: {
   readonly summary: EditorialResultsSummary;
   readonly decisions: ResultsDecisionsControls;
   readonly threadTitles: ReadonlyMap<string, string>;
   /** «Exportar evidencia»; the page mounts it, the view only places it. */
   readonly exportAction?: ReactNode;
+  /** «Línea base manual»; the page mounts it, the view only places it. */
+  readonly baseline?: ReactNode;
 }) {
   const header = (
     <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -600,6 +604,7 @@ export function ResultsView({
       <>
         {header}
         <NoDecisions />
+        {baseline}
         {hasInboxActivity(summary) ? (
           <ResultsSection
             id="bandeja"
@@ -665,6 +670,8 @@ export function ResultsView({
         <StageChart summary={summary} />
         <StageTable summary={summary} />
       </ResultsSection>
+
+      {baseline}
 
       <ResultsSection
         id="utilidad"
@@ -842,6 +849,7 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
               <FiguresExportButton />
             </div>
           }
+          baseline={<ManualBaselineSection environmentId={environmentId} summary={summary} />}
           decisions={{
             state: decisionsState,
             onRetry: retryDecisions,
