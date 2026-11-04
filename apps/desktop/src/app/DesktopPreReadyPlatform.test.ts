@@ -47,6 +47,10 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
+  // Earlyscript: the data-directory guard follows links on disk; nothing here exists.
+  lstatSync: () => {
+    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+  },
   readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,

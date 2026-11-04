@@ -35,6 +35,9 @@ if (
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
+    // Earlyscript: settings come from EARLYSCRIPT_*, never from T3 Code's inherited T3CODE_*.
+    const { adoptEarlyscriptEnvironment } = await import("@t3tools/shared/earlyscriptEnv");
+    adoptEarlyscriptEnvironment(process.env, { transitional: true, dropElectronRunAsNode: false });
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();

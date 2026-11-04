@@ -16,6 +16,8 @@ import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { earlyscriptChildEnvironment } from "@t3tools/shared/earlyscriptEnv";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -329,7 +331,11 @@ const probeClaudeCapabilities = (
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
-    const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    // Earlyscript: the SDK spawns the CLI itself, outside the filtering spawner.
+    const claudeEnvironment = earlyscriptChildEnvironment(
+      yield* makeClaudeEnvironment(claudeSettings, environment),
+      yield* HostProcess.Environment,
+    );
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,

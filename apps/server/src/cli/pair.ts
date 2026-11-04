@@ -196,7 +196,6 @@ const formatPairOutput = (input: {
     "",
     `Pairing URL: ${input.pairingUrl}`,
     `Desktop link: ${buildPairingAppLink(input.pairingUrl, EarlyscriptBrand.urlScheme)}`,
-    `Mobile app link: ${buildPairingAppLink(input.pairingUrl)}`,
     `Token: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),

@@ -12,6 +12,7 @@ try {
       process.platform === "linux"
         ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache")
         : NodeOS.tmpdir();
-    NodeModule.enableCompileCache(NodePath.join(cacheRoot, "t3code", "compile-cache"));
+    // EarlyscriptBrand.runtimeName; a literal because this preload is built without dependencies.
+    NodeModule.enableCompileCache(NodePath.join(cacheRoot, "earlyscript", "compile-cache"));
   }
 } catch {}

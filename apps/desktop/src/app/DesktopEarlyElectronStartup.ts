@@ -62,6 +62,7 @@ function resolveEarlyDesktopSettingsPath(input: {
     homeDirectory: input.homeDirectory,
     joinPath: input.joinPath,
     t3Home,
+    appDataDirectory: trimNonEmpty(input.env.XDG_CONFIG_HOME) ?? undefined,
   });
   const stateDir = resolveDesktopStateDir({
     baseDir,

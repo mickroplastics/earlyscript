@@ -9,6 +9,7 @@ import {
   EditorialFiguresSaveInput,
   type EditorialFigureFile,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -110,6 +111,28 @@ describe("writeFigures", () => {
           write({ directory: folder, files: [png("figura-b-2026-11-04.png")] }, home),
         );
         assert.strictEqual(folderError.reason, "target");
+      }),
+    ),
+  );
+
+  it.effect("never writes into T3 Code's home, directly or through a link", () =>
+    withHome((home) =>
+      Effect.gen(function* () {
+        const figures = NodePath.join(home, ".t3", "figuras");
+        NodeFS.mkdirSync(figures, { recursive: true });
+        NodeFS.symlinkSync(NodePath.join(home, ".t3"), NodePath.join(home, "informes"));
+        for (const directory of [figures, NodePath.join(home, "informes", "figuras")]) {
+          // Under the user's home, so `within` alone would let it through.
+          const refused = yield* Effect.flip(
+            write({ directory, files: [png("figura-a-2026-11-04.png")] }, home).pipe(
+              Effect.provideService(HostProcess.HomeDirectory, home),
+              Effect.provideService(HostProcess.Platform, "linux"),
+            ),
+          );
+          assert.strictEqual(refused.reason, "target");
+          assert.include(refused.message, "T3 Code");
+        }
+        assert.deepStrictEqual(NodeFS.readdirSync(figures), []);
       }),
     ),
   );

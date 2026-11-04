@@ -11,7 +11,6 @@ import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQ
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -46,6 +45,7 @@ import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewG
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as EarlyscriptAnalytics from "./earlyscript/analytics.ts";
 import * as EarlyscriptChangeRequests from "./earlyscript/changeRequests.ts";
+import * as EarlyscriptChildProcessEnvironment from "./earlyscript/childProcessEnvironment.ts";
 import * as EarlyscriptCloudLink from "./earlyscript/cloudLink.ts";
 import * as EarlyscriptObservability from "./earlyscript/observability.ts";
 import * as EditorialLayer from "./editorial/layer.ts";
@@ -343,7 +343,10 @@ const layerHttpServer = Layer.unwrap(
   }),
 );
 
-const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer));
+// Earlyscript: the spawner drops the server's T3CODE_* aliases from every child's environment.
+const layerPlatformServices = DocumentText.layer.pipe(
+  Layer.provideMerge(EarlyscriptChildProcessEnvironment.layerNodeServices),
+);
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
@@ -1127,7 +1130,10 @@ const layerMakeServer = Layer.unwrap(
       ),
       Layer.provide(layerActivation),
       Layer.provideMerge(RelayTracing.layerServerRelayBroker),
-      Layer.provideMerge(layerHttpServer),
+      // Earlyscript: NodeHttpServer.layer re-exports the plain spawner; the filtering one wins.
+      Layer.provideMerge(
+        Layer.merge(layerHttpServer, EarlyscriptChildProcessEnvironment.layerSpawner),
+      ),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),

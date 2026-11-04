@@ -1,6 +1,7 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { T3CodeDataDirectoryError } from "@t3tools/shared/earlyscriptHome";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -28,7 +29,13 @@ const layerEnvironment = (
     ...overrides,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest(env)),
+      Layer.mergeAll(
+        NodeServices.layer,
+        overrides.platform === "win32" && overrides.homeDirectory?.includes("\\")
+          ? NodePath.layerWin32
+          : NodePath.layerPosix,
+        DesktopConfig.layerTest(env),
+      ),
     ),
   );
 
@@ -56,6 +63,56 @@ describe("DesktopEnvironment", () => {
       assert.equal(
         environment.clientAssetsDir,
         "/install/resources/server.asar/apps/server/dist/client",
+      );
+    }),
+  );
+
+  it.effect("refuses T3 Code's userData under a redirected %APPDATA% or XDG_CONFIG_HOME", () =>
+    Effect.gen(function* () {
+      const refused = (
+        overrides: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput>,
+        env: Record<string, string>,
+      ) =>
+        makeEnvironment(overrides, env).pipe(
+          Effect.as("accepted"),
+          Effect.catchDefect((defect) =>
+            Effect.succeed(defect instanceof T3CodeDataDirectoryError ? "refused" : "other"),
+          ),
+        );
+      const windows = { platform: "win32", homeDirectory: "C:\\Users\\Miguel" } as const;
+      assert.equal(
+        yield* refused(windows, { APPDATA: "D:\\Roaming", T3CODE_HOME: "D:\\Roaming\\t3code" }),
+        "refused",
+      );
+      assert.equal(
+        yield* refused(windows, {
+          APPDATA: "D:\\Roaming",
+          T3CODE_HOME: "D:\\Roaming\\t3code-dev\\x",
+        }),
+        "refused",
+      );
+      const linux = { platform: "linux", homeDirectory: "/home/miguel" } as const;
+      assert.equal(
+        yield* refused(linux, {
+          XDG_CONFIG_HOME: "/data/config",
+          T3CODE_HOME: "/data/config/t3code",
+        }),
+        "refused",
+      );
+      // The default folder stays protected when the variable points elsewhere.
+      assert.equal(
+        yield* refused(linux, {
+          XDG_CONFIG_HOME: "/data/config",
+          T3CODE_HOME: "/home/miguel/.config/t3code",
+        }),
+        "refused",
+      );
+      assert.equal(
+        yield* refused(windows, {
+          APPDATA: "D:\\Roaming",
+          T3CODE_HOME: "D:\\Roaming\\earlyscript",
+        }),
+        "accepted",
       );
     }),
   );

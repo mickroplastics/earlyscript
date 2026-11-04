@@ -7,6 +7,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import {
+  adoptEarlyscriptEnvironment,
+  mirrorToEarlyscriptEnvironment,
+} from "@t3tools/shared/earlyscriptEnv";
+import {
+  assertEarlyscriptDataDirectory,
+  earlyscriptHomeContextOf,
+} from "@t3tools/shared/earlyscriptHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -273,17 +281,24 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
   const path = yield* Path.Path;
   const configured = baseDir?.trim();
 
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const context = earlyscriptHomeContextOf({
+    homeDirectory,
+    platform: yield* HostProcess.Platform,
+    env: yield* HostProcess.Environment,
+  });
+  const guard = (directory: string) => assertEarlyscriptDataDirectory(directory, context);
   if (configured === "~") {
-    return yield* HostProcess.HomeDirectory;
+    return guard(homeDirectory);
   }
   if (configured?.startsWith("~/") || configured?.startsWith("~\\")) {
-    return path.join(yield* HostProcess.HomeDirectory, configured.slice(2));
+    return guard(path.join(homeDirectory, configured.slice(2)));
   }
   if (configured) {
-    return path.resolve(configured);
+    return guard(path.resolve(configured));
   }
 
-  return yield* DEFAULT_T3_HOME;
+  return guard(yield* DEFAULT_T3_HOME);
 });
 
 interface CreateDevRunnerEnvInput {
@@ -634,7 +649,13 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
         );
       }
     }
-    const source = path.join(yield* HostProcess.HomeDirectory, ".t3", "userdata", "statev2.sqlite");
+    // Earlyscript: its own installed home, never T3 Code's ~/.t3.
+    const source = path.join(
+      yield* HostProcess.HomeDirectory,
+      EarlyscriptBrand.homeDirName,
+      "userdata",
+      "statev2.sqlite",
+    );
     // A V1 state.sqlite counts as data too: the server imports it only while
     // statev2.sqlite is missing, so seeding would hide it.
     if (
@@ -650,7 +671,7 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
           );
         } else {
           yield* Effect.logInfo(
-            `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only). --no-seed or T3CODE_DEV_SEED=0 skips this.`,
+            `[dev-runner] seeding ${input.worktreeHome} from ${source} (read-only). --no-seed or EARLYSCRIPT_DEV_SEED=0 skips this.`,
           );
           yield* runRepoScript(
             "apps/server/scripts/migrate-dev-db.ts",
@@ -753,6 +774,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     port: input.port,
     devUrl: input.devUrl,
   });
+  mirrorToEarlyscriptEnvironment(env);
 
   const selectionSuffix =
     serverOffset !== offset || webOffset !== offset
@@ -967,7 +989,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   seed: Flag.Boolean("seed").pipe(
     Flag.withDescription(
-      "Seed an empty worktree database from ~/.t3 on first start (read-only, via migrate-dev-db) if the source is at most 500 MiB. On by default; --no-seed or T3CODE_DEV_SEED=0 skips it.",
+      "Seed an empty worktree database from ~/.earlyscript on first start (read-only, via migrate-dev-db) if the source is at most 500 MiB. On by default; --no-seed or EARLYSCRIPT_DEV_SEED=0 skips it.",
     ),
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_DEV_SEED")),
   ),
@@ -993,6 +1015,8 @@ const cliRuntimeLayer = Layer.mergeAll(
 );
 
 if (import.meta.main) {
+  // Earlyscript: drop what T3 Code exports to its terminals (T3CODE_HOME=~/.t3...).
+  adoptEarlyscriptEnvironment(process.env, { transitional: true, dropElectronRunAsNode: true });
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

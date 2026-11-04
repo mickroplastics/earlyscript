@@ -18,6 +18,7 @@ import { describeServerProcess, writeTriageSession } from "../triage/triageSessi
 import { baseDirFlag } from "./config.ts";
 import { interactiveStdin } from "./consoleStdin.ts";
 import { resolveCliCommand } from "./invocation.ts";
+import { earlyscriptChildEnvironment } from "@t3tools/shared/earlyscriptEnv";
 
 interface TriageAgent {
   readonly id: "claude" | "codex";
@@ -92,6 +93,8 @@ const runInteractiveSession = (input: {
   Effect.callback<number, TriageAgentSpawnError>((resume) => {
     const child = NodeChildProcess.spawn(input.command, [...input.args], {
       cwd: input.cwd,
+      // Earlyscript: the agent gets EARLYSCRIPT_HOME, never this process's T3CODE_* aliases.
+      env: earlyscriptChildEnvironment(process.env, process.env),
       // The Windows desktop launcher supplies terminal input through the reopened console.
       stdio: [interactiveStdin(), "inherit", "inherit"],
       shell: input.shell,

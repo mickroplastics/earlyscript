@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -893,6 +894,79 @@ describe("EditorialEvidenceExportService", () => {
         }
       }),
     ),
+  );
+
+  it.effect("never writes inside T3 Code's data folders", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        yield* seedEvidence;
+        const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+        const share = yield* exportOf("share");
+        // A throwaway home, so the real ~/.t3 is never looked at.
+        const home = makeTempDir();
+        const inHome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+        try {
+          for (const target of [
+            NodePath.join(home, ".t3", "evidencia"),
+            NodePath.join(home, ".t3", "userdata", "evidencia"),
+          ]) {
+            const refused = yield* inHome(evidence.write(share, target)).pipe(Effect.flip);
+            assert.strictEqual(refused.reason, "target");
+            assert.include(refused.message, "T3 Code");
+          }
+          assert.isFalse(NodeFS.existsSync(NodePath.join(home, ".t3")));
+          yield* inHome(evidence.write(share, NodePath.join(home, "evidencia")));
+          assert.isTrue(NodeFS.existsSync(NodePath.join(home, "evidencia", "resumen.md")));
+        } finally {
+          NodeFS.rmSync(home, { recursive: true, force: true });
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "never writes below a link to T3 Code's home, even into folders that do not exist",
+    () =>
+      withEvidence(
+        Effect.gen(function* () {
+          yield* seedEvidence;
+          const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+          const share = yield* exportOf("share");
+          const home = makeTempDir();
+          const inHome = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.provideService(HostProcess.HomeDirectory, home),
+              Effect.provideService(HostProcess.Platform, "linux"),
+            );
+          try {
+            NodeFS.mkdirSync(NodePath.join(home, ".t3"));
+            const link = NodePath.join(home, "informes");
+            NodeFS.symlinkSync(NodePath.join(home, ".t3"), link);
+            for (const target of [
+              NodePath.join(link, "evidencia"),
+              NodePath.join(link, "no-existe", "evidencia"),
+              NodePath.join(link, "no-existe", "tampoco", "evidencia"),
+            ]) {
+              // Under the user's home, so `within` alone would let it through.
+              const refused = yield* inHome(evidence.write(share, target, { within: home })).pipe(
+                Effect.flip,
+              );
+              assert.strictEqual(refused.reason, "target");
+              assert.include(refused.message, "T3 Code");
+            }
+            assert.deepEqual(NodeFS.readdirSync(NodePath.join(home, ".t3")), []);
+            const fresh = NodePath.join(home, "nueva", "carpeta", "evidencia");
+            yield* inHome(evidence.write(share, fresh, { within: home }));
+            assert.isTrue(NodeFS.existsSync(NodePath.join(fresh, "resumen.md")));
+          } finally {
+            NodeFS.rmSync(home, { recursive: true, force: true });
+          }
+        }),
+      ),
   );
 
   it.effect("never writes through a symbolic link", () =>

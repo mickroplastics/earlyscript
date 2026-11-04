@@ -147,16 +147,17 @@ describe("remote", () => {
   it("round-trips pairing urls through app links on every channel scheme", () => {
     const pairingUrl = "https://vps.example.com/pair#token=ABC123";
     const appLink = buildPairingAppLink(pairingUrl);
-    expect(appLink.startsWith("t3code://pair?")).toBe(true);
+    expect(appLink.startsWith("earlyscript://pair?")).toBe(true);
     expect(readPairingAppLink(appLink)).toBe(pairingUrl);
-    expect(readPairingAppLink(appLink.replace("t3code:", "t3code-dev:"))).toBe(pairingUrl);
-    const desktopLink = buildPairingAppLink(pairingUrl, "earlyscript");
-    expect(desktopLink.startsWith("earlyscript://pair?")).toBe(true);
-    expect(readPairingAppLink(desktopLink)).toBe(pairingUrl);
-    expect(readPairingAppLink("t3code://pair")).toBeNull();
+    expect(readPairingAppLink(appLink.replace("earlyscript:", "earlyscript-dev:"))).toBe(
+      pairingUrl,
+    );
+    // Earlyscript: T3 Code's scheme is not ours, in either direction.
+    expect(readPairingAppLink(appLink.replace("earlyscript:", "t3code:"))).toBeNull();
+    expect(readPairingAppLink("earlyscript://pair")).toBeNull();
     expect(readPairingAppLink(appLink.replace("//pair?", "//pair/other?"))).toBeNull();
     expect(
-      readPairingAppLink(`t3code://threads?pairingUrl=${encodeURIComponent(pairingUrl)}`),
+      readPairingAppLink(`earlyscript://threads?pairingUrl=${encodeURIComponent(pairingUrl)}`),
     ).toBeNull();
     expect(
       readPairingAppLink(`https://pair?pairingUrl=${encodeURIComponent(pairingUrl)}`),

@@ -26,7 +26,7 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
     logPath: `${baseDir}/userdata/logs/boot-service.log`,
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    unitPath: "/home/theo/.config/systemd/user/earlyscript.service",
   });
 
   expect(
@@ -53,7 +53,7 @@ it("protects the server unit from agents under CPU and memory pressure", () => {
     program: ["/home/theo/.t3/runtime/versions/1.2.3/t3", "__service-launcher"],
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
-    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+    unitPath: "/home/theo/.config/systemd/user/earlyscript.service",
   });
   const service = unit.slice(unit.indexOf("[Service]"), unit.indexOf("[Install]"));
   for (const line of [
@@ -127,13 +127,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
-      if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
-      if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
+      if (!failed && command === "systemctl --user enable earlyscript.service")
+        control.enabled = true;
+      if (!failed && command === "systemctl --user restart earlyscript.service")
+        control.active = true;
       // A timed-out stop may still stop the service.
-      if (command === "systemctl --user stop t3code.service") control.active = false;
+      if (command === "systemctl --user stop earlyscript.service") control.active = false;
       if (
         control.stateAfterStop !== undefined &&
-        (command === "systemctl --user stop t3code.service" ||
+        (command === "systemctl --user stop earlyscript.service" ||
           command.startsWith("launchctl bootout --wait "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
@@ -200,7 +202,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
-                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
+                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "earlyscript.service" } : {}),
               },
             }),
           ),
@@ -274,7 +276,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         );
         expect(yield* fs.readFileString(statePath)).toBe(before);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
-        expect(commands).not.toContain("systemctl --user stop t3code.service");
+        expect(commands).not.toContain("systemctl --user stop earlyscript.service");
       }),
   );
 
@@ -347,7 +349,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
       // systemd can take 90s to stop, exceeding the runner's 60s default.
-      expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
+      expect(timeouts.get("systemctl --user disable --now earlyscript.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -420,9 +422,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           ),
         ).toEqual(
           platform === "linux"
-            ? ["systemctl --user stop t3code.service", "systemctl --user restart t3code.service"]
+            ? [
+                "systemctl --user stop earlyscript.service",
+                "systemctl --user restart earlyscript.service",
+              ]
             : [
-                "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+                "launchctl bootout --wait gui/501/cc.biste.earlyscript.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
               ],
         );
@@ -559,7 +564,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(failure).toBe("repair failed");
       expect(control.active).toBe(true);
 
-      control.failCommand = "systemctl --user stop t3code.service";
+      control.failCommand = "systemctl --user stop earlyscript.service";
       let ran = false;
       const stopFailure = yield* service
         .withStopped(
@@ -580,11 +585,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
       expect(commands).toEqual([
-        "systemctl --user is-enabled t3code.service",
-        "systemctl --user is-active t3code.service",
-        "systemctl --user stop t3code.service",
+        "systemctl --user is-enabled earlyscript.service",
+        "systemctl --user is-active earlyscript.service",
+        "systemctl --user stop earlyscript.service",
         "repair",
-        "systemctl --user restart t3code.service",
+        "systemctl --user restart earlyscript.service",
       ]);
       expect(control.active).toBe(true);
       control.enabled = false;
@@ -594,8 +599,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       control.enabled = false;
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
-      expect(commands).toContain("systemctl --user stop t3code.service");
-      expect(commands).not.toContain("systemctl --user restart t3code.service");
+      expect(commands).toContain("systemctl --user stop earlyscript.service");
+      expect(commands).not.toContain("systemctl --user restart earlyscript.service");
       expect(control.active).toBe(false);
       control.enabled = true;
       control.active = true;
@@ -608,6 +613,52 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands).toEqual([]);
     }),
   );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "install refuses to replace a %s service that serves another home (Earlyscript)",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, commands, makeService } = yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const unitPath = (yield* service.status).unitPath;
+        // The harness serves `<tmp>/.t3`; the foreign unit serves a sibling directory.
+        const t3Home = path.join(path.dirname(path.dirname(path.dirname(unitPath))), "t3-real");
+        const foreignPlan = {
+          program: [`${t3Home}/runtime/versions/0.1.6/t3`, "__service-launcher"],
+          baseDir: t3Home,
+          logPath: `${t3Home}/userdata/logs/boot-service.log`,
+          unitPath,
+        };
+        const foreign =
+          platform === "linux"
+            ? BootService.renderBootServiceUnit(foreignPlan)
+            : BootService.renderBootServicePlist(foreignPlan, {
+                homeDir: "/Users/theo",
+                environmentPath: "/usr/bin",
+              });
+        yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+        yield* fs.writeFileString(unitPath, foreign);
+        commands.length = 0;
+
+        const ours = yield* makeService();
+        const error = yield* ours.install().pipe(Effect.flip);
+        expect(error._tag).toBe("BootServiceForeignHomeError");
+        expect(yield* fs.readFileString(unitPath)).toBe(foreign);
+        // Read-only probes are fine; nothing may stop, restart or reload a service.
+        expect(
+          commands.filter((command) =>
+            /\b(stop|start|restart|enable|disable|daemon-reload|bootout|bootstrap|kickstart)\b/.test(
+              command,
+            ),
+          ),
+        ).toEqual([]);
+      }),
+  );
+
+  it("names the service after Earlyscript, not T3 Code (Earlyscript)", () => {
+    expect(BootService.BOOT_SERVICE_UNIT_FILE).toBe("earlyscript.service");
+    expect(BootService.BOOT_SERVICE_LAUNCHD_LABEL).toBe("cc.biste.earlyscript.service");
+  });
 
   it.effect("restart leaves a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
@@ -642,7 +693,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
-      expect(commands).not.toContain("systemctl --user stop t3code.service");
+      expect(commands).not.toContain("systemctl --user stop earlyscript.service");
       expect(result).toMatchObject({ handedOff: true, logPath: plan.logPath });
       const handoffs = invocations.filter(({ command }) => command === "systemd-run");
       expect(handoffs).toHaveLength(1);
@@ -668,7 +719,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(statePath)).toBe(state);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(control.active).toBe(true);
-      expect(commands).not.toContain("systemctl --user stop t3code.service");
+      expect(commands).not.toContain("systemctl --user stop earlyscript.service");
     }),
   );
 
@@ -695,8 +746,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         const outcome = yield* inside.restart;
         expect(commands).toEqual([
           "systemctl --user daemon-reload",
-          "systemctl --user enable t3code.service",
-          "systemctl --user restart --no-block t3code.service",
+          "systemctl --user enable earlyscript.service",
+          "systemctl --user restart --no-block earlyscript.service",
         ]);
         expect(outcome).toBe("queued");
         expect(yield* fs.readFileString(statePath)).toBe(state);
@@ -718,9 +769,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
         ),
       ).toEqual([
-        "systemctl --user stop t3code.service",
+        "systemctl --user stop earlyscript.service",
         "systemctl --user daemon-reload",
-        "systemctl --user restart t3code.service",
+        "systemctl --user restart earlyscript.service",
       ]);
     }),
   );
@@ -752,8 +803,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
           ),
         ).toEqual([
-          "systemctl --user stop t3code.service",
-          "systemctl --user restart t3code.service",
+          "systemctl --user stop earlyscript.service",
+          "systemctl --user restart earlyscript.service",
         ]);
       }
     }),
@@ -767,7 +818,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect(
         plan.unitPath.endsWith(
-          path.join("Library", "LaunchAgents", "com.t3tools.t3code.service.plist"),
+          path.join("Library", "LaunchAgents", "cc.biste.earlyscript.service.plist"),
         ),
       ).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
@@ -788,7 +839,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
-      expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
+      expect(timeouts.get("launchctl bootout --wait gui/501/cc.biste.earlyscript.service")).toEqual(
         Duration.seconds(120),
       );
     }),
@@ -850,7 +901,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");
       yield* service.install();
-      control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.failCommand = "launchctl bootout --wait gui/501/cc.biste.earlyscript.service";
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);

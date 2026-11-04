@@ -216,7 +216,9 @@ describe("t3 pair", () => {
         assert.isString(token);
         const pairingUrl = `${origin}/pair#token=${token}`;
         assert.include(output, `Desktop link: ${buildPairingAppLink(pairingUrl, "earlyscript")}`);
-        assert.include(output, `Mobile app link: ${buildPairingAppLink(pairingUrl)}`);
+        // Earlyscript: no mobile line; its `t3code://` link would hand the token to T3 Code.
+        assert.notInclude(output, "Mobile app link");
+        assert.notInclude(output, "t3code://");
 
         const listed = yield* captureStdout(
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -480,7 +482,7 @@ describe("auth scope options", () => {
       if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${String(error)}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", ...command]);
+      assert.deepEqual(error.commandPath, ["earlyscript", ...command]);
       const scopeError = error.errors[0];
       if (scopeError?._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(scopeError?._tag)}`);
