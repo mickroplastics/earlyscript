@@ -40,7 +40,9 @@ interface CsvRecord {
 
 /**
  * RFC 4180 records: commas, double quotes with `""` inside, LF or CRLF, a quoted cell may span
- * lines. A leading byte order mark is dropped. Returns null when a quote is never closed.
+ * lines. A leading byte order mark is dropped. Returns null when the text is not well formed:
+ * a quote never closed, a closing quote followed by anything but a comma or a line end, or a
+ * quote inside an unquoted cell. A malformed file is refused whole: nothing is stored.
  */
 export const parseCsvRecords = (text: string): ReadonlyArray<CsvRecord> | null => {
   const source = text.startsWith("﻿") ? text.slice(1) : text;
@@ -57,7 +59,11 @@ export const parseCsvRecords = (text: string): ReadonlyArray<CsvRecord> | null =
         if (source[index + 1] === '"') {
           cell += '"';
           index++;
-        } else quoted = false;
+        } else {
+          const next = source[index + 1];
+          if (next !== undefined && next !== "," && next !== "\n" && next !== "\r") return null;
+          quoted = false;
+        }
       } else {
         if (char === "\n") line++;
         cell += char;
@@ -65,6 +71,7 @@ export const parseCsvRecords = (text: string): ReadonlyArray<CsvRecord> | null =
       continue;
     }
     if (char === '"' && cell === "") quoted = true;
+    else if (char === '"') return null;
     else if (char === ",") {
       cells.push(cell);
       cell = "";
@@ -178,7 +185,7 @@ export const parseBaselineCsv = (text: string): ParsedBaseline => {
   }
   const records = parseCsvRecords(text);
   if (records === null) {
-    fail(null, null, "Hay unas comillas sin cerrar: el archivo no es un CSV válido.");
+    fail(null, null, "Hay comillas sin cerrar o mal puestas: el archivo no es un CSV válido.");
     return empty;
   }
   const [header, ...rows] = records;

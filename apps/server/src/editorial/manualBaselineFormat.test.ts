@@ -38,6 +38,15 @@ describe("parseCsvRecords", () => {
   it("refuses a quote never closed", () => {
     expect(parseCsvRecords('a,b\n"x,y\n')).toBeNull();
   });
+
+  it("refuses text after a closing quote and a quote inside a bare cell", () => {
+    expect(parseCsvRecords('a,b\n"hola"x,y\n')).toBeNull();
+    expect(parseCsvRecords('a,b\nho"la,y\n')).toBeNull();
+    expect(parseCsvRecords('a,b\n"hola",y\n')).toEqual([
+      { line: 1, cells: ["a", "b"] },
+      { line: 2, cells: ["hola", "y"] },
+    ]);
+  });
 });
 
 describe("parseBaselineCsv over the October log", () => {
