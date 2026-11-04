@@ -22,6 +22,11 @@ const TRANSITIONAL_T3_VARIABLES: ReadonlyArray<string> = [
 /** Earlyscript's own variables: never aliases of a `T3CODE_*` setting. */
 const OWN_PREFIXES = ["EARLYSCRIPT_FLAG_", "EARLYSCRIPT_EDITORIAL_"] as const;
 const OWN_NAMES: ReadonlySet<string> = new Set(["EARLYSCRIPT_THREAD_ID"]);
+/** Aliases a child keeps: an Earlyscript child needs its home and launcher, not the server's runtime. */
+const INHERITED_ALIASES: ReadonlySet<string> = new Set([
+  "EARLYSCRIPT_HOME",
+  "EARLYSCRIPT_CLI_PATH",
+]);
 /** One-shot markers for this process only: copied to the T3 name, then removed, so children do not inherit them. */
 const CONSUMED_NAMES: ReadonlySet<string> = new Set(["EARLYSCRIPT_DESKTOP_CLI_LAUNCHER"]);
 
@@ -66,6 +71,26 @@ export function adoptEarlyscriptEnvironment(
     if (CONSUMED_NAMES.has(name)) delete env[name];
   }
   return dropped;
+}
+
+/**
+ * Environment for a child of the server: drops each `T3CODE_*`/`T3_*` and each `EARLYSCRIPT_*`
+ * alias (bar HOME and CLI_PATH) that `serverEnv` holds with the same value. What the caller set
+ * for this child (its MCP wiring) stays, and so does `ELECTRON_RUN_AS_NODE`, which ACP needs.
+ */
+export function earlyscriptChildEnvironment<Env extends Record<string, string | undefined>>(
+  env: Env,
+  serverEnv: Readonly<Record<string, string | undefined>>,
+): Env {
+  const next: Record<string, string | undefined> = { ...env };
+  for (const name of Object.keys(next)) {
+    const fromServer = serverEnv[name] !== undefined && next[name] === serverEnv[name];
+    if (!fromServer) continue;
+    if (isT3Variable(name) || (aliasOf(name) !== undefined && !INHERITED_ALIASES.has(name))) {
+      delete next[name];
+    }
+  }
+  return next as Env;
 }
 
 /**

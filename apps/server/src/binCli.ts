@@ -1,6 +1,5 @@
 import { doctorCommand } from "./cli/doctor.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/cli";
@@ -34,8 +33,13 @@ import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { evidenceCommand } from "./editorial/evidenceCli.ts";
 import { retiredCliCommand } from "./earlyscript/cliCommands.ts";
+import * as EarlyscriptChildProcessEnvironment from "./earlyscript/childProcessEnvironment.ts";
 
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// Earlyscript: the spawner drops the server's T3CODE_* aliases from every child's environment.
+const layerCliRuntime = Layer.mergeAll(
+  EarlyscriptChildProcessEnvironment.layerNodeServices,
+  NetService.layer,
+);
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";

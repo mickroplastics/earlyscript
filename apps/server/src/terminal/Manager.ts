@@ -73,6 +73,7 @@ import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { earlyscriptChildEnvironment } from "@t3tools/shared/earlyscriptEnv";
 
 export {
   TerminalCwdError,
@@ -1369,7 +1370,8 @@ function createTerminalSpawnEnv(
   home: string,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
+  // Earlyscript: also without the server's EARLYSCRIPT_* runtime aliases (earlyscriptChildEnvironment).
+  for (const [key, value] of Object.entries(earlyscriptChildEnvironment(baseEnv, baseEnv))) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
     spawnEnv[key] = value;

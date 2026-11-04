@@ -1280,6 +1280,32 @@ it.layer(
     }),
   );
 
+  it.effect("gives terminals Earlyscript's home but none of the server's runtime aliases", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          EARLYSCRIPT_HOME: "/home/user/.earlyscript",
+          EARLYSCRIPT_CLI_PATH: "/opt/earlyscript/bin/earlyscript",
+          EARLYSCRIPT_PORT: "14842",
+          EARLYSCRIPT_MODE: "web",
+          T3CODE_HOME: "/home/user/.earlyscript",
+          T3CODE_PORT: "14842",
+          T3_FOO: "server",
+          TEST_TERMINAL_KEEP: "keep-me",
+        },
+      });
+      yield* manager.open(openInput());
+      const env = ptyAdapter.spawnInputs[0]!.env;
+      expect(env.EARLYSCRIPT_HOME).toBe("/home/user/.earlyscript");
+      expect(env.EARLYSCRIPT_CLI_PATH).toBe("/opt/earlyscript/bin/earlyscript");
+      expect(env.TEST_TERMINAL_KEEP).toBe("keep-me");
+      for (const name of ["EARLYSCRIPT_PORT", "EARLYSCRIPT_MODE", "T3CODE_HOME", "T3CODE_PORT"]) {
+        expect(env[name], name).toBeUndefined();
+      }
+      expect(env.T3_FOO).toBeUndefined();
+    }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

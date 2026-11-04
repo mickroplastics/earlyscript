@@ -3,6 +3,7 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   adoptEarlyscriptEnvironment,
   earlyscriptAliasOf,
+  earlyscriptChildEnvironment,
   mirrorToEarlyscriptEnvironment,
 } from "./earlyscriptEnv.ts";
 
@@ -96,5 +97,75 @@ describe("mirrorToEarlyscriptEnvironment", () => {
 
   it("names the alias of a T3 setting", () => {
     assert.equal(earlyscriptAliasOf("T3CODE_PORT"), "EARLYSCRIPT_PORT");
+  });
+});
+
+describe("earlyscriptChildEnvironment", () => {
+  /** The server's own environment once adopted: its aliases and transitional knobs. */
+  const serverEnvironment = (): NodeJS.ProcessEnv => {
+    const env: NodeJS.ProcessEnv = {
+      ...fromT3Code(),
+      EARLYSCRIPT_HOME: "/home/miguel/earlyscript-data/isolation/home2",
+      EARLYSCRIPT_CLI_PATH: "/opt/earlyscript/bin/earlyscript",
+      EARLYSCRIPT_PORT: "14842",
+      EARLYSCRIPT_NO_BROWSER: "1",
+      EARLYSCRIPT_FLAG_TERMINAL: "1",
+      EARLYSCRIPT_THREAD_ID: "thread-parent",
+    };
+    adoptEarlyscriptEnvironment(env, { transitional: true, dropElectronRunAsNode: false });
+    return env;
+  };
+
+  it("keeps no T3CODE_* or T3_* of the server, and only the home and launcher of its aliases", () => {
+    const server = serverEnvironment();
+    assert.equal(server.T3CODE_HOME, "/home/miguel/earlyscript-data/isolation/home2");
+    const child = earlyscriptChildEnvironment({ ...server }, server);
+    assert.deepStrictEqual(
+      Object.keys(child).filter((name) => /^(T3CODE_|T3_)/u.test(name)),
+      [],
+    );
+    assert.deepStrictEqual(child, {
+      PATH: "/usr/bin",
+      HOME: "/home/miguel",
+      ELECTRON_RUN_AS_NODE: "1",
+      EARLYSCRIPT_HOME: "/home/miguel/earlyscript-data/isolation/home2",
+      EARLYSCRIPT_CLI_PATH: "/opt/earlyscript/bin/earlyscript",
+      EARLYSCRIPT_FLAG_TERMINAL: "1",
+      EARLYSCRIPT_THREAD_ID: "thread-parent",
+    });
+  });
+
+  it("keeps what the caller set for this child: its MCP wiring and project-script contract", () => {
+    const server = serverEnvironment();
+    const child: NodeJS.ProcessEnv = earlyscriptChildEnvironment(
+      {
+        ...server,
+        T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:14842/mcp/session-1",
+        T3_ACP_MCP_AUTHORIZATION: "Bearer x",
+        T3_MCP_URL: "http://127.0.0.1:14842/mcp",
+        T3CODE_PROJECT_ROOT: "/repo",
+        EARLYSCRIPT_THREAD_ID: "thread-child",
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+      server,
+    );
+    assert.equal(child.T3_ACP_MCP_ENDPOINT, "http://127.0.0.1:14842/mcp/session-1");
+    assert.equal(child.T3_ACP_MCP_AUTHORIZATION, "Bearer x");
+    assert.equal(child.T3_MCP_URL, "http://127.0.0.1:14842/mcp");
+    assert.equal(child.T3CODE_PROJECT_ROOT, "/repo");
+    assert.equal(child.EARLYSCRIPT_THREAD_ID, "thread-child");
+    assert.equal(child.ELECTRON_RUN_AS_NODE, "1");
+    assert.isUndefined(child.T3CODE_HOME);
+    assert.isUndefined(child.T3CODE_PORT_OFFSET);
+  });
+
+  it("lets an Earlyscript started from that child read EARLYSCRIPT_HOME and nothing of T3", () => {
+    const server = serverEnvironment();
+    // A terminal of the server, where a user or agent runs `earlyscript`.
+    const inChild = earlyscriptChildEnvironment({ ...server }, server);
+    adoptEarlyscriptEnvironment(inChild, { transitional: false, dropElectronRunAsNode: false });
+    assert.equal(inChild.T3CODE_HOME, "/home/miguel/earlyscript-data/isolation/home2");
+    assert.isUndefined(inChild.T3CODE_PORT);
+    assert.isUndefined(inChild.T3CODE_THREAD_ID);
   });
 });

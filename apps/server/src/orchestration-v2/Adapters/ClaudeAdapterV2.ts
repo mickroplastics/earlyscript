@@ -173,6 +173,7 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { earlyscriptChildEnvironment } from "@t3tools/shared/earlyscriptEnv";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -964,12 +965,16 @@ export const layerQueryRunner: Layer.Layer<
           // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
           const { mcpServers, ...sdkOptions } = input.options;
           // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
+          // Earlyscript: without the server's T3CODE_* aliases (see earlyscriptChildEnvironment).
           const queryOptions = {
             ...sdkOptions,
-            env: {
-              ...(sdkOptions.env ?? hostEnvironment),
-              [PortScanner.AGENT_THREAD_ENV]: input.threadId,
-            },
+            env: earlyscriptChildEnvironment(
+              {
+                ...(sdkOptions.env ?? hostEnvironment),
+                [PortScanner.AGENT_THREAD_ENV]: input.threadId,
+              },
+              hostEnvironment,
+            ),
           };
           // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
           const binaryPath = queryOptions.pathToClaudeCodeExecutable;
