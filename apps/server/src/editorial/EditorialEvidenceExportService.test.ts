@@ -25,6 +25,7 @@ import * as EditorialEvidenceExportService from "./EditorialEvidenceExportServic
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import {
+  formatMinutes,
   EVIDENCE_COLUMNS,
   EVIDENCE_FILES,
   MANIFEST_FILE,
@@ -1083,5 +1084,14 @@ describe("EditorialEvidenceExportService", () => {
     ].filter((rule): rule is Extract<ShareRule, { kind: "int" }> => rule?.kind === "int");
     assert.isAbove(ints.length, 0);
     for (const rule of ints) assert.isAtLeast(rule.min, 0);
+  });
+});
+
+describe("formatMinutes", () => {
+  it("no redondea un tramo positivo a cero", () => {
+    assert.strictEqual(formatMinutes(100), "< 0,1 min");
+    assert.strictEqual(formatMinutes(0), "0,0 min");
+    assert.strictEqual(formatMinutes(null), "sin datos");
+    assert.strictEqual(formatMinutes(90_000), "1,5 min");
   });
 });

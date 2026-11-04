@@ -345,6 +345,7 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
     mode,
     trendKey: null,
     runId: null,
+    trendLabel: null,
     dossierId: null,
     action: row.accion as EditorialResultsDecision["action"],
     utility,
@@ -361,6 +362,12 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
         : { versionHash: String(row.guion_hash ?? ""), claims, cited },
     video: observedAt === null ? null : { ...metrics, observedAt },
   };
+};
+
+const IMPORT_STATE_LABELS: Readonly<Record<string, string>> = {
+  imported: "completa",
+  partial: "parcial",
+  invalid: "no válida",
 };
 
 /**
@@ -441,26 +448,14 @@ const renderSummary = (input: SummaryInput): string => {
       STAGE_LABEL[entry.stage] ?? entry.stage,
       entry.stats.n,
       formatMinutes(entry.stats.medianMs),
-      formatMinutes(entry.stats.q1Ms),
-      formatMinutes(entry.stats.q3Ms),
-      formatMinutes(
-        entry.stats.q1Ms === null || entry.stats.q3Ms === null
-          ? null
-          : entry.stats.q3Ms - entry.stats.q1Ms,
-      ),
+      ...spreadCells(entry.stats),
     ]),
     [
       MODE_LABEL[mode.mode],
       "Total registrado",
       mode.total.n,
       formatMinutes(mode.total.medianMs),
-      formatMinutes(mode.total.q1Ms),
-      formatMinutes(mode.total.q3Ms),
-      formatMinutes(
-        mode.total.q1Ms === null || mode.total.q3Ms === null
-          ? null
-          : mode.total.q3Ms - mode.total.q1Ms,
-      ),
+      ...spreadCells(mode.total),
     ],
   ]);
   const comparisonRows = comparisons.map((entry) => [
@@ -493,7 +488,7 @@ const renderSummary = (input: SummaryInput): string => {
   const runRows = input.runRows.map((run) => [
     cell(run.corrida),
     utcDay(typeof run.corte === "string" ? run.corte : null) ?? "sin corte",
-    cell(run.estado_importacion),
+    IMPORT_STATE_LABELS[String(run.estado_importacion)] ?? cell(run.estado_importacion),
     cell(run.expedientes),
     cell(run.vistas),
     cell(run.descartadas),
@@ -546,9 +541,9 @@ const renderSummary = (input: SummaryInput): string => {
         "3",
         "4",
         "5",
-        "accept",
-        "edit",
-        "reject",
+        "Aceptadas",
+        "Editadas",
+        "Rechazadas",
         "Reloj provisional",
         "Cobertura parcial",
       ],
@@ -1107,3 +1102,23 @@ export const layerFromReads = Layer.effect(EditorialEvidenceExportService, make)
 export const layer = layerFromReads.pipe(
   Layer.provide(Layer.mergeAll(EditorialResultsService.layer, EditorialSourcesService.layer)),
 );
+
+/**
+ * Quartiles and their range need at least two threads; with one, the spread would be a
+ * meaningless `0,0 min`. The page applies the same rule.
+ */
+function spreadCells(stats: {
+  readonly n: number;
+  readonly q1Ms: number | null;
+  readonly q3Ms: number | null;
+}): [string, string, string] {
+  if (stats.n < 2 || stats.q1Ms === null || stats.q3Ms === null) {
+    const why = stats.n === 1 ? "un solo hilo" : "sin datos";
+    return [why, why, why];
+  }
+  return [
+    formatMinutes(stats.q1Ms),
+    formatMinutes(stats.q3Ms),
+    formatMinutes(stats.q3Ms - stats.q1Ms),
+  ];
+}

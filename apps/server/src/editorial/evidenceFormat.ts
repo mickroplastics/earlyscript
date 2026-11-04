@@ -581,9 +581,15 @@ export const packageHashOf = (
       .join(""),
   );
 
-/** Fixed formatting, independent of the host locale: `12,5 min`. */
-export const formatMinutes = (ms: number | null): string =>
-  ms === null ? "sin datos" : `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
+/**
+ * Fixed formatting, independent of the host locale: `12,5 min`. A positive span below the
+ * tenth of a minute reads `< 0,1 min`, never `0,0 min`: the CSV keeps the milliseconds.
+ */
+export const formatMinutes = (ms: number | null): string => {
+  if (ms === null) return "sin datos";
+  if (ms > 0 && ms < 6_000) return "< 0,1 min";
+  return `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
+};
 
 export const formatDecimal = (value: number | null, digits = 2): string =>
   value === null ? "sin datos" : value.toFixed(digits).replace(".", ",");
