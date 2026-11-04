@@ -7,6 +7,9 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
+/** Whether Markdown opens rendered; shared with the editorial "Editar guion" (Earlyscript). */
+export const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
+
 export const isMarkdownPreviewFile = (path: string): boolean =>
   /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 

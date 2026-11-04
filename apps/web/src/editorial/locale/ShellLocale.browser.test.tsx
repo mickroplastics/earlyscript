@@ -1,7 +1,12 @@
 import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
+import { WorkingTimelineRow } from "../../components/chat/TimelineWorkGroupRows";
+import {
+  TimelineRowActivityCtx,
+  type TimelineRowActivityState,
+} from "../../components/chat/timelineRowContext";
 import { makeTranslator, useScopedLocale, type ScopedLocaleOptions } from "./scopedLocale";
 import {
   SIDEBAR_LOCALE,
@@ -63,8 +68,19 @@ function SidebarDouble({
             </div>
           ))}
           <span data-testid="section">Settled</span>
+          {/* As `EditorialSidebar.tsx`: upstream's header, the trend list, upstream's footer. */}
           <div data-editorial-space="trends">
-            <span data-testid="trend">Settled</span>
+            <div>
+              <a href="/" aria-label="Go to threads" data-testid="trends-header">
+                Earlyscript
+              </a>
+            </div>
+            <div>
+              <span data-testid="trend">Settled</span>
+            </div>
+            <div>
+              <button type="button" aria-label="Settings" data-testid="trends-footer" />
+            </div>
           </div>
         </div>
       </nav>
@@ -85,10 +101,58 @@ function ThreadDouble({ mode }: { readonly mode?: string }) {
       <div data-timeline-row-id="message-1">
         <p data-testid="message">Settled</p>
       </div>
+      {/* Rows as upstream renders them: its own words around the message bodies. */}
+      <div data-timeline-row-id="message-2" data-timeline-row-kind="message">
+        <h3 data-testid="author">You</h3>
+        <div data-user-message-body="true" data-thread-find-text="true">
+          <p data-testid="user-body">Done</p>
+        </div>
+        <button type="button" data-slot="tooltip-trigger" aria-label="Copy message" />
+      </div>
+      <div data-timeline-row-id="turn-fold:1" data-timeline-row-kind="turn-fold">
+        <button type="button">
+          <span data-testid="fold">Worked for 35s</span>
+        </button>
+      </div>
+      <div data-timeline-row-id="message-3" data-timeline-row-kind="message">
+        <div data-thread-find-text="true">
+          <h3 data-testid="agent-heading">Done</h3>
+          <button type="button" data-slot="tooltip-trigger" aria-label="Copy message">
+            Copy
+          </button>
+        </div>
+      </div>
       <div contentEditable suppressContentEditableWarning aria-label="Message New thread">
         Settled
       </div>
       <div>Ask anything. @ files, $ skills, / commands</div>
+    </div>
+  );
+}
+
+const WORKING_NOW = new Date("2026-11-04T12:00:10.000Z");
+
+const WORKING_ACTIVITY: TimelineRowActivityState = {
+  isWorking: true,
+  isCompacting: false,
+  isRevertingCheckpoint: false,
+  awaitingUser: false,
+  isPreparingWorktree: false,
+  latestRunId: null,
+  backgroundWorktreeSetup: null,
+};
+
+/** The thread area with upstream's running-turn row, as `MessagesTimeline` wraps it. */
+function WorkingDouble({ createdAt }: { readonly createdAt: string | null }) {
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  useThreadAreaLocale(area);
+  return (
+    <div ref={setArea} className="contents" data-testid="thread">
+      <TimelineRowActivityCtx value={WORKING_ACTIVITY}>
+        <div data-timeline-row-id="working-indicator-row" data-timeline-row-kind="working">
+          <WorkingTimelineRow row={{ kind: "working", id: "working-indicator-row", createdAt }} />
+        </div>
+      </TimelineRowActivityCtx>
     </div>
   );
 }
@@ -158,6 +222,10 @@ describe("shell locale scopes", () => {
     expect(row.querySelector("button")!.textContent).toBe("Resolver");
     expect(row.querySelector("button")!.getAttribute("aria-label")).toBe("Posponer el hilo");
     expect(view.getByTestId("trend").element().textContent).toBe("Settled");
+    expect(view.getByTestId("trends-header").element().getAttribute("aria-label")).toBe(
+      "Ir a los hilos",
+    );
+    expect(view.getByTestId("trends-footer").element().getAttribute("aria-label")).toBe("Ajustes");
     expect(view.getByTestId("outside").element().textContent).toBe("Settled");
     const input = view.getByTestId("sidebar").element().querySelector("input")!;
     expect(input.placeholder).toBe("Buscar");
@@ -204,6 +272,59 @@ describe("shell locale scopes", () => {
       [...message.querySelectorAll("span")].every((span) => span.textContent === "Delete"),
     ).toBe(true);
     expect(text.nodeValue?.startsWith(" Settled Settled")).toBe(true);
+  });
+
+  it("translates upstream's words in timeline rows and leaves the message bodies", async () => {
+    await using screen = await render(<ThreadDouble />);
+    await vi.waitFor(() => expect(screen.getByTestId("author").element().textContent).toBe("Tú"));
+    expect(screen.getByTestId("fold").element().textContent).toBe("Trabajó durante 35s");
+    const thread = screen.getByTestId("thread").element();
+    const rowButton = thread.querySelector('[data-timeline-row-id="message-2"] > button')!;
+    expect(rowButton.getAttribute("aria-label")).toBe("Copiar el mensaje");
+    // What the operator and the agent wrote, headings and buttons inside it included.
+    expect(screen.getByTestId("user-body").element().textContent).toBe("Done");
+    expect(screen.getByTestId("agent-heading").element().textContent).toBe("Done");
+    const bodyButton = thread.querySelector('[data-timeline-row-id="message-3"] button')!;
+    expect(bodyButton.getAttribute("aria-label")).toBe("Copy message");
+    expect(bodyButton.textContent).toBe("Copy");
+    expect(screen.getByTestId("message").element().textContent).toBe("Settled");
+    // A fold that updates in place stays in Spanish.
+    screen.getByTestId("fold").element().firstChild!.nodeValue = "Worked for 1m 2s";
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("fold").element().textContent).toBe("Trabajó durante 1m 2s"),
+    );
+  });
+
+  it("translates the running turn's indicator as upstream renders it, timer apart", async () => {
+    using _timers = fakeTimers();
+    vi.setSystemTime(WORKING_NOW);
+    // Upstream's own row (`WorkingTimelineRow`) inside the row wrapper of `MessagesTimeline`:
+    // «Working for » is a text node and the timer a sibling span that ticks every second.
+    await using screen = await render(<WorkingDouble createdAt="2026-11-04T12:00:03.000Z" />);
+    const row = screen.getByTestId("thread").element();
+    const timer = row.querySelector('[data-timeline-row-kind="working"] span.tabular-nums')!;
+    const label = timer.parentElement!;
+    await act(async () => {
+      await endBatch();
+    });
+    expect(label.firstChild!.nodeValue).toBe("Trabajando desde hace ");
+    expect(timer.textContent).toBe("7s");
+    // The timer keeps ticking in upstream's format; the words stay in Spanish.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(timer.textContent).toBe("9s");
+    expect(label.textContent).toBe("Trabajando desde hace 9s");
+  });
+
+  it("translates the running turn's indicator before its start time is known", async () => {
+    await using screen = await render(<WorkingDouble createdAt={null} />);
+    const row = screen.getByTestId("thread").element();
+    await vi.waitFor(() =>
+      expect(row.querySelector('[data-timeline-row-kind="working"]')!.textContent).toBe(
+        "Trabajando…",
+      ),
+    );
   });
 
   it("runs at most once per batch while content streams into a scope", async () => {

@@ -191,6 +191,8 @@ export function VideoDecisionPanel({
       aria-label="Decisión"
       onFocusCapture={controls.onEngage}
       onPointerDownCapture={controls.onEngage}
+      onClickCapture={controls.onEngage}
+      onKeyDownCapture={controls.onEngage}
       onSubmit={(event) => {
         event.preventDefault();
         if (block.problem === null) controls.onSubmit(block.versionHash);

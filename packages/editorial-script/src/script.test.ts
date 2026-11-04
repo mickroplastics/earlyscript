@@ -33,6 +33,71 @@ describe("script checking", () => {
     ]);
   });
 
+  it("does not count a call to action in Close as a claim", () => {
+    const script = [
+      "# Hook",
+      "",
+      "Cisco says it is rewriting most of its legacy code with AI. [itm_hn_50061234]",
+      "",
+      "# Block 1",
+      "",
+      "Join the people who read the source before they believe the headline.",
+      "",
+      "# Close",
+      "",
+      "If this was useful, join SingulariDev as a member to get the next analysis first.",
+      "Subscribe for the follow-up on the rewrite.",
+      "Join 3,000 members who already read the full benchmark.",
+      "The rewrite still has no published quality assessment.",
+      "",
+      "# Sources",
+      "",
+      "- https://news.ycombinator.com/item?id=50061234",
+      "",
+    ].join("\n");
+    const report = checkScript(script);
+    expect(report.claimsMap.map((claim) => claim.text)).toEqual([
+      "Cisco says it is rewriting most of its legacy code with AI. [itm_hn_50061234]",
+      // Outside Close an imperative still counts.
+      "Join the people who read the source before they believe the headline.",
+      // A figure may be a claim.
+      "Join 3,000 members who already read the full benchmark.",
+      "The rewrite still has no published quality assessment.",
+    ]);
+    expect(report.counts).toEqual({ claims: 4, cited: 1, uncited: 3 });
+  });
+
+  it("counts an invitation that carries a claim or a figure (Sol, hallazgo 1)", () => {
+    const counted = (sentence: string) =>
+      checkScript(`# Hook\nA valid claim has words.\n# Block 1\nx\n# Close\n${sentence}`)
+        .claimsMap.map((claim) => claim.text)
+        .includes(sentence);
+    // Not claims: a plain membership or subscription invitation.
+    for (const sentence of [
+      "Join SingulariDev as a member today.",
+      "If this was useful, subscribe to the channel.",
+      "Become a member of SingulariDev to get the next analysis first.",
+      "Hazte miembro de SingulariDev.",
+    ]) {
+      expect(counted(sentence), sentence).toBe(false);
+    }
+    // Claims: a figure in digits or words, a subordinate clause, a comparison, or a verb that
+    // invites to nothing about membership.
+    for (const sentence of [
+      "Join 10,000 members in our community.",
+      "Join ten thousand members in our community.",
+      "Join our community, which is the largest developer community in Ecuador.",
+      "Consider that this model outperforms every competitor.",
+      "Leave the benchmark running because this model never leaks private data.",
+      "Join SingulariDev, the largest developer community in Ecuador.",
+      "Subscribe to the channel with more benchmarks than anyone else.",
+      "Únete a los miles de miembros de SingulariDev.",
+      "Únete al canal con más miembros de Ecuador.",
+    ]) {
+      expect(counted(sentence), sentence).toBe(true);
+    }
+  });
+
   it("starts from a template whose only problems are its empty sections", () => {
     const report = checkScript(SCRIPT_TEMPLATE);
     expect(report.structure.map(({ code }) => code)).toEqual([

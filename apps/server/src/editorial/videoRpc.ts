@@ -5,8 +5,6 @@ import * as NodePath from "node:path";
 import { checkScript } from "@earlyscript/editorial-script";
 import {
   EDITORIAL_VIDEO_WS_METHODS,
-  EditorialDossierId,
-  EditorialRunId,
   EditorialVideoError,
   type EditorialVideoCapture,
   type EditorialVideoClockInput,
@@ -33,7 +31,10 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as BrowserVisits from "./BrowserVisitService.ts";
 import { purgeVideoRecord } from "./EditorialPurge.ts";
+import * as AssistedWritingStart from "./AssistedWritingStart.ts";
 import * as VideoThreadDeletion from "./VideoThreadDeletion.ts";
+import * as VideoThreadTitle from "./VideoThreadTitle.ts";
+import { readTrendTitle } from "./VideoThreadTitle.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
@@ -276,15 +277,8 @@ const makeHandlers = Effect.gen(function* () {
     const key = `${runId}\u0000${dossierId}`;
     const cached = trendTitles.get(key);
     if (cached !== undefined) return cached;
-    const dossier = yield* reader.value
-      .getDossier({
-        runId: EditorialRunId.make(runId),
-        dossierId: EditorialDossierId.make(dossierId),
-        evidenceLimit: 1,
-      })
-      .pipe(Effect.option);
-    if (Option.isNone(dossier)) return null;
-    const title = dossier.value.trend.presentation?.title ?? dossier.value.trend.label;
+    const title = yield* readTrendTitle(reader, runId, dossierId);
+    if (title === null) return null;
     trendTitles.set(key, title);
     return title;
   });
@@ -511,15 +505,26 @@ const makeHandlers = Effect.gen(function* () {
           actor: "operator" as const,
           refuseWhenDecided: true,
         };
+        // The decision block opens Decidir by itself (`cause: "decision-block"`): an automatic
+        // change, recorded as such, that never sends back to Decidir an operator who left it.
         switch (command._tag) {
           case "start":
-            return yield* clocks.start(thread.threadId, command.stage, options);
+            return yield* clocks.start(thread.threadId, command.stage, {
+              ...options,
+              source: command.cause === undefined ? "manual" : "auto",
+            });
           case "pause":
             return yield* clocks.pause(thread.threadId, { ...options, reason: command.reason });
           case "resume":
             return yield* clocks.resume(thread.threadId, options);
           case "stage":
-            return yield* clocks.changeStage(thread.threadId, command.stage, options);
+            return yield* clocks.changeStage(
+              thread.threadId,
+              command.stage,
+              command.cause === undefined
+                ? options
+                : { ...options, source: "auto", onlyFirst: true, cause: command.cause },
+            );
           case "stop":
             return yield* clocks.stop(thread.threadId, options);
           case "resolve": {
@@ -549,12 +554,18 @@ const makeHandlers = Effect.gen(function* () {
     onThread(threadId, (thread) =>
       Effect.gen(function* () {
         yield* scripts.snapshot(thread.threadId);
-        // Reading the dossier ends at the first saved script. Both conditions, Leer running
-        // and no decision, are checked in the stage change's own transaction.
+        // Reading the dossier ends at the first saved script, unless the first request to the
+        // agent ended it before (`AssistedWritingStart.ts`). Leer running and not chosen by
+        // hand, Escribir never run and no decision are checked in the stage change's own
+        // transaction, so a stage the operator chose by hand stays.
         yield* clocks
           .changeStage(thread.threadId, "write", {
             actor: "operator",
+            source: "auto",
             onlyFrom: "read",
+            onlyFirst: true,
+            unlessChosenByHand: true,
+            cause: "script-version",
             refuseWhenDecided: true,
           })
           .pipe(
@@ -805,4 +816,8 @@ export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers).pipe(
   Layer.provideMerge(BrowserVisits.layer),
   // T3 deletions of video threads stop their clock and refresh their open views.
   Layer.provideMerge(VideoThreadDeletion.layer),
+  // The first request to the agent in an assisted thread moves its clock from Leer to Escribir.
+  Layer.provideMerge(AssistedWritingStart.layer),
+  // An assisted thread whose generated title is empty or a filler word takes its trend's.
+  Layer.provideMerge(VideoThreadTitle.layer),
 );

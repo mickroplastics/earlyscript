@@ -33,6 +33,7 @@ import {
   clockStateOf,
   closeInterval,
   loadIntervals,
+  type IntervalSource,
   openInterval,
   stopClock,
   summarize,
@@ -47,11 +48,30 @@ export interface WorkClockCommandOptions {
    * transaction, so a command admitted before a decision commits cannot reopen the clock.
    */
   readonly refuseWhenDecided?: boolean | undefined;
+  /**
+   * Persisted with the segment it opens. `manual` (the default) is the operator choosing the
+   * stage by hand; `auto` is a rule of the thread flow, which never overrides a manual choice.
+   * A resume keeps the source of the segment it continues.
+   */
+  readonly source?: IntervalSource | undefined;
 }
 
 export interface WorkClockStageOptions extends WorkClockCommandOptions {
   /** Applies only while `onlyFrom` is running; otherwise records nothing. */
   readonly onlyFrom?: WorkStage | undefined;
+  /**
+   * Applies only when `stage` never ran on this thread; otherwise records nothing. The
+   * automatic stage changes use it, so an operator who left a stage by hand is not sent back.
+   */
+  readonly onlyFirst?: boolean | undefined;
+  /**
+   * Records nothing when the running or paused stage was chosen by hand (`source = 'manual'`),
+   * checked in the change's own transaction. The automatic move out of Leer uses it, so a Leer
+   * the operator chose stays even if Escribir never ran.
+   */
+  readonly unlessChosenByHand?: boolean | undefined;
+  /** Why an automatic change happened, kept in the event's payload. */
+  readonly cause?: "agent-request" | "script-version" | "decision-block" | undefined;
 }
 
 export interface WorkClockPauseOptions extends WorkClockCommandOptions {
@@ -188,7 +208,8 @@ const make = Effect.gen(function* () {
           return yield* stateError(threadId, "paused", `stage ${state.stage} is paused`);
         }
         const intervalId = yield* newId;
-        yield* openInterval(sql, { intervalId, threadId, stage, startedAt: at, actor });
+        const source = options?.source ?? "manual";
+        yield* openInterval(sql, { intervalId, threadId, stage, startedAt: at, actor, source });
         return [
           yield* appendEvent(sql, {
             type: "work.started",
@@ -229,17 +250,21 @@ const make = Effect.gen(function* () {
   const resume: WorkClockService["Service"]["resume"] = (threadId, options) =>
     command("workClock.resume", "work.resumed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
-        const state = clockStateOf(yield* loadIntervals(sql, threadId));
+        const intervals = yield* loadIntervals(sql, threadId);
+        const state = clockStateOf(intervals);
         if (state._tag !== "paused") {
           return yield* stateError(threadId, "not-paused", "the clock is not paused");
         }
         const intervalId = yield* newId;
+        // Resuming continues the paused stage: whoever chose it still did. A segment from
+        // before migration 016 passes on its unknown origin.
         yield* openInterval(sql, {
           intervalId,
           threadId,
           stage: state.stage,
           startedAt: at,
           actor,
+          source: intervals.find((row) => row.interval_id === state.intervalId)?.source ?? null,
         });
         return [
           yield* appendEvent(sql, {
@@ -258,9 +283,20 @@ const make = Effect.gen(function* () {
   const changeStage: WorkClockService["Service"]["changeStage"] = (threadId, stage, options) =>
     command("workClock.changeStage", "work.stage-changed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
-        const state = clockStateOf(yield* loadIntervals(sql, threadId));
+        const intervals = yield* loadIntervals(sql, threadId);
+        const state = clockStateOf(intervals);
         const onlyFrom = options?.onlyFrom;
         if (onlyFrom !== undefined && (state._tag !== "running" || state.stage !== onlyFrom)) {
+          return [];
+        }
+        if (options?.onlyFirst === true && intervals.some((row) => row.stage === stage)) {
+          return [];
+        }
+        if (
+          options?.unlessChosenByHand === true &&
+          state._tag !== "idle" &&
+          intervals.find((row) => row.interval_id === state.intervalId)?.source === "manual"
+        ) {
           return [];
         }
         if (state._tag === "idle") {
@@ -273,7 +309,8 @@ const make = Effect.gen(function* () {
           yield* closeInterval(sql, state.intervalId, at, "stage_changed");
         }
         const intervalId = yield* newId;
-        yield* openInterval(sql, { intervalId, threadId, stage, startedAt: at, actor });
+        const source = options?.source ?? "manual";
+        yield* openInterval(sql, { intervalId, threadId, stage, startedAt: at, actor, source });
         return [
           yield* appendEvent(sql, {
             type: "work.stage-changed",
@@ -281,7 +318,13 @@ const make = Effect.gen(function* () {
             aggregateId: threadId,
             operationId: options?.operationId,
             actor,
-            payload: { from: state.stage, to: stage, fromState: state._tag, intervalId },
+            payload: {
+              from: state.stage,
+              to: stage,
+              fromState: state._tag,
+              intervalId,
+              ...(options?.cause === undefined ? {} : { cause: options.cause }),
+            },
             createdAt: at,
           }),
         ];

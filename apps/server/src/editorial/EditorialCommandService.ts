@@ -606,6 +606,8 @@ const make = Effect.gen(function* () {
               stage: input.openStage,
               startedAt: at,
               actor,
+              // Opened by the decision itself, not by a stage chosen in the clock.
+              source: "auto",
             });
             // No operation id: the decision's own event carries it, and replay looks it up.
             stageEvents.push(

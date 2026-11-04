@@ -35,7 +35,7 @@ vi.mock(import("./videoState"), async (original) => ({
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
-  // No workspace unless a test sets one: auto-versioning stays off and "Abrir guion" disabled.
+  // No workspace unless a test sets one: auto-versioning stays off and "Editar guion" disabled.
   useQuietThreadShell: (() =>
     testState.shell ??
     (testState.workspace === null
@@ -148,6 +148,15 @@ describe("VideoThreadSections", () => {
     expect(version).toContain("10 de 11 afirmaciones con cita");
     // The result form waits for the decision.
     expect(screen.container.textContent).not.toContain("Guardar resultado");
+  });
+
+  it("offers to edit the script and says where it is edited", async () => {
+    using _setup = setup(WRITING);
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await expect.element(screen.getByRole("button", { name: "Editar guion" })).toBeVisible();
+    await expect
+      .element(screen.getByText(/Se abre a la derecha en texto: escribe ahí/))
+      .toBeVisible();
   });
 
   it("sends the decision with the version on screen", async () => {
@@ -395,7 +404,42 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
     await userEvent.click(screen.getByRole("button", { name: "Editar" }));
     await expect
       .poll(() => callsOf(CLOCK))
-      .toEqual([expect.objectContaining({ command: { _tag: "stage", stage: "decide" } })]);
+      .toEqual([
+        expect.objectContaining({
+          command: { _tag: "stage", stage: "decide", cause: "decision-block" },
+        }),
+      ]);
+  });
+
+  /** A click alone, without pointer or focus, as scripted clicks and some assistive tools send. */
+  const clickOnly = (locator: Locator) => (locator.element() as HTMLElement).click();
+
+  // The decision's own snapshot ended Leer at submission and left Escribir and Decidir at zero.
+  it("opens Decidir before the snapshot when the form is sent without pointer or focus", async () => {
+    using _setup = setup({
+      ...WRITING,
+      clock: {
+        ...WRITING.clock,
+        state: { _tag: "running", stage: "read", since: "2026-10-31T13:05:00.000Z" },
+      },
+    });
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    clickOnly(screen.getByRole("button", { name: "Aceptar" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Aceptar" }))
+      .toHaveAttribute("aria-pressed", "true");
+    clickOnly(screen.getByRole("button", { name: "Utilidad 4" }));
+    await expect.element(screen.getByRole("button", { name: "Registrar decisión" })).toBeEnabled();
+    clickOnly(screen.getByRole("button", { name: "Registrar decisión" }));
+    await expect.poll(() => callsOf(DECIDE).length).toBe(1);
+    const order = testState.calls.map((call) => call.label);
+    expect(callsOf(CLOCK)).toEqual([
+      expect.objectContaining({
+        command: { _tag: "stage", stage: "decide", cause: "decision-block" },
+      }),
+    ]);
+    expect(order.indexOf(CLOCK)).toBeLessThan(order.indexOf(SAVE_SCRIPT));
+    expect(order.indexOf(SAVE_SCRIPT)).toBeLessThan(order.indexOf(DECIDE));
   });
 
   // H3-R: a clock a resolved recovery left stopped starts again in Decidir, once.
@@ -405,7 +449,11 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
     await userEvent.click(screen.getByRole("button", { name: "Aceptar" }));
     await expect
       .poll(() => callsOf(CLOCK))
-      .toEqual([expect.objectContaining({ command: { _tag: "start", stage: "decide" } })]);
+      .toEqual([
+        expect.objectContaining({
+          command: { _tag: "start", stage: "decide", cause: "decision-block" },
+        }),
+      ]);
   });
 
   // H4: once decided, the script opens as the decided snapshot, read-only.
@@ -415,7 +463,7 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
       path: "/state/editorial/versions/9f2c1ab07d3e4c55aa10/computacion-cuantica-threadvi.md",
     });
     await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
-    expect(screen.container.textContent).not.toContain("Abrir guion");
+    expect(screen.container.textContent).not.toContain("Editar guion");
     await userEvent.click(screen.getByRole("button", { name: "Abrir versión decidida" }));
     expect(callsOf("environment-data:editorial:video-open-version")).toEqual([
       { threadId: "thread-video", contentHash: "9f2c1ab07d3e4c55aa10" },

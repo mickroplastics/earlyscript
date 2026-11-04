@@ -257,4 +257,109 @@ describe("WorkClockService", () => {
       }).pipe(Effect.provide(layerAt(dbPath)));
     }).pipe(Effect.ensuring(removeDir(dir)));
   });
+
+  it.effect("moves automatically only from the named stage and only the first time", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        yield* registerThread;
+        const auto = {
+          source: "auto",
+          onlyFrom: "read",
+          onlyFirst: true,
+          unlessChosenByHand: true,
+          cause: "agent-request",
+        } as const;
+
+        yield* clock.start(THREAD, "read", { source: "auto" });
+        yield* advance(4);
+        const first = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(first.state, { _tag: "running", stage: "write" });
+        yield* advance(6);
+        // The operator goes back to Leer by hand: a later automatic change leaves it there.
+        yield* clock.changeStage(THREAD, "read");
+        yield* advance(2);
+        const kept = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(kept.state, { _tag: "running", stage: "read" });
+        assert.strictEqual(stageMs(kept, "read"), Duration.toMillis(Duration.minutes(6)));
+        assert.strictEqual(stageMs(kept, "write"), Duration.toMillis(Duration.minutes(6)));
+
+        const log = yield* EditorialEventLog;
+        const changes = (yield* log.readSince(0)).filter(
+          (event) => event.type === "work.stage-changed",
+        );
+        assert.strictEqual(changes.length, 2);
+        assert.deepInclude(changes[0]!.payload as object, { to: "write", cause: "agent-request" });
+        assert.notProperty(changes[1]!.payload as object, "cause");
+      }),
+    ),
+  );
+
+  it.effect("never overrides a stage chosen by hand, even before Escribir ran", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        const sql = yield* EditorialSql;
+        yield* registerThread;
+        const auto = {
+          source: "auto",
+          onlyFrom: "read",
+          onlyFirst: true,
+          unlessChosenByHand: true,
+          cause: "agent-request",
+        } as const;
+
+        // Sol's sequence: Leer as the thread opens, Decidir by hand, Leer by hand.
+        yield* clock.start(THREAD, "read", { source: "auto" });
+        yield* advance(1);
+        yield* clock.changeStage(THREAD, "decide");
+        yield* advance(1);
+        yield* clock.changeStage(THREAD, "read");
+        yield* advance(1);
+        const kept = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(kept.state, { _tag: "running", stage: "read" });
+        assert.isUndefined(stageMs(kept, "write"));
+
+        // A pause does not lose the choice: the resumed Leer is still the operator's.
+        yield* clock.pause(THREAD);
+        yield* clock.resume(THREAD);
+        const resumed = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(resumed.state, { _tag: "running", stage: "read" });
+
+        // Each segment says who opened it.
+        const rows = yield* sql<{ readonly stage: string; readonly source: string | null }>`
+          SELECT stage, source FROM editorial_work_intervals
+          WHERE thread_id = ${THREAD} ORDER BY started_at, rowid
+        `;
+        assert.deepStrictEqual(
+          rows.map((row) => [row.stage, row.source]),
+          [
+            ["read", "auto"],
+            ["decide", "manual"],
+            ["read", "manual"],
+            ["read", "manual"],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("still moves out of a Leer the flow chose after a pause", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        yield* registerThread;
+        yield* clock.start(THREAD, "read", { source: "auto" });
+        yield* clock.pause(THREAD);
+        yield* clock.resume(THREAD);
+        const moved = yield* clock.changeStage(THREAD, "write", {
+          source: "auto",
+          onlyFrom: "read",
+          onlyFirst: true,
+          unlessChosenByHand: true,
+        });
+        assert.deepInclude(moved.state, { _tag: "running", stage: "write" });
+      }),
+    ),
+  );
 });

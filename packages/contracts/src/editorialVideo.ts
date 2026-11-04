@@ -207,13 +207,20 @@ export type EditorialVideoThreadInput = typeof EditorialVideoThreadInput.Type;
 
 const Reason = Schema.String.check(Schema.isMaxLength(2_000));
 
+/**
+ * Set when the thread flow, not the operator's choice in the clock, asks for the stage: the
+ * first interaction with the decision block opens Decidir. The server records the segment as
+ * automatic and never uses it to send back to Decidir an operator who left it by hand.
+ */
+const ClockCause = Schema.optionalKey(Schema.Literal("decision-block"));
+
 export const EditorialVideoClockCommand = Schema.Union([
   /** Starts a stopped or recovered clock; refused while running or paused. */
-  Schema.TaggedStruct("start", { stage: EditorialResultsStage }),
+  Schema.TaggedStruct("start", { stage: EditorialResultsStage, cause: ClockCause }),
   Schema.TaggedStruct("pause", { reason: Schema.optionalKey(Reason) }),
   Schema.TaggedStruct("resume", {}),
   /** Closes the running stage and opens `stage`; from a pause, ends the pause too. */
-  Schema.TaggedStruct("stage", { stage: EditorialResultsStage }),
+  Schema.TaggedStruct("stage", { stage: EditorialResultsStage, cause: ClockCause }),
   Schema.TaggedStruct("stop", {}),
   /** The operator says when a recovered segment actually ended. */
   Schema.TaggedStruct("resolve", { intervalId: Schema.String, endedAt: IsoDateTime }),
