@@ -2247,7 +2247,7 @@ Siguen en inglés: las filas del registro de trabajo del agente («Thinking», �
 
 ## Aislamiento de T3 Code (rama `es/isolation`, 4 de noviembre de 2026)
 
-Base: `main` en `7c5f5de9dd`. Objetivo: Earlyscript no comparte nada con el T3 Code real que convive en las mismas máquinas (home `~/.t3`, puerto 3773, servicio `t3code.service`): ni carpetas, ni servicio de fondo, ni variables heredadas, ni enlaces. Corrige los cruces de `~/earlyscript-data/auditoria-aislamiento-2026-11-04/informe.md` y de la auditoría en Clotilde. Informe de la rama: `~/earlyscript-data/isolation/informe.md`; verificación de Sol en `~/earlyscript-data/isolation-verify/informe.md` y sus correcciones (G1 a G3) en la sección «Correcciones tras Sol» del informe de la rama.
+Base: `main` en `1aadad83c1`. Objetivo: Earlyscript no comparte nada con el T3 Code real que convive en las mismas máquinas (home `~/.t3`, puerto 3773, servicio `t3code.service`): ni carpetas, ni servicio de fondo, ni variables heredadas, ni enlaces. Corrige los cruces de `~/earlyscript-data/auditoria-aislamiento-2026-11-04/informe.md` y de la auditoría en Clotilde. Informe de la rama: `~/earlyscript-data/isolation/informe.md`; verificación de Sol en `~/earlyscript-data/isolation-verify/informe.md` y sus correcciones (G1 a G3) en la sección «Correcciones tras Sol» del informe de la rama; segunda ronda en `isolation-verify-2/` (G1: un `..` después de una carpeta inexistente ya no se acepta, porque la resolución no puede seguir enlaces tras ese punto; G2: `DocumentText.ts` y el `git` de la exportación lanzan procesos propios sin agentes con el entorno del servidor, excepción aceptada y documentada; con `--base-dir` el servidor no publica `EARLYSCRIPT_HOME`, limitación aceptada).
 
 Decisiones:
 

@@ -161,7 +161,7 @@ describe("assertEarlyscriptDataDirectory", () => {
       ]) {
         assert.throws(
           () => assertEarlyscriptDataDirectory(candidate, context),
-          /pertenece a T3 Code/,
+          T3CodeDataDirectoryError,
           candidate,
         );
       }
@@ -187,6 +187,27 @@ describe("assertEarlyscriptDataDirectory", () => {
         () =>
           assertEarlyscriptDataDirectory(`${NodePath.join(home, "inside")}/../new/child`, context),
         T3CodeDataDirectoryError,
+      );
+    });
+
+    it("refuses `..` after a missing folder, where a link could lead back into T3 Code", () => {
+      const { home, context } = fakeHome();
+      NodeFS.symlinkSync(NodePath.join(home, ".t3"), NodePath.join(home, "link"));
+      for (const candidate of [
+        NodePath.join(home, "missing", "..", "link", "nuevo"),
+        NodePath.join(home, "missing", "deeper", "..", "..", "link"),
+      ]) {
+        assert.throws(
+          () => assertEarlyscriptDataDirectory(candidate, context),
+          T3CodeDataDirectoryError,
+          candidate,
+        );
+      }
+      // The same climb over existing folders is fine: `..` is followed before anything is missing.
+      NodeFS.mkdirSync(NodePath.join(home, "real"));
+      assertEarlyscriptDataDirectory(
+        NodePath.join(home, "real", "..", "nueva", "carpeta"),
+        context,
       );
     });
 

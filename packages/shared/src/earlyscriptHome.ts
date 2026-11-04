@@ -115,7 +115,19 @@ function resolveOnDisk(candidate: string, path: NodePath.PlatformPath): Resoluti
     try {
       stat = NodeFS.lstatSync(next);
     } catch (error) {
-      if (isMissing(error)) return { kind: "resolved", path: path.join(next, ...pending) };
+      if (isMissing(error)) {
+        // Past a missing folder nothing more can be followed. A `..` later would climb back
+        // into existing ground, where a link could still lead to T3 Code: the kernel refuses
+        // `missing/..` too, so the path is not verifiable as written.
+        const rest = pending.filter((part) => part !== ".");
+        if (rest.includes("..")) {
+          return {
+            kind: "unverifiable",
+            detail: `«..» después de una carpeta inexistente en ${next}`,
+          };
+        }
+        return { kind: "resolved", path: path.join(next, ...rest) };
+      }
       return { kind: "unverifiable", detail: `${errorCode(error) || "error"} en ${next}` };
     }
     if (!stat.isSymbolicLink()) {
