@@ -1,9 +1,9 @@
 import type { EditorialVideoState } from "@t3tools/contracts";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { videoDeveloperToolsHidden } from "../earlyscript/hiddenFeatures";
 import { Button } from "../components/ui/button";
 import { ACTION_LABEL, formatClock, stageClockMs, interpolateClock } from "./videoThread.logic";
-import type { MapStop } from "./threadMap.logic";
+import { mapPanel, type MapStop } from "./threadMap.logic";
 import "./threadMap.css";
 
 const STOPS = [1, 2, 3, 4] as const;
@@ -46,13 +46,33 @@ export function ThreadMapView({
   /** Marks the thread as a trial (kept as evidence, out of Results) or back as human work. */
   readonly onToggleCohort: () => void;
 }) {
+  const readingPanel = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<{ active: MapStop; stop: MapStop } | null>(null);
   const stop = selection?.active === active ? selection.stop : active;
   const [tab, setTab] = useState("script");
   const decided = video.decision;
+  const storageKey = `earlyscript:map-chat:${video.thread.threadId}`;
+  const [chatOpen, setChatOpen] = useState(() => {
+    try {
+      return localStorage.getItem(storageKey) !== "closed";
+    } catch {
+      return true;
+    }
+  });
+  const toggleChat = (open: boolean) => {
+    setChatOpen(open);
+    if (!open) setTab("script");
+    try {
+      localStorage.setItem(storageKey, open ? "open" : "closed");
+    } catch {
+      /* Storage is optional. */
+    }
+  };
+  const panel = mapPanel(stop, active, decided !== null);
   // Visiting «② Pedir el borrador» once the draft exists shows the script, not the empty state.
   const drafted = active > 2;
   const focusChat = () => {
+    toggleChat(true);
     setTab("chat");
     onChange();
   };
@@ -63,6 +83,7 @@ export function ThreadMapView({
       data-testid="thread-map"
       data-stop={stop}
     >
+      <style>{`[data-map-quiet="true"] [data-chat-provider-model-picker], [data-map-quiet="true"] [data-composer-shortcut~="composer.effort"] { display: none; }`}</style>
       <header className="space-y-4 border-b p-4">
         <div className="flex flex-wrap justify-between gap-2 pr-16">
           <h1 className="font-semibold">{video.thread.trendTitle ?? "Mapa del video"}</h1>
@@ -93,6 +114,8 @@ export function ThreadMapView({
               aria-current={n === stop ? "step" : undefined}
               className={`rounded-lg border p-3 text-left text-sm ${n === stop ? "border-primary bg-primary/5" : "text-muted-foreground"}`}
               onClick={() => {
+                readingPanel.current?.scrollTo({ top: 0 });
+                setTab("script");
                 setSelection({ active, stop: n });
                 if (n === 4 && !decided) onDecide();
               }}
@@ -111,7 +134,7 @@ export function ThreadMapView({
         </nav>
         <p className="text-sm">
           {decided
-            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total. El guion de abajo es la versión decidida.`
+            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total.`
             : stop === 1
               ? "Lee de qué va el tema y por qué está aquí."
               : stop === 2
@@ -125,6 +148,9 @@ export function ThreadMapView({
                   : "Decide qué hacer con este guion."}
         </p>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" aria-expanded={chatOpen} onClick={() => toggleChat(!chatOpen)}>
+            {chatOpen ? "Plegar conversación" : "Abrir conversación"}
+          </Button>
           {decided ? null : stop === 1 ? (
             <Button
               onClick={() => {
@@ -142,6 +168,7 @@ export function ThreadMapView({
             <Button
               disabled={working}
               onClick={() => {
+                toggleChat(true);
                 setTab("chat");
                 onRequest();
               }}
@@ -176,29 +203,56 @@ export function ThreadMapView({
         <button role="tab" aria-selected={tab === "script"} onClick={() => setTab("script")}>
           Guion
         </button>
-        <button role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>
+        <button
+          role="tab"
+          aria-selected={tab === "chat"}
+          onClick={() => {
+            toggleChat(true);
+            setTab("chat");
+          }}
+        >
           Conversación
         </button>
       </div>
-      <div className="grid min-h-0 flex-1 lg:grid-cols-2">
+      <div className={`grid min-h-0 flex-1 ${chatOpen ? "lg:grid-cols-2" : ""}`}>
         <div
+          key={stop}
+          ref={readingPanel}
+          data-testid="map-reading-panel"
           className={`${tab === "script" ? "flex" : "hidden"} min-h-0 flex-col gap-5 overflow-auto border-r p-5 lg:flex`}
         >
-          {stop === 1 && !decided ? (
+          {panel === "topic" ? (
             topic
-          ) : stop === 2 && !decided && !drafted ? (
+          ) : panel === "empty" ? (
             <p className="text-muted-foreground">
               Todavía no hay guion. Aparecerá aquí cuando el asistente lo escriba.
             </p>
+          ) : panel === "decision" ? (
+            <>
+              {decision}
+              {decided ? (
+                <details>
+                  <summary className="cursor-pointer font-medium">
+                    Métricas del video publicado
+                  </summary>
+                  {result}
+                </details>
+              ) : null}
+              <section className="space-y-4" aria-label="Guion evaluado">
+                <h2 className="font-semibold">
+                  {decided ? "Guion de la versión decidida" : "Guion evaluado"}
+                </h2>
+                {script}
+              </section>
+            </>
           ) : (
             script
           )}
-          {stop === 4 || decided ? decision : null}
-          {decided ? result : null}
         </div>
         <div
           data-map-conversation
-          className={`${tab === "chat" ? "flex" : "hidden"} min-h-0 min-w-0 flex-col lg:flex`}
+          style={chatOpen ? undefined : { display: "none" }}
+          className={`${chatOpen ? (tab === "chat" ? "flex lg:flex" : "hidden lg:flex") : "hidden"} min-h-0 min-w-0 flex-col`}
         >
           <h2 className="border-b px-4 py-2 text-xs font-medium text-muted-foreground">
             CONVERSACIÓN CON EL ASISTENTE

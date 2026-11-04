@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { JUST_CREATED, WRITING, DECIDED } from "./videoThread.fixture";
-import { activeMapStop, mapScript } from "./threadMap.logic";
+import { activeMapStop, mapPanel, mapScript } from "./threadMap.logic";
 const SCRIPT =
   "# Hook\n\nA claim with enough words [itm_hn_a].\n\n# Block 1\n\nAnother claim here [itm_hn_b, itm_hn_a].\n\n# Sources\n\n[itm_hn_c]";
 describe("video map", () => {
@@ -23,6 +23,13 @@ describe("video map", () => {
       ),
     ).toBe(4);
     expect(activeMapStop(DECIDED, "", false)).toBe(4);
+  });
+  it("keeps completed stops independently readable", () => {
+    expect(mapPanel(1, 4, true)).toBe("topic");
+    expect(mapPanel(4, 4, true)).toBe("decision");
+    expect(mapPanel(4, 3, false)).toBe("decision");
+    expect(mapPanel(3, 4, true)).toBe("script");
+    expect(mapPanel(2, 2, false)).toBe("empty");
   });
   it("numbers unique citations in body order and keeps missing sources explicit", () => {
     const mapped = mapScript(SCRIPT, []);

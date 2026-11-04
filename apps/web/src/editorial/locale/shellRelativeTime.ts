@@ -8,6 +8,11 @@ import type { LocaleTable } from "./scopedLocale";
 const UNITS: Readonly<Record<string, string>> = { s: "s", m: "min", h: "h", d: "d" };
 
 export function relativeTimeEs(value: string): string {
+  const yesterday = /^yesterday at (.+)$/.exec(value);
+  if (yesterday) return `ayer, ${relativeTimeEs(yesterday[1] ?? "")}`;
+  const time = /^(\d{1,2}):(\d{2})\s*([AP]M)$/.exec(value);
+  if (time)
+    return `${String((Number(time[1]) % 12) + (time[3] === "PM" ? 12 : 0)).padStart(2, "0")}:${time[2]}`;
   if (value === "just now") return "ahora mismo";
   if (value === "now") return "ahora";
   const ago = /^(\d+)([mhd]) ago$/.exec(value);

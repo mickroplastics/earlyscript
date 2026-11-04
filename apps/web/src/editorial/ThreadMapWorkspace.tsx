@@ -264,7 +264,12 @@ function LiveMap({
   const active = activeMapStop(video, contents, shell?.latestUserMessageAt != null);
   const change = () => {
     window.setTimeout(
-      () => root.current?.querySelector<HTMLElement>('[contenteditable="true"],textarea')?.focus(),
+      () =>
+        root.current
+          ?.querySelector<HTMLElement>(
+            '[data-map-conversation] [contenteditable="true"], [data-map-conversation] textarea',
+          )
+          ?.focus(),
       0,
     );
   };
