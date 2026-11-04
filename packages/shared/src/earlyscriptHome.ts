@@ -12,8 +12,32 @@ export interface EarlyscriptHomeContext {
   readonly homeDirectory: string;
   /** Omitted: every platform's folders count, matched without case (refuses more, never less). */
   readonly platform?: NodeJS.Platform | undefined;
-  /** `%APPDATA%` on Windows; defaults to `<home>\AppData\Roaming`. */
+  /**
+   * Electron's appData folder, where T3 Code's userData lives: `%APPDATA%` on Windows,
+   * `$XDG_CONFIG_HOME` on Linux. Checked in addition to the default (`<home>\AppData\Roaming`,
+   * `~/.config`), never instead of it.
+   */
   readonly appDataDirectory?: string | undefined;
+}
+
+/** The context for the current process: its platform and the appData folder its environment sets. */
+export function earlyscriptHomeContextOf(input: {
+  readonly homeDirectory: string;
+  readonly platform: NodeJS.Platform;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}): EarlyscriptHomeContext {
+  const configured = (
+    input.platform === "win32"
+      ? input.env.APPDATA
+      : input.platform === "darwin"
+        ? undefined
+        : input.env.XDG_CONFIG_HOME
+  )?.trim();
+  return {
+    homeDirectory: input.homeDirectory,
+    platform: input.platform,
+    appDataDirectory: configured === undefined || configured.length === 0 ? undefined : configured,
+  };
 }
 
 const pathApi = (platform: NodeJS.Platform) =>
@@ -33,16 +57,19 @@ function t3CodeDataDirectories(context: EarlyscriptHomeContext): ReadonlyArray<s
   const directories = platformsOf(context).flatMap((platform) => {
     const path = pathApi(platform);
     const home = context.homeDirectory;
-    const userDataRoot =
+    const userDataRoots =
       platform === "darwin"
-        ? path.join(home, "Library", "Application Support")
-        : platform === "win32"
-          ? (context.appDataDirectory ?? path.join(home, "AppData", "Roaming"))
-          : path.join(home, ".config");
+        ? [path.join(home, "Library", "Application Support")]
+        : [
+            path.join(home, ...(platform === "win32" ? ["AppData", "Roaming"] : [".config"])),
+            ...(context.appDataDirectory === undefined ? [] : [context.appDataDirectory]),
+          ];
     return [
       path.join(home, ".t3"),
-      path.join(userDataRoot, "t3code"),
-      path.join(userDataRoot, "t3code-dev"),
+      ...userDataRoots.flatMap((root) => [
+        path.join(root, "t3code"),
+        path.join(root, "t3code-dev"),
+      ]),
     ];
   });
   return [...new Set(directories)];

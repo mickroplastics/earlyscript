@@ -7,6 +7,7 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 import {
   assertEarlyscriptDataDirectory,
   checkEarlyscriptDataDirectory,
+  earlyscriptHomeContextOf,
   T3CodeDataDirectoryError,
   type EarlyscriptHomeContext,
 } from "./earlyscriptHome.ts";
@@ -84,6 +85,42 @@ describe("assertEarlyscriptDataDirectory", () => {
     assert.equal(
       findT3CodeDataDirectory("/Users/miguel/Library/Application Support/earlyscript", mac),
       undefined,
+    );
+  });
+
+  it("derives T3 Code's userData from APPDATA and XDG_CONFIG_HOME, keeping the defaults", () => {
+    const windows = earlyscriptHomeContextOf({
+      homeDirectory: "C:\\Users\\Miguel",
+      platform: "win32",
+      env: { APPDATA: "D:\\Roaming", XDG_CONFIG_HOME: "/ignored" },
+    });
+    assert.equal(windows.appDataDirectory, "D:\\Roaming");
+    assert.equal(findT3CodeDataDirectory("D:\\Roaming\\t3code", windows), "D:\\Roaming\\t3code");
+    assert.equal(
+      findT3CodeDataDirectory("C:\\Users\\Miguel\\AppData\\Roaming\\t3code-dev", windows),
+      "C:\\Users\\Miguel\\AppData\\Roaming\\t3code-dev",
+    );
+    const linux = earlyscriptHomeContextOf({
+      homeDirectory: "/home/miguel",
+      platform: "linux",
+      env: { XDG_CONFIG_HOME: "/data/config", APPDATA: "D:\\ignored" },
+    });
+    assert.equal(findT3CodeDataDirectory("/data/config/t3code/x", linux), "/data/config/t3code");
+    assert.equal(
+      findT3CodeDataDirectory("/home/miguel/.config/t3code", linux),
+      "/home/miguel/.config/t3code",
+    );
+    assert.equal(findT3CodeDataDirectory("/data/config/earlyscript", linux), undefined);
+    assert.isUndefined(
+      earlyscriptHomeContextOf({ homeDirectory: "/Users/m", platform: "darwin", env: {} })
+        .appDataDirectory,
+    );
+    assert.isUndefined(
+      earlyscriptHomeContextOf({
+        homeDirectory: "/home/m",
+        platform: "linux",
+        env: { XDG_CONFIG_HOME: " " },
+      }).appDataDirectory,
     );
   });
 

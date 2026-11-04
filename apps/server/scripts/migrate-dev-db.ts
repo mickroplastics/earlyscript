@@ -4,7 +4,11 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
-import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
+import {
+  assertEarlyscriptDataDirectory,
+  earlyscriptHomeContextOf,
+} from "@t3tools/shared/earlyscriptHome";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeURL from "node:url";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as Console from "effect/Console";
@@ -456,10 +460,13 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     return yield* new MigrateDevDbNotInWorktreeError();
   }
   // Earlyscript: never read from or write to T3 Code's data directories.
+  const homeContext = earlyscriptHomeContextOf({
+    homeDirectory: NodeOS.homedir(),
+    platform: yield* HostProcess.Platform,
+    env: yield* HostProcess.Environment,
+  });
   for (const directory of [baseDir, sourcePath]) {
-    yield* Effect.sync(() =>
-      assertEarlyscriptDataDirectory(directory, { homeDirectory: NodeOS.homedir() }),
-    );
+    yield* Effect.sync(() => assertEarlyscriptDataDirectory(directory, homeContext));
   }
   const stateDir = path.join(baseDir, "userdata");
   const databasePath = path.join(stateDir, "statev2.sqlite");

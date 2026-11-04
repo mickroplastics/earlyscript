@@ -4,7 +4,11 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
-import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
+import {
+  assertEarlyscriptDataDirectory,
+  earlyscriptHomeContextOf,
+} from "@t3tools/shared/earlyscriptHome";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -188,9 +192,12 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   );
   const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
   // Earlyscript: never open T3 Code's databases.
-  yield* Effect.sync(() =>
-    assertEarlyscriptDataDirectory(baseDir, { homeDirectory: NodeOS.homedir() }),
-  );
+  const homeContext = earlyscriptHomeContextOf({
+    homeDirectory: NodeOS.homedir(),
+    platform: yield* HostProcess.Platform,
+    env: yield* HostProcess.Environment,
+  });
+  yield* Effect.sync(() => assertEarlyscriptDataDirectory(baseDir, homeContext));
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {

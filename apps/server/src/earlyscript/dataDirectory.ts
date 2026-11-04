@@ -3,6 +3,7 @@
 import {
   checkEarlyscriptDataDirectory,
   describeRefusedDataDirectory,
+  earlyscriptHomeContextOf,
 } from "@t3tools/shared/earlyscriptHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -31,11 +32,14 @@ export class EarlyscriptDataDirectoryError extends Schema.TaggedError<Earlyscrip
 export const checkT3CodeDirectoryFor = Effect.fn("earlyscript.checkT3CodeDirectoryFor")(function* (
   directory: string,
 ) {
-  return checkEarlyscriptDataDirectory(directory, {
-    homeDirectory: yield* HostProcess.HomeDirectory,
-    platform: yield* HostProcess.Platform,
-    appDataDirectory: (yield* HostProcess.Environment).APPDATA,
-  });
+  return checkEarlyscriptDataDirectory(
+    directory,
+    earlyscriptHomeContextOf({
+      homeDirectory: yield* HostProcess.HomeDirectory,
+      platform: yield* HostProcess.Platform,
+      env: yield* HostProcess.Environment,
+    }),
+  );
 });
 
 export const guardEarlyscriptBaseDir = Effect.fn("earlyscript.guardEarlyscriptBaseDir")(function* (

@@ -23,4 +23,32 @@ describe("resolveDesktopBaseDir (Earlyscript guard)", () => {
     assert.throws(() => resolve("/home/miguel/.t3"), T3CodeDataDirectoryError);
     assert.throws(() => resolve("/home/miguel/.t3/userdata"), T3CodeDataDirectoryError);
   });
+
+  it("checks the redirected %APPDATA% and XDG_CONFIG_HOME it is given", () => {
+    const windows = (t3Home: string) =>
+      resolveDesktopBaseDir({
+        homeDirectory: "C:\\Users\\Miguel",
+        joinPath: NodePath.win32.join,
+        t3Home: Option.some(t3Home),
+        platform: "win32",
+        appDataDirectory: "D:\\Roaming",
+      });
+    assert.throws(() => windows("D:\\Roaming\\t3code"), T3CodeDataDirectoryError);
+    assert.throws(
+      () => windows("C:\\Users\\Miguel\\AppData\\Roaming\\t3code"),
+      T3CodeDataDirectoryError,
+    );
+    assert.equal(windows("D:\\Roaming\\earlyscript"), "D:\\Roaming\\earlyscript");
+    assert.throws(
+      () =>
+        resolveDesktopBaseDir({
+          homeDirectory: "/home/miguel",
+          joinPath: NodePath.posix.join,
+          t3Home: Option.some("/data/config/t3code"),
+          platform: "linux",
+          appDataDirectory: "/data/config",
+        }),
+      T3CodeDataDirectoryError,
+    );
+  });
 });

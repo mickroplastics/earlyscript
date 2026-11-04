@@ -11,7 +11,10 @@ import {
   adoptEarlyscriptEnvironment,
   mirrorToEarlyscriptEnvironment,
 } from "@t3tools/shared/earlyscriptEnv";
-import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
+import {
+  assertEarlyscriptDataDirectory,
+  earlyscriptHomeContextOf,
+} from "@t3tools/shared/earlyscriptHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -279,10 +282,12 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
   const configured = baseDir?.trim();
 
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const platform = yield* HostProcess.Platform;
-  const appDataDirectory = (yield* HostProcess.Environment).APPDATA;
-  const guard = (directory: string) =>
-    assertEarlyscriptDataDirectory(directory, { homeDirectory, platform, appDataDirectory });
+  const context = earlyscriptHomeContextOf({
+    homeDirectory,
+    platform: yield* HostProcess.Platform,
+    env: yield* HostProcess.Environment,
+  });
+  const guard = (directory: string) => assertEarlyscriptDataDirectory(directory, context);
   if (configured === "~") {
     return guard(homeDirectory);
   }

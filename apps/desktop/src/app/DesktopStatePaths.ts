@@ -16,12 +16,20 @@ export function resolveDesktopBaseDir(input: {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly t3Home: Option.Option<string>;
+  /** Omitted: the guard checks every platform's folders. */
+  readonly platform?: NodeJS.Platform | undefined;
+  /** Electron's appData folder (`%APPDATA%`, `$XDG_CONFIG_HOME`), where T3 Code's userData lives. */
+  readonly appDataDirectory?: string | undefined;
 }): string {
   return assertEarlyscriptDataDirectory(
     Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
       input.joinPath(input.homeDirectory, EarlyscriptBrand.homeDirName),
     ),
-    { homeDirectory: input.homeDirectory },
+    {
+      homeDirectory: input.homeDirectory,
+      platform: input.platform,
+      appDataDirectory: input.appDataDirectory,
+    },
   );
 }
 
