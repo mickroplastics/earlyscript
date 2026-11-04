@@ -10,7 +10,7 @@ export class EarlyscriptDataDirectoryError extends Schema.TaggedError<Earlyscrip
   { directory: Schema.String, t3CodeDirectory: Schema.String },
 ) {
   override get message(): string {
-    return `Earlyscript no puede usar ${this.directory} como carpeta de datos: pertenece a T3 Code (${this.t3CodeDirectory}). Usa la carpeta por defecto (~/.earlyscript) o indica otra con --home-dir o EARLYSCRIPT_HOME.`;
+    return `Earlyscript no puede usar ${this.directory} como carpeta de datos: pertenece a T3 Code (${this.t3CodeDirectory}). Usa la carpeta por defecto (~/.earlyscript) o indica otra con EARLYSCRIPT_HOME, --base-dir (servidor) o --home-dir (pnpm dev).`;
   }
 }
 

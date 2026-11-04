@@ -90,7 +90,7 @@ export class T3CodeDataDirectoryError extends Error {
   constructor(directory: string, t3CodeDirectory: string) {
     super(
       `Earlyscript no puede usar ${directory} como carpeta de datos: pertenece a T3 Code (${t3CodeDirectory}). ` +
-        "Usa la carpeta por defecto (~/.earlyscript) o indica otra con --home-dir o EARLYSCRIPT_HOME.",
+        "Usa la carpeta por defecto (~/.earlyscript) o indica otra con EARLYSCRIPT_HOME, --base-dir (servidor) o --home-dir (pnpm dev).",
     );
     this.name = "T3CodeDataDirectoryError";
     this.directory = directory;
