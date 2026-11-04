@@ -7,6 +7,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import {
+  adoptEarlyscriptEnvironment,
+  mirrorToEarlyscriptEnvironment,
+} from "@t3tools/shared/earlyscriptEnv";
 import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -759,6 +763,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     port: input.port,
     devUrl: input.devUrl,
   });
+  mirrorToEarlyscriptEnvironment(env);
 
   const selectionSuffix =
     serverOffset !== offset || webOffset !== offset
@@ -999,6 +1004,8 @@ const cliRuntimeLayer = Layer.mergeAll(
 );
 
 if (import.meta.main) {
+  // Earlyscript: drop what T3 Code exports to its terminals (T3CODE_HOME=~/.t3...).
+  adoptEarlyscriptEnvironment(process.env, { transitional: true, dropElectronRunAsNode: true });
   Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

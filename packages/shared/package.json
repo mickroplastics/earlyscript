@@ -355,6 +355,10 @@
       "types": "./src/earlyscriptBrand.ts",
       "import": "./src/earlyscriptBrand.ts"
     },
+    "./earlyscriptEnv": {
+      "types": "./src/earlyscriptEnv.ts",
+      "import": "./src/earlyscriptEnv.ts"
+    },
     "./earlyscriptHome": {
       "types": "./src/earlyscriptHome.ts",
       "import": "./src/earlyscriptHome.ts"

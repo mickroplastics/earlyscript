@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { dropInheritedT3Home } from "./inheritedHome.ts";
+import { adoptInheritedEnvironment } from "./inheritedHome.ts";
 
 const environmentFor = (isPackaged: boolean, env: NodeJS.ProcessEnv) =>
   DesktopEnvironment.DesktopEnvironment.pipe(
@@ -29,26 +29,56 @@ const environmentFor = (isPackaged: boolean, env: NodeJS.ProcessEnv) =>
     ),
   );
 
-describe("dropInheritedT3Home", () => {
+/** What a terminal or agent started by T3 Code exports. */
+const fromT3Code = (): NodeJS.ProcessEnv => ({
+  PATH: "/usr/bin",
+  T3CODE_HOME: "/Users/alice/.t3",
+  T3CODE_THREAD_ID: "thread:1",
+  T3_BOOT_SERVICE_UNIT: "t3code.service",
+  T3_SERVICE_LAUNCHER_CONTEXT: "{}",
+  ELECTRON_RUN_AS_NODE: "1",
+});
+
+describe("adoptInheritedEnvironment", () => {
   it.effect("keeps the packaged app's logs and state out of an inherited T3 Code home", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { T3CODE_HOME: "/Users/alice/.t3", PATH: "/usr/bin" };
-      dropInheritedT3Home(env, true);
+      const env = fromT3Code();
+      adoptInheritedEnvironment(env, true);
       const environment = yield* environmentFor(true, env);
 
       assert.equal(environment.baseDir, "/Users/alice/.earlyscript");
       assert.equal(environment.logDir, "/Users/alice/.earlyscript/userdata/logs");
-      assert.equal(env.PATH, "/usr/bin");
+      assert.deepStrictEqual(env, { PATH: "/usr/bin" });
     }),
   );
 
-  it.effect("keeps the home the dev runner sets for an unpackaged app", () =>
+  it.effect("takes the home from EARLYSCRIPT_HOME", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { T3CODE_HOME: "/repo/.t3" };
-      dropInheritedT3Home(env, false);
+      const env: NodeJS.ProcessEnv = { ...fromT3Code(), EARLYSCRIPT_HOME: "/Users/alice/es-home" };
+      adoptInheritedEnvironment(env, true);
+      const environment = yield* environmentFor(true, env);
+
+      assert.equal(environment.baseDir, "/Users/alice/es-home");
+    }),
+  );
+
+  it.effect("keeps the home the dev runner passes to an unpackaged app", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { T3CODE_HOME: "/repo/.t3", EARLYSCRIPT_HOME: "/repo/.t3" };
+      adoptInheritedEnvironment(env, false);
       const environment = yield* environmentFor(false, env);
 
       assert.equal(environment.baseDir, "/repo/.t3");
+    }),
+  );
+
+  it.effect("ignores T3 Code's home in development too", () =>
+    Effect.gen(function* () {
+      const env = fromT3Code();
+      adoptInheritedEnvironment(env, false);
+      const environment = yield* environmentFor(false, env);
+
+      assert.equal(environment.baseDir, "/Users/alice/.earlyscript");
     }),
   );
 });

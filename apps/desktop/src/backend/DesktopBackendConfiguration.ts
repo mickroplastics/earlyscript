@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import { earlyscriptAliasOf } from "@t3tools/shared/earlyscriptEnv";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
@@ -121,7 +122,12 @@ const nodeBinDirOf = (nodePath: string): string => {
 };
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
-  Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
+  Object.fromEntries(
+    DESKTOP_BACKEND_ENV_NAMES.flatMap((name) => [
+      [name, undefined],
+      [earlyscriptAliasOf(name), undefined],
+    ]),
+  );
 
 const getWslEnvEntryName = (entry: string): string => {
   const slashIndex = entry.indexOf("/");
@@ -532,7 +538,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
-        T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        EARLYSCRIPT_CLI_PATH: Option.getOrUndefined(input.cliPath),
       },
       extendEnv: true,
       bootstrap,
