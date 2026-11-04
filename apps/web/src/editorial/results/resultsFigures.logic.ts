@@ -20,7 +20,6 @@ import {
   citationDetail,
   coverageNote,
   formatDuration,
-  formatPercent,
   medianDifferenceText,
   modeLabel,
   modeSummary,
@@ -126,8 +125,8 @@ export function utilityFigure(summary: EditorialResultsSummary): FigureBody {
         series: mode,
       })),
       ...entries.map(({ mode, entry }) => ({
-        label: `Afirmaciones con cita, ${modeLabel(mode).toLowerCase()}`,
-        value: entry.citations.ratio === null ? "sin datos" : formatPercent(entry.citations.ratio),
+        label: `Frases con marcador de fuente, ${modeLabel(mode).toLowerCase()}`,
+        value: `${entry.citations.cited} de ${entry.citations.claims} frases con marcador de fuente`,
         detail: citationDetail(entry),
         series: mode,
       })),

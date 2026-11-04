@@ -177,7 +177,7 @@ export function formatDuration(ms: number): string {
   if (hours === 0) return `${number.format(rest)}${NBSP}min`;
   return rest === 0
     ? `${hours}${NBSP}h`
-    : `${hours}${NBSP}h${NBSP}${number.format(rest).padStart(2, "0")}${NBSP}min`;
+    : `${hours}${NBSP}h${NBSP}${number.format(rest)}${NBSP}min`;
 }
 
 export function formatCount(n: number, singular: string, plural: string): string {
@@ -265,18 +265,10 @@ export function emptySideText(stats: EditorialDurationStats, provisional: number
   return `${sizeText(0)} · ${formatCount(provisional, "hilo espera", "hilos esperan")} resolver un tramo`;
 }
 
-const percentFormat = new Intl.NumberFormat("es", {
-  style: "percent",
-  maximumFractionDigits: 0,
-});
 const meanFormat = new Intl.NumberFormat("es", {
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
-
-export function formatPercent(ratio: number): string {
-  return percentFormat.format(ratio);
-}
 
 function formatMean(value: number): string {
   return meanFormat.format(value);
@@ -445,7 +437,7 @@ export function closingStrip(summary: EditorialResultsSummary) {
     },
     {
       title: "Muestra",
-      text: `${human} hilos humanos. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${trials} ensayos excluidos${firstTrial && lastTrial ? `, creados entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+      text: `${human} hilos humanos. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
     },
     {
       title: "Límites",

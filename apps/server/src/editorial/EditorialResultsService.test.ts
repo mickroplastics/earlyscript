@@ -5,6 +5,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { checkScript } from "@earlyscript/editorial-script";
 import type { EditorialDurationStats, EditorialResultsSummary } from "@t3tools/contracts";
 
+import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { WorkClockService } from "./WorkClockService.ts";
@@ -63,6 +64,29 @@ describe("quantiles", () => {
 });
 
 describe("EditorialResultsService", () => {
+  it.effect("excludes trials from every human aggregate but keeps decisions, reversibly", () =>
+    withResults(
+      Effect.gen(function* () {
+        yield* seedResultsFixture;
+        const service = yield* EditorialResultsService.EditorialResultsService;
+        const threads = yield* EditorialThreadService;
+        const before = yield* service.summary;
+        yield* threads.setCohort("thread-assisted-1", "trial");
+        const after = yield* service.summary;
+        assert.strictEqual(modeOf(after, "assisted").threads, 2);
+        assert.strictEqual(modeOf(after, "assisted").utility.n, 2);
+        assert.strictEqual(modeOf(after, "assisted").citations.threads, 2);
+        assert.strictEqual(modeOf(after, "assisted").total.n, 2);
+        assert.strictEqual(after.trials?.length, 1);
+        assert.strictEqual(after.decisionCount, before.decisionCount - 1);
+        const decisions = yield* service.allDecisions;
+        assert.strictEqual(decisions.at(-1)?.cohort, "trial");
+        yield* threads.setCohort("thread-assisted-1", "human");
+        assert.deepStrictEqual((yield* service.summary).modes, before.modes);
+      }),
+    ),
+  );
+
   it("counts the fixture scripts as the validator does", () => {
     assert.deepStrictEqual(checkScript(FULLY_CITED_SCRIPT).counts, {
       claims: 4,

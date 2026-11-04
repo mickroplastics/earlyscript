@@ -12,6 +12,8 @@ import {
 } from "@t3tools/contracts";
 import { durationAxis, type FigureBody, type FigureSeries } from "./figureExport.logic";
 
+import { formatDuration } from "./results.logic";
+
 const MINUTE_MS = 60_000;
 
 const MONTHS = [
@@ -59,25 +61,9 @@ export function daysListText(days: ReadonlyArray<string>): string {
   return items.length === 1 ? items[0]! : `${items.slice(0, -1).join(", ")} y ${items.at(-1)!}`;
 }
 
-const halfFormat = new Intl.NumberFormat("es", { maximumFractionDigits: 1 });
-
-/**
- * "45 min", "1 h", "1 h 05 min", "1 h 02,5 min": a median of whole minutes can fall on a half
- * minute, which stays visible; anything finer rounds to the half minute. Under a minute, "45 s".
- */
 export function formatMinutes(minutes: number): string {
-  if (minutes === 0) return "0 min";
-  if (minutes < 1) return `${Math.round(minutes * 60)} s`;
-  const half = Math.round(minutes * 2) / 2;
-  if (half < 60) return `${halfFormat.format(half)} min`;
-  const hours = Math.floor(half / 60);
-  const rest = half - hours * 60;
-  if (rest === 0) return `${hours} h`;
-  const whole = Math.floor(rest);
-  const text = `${String(whole).padStart(2, "0")}${rest === whole ? "" : ",5"}`;
-  return `${hours} h ${text} min`;
+  return formatDuration(minutes * MINUTE_MS).replaceAll("\u00a0", " ");
 }
-
 export function formatMs(ms: number): string {
   return formatMinutes(ms / MINUTE_MS);
 }

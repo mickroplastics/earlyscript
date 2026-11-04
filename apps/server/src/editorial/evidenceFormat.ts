@@ -126,6 +126,7 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("hilo", THREAD, "Hilo de video; en share, índice estable h001…"),
     column("entorno", null, "Entorno de T3 que registró el hilo."),
     column("modo", MODES, "assisted o manual."),
+    column("cohorte", { kind: "enum", values: ["human", "trial"] }, "human o trial."),
     column("tendencia", TREND, "Clave de tendencia; en share, índice estable t001…"),
     column("corrida", RUN, "Corrida del motor del hilo asistido; en share, índice r001…"),
     column("expediente", null, "Expediente de la corrida."),
@@ -332,6 +333,10 @@ export const SHARE_EVENT_DATA: Readonly<
   "trend.dismissed": {},
   "trend.reopened": {},
   "trend.production-linked": { threadId: THREAD, previousThreadId: THREAD },
+  "video-thread.cohort-changed": {
+    previous: oneOf("human", "trial"),
+    cohort: oneOf("human", "trial"),
+  },
   "video-thread.registered": { mode: MODES, trendKey: TREND, runId: RUN },
   "video-thread.launched": { previous: oneOf("pending", "launched", "failed") },
   "video-thread.launch-failed": { previous: oneOf("pending", "launched", "failed") },

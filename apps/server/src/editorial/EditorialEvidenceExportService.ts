@@ -279,6 +279,7 @@ const decisionRow = (decision: EditorialResultsDecision, current: boolean): CsvR
   hilo: decision.threadId,
   entorno: decision.environmentId,
   modo: decision.mode,
+  cohorte: decision.cohort ?? "human",
   tendencia: decision.trendKey,
   corrida: decision.runId,
   expediente: decision.dossierId,
@@ -351,6 +352,7 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
     threadId: String(row.hilo ?? ""),
     environmentId: "",
     mode,
+    cohort: row.cohorte === "trial" ? "trial" : "human",
     trendKey: null,
     runId: null,
     trendLabel: null,
@@ -658,7 +660,7 @@ const renderSummary = (input: SummaryInput): string => {
     "",
     "## Tiempos por modo y etapa",
     "",
-    "Decisión vigente de cada hilo dentro del filtro. Los hilos con un tramo sin resolver quedan fuera de los tiempos. Una etapa que no corrió no aporta un cero. Cuartiles por interpolación lineal (tipo 7 de R); RIC = Q3 − Q1.",
+    "Solo cohorte human. Los ensayos (trial) se conservan en decisiones.csv y quedan fuera de estas cifras. Decisión vigente de cada hilo dentro del filtro. Los hilos con un tramo sin resolver quedan fuera de los tiempos. Una etapa que no corrió no aporta un cero. Cuartiles por interpolación lineal (tipo 7 de R); RIC = Q3 − Q1.",
     "",
     markdownTable(["Modo", "Etapa", "n", "Mediana", "Q1", "Q3", "RIC"], stageRows),
     "",
@@ -1036,7 +1038,7 @@ const make = Effect.gen(function* () {
     // its domain leaves the aggregates and is only counted, never shown.
     const inDomain = decisions.map(decisionInDomain);
     const excludedByDomain = decisions.filter(
-      (decision, index) => decision.current && !inDomain[index],
+      (decision, index) => decision.cohort !== "trial" && decision.current && !inDomain[index],
     ).length;
     const baselineProvenance = manualLog.provenance;
     const baselineHash =

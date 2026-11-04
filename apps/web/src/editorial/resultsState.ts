@@ -21,19 +21,19 @@ const refreshBaseline = (
 ) => Effect.sync(() => registry.refresh(baseline({ environmentId, input: {} })));
 
 /**
- * Results reads per environment. Decisions arrive a few times a day at most, so a minute of
- * staleness is invisible and reopening the space picks up the thread just closed.
+ * Results reads per environment. Reopening must reflect cohort changes immediately, so
+ * a trial never stays in the human figures through the previous view's cache.
  */
 export const editorialResultsEnvironment = {
   summary: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:editorial:results-summary",
     tag: EDITORIAL_RESULTS_WS_METHODS.summary,
-    staleTimeMs: 60_000,
+    staleTimeMs: 0,
   }),
   decisions: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:editorial:results-decisions",
     tag: EDITORIAL_RESULTS_WS_METHODS.decisions,
-    staleTimeMs: 60_000,
+    staleTimeMs: 0,
   }),
   baseline,
   /** Replaces the stored manual log with the CSV's; the section reads it again on success. */

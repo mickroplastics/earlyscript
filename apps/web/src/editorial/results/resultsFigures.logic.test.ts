@@ -16,7 +16,6 @@ import {
   utilityFigure,
   videoFigure,
 } from "./resultsFigures.logic";
-import { formatPercent } from "./results.logic";
 
 const MINUTE = 60_000;
 const stats = (
@@ -109,8 +108,8 @@ describe("Results figures", () => {
     expect(utility.metrics.map((metric) => metric.value)).toEqual([
       "4,0 de 5",
       "3,0 de 5",
-      formatPercent(11 / 13),
-      formatPercent(11 / 13),
+      "11 de 13 frases con marcador de fuente",
+      "11 de 13 frases con marcador de fuente",
     ]);
     const inbox = inboxFigure(SUMMARY);
     if (inbox.kind !== "metrics") throw new Error("metrics expected");

@@ -29,7 +29,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatDate } from "../editorial.logic";
+import { localResultsDate as formatDate } from "./results.logic";
 import { editorialResultsEnvironment } from "../resultsState";
 import { FigureFrame } from "./FigureFrame";
 import {
