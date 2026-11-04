@@ -8,6 +8,7 @@ import type { EditorialDurationStats, EditorialResultsSummary } from "@t3tools/c
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { WorkClockService } from "./WorkClockService.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { withEditorialDatabase } from "./persistence/EditorialDatabase.testkit.ts";
 import {
   FIXTURE_START,
@@ -313,6 +314,51 @@ describe("EditorialResultsService", () => {
             ["thread-twice", true],
             ["thread-twice", false],
           ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("names a decision's trend by the latest dossier label of that trend", () =>
+    withResults(
+      Effect.gen(function* () {
+        yield* seedResultsFixture;
+        const sql = yield* EditorialSql;
+        for (const [runId, label] of [
+          ["run_20261019", "local models"],
+          ["run_20261020", "local models llama"],
+        ] as const) {
+          yield* sql`
+            INSERT INTO editorial_runs (
+              run_id, cutoff_at, finished_at, engine_status, config_hash, logical_hash,
+              sources_json, coverage_json, artifact_path, artifact_version, content_hash,
+              dossier_count, import_state, skipped_files_json, imported_at, updated_at
+            ) VALUES (
+              ${runId}, '2026-10-19T00:00:00.000Z', '2026-10-19T00:05:00.000Z', 'ok', 'c', 'l',
+              '[]', '{}', '/x', '{}', 'h', 1, 'imported', '[]', '2026-10-19T01:00:00.000Z',
+              '2026-10-19T01:00:00.000Z'
+            )
+          `;
+          yield* sql`
+            INSERT INTO editorial_dossiers (
+              run_id, dossier_id, trend_key, trend_key_rule, file_path, content_hash, label,
+              items_7d, items_28d, authors_7d, score, volume_rank, score_rank
+            ) VALUES (
+              ${runId}, 'd1', 'trend:local-models', 'signal-id', 'd1.json', 'aaaa', ${label},
+              5, 9, 3, 0.5, 1, 1
+            )
+          `;
+        }
+        const results = yield* EditorialResultsService.EditorialResultsService;
+        const { decisions } = yield* results.decisions({});
+        const labelOf = (threadId: string) =>
+          decisions.find((decision) => decision.threadId === threadId)?.trendLabel;
+        assert.strictEqual(labelOf("thread-assisted-1"), "local models llama");
+        // A thread its trend never reached a dossier for has no label, never its key.
+        assert.isTrue(
+          decisions
+            .filter((decision) => decision.trendKey !== "trend:local-models")
+            .every((decision) => decision.trendLabel === null),
         );
       }),
     ),

@@ -345,6 +345,7 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
     mode,
     trendKey: null,
     runId: null,
+    trendLabel: null,
     dossierId: null,
     action: row.accion as EditorialResultsDecision["action"],
     utility,
@@ -361,6 +362,12 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
         : { versionHash: String(row.guion_hash ?? ""), claims, cited },
     video: observedAt === null ? null : { ...metrics, observedAt },
   };
+};
+
+const IMPORT_STATE_LABELS: Readonly<Record<string, string>> = {
+  imported: "completa",
+  partial: "parcial",
+  invalid: "no válida",
 };
 
 /**
@@ -493,7 +500,7 @@ const renderSummary = (input: SummaryInput): string => {
   const runRows = input.runRows.map((run) => [
     cell(run.corrida),
     utcDay(typeof run.corte === "string" ? run.corte : null) ?? "sin corte",
-    cell(run.estado_importacion),
+    IMPORT_STATE_LABELS[String(run.estado_importacion)] ?? cell(run.estado_importacion),
     cell(run.expedientes),
     cell(run.vistas),
     cell(run.descartadas),
@@ -546,9 +553,9 @@ const renderSummary = (input: SummaryInput): string => {
         "3",
         "4",
         "5",
-        "accept",
-        "edit",
-        "reject",
+        "Aceptadas",
+        "Editadas",
+        "Rechazadas",
         "Reloj provisional",
         "Cobertura parcial",
       ],
