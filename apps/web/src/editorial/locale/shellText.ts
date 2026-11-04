@@ -241,6 +241,31 @@ const THREAD_TEXT: Readonly<Record<string, string>> = {
   "Supported providers approve routine actions; others still ask.":
     "Los proveedores compatibles aprueban lo rutinario; los demás siguen preguntando.",
   "Allow commands and edits without prompts.": "Permite órdenes y ediciones sin preguntar.",
+  // Timeline rows: the author heading, the turn's fold and the message actions.
+  You: "Tú",
+  Worked: "Trabajó",
+  "You stopped this response": "Detuviste esta respuesta",
+  "Copy message": "Copiar el mensaje",
+  "Copy prompt link": "Copiar el enlace a la petición",
+  "Fork from this response": "Bifurcar desde esta respuesta",
+  // The thread's spoken status (`threadActivityAnnouncement.ts`).
+  Done: "Listo",
+  "Needs approval": "Necesita aprobación",
+  "Needs your input": "Necesita tu respuesta",
+  Failed: "Falló",
+  Stopped: "Detenido",
+  // The file surface in the right panel, where the script is read and edited.
+  Open: "Abrir",
+  "Open file in preferred editor": "Abrir el archivo en el editor preferido",
+  "Show rendered markdown": "Mostrar el markdown renderizado",
+  "Show markdown source": "Mostrar el texto del markdown",
+  "Enable word wrap": "Ajustar las líneas",
+  "Disable word wrap": "No ajustar las líneas",
+  "Show file explorer": "Mostrar el explorador de archivos",
+  "Hide file explorer": "Ocultar el explorador de archivos",
+  "Refresh workspace files": "Actualizar los archivos",
+  "Collapse all folders": "Plegar todas las carpetas",
+  "Search files": "Buscar archivos",
 };
 
 const THREAD_PATTERNS: LocaleTable["patterns"] = [
@@ -265,6 +290,12 @@ const THREAD_PATTERNS: LocaleTable["patterns"] = [
       `Esfuerzo: ${translate(match[1] ?? "")} · Permisos: ${translate(match[2] ?? "")}${match[3] ?? ""}`,
   ],
   [/^Permissions: (.+)$/, (match, translate) => `Permisos: ${translate(match[1] ?? "")}`],
+  // The turn's fold; the duration is upstream's compact format («35s», «2m 5s»).
+  [/^Worked for (.+)$/, "Trabajó durante $1"],
+  [/^You stopped after (.+)$/, "Lo detuviste tras $1"],
+  // File surface: the file or folder's name is a value.
+  [/^Close (.+)$/, "Cerrar $1"],
+  [/^Browse (.+)$/, "Explorar $1"],
 ];
 
 /** Settings: navigation and the General, Appearance, Providers and Chat sections. */

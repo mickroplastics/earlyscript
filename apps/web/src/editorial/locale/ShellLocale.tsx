@@ -29,8 +29,10 @@ export const SIDEBAR_LOCALE: ScopedLocaleOptions = {
     USER_TEXT,
     // Descriptions can carry the server's messages, which stay as sent.
     '[data-slot="toast-description"]',
-    '[data-editorial-space="trends"]',
-    '[data-editorial-space="results"]',
+    // The trend and results lists, between upstream's sidebar header and footer, which are
+    // translated like any other sidebar (`EditorialSidebar.tsx` renders the three in order).
+    '[data-editorial-space="trends"] > :not(:first-child):not(:last-child)',
+    '[data-editorial-space="results"] > :not(:first-child):not(:last-child)',
     "[data-thread-item] .sr-only",
   ].join(", "),
 };
@@ -46,9 +48,21 @@ export const THREAD_LOCALE: ScopedLocaleOptions = {
   skip: [
     USER_TEXT,
     "[data-timeline-row-id]",
+    // Message bodies, user and agent: skipped even inside an allowed control.
+    "[data-thread-find-text]",
     '[data-slot="workspace-breadcrumb-text"]',
     ".xterm",
   ].join(", "),
+  // Upstream's own words in a timeline row: the author heading ("You"), the turn's fold
+  // ("Worked for 35s") and the icon buttons of the message actions.
+  allow: {
+    within: "[data-timeline-row-id]",
+    controls: [
+      "[data-timeline-row-id] h3",
+      '[data-timeline-row-kind="turn-fold"] button',
+      '[data-timeline-row-id] button[data-slot="tooltip-trigger"][aria-label]',
+    ].join(", "),
+  },
 };
 
 export const SETTINGS_LOCALE: ScopedLocaleOptions = {

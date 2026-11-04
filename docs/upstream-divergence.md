@@ -2154,3 +2154,13 @@ Archivos de upstream tocados:
 | `apps/web/src/components/files/FilePreviewPanel.tsx` | Importa esa constante en lugar de declararla.                                                                |
 
 La constante va en `filePreviewMode.ts` porque `FilePreviewPanel.tsx` se carga en diferido (`lazy`) y el hilo no debe arrastrarlo al importar una cadena.
+
+### Textos en inglés del hilo y de Tendencias
+
+Causas, sin archivos de upstream nuevos:
+
+- Las filas del historial (`[data-timeline-row-id]`) estaban excluidas enteras del ámbito del hilo (§28), para no tocar mensajes. Con ellas quedaban fuera «You», «Worked for 35s», «Copy message», «Copy prompt link» y «Fork from this response», que son de upstream. `scopedLocale.ts` gana la opción `allow: { within, controls }`: dentro de un contenedor excluido que coincide con `within`, un nodo cuyo `controls` más cercano está dentro de ese contenedor se traduce. Si entre el nodo y la fila hay otra zona excluida (un cuerpo de mensaje, un `[dir]`), sigue excluido. `THREAD_LOCALE` excluye además `[data-thread-find-text]`, que upstream pone en el cuerpo de los mensajes del operador y del agente, y permite el encabezado de autor (`h3`), el botón del pliegue del turno y los botones de icono con `aria-label` de la fila. Prueba: «translates upstream's words in timeline rows and leaves the message bodies» (un `h3` y un botón dentro del cuerpo de un mensaje quedan en inglés).
+- El espacio Tendencias (y Resultados) de la barra lateral estaba excluido entero; con él, la cabecera y el pie de upstream que `EditorialSidebar.tsx` pinta a su alrededor («Toggle main sidebar», «Go to threads», «Settings», «Usage»). Ahora se excluye solo el hijo central del espacio, la lista (`[data-editorial-space="trends"] > :not(:first-child):not(:last-child)`). El doble de la prueba de la barra lateral reproduce las tres piezas.
+- `shellText.ts`: las cadenas del pliegue («Trabajó durante 35s», «Lo detuviste tras …»), del autor («Tú»), de las acciones del mensaje, del estado hablado del hilo («Listo», «Necesita aprobación»…) y del panel de archivos donde se edita el guion («Abrir», «Mostrar el markdown renderizado», «Mostrar el texto del markdown», «Cerrar guion.md», «Explorar videos», «Buscar archivos»…).
+
+Siguen en inglés: los resúmenes del registro de trabajo del agente («Used t3 code integration and ran 1 command»), que upstream compone con números y nombres de herramientas, y la hora de los mensajes («1:32 AM»).
