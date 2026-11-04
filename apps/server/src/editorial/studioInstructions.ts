@@ -19,7 +19,7 @@ Earlyscript es el estudio editorial de SingulariDev: un motor detecta tendencias
 ## El guion
 
 - Va en \`videos/<carpeta>/guion.md\`, que ya existe con la plantilla. Respeta sus encabezados de nivel 1 y su orden: \`# Hook\`, \`# Block 1\`, \`# Block 2\`…, \`# Close\` y \`# Sources\`.
-- Se escribe en inglés.
+- Se escribe en el idioma del canal que indica \`dossier_read\` (o el expediente).
 - Cada afirmación cita su evidencia con el id entre corchetes, por ejemplo \`[itm_hn_45678901]\`. En \`# Sources\`, una línea por evidencia citada: el id y su URL del expediente.
 - Antes de entregar, llama a \`script_check\` con la ruta del guion y corrige lo que señale. Revisa estructura y citas; no juzga si la fuente respalda la afirmación.
 

@@ -57,6 +57,7 @@ const ScriptCheckTool = Tool.make("script_check", {
   .annotate(Tool.Strict, true);
 
 export const DossierReadResult = Schema.Struct({
+  scriptLanguage: Schema.String,
   mode: Schema.Literals(["assisted", "manual"]),
   /** The dossier file's title: the trend's assistant title, else the engine label. */
   trendTitle: Schema.NullOr(Schema.String),

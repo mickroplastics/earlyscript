@@ -485,6 +485,7 @@ describe("EditorialJobsService", () => {
 
         // A new version before the job runs: the pending job is replaced by one of the new key.
         const { active } = yield* profiles.update({
+          language: "en",
           name: "SingulariDev",
           audience: "Solo founders building with AI agents",
           include: ["AI coding agents"],

@@ -5,7 +5,12 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  type EditorialProfileVersion,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +19,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
+import { EditorialProfileService } from "../EditorialProfileService.ts";
 import { DossierEvidence } from "../DossierEvidence.ts";
 import { DOSSIER_FILE_SCHEMA } from "../videoWorkspaceFormat.ts";
 import {
@@ -184,6 +190,38 @@ const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "u
 const dossierFile = (dossierId = "dossier-1", body = DOSSIER_BODY) =>
   `---\nschema: ${DOSSIER_FILE_SCHEMA}\ndossier_id: ${dossierId}\ndossier_hash: sha256:dossier\nrun_id: run-1\ntrend_key: null\nbody_hash: ${sha256(body)}\n---\n${body}`;
 
+it.effect(
+  "dossier_read follows the channel language rather than the studio's old English default",
+  () =>
+    withVideoWorkspace(() =>
+      Effect.gen(function* () {
+        const result = yield* callTool("dossier_read", {});
+        expect(result.structuredContent).toMatchObject({
+          scriptLanguage: "Idioma del guion: español (es)",
+        });
+      }).pipe(Effect.provide(layerEditorialServer())),
+    ).pipe(
+      Effect.provideService(EditorialProfileService, {
+        get: Effect.succeed<EditorialProfileVersion>({
+          version: 2,
+          name: "Channel",
+          audience: "Developers",
+          language: "es",
+          include: ["AI"],
+          exclude: [],
+          hash: "sha256:profile",
+          createdAt: "2026-11-04T00:00:00.000Z",
+          origin: "operator",
+          active: true,
+        }),
+        history: Effect.die("unused"),
+        update: () => Effect.die("unused"),
+        activeFile: Effect.die("unused"),
+        fileByHash: () => Effect.die("unused"),
+      }),
+    ),
+);
+
 it.effect("dossier_read gives the thread's trend, folder, script and dossier file", () =>
   withVideoWorkspace(({ write }) =>
     Effect.gen(function* () {
@@ -192,6 +230,7 @@ it.effect("dossier_read gives the thread's trend, folder, script and dossier fil
       expect(result.isError).toBe(false);
       expect(result.structuredContent).toEqual({
         mode: "assisted",
+        scriptLanguage: "Idioma del guion: inglés (en)",
         trendTitle: "Quantum error correction",
         folder: "videos/quantum",
         scriptPath: SCRIPT_PATH,

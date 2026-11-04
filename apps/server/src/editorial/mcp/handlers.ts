@@ -1,11 +1,12 @@
 import { checkScript } from "@earlyscript/editorial-script";
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { scriptLanguageInstruction, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
 import { unavailable } from "../../mcp/threadAccess.ts";
+import { EditorialProfileService } from "../EditorialProfileService.ts";
 import { DossierEvidence } from "../DossierEvidence.ts";
 import { EditorialThreadService } from "../EditorialThreadService.ts";
 import type { VideoThread } from "../persistence/EditorialModel.ts";
@@ -80,10 +81,15 @@ export const layer = McpToolAccess.toLayer(EditorialToolkit, {
   dossier_read: McpToolAccess.readsAsCaller(() =>
     Effect.gen(function* () {
       const thread = yield* callerVideoThread("dossier_read");
+      const profiles = yield* Effect.serviceOption(EditorialProfileService);
+      const language = Option.isSome(profiles)
+        ? (yield* profiles.value.get.pipe(Effect.mapError(unavailable))).language
+        : "en";
       const dossierPath = dossierPathOf(thread);
       const contents = yield* readDossierFile(thread);
       const dossier = Option.getOrNull(contents);
       return {
+        scriptLanguage: scriptLanguageInstruction(language),
         mode: thread.mode,
         trendTitle: dossier === null ? null : (TITLE.exec(dossier)?.[1]?.trim() ?? null),
         folder: thread.scriptPath === null ? null : videoFolderOf(thread.scriptPath),
