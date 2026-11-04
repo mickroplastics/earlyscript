@@ -8,6 +8,14 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { IsoDateTime, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
+import {
+  EditorialBaselineImportInput,
+  EditorialBaselineImportResult,
+  EditorialBaselineInput,
+  EditorialBaselineRecord,
+} from "./editorialBaseline.ts";
+
+export * from "./editorialBaseline.ts";
 
 // Earlyscript Results space: read-only aggregates over editorial.sqlite. Descriptive only:
 // medians, quartiles and counts per mode, never a computed "saving" or a causal claim. The
@@ -17,6 +25,9 @@ export const EDITORIAL_RESULTS_WS_METHODS = {
   summary: "editorial.results.summary",
   decisions: "editorial.results.decisions",
   export: "editorial.results.export",
+  baseline: "editorial.results.baseline",
+  baselineImport: "editorial.results.baseline.import",
+  saveFigures: "editorial.results.saveFigures",
 } as const;
 
 export const EditorialResultsMode = Schema.Literals(["assisted", "manual"]);
@@ -165,6 +176,8 @@ export const EditorialResultsDecision = Schema.Struct({
   environmentId: Schema.String,
   mode: EditorialResultsMode,
   trendKey: Schema.NullOr(Schema.String),
+  /** The trend's dossier label (its own dossier, else the latest one); names a thread without title. */
+  trendLabel: Schema.NullOr(Schema.String),
   runId: Schema.NullOr(Schema.String),
   dossierId: Schema.NullOr(Schema.String),
   action: EditorialResultsAction,
@@ -223,7 +236,7 @@ export type EditorialResultsDecisionPage = typeof EditorialResultsDecisionPage.T
 export class EditorialResultsError extends Schema.TaggedError<EditorialResultsError>()(
   "EditorialResultsError",
   {
-    reason: Schema.Literals(["unavailable", "unreadable"]),
+    reason: Schema.Literals(["unavailable", "unreadable", "unwritable"]),
     message: Schema.String,
   },
 ) {}
@@ -280,6 +293,52 @@ export class EditorialEvidenceExportError extends Schema.TaggedError<EditorialEv
   },
 ) {}
 
+/**
+ * Figures of the Results space, drawn and encoded by the client (PNG, SVG and the `figuras.md`
+ * index) and written by the server into a folder the desktop app picked. Names are fixed
+ * shapes, never paths; the sizes keep one WebSocket message under about 32 MB.
+ */
+export const EDITORIAL_FIGURE_FILE_NAME =
+  /^(?:figura-[a-z0-9]+(?:-[a-z0-9]+)*\.(?:png|svg)|figuras\.md)$/;
+/** Base64 characters per file: about 3 MB of PNG, ten times a 1600 px chart. */
+const EDITORIAL_FIGURE_MAX_BASE64 = 4_000_000;
+const EDITORIAL_FIGURES_MAX_FILES = 24;
+/** Base64 characters over all files of one call. */
+export const EDITORIAL_FIGURES_MAX_TOTAL_BASE64 = 32_000_000;
+
+export const EditorialFigureFile = Schema.Struct({
+  name: Schema.String.check(Schema.isPattern(EDITORIAL_FIGURE_FILE_NAME)),
+  base64: Schema.String.check(
+    Schema.isMaxLength(EDITORIAL_FIGURE_MAX_BASE64),
+    Schema.isPattern(/^[A-Za-z0-9+/]*={0,2}$/),
+  ),
+});
+export type EditorialFigureFile = typeof EditorialFigureFile.Type;
+
+export const EditorialFiguresSaveInput = Schema.Struct({
+  /** Absolute folder on the server's machine, under the user's home. Written as is. */
+  directory: Schema.String.check(Schema.isMinLength(1)),
+  files: Schema.Array(EditorialFigureFile).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(EDITORIAL_FIGURES_MAX_FILES),
+  ),
+});
+export type EditorialFiguresSaveInput = typeof EditorialFiguresSaveInput.Type;
+
+export const EditorialFiguresSaveResult = Schema.Struct({
+  directory: Schema.String,
+  files: Schema.Array(Schema.Struct({ name: Schema.String, bytes: NonNegativeInt })),
+});
+export type EditorialFiguresSaveResult = typeof EditorialFiguresSaveResult.Type;
+
+export class EditorialFiguresSaveError extends Schema.TaggedError<EditorialFiguresSaveError>()(
+  "EditorialFiguresSaveError",
+  {
+    reason: Schema.Literals(["unavailable", "target", "too-large"]),
+    message: Schema.String,
+  },
+) {}
+
 const EditorialResultsSummaryRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.summary, {
   payload: EditorialResultsSummaryInput,
   success: EditorialResultsSummary,
@@ -298,11 +357,32 @@ const EditorialResultsExportRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.export, 
   error: Schema.Union([EditorialEvidenceExportError, EnvironmentAuthorizationError]),
 });
 
+const EditorialBaselineRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.baseline, {
+  payload: EditorialBaselineInput,
+  success: EditorialBaselineRecord,
+  error: Schema.Union([EditorialResultsError, EnvironmentAuthorizationError]),
+});
+
+const EditorialBaselineImportRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.baselineImport, {
+  payload: EditorialBaselineImportInput,
+  success: EditorialBaselineImportResult,
+  error: Schema.Union([EditorialResultsError, EnvironmentAuthorizationError]),
+});
+
+const EditorialResultsSaveFiguresRpc = Rpc.make(EDITORIAL_RESULTS_WS_METHODS.saveFigures, {
+  payload: EditorialFiguresSaveInput,
+  success: EditorialFiguresSaveResult,
+  error: Schema.Union([EditorialFiguresSaveError, EnvironmentAuthorizationError]),
+});
+
 /** Merged into `WsRpcGroup` next to `EditorialRpcGroup`. */
 export const EditorialResultsRpcGroup = RpcGroup.make(
   EditorialResultsSummaryRpc,
   EditorialResultsDecisionsRpc,
   EditorialResultsExportRpc,
+  EditorialBaselineRpc,
+  EditorialBaselineImportRpc,
+  EditorialResultsSaveFiguresRpc,
 );
 
 export const EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES = {
@@ -311,4 +391,20 @@ export const EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES = {
   // Writes files on the server's machine (or returns the private record), so it needs the
   // same scope as the other editorial writes.
   [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.baseline]: AuthOrchestrationReadScope,
+  // Replaces the stored manual log, like any other editorial write.
+  [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: AuthOrchestrationOperateScope,
+  // Writes files on the server's machine.
+  [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
+} as const;
+
+/**
+ * The writes the client checks before it opens a folder dialog, draws the figures or sends
+ * the CSV, spread into `CLIENT_GUARDED_RPC_SCOPES` (`clientRpcPermissions.ts`); the server
+ * checks them again.
+ */
+export const EDITORIAL_RESULTS_CLIENT_GUARDED_SCOPES = {
+  [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: AuthOrchestrationOperateScope,
 } as const;

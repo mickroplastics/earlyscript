@@ -13,6 +13,7 @@ import type {
 const RESULTS_SECTIONS = [
   { id: "tiempos", label: "Tiempo por ficha" },
   { id: "etapas", label: "Etapas" },
+  { id: "linea-base", label: "Línea base manual" },
   { id: "utilidad", label: "Utilidad y citas" },
   { id: "bandeja", label: "Bandeja" },
   { id: "video", label: "Métricas de video" },
@@ -94,30 +95,23 @@ export function actionLabel(action: EditorialResultsAction): string {
  * takes threads with complete coverage; `recorded` takes every timed thread.
  */
 export const COMPARISON_TEXT: Readonly<
-  Record<
-    EditorialResultsComparisonKey,
-    { readonly title: string; readonly assisted: string; readonly manual: string }
-  >
+  Record<EditorialResultsComparisonKey, { readonly title: string; readonly measures: string }>
 > = {
   explore: {
     title: "Explorar",
-    assisted: "Tendencias: explorar y leer la ficha de tendencia",
-    manual: "Explorar a mano",
+    measures: "Asistido: explorar y leer la ficha de tendencia. Manual: explorar a mano.",
   },
   write: {
     title: "Escribir",
-    assisted: "Escribir con asistente",
-    manual: "Escribir a mano",
+    measures: "Escribir el guion, con asistente o a mano.",
   },
   total: {
     title: "Proceso completo",
-    assisted: "Todas las etapas, asistido",
-    manual: "Todas las etapas, manual",
+    measures: "Todas las etapas de su modo, solo en hilos que las registraron todas.",
   },
   recorded: {
     title: "Total de etapas registradas",
-    assisted: "Etapas registradas, asistido",
-    manual: "Etapas registradas, manual",
+    measures: "Suma de las etapas registradas, también en hilos sin todas.",
   },
 };
 
@@ -134,9 +128,6 @@ export function comparisonCards(
  */
 export function coverageNote(comparison: EditorialResultsComparison): string | null {
   const count = comparison.partial.assisted + comparison.partial.manual;
-  if (comparison.key === "total") {
-    return "Solo hilos con todas las etapas de su modo registradas.";
-  }
   if (comparison.key !== "recorded" || count === 0) return null;
   return `Cobertura parcial: incluye ${formatCount(count, "hilo", "hilos")} sin todas las etapas de su modo; no es el proceso completo.`;
 }
@@ -144,11 +135,19 @@ export function coverageNote(comparison: EditorialResultsComparison): string | n
 /** "Total de etapas registradas: asistido 40 min (n = 4) · manual 1 h 40 min (n = 3)". */
 export function recordedTotalText(comparison: EditorialResultsComparison): string {
   const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) =>
-    `${MODE_LABELS[mode].toLowerCase()} ${stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)} (n = ${stats.n})`;
+    `${MODE_LABELS[mode].toLowerCase()} ${stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)} (${sizeText(stats.n)})`;
   return `${COMPARISON_TEXT.recorded.title}, mediana: ${side("assisted", comparison.assisted)} · ${side("manual", comparison.manual)}`;
 }
 
 const MINUTE_MS = 60_000;
+
+/** Joins a number to its unit so a narrow column never breaks "1 h" or "n = 3" apart. */
+const NBSP = "\u00a0";
+
+/** "n = 3", unbreakable. */
+export function sizeText(n: number): string {
+  return `n${NBSP}=${NBSP}${n}`;
+}
 
 /** Why the decisions page failed, in the operator's words, from the RPC error. */
 export function decisionsFailureText(error: unknown): string {
@@ -169,27 +168,34 @@ export function decisionsFailureText(error: unknown): string {
 
 /** "26 min", "1 h 40 min", "45 s"; rounded to the minute from one minute up. */
 export function formatDuration(ms: number): string {
-  if (ms < MINUTE_MS) return `${Math.round(ms / 1000)} s`;
+  // A stage recorded for a few milliseconds ran: it reads as under a second, never as zero.
+  if (ms > 0 && ms < 500) return `<${NBSP}1${NBSP}s`;
+  if (ms < MINUTE_MS) return `${Math.round(ms / 1000)}${NBSP}s`;
   const minutes = Math.round(ms / MINUTE_MS);
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return `${minutes}${NBSP}min`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+  return rest === 0 ? `${hours}${NBSP}h` : `${hours}${NBSP}h${NBSP}${rest}${NBSP}min`;
 }
 
 export function formatCount(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
 }
 
-/** "RIC 24–28 min" under an hour, "RIC 58 min–1 h 2 min" across units. */
+/**
+ * "RIC 24 a 28 min" under an hour, "RIC 58 min a 1 h 2 min" across units. One thread has no
+ * spread to describe, so a single value gives none.
+ */
 export function iqrText(stats: EditorialDurationStats): string | null {
-  if (stats.q1Ms === null || stats.q3Ms === null) return null;
+  if (stats.q1Ms === null || stats.q3Ms === null || stats.n < 2) return null;
   const low = formatDuration(stats.q1Ms);
   const high = formatDuration(stats.q3Ms);
-  if (low.endsWith(" min") && high.endsWith(" min") && !low.includes("h") && !high.includes("h")) {
-    return `RIC ${low.slice(0, -4)}–${high}`;
+  if (low === high) return `cuartiles en ${low}`;
+  const unit = `${NBSP}min`;
+  if (low.endsWith(unit) && high.endsWith(unit) && !low.includes("h") && !high.includes("h")) {
+    return `RIC ${low.slice(0, -4)} a ${high}`;
   }
-  return `RIC ${low}–${high}`;
+  return `RIC ${low} a ${high}`;
 }
 
 /** "1 aceptada, 1 editada, 1 rechazada". */
@@ -201,14 +207,17 @@ export function actionsText(actions: EditorialResultsModeSummary["actions"]): st
   ].join(", ");
 }
 
-/** "26 min · RIC 24–28 min · n = 3", or "sin datos · n = 0". */
+/** "26 min · RIC 24 a 28 min · n = 3", or "sin datos · n = 0". */
 export function statsText(stats: EditorialDurationStats): string {
-  if (stats.medianMs === null) return `sin datos · n = ${stats.n}`;
+  if (stats.medianMs === null) return `sin datos · ${sizeText(stats.n)}`;
   const iqr = iqrText(stats);
-  return [formatDuration(stats.medianMs), iqr, `n = ${stats.n}`]
+  return [formatDuration(stats.medianMs), iqr, sizeText(stats.n)]
     .filter((part) => part !== null)
     .join(" · ");
 }
+
+/** Below this many threads in a mode, a median is a handful of cases. */
+const SMALL_SAMPLE = 3;
 
 /**
  * The descriptive difference of the two medians, with both n. Never a percentage or a
@@ -217,17 +226,41 @@ export function statsText(stats: EditorialDurationStats): string {
 export function medianDifferenceText(
   assisted: EditorialDurationStats,
   manual: EditorialDurationStats,
-): string | null {
-  if (assisted.medianMs === null || manual.medianMs === null) return null;
+): string {
+  if (assisted.medianMs === null || manual.medianMs === null) {
+    const missing = [
+      assisted.medianMs === null ? "asistido" : null,
+      manual.medianMs === null ? "manual" : null,
+    ].filter((mode) => mode !== null);
+    if (missing.length === 2) {
+      return "Sin hilos medidos en ningún modo: no hay diferencia que describir.";
+    }
+    const present = assisted.medianMs === null ? manual : assisted;
+    const few =
+      present.n < SMALL_SAMPLE
+        ? " Con tan pocos hilos describe casos sueltos, no una tendencia."
+        : "";
+    return `Sin hilos medidos en modo ${missing[0]}: no hay diferencia que describir.${few}`;
+  }
   const difference = manual.medianMs - assisted.medianMs;
-  const sizes = `n = ${assisted.n} y ${manual.n}`;
+  const sizes = `n${NBSP}=${NBSP}${assisted.n}${NBSP}y${NBSP}${manual.n}`;
+  const few =
+    Math.min(assisted.n, manual.n) < SMALL_SAMPLE
+      ? " Con tan pocos hilos describe casos sueltos, no una tendencia."
+      : "";
   if (Math.round(difference / MINUTE_MS) === 0 && Math.abs(difference) < MINUTE_MS) {
-    return `Medianas iguales al minuto (${sizes})`;
+    return `Medianas iguales al minuto (${sizes}).${few}`;
   }
   const magnitude = formatDuration(Math.abs(difference));
   return difference > 0
-    ? `Mediana manual ${magnitude} mayor (${sizes})`
-    : `Mediana asistida ${magnitude} mayor (${sizes})`;
+    ? `Mediana manual ${magnitude} mayor (${sizes}).${few}`
+    : `Mediana asistida ${magnitude} mayor (${sizes}).${few}`;
+}
+
+/** Why a side of a comparison has no median: no thread, or every one awaiting resolution. */
+export function emptySideText(stats: EditorialDurationStats, provisional: number): string {
+  if (stats.n > 0 || provisional === 0) return sizeText(stats.n);
+  return `${sizeText(0)} · ${formatCount(provisional, "hilo espera", "hilos esperan")} resolver un tramo`;
 }
 
 const percentFormat = new Intl.NumberFormat("es", {
@@ -247,6 +280,17 @@ function formatMean(value: number): string {
   return meanFormat.format(value);
 }
 
+/** Under a mode's utility: n and the actions, or that the mode has no thread yet. */
+export function utilityDetail(summary: EditorialResultsModeSummary): string {
+  if (summary.threads === 0) return "ningún hilo cerrado en este modo";
+  return `${sizeText(summary.utility.n)} · ${actionsText(summary.actions)}`;
+}
+
+/** "2 de 7" threads with video metrics, or "sin hilos" before the mode has any. */
+export function videoCoverageText(summary: EditorialResultsModeSummary): string {
+  return summary.threads === 0 ? "sin hilos" : `${summary.withVideoResults} de ${summary.threads}`;
+}
+
 /** "4,0 de 5" or "sin datos". */
 export function utilityText(summary: EditorialResultsModeSummary): string {
   return summary.utility.mean === null ? "sin datos" : `${formatMean(summary.utility.mean)} de 5`;
@@ -259,6 +303,18 @@ export function citationDetail(summary: EditorialResultsModeSummary): string {
   return `${cited} de ${formatCount(claims, "afirmación", "afirmaciones")} · ${formatCount(threads, "guion", "guiones")}`;
 }
 
+/** "14 decisiones entre el 20 oct 2026 y el 3 nov 2026", "2 decisiones el 3 nov 2026". */
+export function decisionRangeText(
+  summary: EditorialResultsSummary,
+  formatDate: (iso: string) => string,
+): string {
+  const count = formatCount(summary.decisionCount, "decisión", "decisiones");
+  if (summary.firstDecidedAt === null || summary.lastDecidedAt === null) return count;
+  const first = formatDate(summary.firstDecidedAt);
+  const last = formatDate(summary.lastDecidedAt);
+  return first === last ? `${count} el ${first}` : `${count} entre el ${first} y el ${last}`;
+}
+
 export function hasDecisions(summary: EditorialResultsSummary): boolean {
   return summary.decisionCount > 0;
 }
@@ -269,12 +325,16 @@ export function hasInboxActivity(summary: EditorialResultsSummary): boolean {
   return read + observing + dismissed + production > 0;
 }
 
-/** The page sections present: without decisions, at most the inbox counters. */
+/**
+ * The page sections present: without decisions, the manual baseline (its import is there
+ * before any thread) and the inbox counters once one moved.
+ */
 export function visibleSections(summary: EditorialResultsSummary | null) {
   if (summary === null || hasDecisions(summary)) return RESULTS_SECTIONS;
-  return hasInboxActivity(summary)
-    ? RESULTS_SECTIONS.filter((section) => section.id === "bandeja")
-    : [];
+  return RESULTS_SECTIONS.filter(
+    (section) =>
+      section.id === "linea-base" || (section.id === "bandeja" && hasInboxActivity(summary)),
+  );
 }
 
 export function modeSummary(
@@ -324,13 +384,18 @@ export function formatInteger(value: number): string {
   return integerFormat.format(value);
 }
 
-/** "trend:local-models" reads "local-models"; a thread without trend shows its short id. */
-export function decisionThreadFallback(input: {
-  readonly threadId: string;
-  readonly trendKey: string | null;
-}): string {
-  if (input.trendKey !== null) return input.trendKey.replace(/^trend:/, "");
-  return `Hilo ${input.threadId.slice(0, 8)}`;
+/**
+ * A thread's name in the decisions table: its title without the "Video: " every video thread
+ * carries, else its trend's dossier label; never an id or a trend key.
+ */
+export function decisionThreadLabel(
+  decision: { readonly mode: EditorialResultsMode; readonly trendLabel: string | null },
+  title: string | undefined,
+): string {
+  const trimmed = title?.replace(/^Video:\s*/, "").trim();
+  if (trimmed) return trimmed;
+  if (decision.trendLabel !== null) return `Tendencia: ${decision.trendLabel}`;
+  return decision.mode === "manual" ? "Hilo manual sin título" : "Hilo sin título";
 }
 
 /** "1 h 40 min", "≥ 33 min" when a segment awaited resolution, "sin reloj" if none ran. */
