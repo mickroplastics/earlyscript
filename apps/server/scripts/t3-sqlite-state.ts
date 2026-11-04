@@ -3,6 +3,8 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
+import { assertEarlyscriptDataDirectory } from "@t3tools/shared/earlyscriptHome";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -62,7 +64,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to mutate the shared ~/.earlyscript database. Use an isolated --base-dir.";
   }
 }
 
@@ -181,8 +183,14 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const sharedHome = path.resolve(
+    options.sharedHome ?? path.join(NodeOS.homedir(), EarlyscriptBrand.homeDirName),
+  );
   const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+  // Earlyscript: never open T3 Code's databases.
+  yield* Effect.sync(() =>
+    assertEarlyscriptDataDirectory(baseDir, { homeDirectory: NodeOS.homedir() }),
+  );
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {

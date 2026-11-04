@@ -24,6 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { EarlyscriptBrand } from "@t3tools/shared/earlyscriptBrand";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -542,7 +543,9 @@ function isT3ManagedWorktree(
   const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
   return (
     normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
-    normalized.includes("/.t3/worktrees/")
+    normalized.includes("/.t3/worktrees/") ||
+    // Earlyscript: its own homes (worktrees, estudio, projects) are threads already.
+    normalized.includes(`/${EarlyscriptBrand.homeDirName}/`)
   );
 }
 
