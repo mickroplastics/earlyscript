@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { BASELINE_RECORD, EMPTY_BASELINE } from "./manualBaseline.fixture";
 import {
+  baselineFigure,
   baselineComparisons,
   baselineNotes,
   baselineStatsText,
@@ -177,5 +178,42 @@ describe("import messages", () => {
     expect(csvFileProblem({ name: "a.csv", size: 70_000 })).toBe("El archivo pesa más de 64 KiB.");
     expect(csvFileProblem({ name: "a.csv", size: 0 })).toBe("El archivo está vacío.");
     expect(csvFileProblem({ name: "a.csv", size: 2_000 })).toBeNull();
+  });
+});
+
+describe("baselineFigure", () => {
+  it("prints the same medians the chart draws, with the whisker only past one block", () => {
+    const stats = (n: number, median: number) => ({
+      n,
+      medianMs: median,
+      q1Ms: median - 60_000,
+      q3Ms: median + 60_000,
+      minMs: median - 60_000,
+      maxMs: median + 60_000,
+    });
+    const figure = baselineFigure([
+      {
+        key: "search",
+        title: "Buscar ideas",
+        assistedLabel: "Asistido",
+        manualLabel: "Manual",
+        stats: {
+          assisted: stats(1, 600_000),
+          cronometrado: stats(9, 3_300_000),
+          reconstruido: null,
+        },
+      },
+    ]);
+    if (figure.kind !== "bars") throw new Error("bars expected");
+    expect(figure.series.map((series) => series.key)).toEqual([
+      "assisted",
+      "cronometrado",
+      "reconstruido",
+    ]);
+    const rows = figure.groups[0]!.rows;
+    expect(rows[0]).toMatchObject({ series: "assisted", value: 600_000, low: null, high: null });
+    expect(rows[1]).toMatchObject({ series: "cronometrado", value: 3_300_000, low: 3_240_000 });
+    expect(rows[2]).toMatchObject({ series: "reconstruido", value: null, text: "sin datos" });
+    expect(figure.axis.max).toBeGreaterThanOrEqual(3_360_000);
   });
 });

@@ -31,9 +31,12 @@ import { cn } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatDate } from "../editorial.logic";
 import { editorialResultsEnvironment } from "../resultsState";
+import { FigureFrame } from "./FigureFrame";
 import {
+  BASELINE_FIGURE_TEXT,
   BASELINE_SERIES,
   baselineChartMaxMs,
+  baselineFigure,
   baselineComparisons,
   baselineFailureText,
   baselineNotes,
@@ -576,6 +579,11 @@ export function ManualBaselineView({
             medianas se muestran lado a lado, sin restarlas. La cifra principal es la cronometrada;
             la reconstruida es una estimación.
           </p>
+          <FigureFrame
+            id="linea-base"
+            {...BASELINE_FIGURE_TEXT}
+            figure={baselineFigure(comparisons)}
+          />
           <BaselineChart comparisons={comparisons} />
           <ComparisonTable comparisons={comparisons} record={record} />
           <WeeksAndOutcomes record={record} />

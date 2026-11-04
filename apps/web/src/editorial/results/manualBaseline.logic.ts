@@ -10,6 +10,7 @@ import {
   type EditorialDurationStats,
   type EditorialResultsSummary,
 } from "@t3tools/contracts";
+import { durationAxis, type FigureBody, type FigureSeries } from "./figureExport.logic";
 
 const MINUTE_MS = 60_000;
 
@@ -366,4 +367,48 @@ export function baselineFailureText(error: unknown): string {
     return "Esta conexión no tiene permiso para importar el registro.";
   }
   return "No hubo respuesta del entorno.";
+}
+
+/** Text at the end of a printed bar: median, RIC with two or more, n. */
+const baselineBarText = (stats: EditorialDurationStats | null): string =>
+  stats === null ? "sin datos" : baselineStatsText(stats);
+
+const BASELINE_FIGURE_SERIES: ReadonlyArray<FigureSeries> = BASELINE_SERIES.map((series) => ({
+  key: series,
+  label: seriesLabel(series),
+  color: series === "assisted" ? "primary" : series === "cronometrado" ? "neutral" : "accent",
+}));
+
+export const BASELINE_FIGURE_TEXT = {
+  title: "Buscar y escribir: asistido frente al registro manual de octubre de 2026",
+  caption:
+    "Mediana y rango intercuartílico. Asistido: tiempo activo por hilo en la app. Manual: minutos por bloque del registro llevado a mano del 1 al 14 de octubre de 2026, un operador; la primera semana se reconstruyó después y la segunda se cronometró en el momento, sin descontar interrupciones. Temas distintos en cada lado: descripción, no un efecto del sistema.",
+} as const;
+
+/** The printed version of the baseline chart: the same data, series and scale rule. */
+export function baselineFigure(comparisons: ReadonlyArray<BaselineComparison>): FigureBody {
+  return {
+    kind: "bars",
+    series: BASELINE_FIGURE_SERIES,
+    groups: comparisons.map((comparison) => ({
+      label: comparison.title,
+      rows: BASELINE_SERIES.map((series) => {
+        const stats = comparison.stats[series];
+        return {
+          series,
+          value: stats?.medianMs ?? null,
+          low: stats && stats.n > 1 ? stats.q1Ms : null,
+          high: stats && stats.n > 1 ? stats.q3Ms : null,
+          text: baselineBarText(stats),
+        };
+      }),
+      note: `${comparison.assistedLabel}. ${comparison.manualLabel}.`,
+    })),
+    axis: durationAxis(baselineChartMaxMs(comparisons), formatMs),
+    notes: [
+      "Barra: mediana",
+      "Trazo: rango intercuartílico (RIC)",
+      "Línea discontinua: sin registro en esa serie",
+    ],
+  };
 }

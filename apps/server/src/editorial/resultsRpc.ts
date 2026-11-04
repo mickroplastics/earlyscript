@@ -4,11 +4,13 @@ import * as NodeOS from "node:os";
 import {
   EDITORIAL_RESULTS_WS_METHODS,
   EditorialEvidenceExportError,
+  EditorialFiguresSaveError,
   EditorialResultsError,
   type EditorialResultsRpcGroup,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -18,6 +20,7 @@ import * as EditorialEvidenceExportService from "./EditorialEvidenceExportServic
 import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { MANIFEST_FILE } from "./evidenceFormat.ts";
+import { writeFigures } from "./figuresWrite.ts";
 
 /** Trace and metric aggregate of each Results method, merged into `RpcInstrumentation`. */
 export const EDITORIAL_RESULTS_RPC_AGGREGATES = {
@@ -26,6 +29,7 @@ export const EDITORIAL_RESULTS_RPC_AGGREGATES = {
   [EDITORIAL_RESULTS_WS_METHODS.export]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.baseline]: "editorial",
   [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: "editorial",
+  [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: "editorial",
 } as const;
 
 type ResultsRpcs = RpcGroup.Rpcs<typeof EditorialResultsRpcGroup>;
@@ -59,12 +63,16 @@ export class EditorialResultsRpcHandlers extends Context.Reference<EditorialResu
         ),
       [EDITORIAL_RESULTS_WS_METHODS.baseline]: () => Effect.fail(unavailable),
       [EDITORIAL_RESULTS_WS_METHODS.baselineImport]: () => Effect.fail(unavailable),
+      [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: () =>
+        Effect.fail(
+          new EditorialFiguresSaveError({ reason: "unavailable", message: unavailable.message }),
+        ),
     }),
   },
 ) {}
 
 /**
- * Where the export RPC may write: the real path of the destination stays under this folder.
+ * Where the export and figures RPCs may write: the real path of the destination stays under this folder.
  * The user's home by default; a client cannot widen it.
  */
 export class EvidenceExportRoot extends Context.Reference<string>(
@@ -78,6 +86,7 @@ export const makeHandlers = Effect.gen(function* () {
   const baseline = yield* EditorialManualBaselineService.EditorialManualBaselineService;
   const path = yield* Path.Path;
   const root = yield* EvidenceExportRoot;
+  const fileSystem = yield* FileSystem.FileSystem;
   return {
     [EDITORIAL_RESULTS_WS_METHODS.summary]: () => results.summary,
     [EDITORIAL_RESULTS_WS_METHODS.decisions]: results.decisions,
@@ -119,6 +128,12 @@ export const makeHandlers = Effect.gen(function* () {
         };
       },
     ),
+    // Figures drawn by the client, written into the folder the desktop app picked.
+    [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: (input) =>
+      writeFigures(input, { within: root }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
   } satisfies EditorialResultsHandlers;
 });
 
