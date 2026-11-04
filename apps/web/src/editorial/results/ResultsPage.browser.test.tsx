@@ -176,6 +176,26 @@ const controls = (overrides: Partial<ResultsDecisionsControls> = {}): ResultsDec
 });
 
 describe("ResultsView", () => {
+  it("shows an empty comparison as a baseline note instead of a headline number", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={{
+          ...SUMMARY,
+          comparisons: SUMMARY.comparisons.map((comparison) => ({
+            ...comparison,
+            assisted: stats(0, null),
+            manual: stats(0, null),
+          })),
+        }}
+        decisions={controls()}
+        threadTitles={new Map()}
+      />,
+    );
+    const baselineNote = screen.getByText("Consulta la línea base manual").first();
+    await expect.element(baselineNote).toHaveClass("text-xs");
+    await expect.element(baselineNote).not.toHaveClass("text-base");
+  });
+
   it("says plainly that nothing was decided yet", async () => {
     await using screen = await render(
       <ResultsView

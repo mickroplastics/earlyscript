@@ -2354,3 +2354,15 @@ atributos `data-chat-provider-model-picker` y `data-composer-shortcut`; revisar 
 al fusionar upstream. La capa propia de locale permite traducir los timestamps de los mensajes,
 sin traducir sus cuerpos ni el guion. La petición nueva ya es una frase editorial; las peticiones
 históricas no se ocultan porque no identifican de forma fiable su origen automático.
+
+## Bandeja y expediente conscientes de la cohorte (rama `es/cohort-inbox`, 4 de noviembre de 2026)
+
+Base `d443079af3`. `EditorialReadService` consulta la cohorte del hilo enlazado por lotes de hasta 500 tendencias. El contrato editorial conserva `production` para el enlace humano y añade `trial`, opcional para admitir servidores anteriores. Un ensayo no muestra «en producción» y deja disponible «Crear hilo de video»; «Ver el ensayo» conserva su acceso secundario. Quitar la marca de ensayo restituye el enlace de producción mientras no se haya creado otro hilo para el tema. No se borran hilos ni decisiones.
+
+La creación asistida después de un ensayo usa una clave de operación derivada del expediente y del hilo de ensayo. Evita recuperar la operación del ensayo y mantiene idempotencia ante reintentos y dobles clics. El nuevo hilo humano reemplaza el enlace activo de la tendencia; el ensayo permanece en Hilos y Resultados. Los cambios de cohorte invalidan la instantánea de la bandeja, también al recuperar eventos perdidos tras una reconexión. El comando del cliente invalida además las lecturas del expediente que permanecían en caché mientras se clasificaba el hilo.
+
+En el expediente, los términos del motor, sus etiquetas y el modelo quedan en «Detalles técnicos», cerrado por defecto. La fecha y «Regenerar» siguen visibles. En Resultados, una mediana ausente remite a la línea base como nota pequeña.
+
+La barra lateral heredada queda pendiente: `SidebarThreadRow.tsx` recibe datos de orquestación sin cohorte editorial y el orden se calcula fuera de los archivos propios. `hiddenFeatures.ts` filtra funciones, y el locale omite expresamente los títulos de usuario; ninguno permite ordenar por cohorte o añadir insignias. No se modifican componentes de upstream ni se reordenan sus nodos por DOM. Alternativa futura: una lista propia de ensayos con suscripción a cohortes, o un punto de montaje aprobado en la lista heredada. El panel editorial del hilo y Resultados conservan la marca «Ensayo» disponible hoy.
+
+Pruebas: lectura y reversión de cohorte, actualización de la suscripción, creación humana posterior con reintento, ausencia de insignia en la fila, acciones del expediente, detalles plegados y desplegados, y nota de mediana vacía. Evidencia y salidas literales en `/home/miguel/earlyscript-data/cohort-inbox/informe.md`. Las capturas usan una copia aislada con fixture visual identificada en ese informe, no resultados humanos nuevos. Ningún archivo de upstream modificado.

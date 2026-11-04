@@ -433,10 +433,7 @@ function TrendPresentationSummary({
         ))}
       </dl>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>
-          {presentation.model} · {formatDate(presentation.generatedAt)} · no cambia el orden ni el
-          puntaje
-        </span>
+        <span>{formatDate(presentation.generatedAt)} · no cambia el orden ni el puntaje</span>
         {actions ? (
           <Button
             size="xs"
@@ -603,6 +600,20 @@ function TrendDecision({
                 Crear hilo de video
               </Button>
             )}
+            {state?.trial ? (
+              <Button
+                size="sm"
+                variant="ghost-muted"
+                render={
+                  <Link
+                    to="/$environmentId/$threadId"
+                    params={{ environmentId, threadId: ThreadId.make(state.trial.threadId) }}
+                  />
+                }
+              >
+                Ver el ensayo
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="outline"
@@ -698,17 +709,30 @@ export function TrendDossierView({
           {presentation?.title ?? trend.label}
         </h1>
         {presentation ? (
-          <p className="text-xs text-muted-foreground">Términos del motor: {trend.label}</p>
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Detalles técnicos</summary>
+            <p className="mt-2">Términos del motor: {trend.label}</p>
+            <p>Modelo: {presentation.model}</p>
+            <ul aria-label="Términos" className="mt-2 flex flex-wrap gap-1">
+              {trend.terms.map((term) => (
+                <li key={term}>
+                  <Badge variant="secondary">{term}</Badge>
+                </li>
+              ))}
+            </ul>
+          </details>
         ) : trend.subtitle ? (
           <p className="text-sm text-muted-foreground">{trend.subtitle}</p>
         ) : null}
-        <ul aria-label="Términos" className="flex flex-wrap gap-1">
-          {trend.terms.map((term) => (
-            <li key={term}>
-              <Badge variant="secondary">{term}</Badge>
-            </li>
-          ))}
-        </ul>
+        {!presentation ? (
+          <ul aria-label="Términos" className="flex flex-wrap gap-1">
+            {trend.terms.map((term) => (
+              <li key={term}>
+                <Badge variant="secondary">{term}</Badge>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </header>
 
       {presentation ? (

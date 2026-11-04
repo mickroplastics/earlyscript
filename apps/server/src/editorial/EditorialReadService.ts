@@ -79,7 +79,22 @@ const make = Effect.gen(function* () {
       Array.from({ length: Math.ceil(trendKeys.length / MAX_INBOX_KEYS_PER_READ) }, (_, page) =>
         trendKeys.slice(page * MAX_INBOX_KEYS_PER_READ, (page + 1) * MAX_INBOX_KEYS_PER_READ),
       ),
-      (keys) => commands.getInboxState(keys),
+      (keys) =>
+        Effect.gen(function* () {
+          const states = yield* commands.getInboxState(keys);
+          const trials = yield* sql<{ thread_id: string }>`
+          SELECT t.thread_id FROM editorial_trend_inbox i
+          JOIN editorial_video_threads t ON t.thread_id = i.production_thread_id
+          WHERE i.trend_key IN ${sql.in([...keys])} AND t.cohort = 'trial'
+        `.pipe(Effect.mapError(unreadable("Cannot read the production cohort")));
+          const ids = new Set(trials.map((row) => row.thread_id));
+          return states.map((state) => ({
+            ...state,
+            productionCohort: ids.has(state.productionThreadId ?? "")
+              ? ("trial" as const)
+              : ("human" as const),
+          }));
+        }),
     ).pipe(
       Effect.map((pages) => pages.flat()),
       Effect.mapError(unreadable("Cannot read the inbox state")),

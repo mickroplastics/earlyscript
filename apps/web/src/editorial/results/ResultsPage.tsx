@@ -169,7 +169,13 @@ function ComparisonCard({
           <ModeSwatch mode={mode} />
           {modeLabel(mode)}
         </span>
-        <span className="text-base font-medium text-foreground tabular-nums">
+        <span
+          className={
+            stats.medianMs === null
+              ? "text-xs text-muted-foreground"
+              : "text-base font-medium text-foreground tabular-nums"
+          }
+        >
           {stats.medianMs === null
             ? "Consulta la línea base manual"
             : formatDuration(stats.medianMs)}

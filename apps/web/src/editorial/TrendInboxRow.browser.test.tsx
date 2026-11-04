@@ -67,10 +67,17 @@ describe("TrendInboxRow", () => {
     await using screen = await render(
       <SidebarProvider defaultOpen>
         <SidebarMenu>
-          <TrendInboxRow environmentId={ENVIRONMENT_ID} trend={QUANTUM} isActive />
+          <TrendInboxRow
+            environmentId={ENVIRONMENT_ID}
+            trend={{ ...QUANTUM, inbox: { ...SEEN, trial: { threadId: "trial", linkedAt: AT } } }}
+            isActive
+          />
         </SidebarMenu>
       </SidebarProvider>,
     );
+    await expect
+      .element(screen.getByText("en producción", { exact: true }))
+      .not.toBeInTheDocument();
     const link = screen.getByRole("link", { name: /quantum computing ibm open/ });
     await expect.element(link).toHaveAttribute("aria-current", "page");
     await expect

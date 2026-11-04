@@ -55,7 +55,7 @@ export interface EditorialInboxCommandsShape {
   readonly dismiss: (session: EditorialSession, input: EditorialDismissInput) => Result;
   readonly reopen: (session: EditorialSession, input: EditorialTrendKeyInput) => Result;
   /**
-   * One assisted video thread per trend: a trend already in production resumes its thread's
+   * One human production link per trend: a trend already in production resumes its thread's
    * operation, and a retry of the same dossier replays it; either finishes a step left undone.
    */
   readonly createVideo: (
@@ -301,7 +301,9 @@ const make = Effect.gen(function* () {
     const operation = Option.match(linked, {
       onNone: () => ({
         // Derived from the dossier, so a double click or a retry replays the same operation.
-        operationId: `editorial:trend-video:${input.runId}:${input.dossierId}`,
+        operationId: before.state.trial
+          ? `editorial:trend-video:${input.runId}:${input.dossierId}:after-trial:${before.state.trial.threadId}`
+          : `editorial:trend-video:${input.runId}:${input.dossierId}`,
         mode: "assisted" as const,
         runId: input.runId,
         dossierId: input.dossierId,

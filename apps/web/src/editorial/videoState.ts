@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { bumpResults } from "./resultsState";
+import { bumpInbox } from "./state";
 import { useQuietThreadShell } from "../state/entities";
 
 /** Stands in for the subscription of a route with no server thread. */
@@ -46,8 +47,9 @@ export const editorialVideoEnvironment = {
   setCohort: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-cohort",
     tag: EDITORIAL_VIDEO_WS_METHODS.setCohort,
-    // Results keeps its last summary while mounted elsewhere; a cohort change must reach it.
-    onSuccess: bumpResults,
+    // Both spaces cache reads while the operator classifies a thread elsewhere.
+    onSuccess: (target, registry) =>
+      Effect.all([bumpResults(target, registry), bumpInbox(target, registry)]),
   }),
   clock: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-clock",
