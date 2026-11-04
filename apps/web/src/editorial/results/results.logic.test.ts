@@ -8,8 +8,10 @@ import {
   recordedTotalText,
   sectionAriaCurrent,
   withoutRouteActive,
-  decisionThreadFallback,
+  decisionRangeText,
+  decisionThreadLabel,
   decisionTotalText,
+  emptySideText,
   formatDuration,
   iqrText,
   medianDifferenceText,
@@ -22,6 +24,9 @@ import {
 } from "./results.logic";
 
 const MINUTE = 60_000;
+
+/** The texts join numbers to units with no-break spaces; the expectations read plain ones. */
+const plain = (text: string | null) => text?.replaceAll("\u00a0", " ") ?? null;
 
 const stats = (values: Partial<EditorialDurationStats>): EditorialDurationStats => ({
   n: 0,
@@ -68,35 +73,90 @@ const summary = (modes: EditorialResultsSummary["modes"]): EditorialResultsSumma
 
 describe("formatDuration", () => {
   it("reads seconds, minutes and hours", () => {
-    expect(formatDuration(45_000)).toBe("45 s");
-    expect(formatDuration(26 * MINUTE)).toBe("26 min");
-    expect(formatDuration(100 * MINUTE)).toBe("1 h 40 min");
-    expect(formatDuration(120 * MINUTE)).toBe("2 h");
+    expect(plain(formatDuration(45_000))).toBe("45 s");
+    expect(plain(formatDuration(117))).toBe("< 1 s");
+    expect(plain(formatDuration(0))).toBe("0 s");
+    expect(plain(formatDuration(26 * MINUTE))).toBe("26 min");
+    expect(plain(formatDuration(100 * MINUTE))).toBe("1 h 40 min");
+    expect(plain(formatDuration(120 * MINUTE))).toBe("2 h");
+    expect(formatDuration(100 * MINUTE)).not.toContain(" ");
   });
 });
 
 describe("statsText", () => {
   it("states the median, the interquartile range and n", () => {
     expect(
-      statsText(stats({ n: 3, medianMs: 26 * MINUTE, q1Ms: 24 * MINUTE, q3Ms: 28 * MINUTE })),
-    ).toBe("26 min · RIC 24–28 min · n = 3");
-    expect(statsText(EMPTY_STATS)).toBe("sin datos · n = 0");
+      plain(
+        statsText(stats({ n: 3, medianMs: 26 * MINUTE, q1Ms: 24 * MINUTE, q3Ms: 28 * MINUTE })),
+      ),
+    ).toBe("26 min · RIC 24 a 28 min · n = 3");
+    expect(plain(statsText(EMPTY_STATS))).toBe("sin datos · n = 0");
+  });
+
+  it("gives no spread for a single thread", () => {
+    expect(
+      plain(
+        statsText(stats({ n: 1, medianMs: 14 * MINUTE, q1Ms: 14 * MINUTE, q3Ms: 14 * MINUTE })),
+      ),
+    ).toBe("14 min · n = 1");
   });
 });
 
 describe("medianDifferenceText", () => {
+  it("avisa de muestra pequeña aunque solo un modo tenga hilos", () => {
+    const one = {
+      n: 1,
+      medianMs: 60_000,
+      q1Ms: 60_000,
+      q3Ms: 60_000,
+      minMs: 60_000,
+      maxMs: 60_000,
+    };
+    const none = { n: 0, medianMs: null, q1Ms: null, q3Ms: null, minMs: null, maxMs: null };
+    expect(medianDifferenceText(one, none)).toBe(
+      "Sin hilos medidos en modo manual: no hay diferencia que describir. Con tan pocos hilos describe casos sueltos, no una tendencia.",
+    );
+  });
   it("describes the difference of medians with both n, never as a saving", () => {
     const assisted = stats({ n: 3, medianMs: 40 * MINUTE });
     const manual = stats({ n: 3, medianMs: 100 * MINUTE });
-    const text = medianDifferenceText(assisted, manual);
-    expect(text).toBe("Mediana manual 1 h mayor (n = 3 y 3)");
+    const text = plain(medianDifferenceText(assisted, manual));
+    expect(text).toBe("Mediana manual 1 h mayor (n = 3 y 3).");
     expect(text).not.toMatch(/%|ahorr|reduc/i);
-    expect(medianDifferenceText(manual, assisted)).toBe("Mediana asistida 1 h mayor (n = 3 y 3)");
-    expect(medianDifferenceText(assisted, assisted)).toBe("Medianas iguales al minuto (n = 3 y 3)");
+    expect(plain(medianDifferenceText(manual, assisted))).toBe(
+      "Mediana asistida 1 h mayor (n = 3 y 3).",
+    );
+    expect(plain(medianDifferenceText(assisted, assisted))).toBe(
+      "Medianas iguales al minuto (n = 3 y 3).",
+    );
   });
 
-  it("says nothing without both medians", () => {
-    expect(medianDifferenceText(EMPTY_STATS, stats({ n: 1, medianMs: MINUTE }))).toBeNull();
+  it("warns that a handful of threads are single cases", () => {
+    expect(
+      plain(
+        medianDifferenceText(
+          stats({ n: 1, medianMs: MINUTE }),
+          stats({ n: 4, medianMs: 3 * MINUTE }),
+        ),
+      ),
+    ).toBe(
+      "Mediana manual 2 min mayor (n = 1 y 4). Con tan pocos hilos describe casos sueltos, no una tendencia.",
+    );
+  });
+
+  it("names the mode without a median", () => {
+    expect(medianDifferenceText(EMPTY_STATS, stats({ n: 1, medianMs: MINUTE }))).toBe(
+      "Sin hilos medidos en modo asistido: no hay diferencia que describir. Con tan pocos hilos describe casos sueltos, no una tendencia.",
+    );
+    expect(medianDifferenceText(EMPTY_STATS, EMPTY_STATS)).toBe(
+      "Sin hilos medidos en ningún modo: no hay diferencia que describir.",
+    );
+  });
+
+  it("says why a side is empty when its threads await resolution", () => {
+    expect(plain(emptySideText(EMPTY_STATS, 1))).toBe("n = 0 · 1 hilo espera resolver un tramo");
+    expect(plain(emptySideText(EMPTY_STATS, 0))).toBe("n = 0");
+    expect(plain(emptySideText(stats({ n: 2, medianMs: MINUTE }), 1))).toBe("n = 2");
   });
 });
 
@@ -128,23 +188,39 @@ describe("stageChartMaxMs", () => {
 
 describe("decision cells", () => {
   it("marks a total with an unresolved segment as a floor", () => {
-    expect(decisionTotalText({ clockDefinitive: true, durations: { totalMs: 33 * MINUTE } })).toBe(
-      "33 min",
-    );
-    expect(decisionTotalText({ clockDefinitive: false, durations: { totalMs: 33 * MINUTE } })).toBe(
-      "≥ 33 min",
-    );
+    expect(
+      plain(decisionTotalText({ clockDefinitive: true, durations: { totalMs: 33 * MINUTE } })),
+    ).toBe("33 min");
+    expect(
+      plain(decisionTotalText({ clockDefinitive: false, durations: { totalMs: 33 * MINUTE } })),
+    ).toBe("≥ 33 min");
     expect(decisionTotalText({ clockDefinitive: true, durations: { totalMs: null } })).toBe(
       "sin reloj",
     );
   });
 
-  it("names a thread without title by its trend or its short id", () => {
-    expect(decisionThreadFallback({ threadId: "abc", trendKey: "trend:local-models" })).toBe(
-      "local-models",
+  it("names a thread by its title, else its trend, never by an id", () => {
+    const decision = { mode: "assisted" as const, trendLabel: "local models llama" };
+    expect(decisionThreadLabel(decision, "Video: Modelos locales")).toBe("Modelos locales");
+    expect(decisionThreadLabel(decision, undefined)).toBe("Tendencia: local models llama");
+    expect(decisionThreadLabel({ mode: "manual", trendLabel: null }, undefined)).toBe(
+      "Hilo manual sin título",
     );
-    expect(decisionThreadFallback({ threadId: "0123456789", trendKey: null })).toBe(
-      "Hilo 01234567",
+  });
+
+  it("states one day once", () => {
+    const dated = (first: string, last: string) => ({
+      ...summary([]),
+      decisionCount: 2,
+      firstDecidedAt: first,
+      lastDecidedAt: last,
+    });
+    const day = (iso: string) => iso.slice(0, 10);
+    expect(decisionRangeText(dated("2026-11-03T10:00:00Z", "2026-11-03T12:00:00Z"), day)).toBe(
+      "2 decisiones el 2026-11-03",
+    );
+    expect(decisionRangeText(dated("2026-10-20T10:00:00Z", "2026-11-03T12:00:00Z"), day)).toBe(
+      "2 decisiones entre el 2026-10-20 y el 2026-11-03",
     );
   });
 
@@ -167,9 +243,10 @@ describe("visibleSections", () => {
 describe("iqrText and actionsText", () => {
   it("shortens a range within minutes and keeps units across an hour", () => {
     const range = (q1: number, q3: number) =>
-      iqrText(stats({ n: 3, q1Ms: q1 * MINUTE, q3Ms: q3 * MINUTE }));
-    expect(range(42, 53)).toBe("RIC 42–53 min");
-    expect(range(58, 62)).toBe("RIC 58 min–1 h 2 min");
+      plain(iqrText(stats({ n: 3, q1Ms: q1 * MINUTE, q3Ms: q3 * MINUTE })));
+    expect(range(42, 53)).toBe("RIC 42 a 53 min");
+    expect(range(58, 62)).toBe("RIC 58 min a 1 h 2 min");
+    expect(range(2, 2.2)).toBe("cuartiles en 2 min");
   });
 
   it("agrees in number", () => {
@@ -195,10 +272,8 @@ describe("coverage", () => {
       "Cobertura parcial: incluye 1 hilo sin todas las etapas de su modo; no es el proceso completo.",
     );
     expect(coverageNote(comparison("recorded", { assisted: 0, manual: 0 }))).toBeNull();
-    expect(coverageNote(comparison("total", { assisted: 0, manual: 0 }))).toBe(
-      "Solo hilos con todas las etapas de su modo registradas.",
-    );
-    expect(recordedTotalText(comparison("recorded", { assisted: 1, manual: 0 }))).toBe(
+    expect(coverageNote(comparison("total", { assisted: 0, manual: 0 }))).toBeNull();
+    expect(plain(recordedTotalText(comparison("recorded", { assisted: 1, manual: 0 })))).toBe(
       "Total de etapas registradas, mediana: asistido 37 min (n = 4) · manual 1 h 40 min (n = 3)",
     );
   });

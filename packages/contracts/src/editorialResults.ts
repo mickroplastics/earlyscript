@@ -175,6 +175,8 @@ export const EditorialResultsDecision = Schema.Struct({
   environmentId: Schema.String,
   mode: EditorialResultsMode,
   trendKey: Schema.NullOr(Schema.String),
+  /** The trend's dossier label (its own dossier, else the latest one); names a thread without title. */
+  trendLabel: Schema.NullOr(Schema.String),
   runId: Schema.NullOr(Schema.String),
   dossierId: Schema.NullOr(Schema.String),
   action: EditorialResultsAction,
