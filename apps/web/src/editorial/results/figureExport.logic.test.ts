@@ -99,18 +99,19 @@ describe("durationAxis", () => {
   it("ends at a round step past the data, with at most six steps", () => {
     const axis = durationAxis(52 * MINUTE, formatDuration);
     expect(axis.max).toBe(60 * MINUTE);
+    // formatDuration joins number and unit with a no-break space.
     expect(axis.ticks.map((tick) => tick.label)).toEqual([
       "0",
-      "10 min",
-      "20 min",
-      "30 min",
-      "40 min",
-      "50 min",
-      "1 h",
+      "10\u00a0min",
+      "20\u00a0min",
+      "30\u00a0min",
+      "40\u00a0min",
+      "50\u00a0min",
+      "1\u00a0h",
     ]);
     const long = durationAxis(101.5 * MINUTE, formatDuration);
     expect(long.max).toBe(120 * MINUTE);
-    expect(long.ticks.at(-1)?.label).toBe("2 h");
+    expect(long.ticks.at(-1)?.label).toBe("2\u00a0h");
     expect(durationAxis(0, formatDuration).max).toBe(MINUTE);
   });
 });
@@ -165,8 +166,8 @@ describe("renderFigureSvg", () => {
     expect(rowLines.length).toBeGreaterThan(1);
     expect(rowLines.join(" · ")).toBe(long);
     // Seven ticks to two hours do not fit side by side: every second label is drawn.
-    expect(svg).toContain(">40 min</text>");
-    expect(svg).not.toContain(">20 min</text>");
+    expect(svg).toContain(">40\u00a0min</text>");
+    expect(svg).not.toContain(">20\u00a0min</text>");
   });
 
   it("wraps row texts on their separators before words", () => {

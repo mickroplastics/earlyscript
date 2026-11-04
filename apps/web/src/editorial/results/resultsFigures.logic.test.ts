@@ -84,7 +84,9 @@ describe("Results figures", () => {
     const figure = timesFigure(SUMMARY);
     if (figure.kind !== "bars") throw new Error("bars expected");
     expect(figure.groups.map((group) => group.label)).toEqual(["Escribir", "Proceso completo"]);
-    expect(figure.groups[0]?.note).toContain("Mediana manual 24 min mayor (n = 3 y 3)");
+    expect(figure.groups[0]?.note).toContain(
+      "Mediana manual 24\u00a0min mayor (n\u00a0=\u00a03\u00a0y\u00a03).",
+    );
     // A single thread has no whisker, as on the page.
     const total = figure.groups[1]?.rows[0];
     expect(total?.low).toBeNull();
@@ -98,7 +100,7 @@ describe("Results figures", () => {
     expect(figure.groups.map((group) => group.label)).toHaveLength(4);
     const read = figure.groups[1]?.rows.find((row) => row.series === "manual");
     expect(read?.value).toBeNull();
-    expect(read?.text).toBe("sin datos · n = 0");
+    expect(read?.text).toBe("sin datos · n\u00a0=\u00a00");
   });
 
   it("keeps utility, inbox and video as tiles with the page's words", () => {
