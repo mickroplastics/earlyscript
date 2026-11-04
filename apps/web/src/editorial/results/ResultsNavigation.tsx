@@ -106,6 +106,8 @@ export function ResultsNavigation({ environmentId }: { readonly environmentId: E
                         sectionId={section.id}
                         onNavigate={() => {
                           if (isMobile) setOpenMobile(false);
+                          // Keyboard and screen reader users land on the section, not the menu.
+                          document.getElementById(section.id)?.focus({ preventScroll: true });
                         }}
                       />
                     }
