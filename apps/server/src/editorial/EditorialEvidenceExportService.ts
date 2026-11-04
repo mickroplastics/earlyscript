@@ -26,7 +26,7 @@ import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
-import { findT3CodeDirectoryFor } from "../earlyscript/dataDirectory.ts";
+import { checkT3CodeDirectoryFor } from "../earlyscript/dataDirectory.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { COUNT_MAX, decisionInDomain } from "./decisionDomain.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
@@ -1212,13 +1212,25 @@ const make = Effect.gen(function* () {
         return yield* refuse(`${target} is outside ${options!.within}. Choose a folder there.`);
       }
     }
-    // T3 Code shares the machine; its data folders are never an export destination.
-    const t3CodeDirectory = yield* findT3CodeDirectoryFor(target);
-    if (t3CodeDirectory !== undefined) {
-      return yield* refuse(
-        `${target} is inside T3 Code's data folder (${t3CodeDirectory}). Choose another folder.`,
-      );
-    }
+    // T3 Code shares the machine; its data folders are never an export destination. Being under
+    // `within` (the user's home) is not enough: ~/.t3 is there too. The check follows the links
+    // of every existing ancestor, so a new folder under a link to ~/.t3 is refused as well.
+    const outsideT3Code = Effect.fn("EditorialEvidenceExportService.outsideT3Code")(function* (
+      entry: string,
+    ) {
+      const check = yield* checkT3CodeDirectoryFor(entry);
+      if (check.kind === "inside") {
+        return yield* refuse(
+          `${target} is inside T3 Code's data folder (${check.t3CodeDirectory}). Choose another folder.`,
+        );
+      }
+      if (check.kind === "unverifiable") {
+        return yield* refuse(
+          `Could not verify that ${target} is outside T3 Code's data folders (${check.detail}). Choose another folder.`,
+        );
+      }
+    });
+    yield* outsideT3Code(target);
     yield* fs.makeDirectory(parent, { recursive: true }).pipe(Effect.catch(failed));
     // The destination is a real folder of its parent, never a link to somewhere else.
     const before = yield* lstat(target);
@@ -1237,6 +1249,7 @@ const make = Effect.gen(function* () {
     if (!inside(resolved)) {
       return yield* refuse(`${target} is outside ${options!.within}. Choose a folder there.`);
     }
+    yield* outsideT3Code(resolved);
 
     const entries = yield* fs.readDirectory(target).pipe(Effect.catch(failed));
     if (entries.length > 0) {

@@ -6,9 +6,17 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 
 import {
   assertEarlyscriptDataDirectory,
-  findT3CodeDataDirectory,
+  checkEarlyscriptDataDirectory,
   T3CodeDataDirectoryError,
+  type EarlyscriptHomeContext,
 } from "./earlyscriptHome.ts";
+
+/** The T3 Code folder holding `candidate`, or undefined when it is outside them. */
+const findT3CodeDataDirectory = (candidate: string, context: EarlyscriptHomeContext) => {
+  const check = checkEarlyscriptDataDirectory(candidate, context);
+  assert.notEqual(check.kind, "unverifiable");
+  return check.kind === "inside" ? check.t3CodeDirectory : undefined;
+};
 
 const linux = { homeDirectory: "/home/miguel", platform: "linux" } as const;
 const mac = { homeDirectory: "/Users/miguel", platform: "darwin" } as const;
@@ -95,6 +103,97 @@ describe("assertEarlyscriptDataDirectory", () => {
         () => assertEarlyscriptDataDirectory(link, { homeDirectory: home, platform: "linux" }),
         T3CodeDataDirectoryError,
       );
+    });
+
+    const fakeHome = () => {
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "es-home-"));
+      roots.push(home);
+      NodeFS.mkdirSync(NodePath.join(home, ".t3", "userdata"), { recursive: true });
+      return { home, context: { homeDirectory: home, platform: "linux" } as const };
+    };
+
+    it("rejects missing folders below a link to T3 Code's home, one or several levels deep", () => {
+      const { home, context } = fakeHome();
+      const link = NodePath.join(home, "looks-harmless");
+      NodeFS.symlinkSync(NodePath.join(home, ".t3"), link);
+      for (const candidate of [
+        NodePath.join(link, "missing"),
+        NodePath.join(link, "missing", "child"),
+        NodePath.join(link, "userdata", "missing", "a", "b"),
+        `${link}/./missing/../other/child`,
+      ]) {
+        assert.throws(
+          () => assertEarlyscriptDataDirectory(candidate, context),
+          /pertenece a T3 Code/,
+          candidate,
+        );
+      }
+      assert.deepEqual(NodeFS.readdirSync(NodePath.join(home, ".t3")), ["userdata"]);
+    });
+
+    it("rejects paths through a link whose parent folder is a link to T3 Code's home", () => {
+      const { home, context } = fakeHome();
+      NodeFS.mkdirSync(NodePath.join(home, "work"));
+      NodeFS.symlinkSync(NodePath.join(home, ".t3"), NodePath.join(home, "work", "t3"));
+      NodeFS.symlinkSync(NodePath.join(home, "work", "t3"), NodePath.join(home, "chain"));
+      assert.throws(
+        () => assertEarlyscriptDataDirectory(NodePath.join(home, "chain", "x", "y"), context),
+        T3CodeDataDirectoryError,
+      );
+    });
+
+    it("follows `..` after a link the way the kernel does", () => {
+      const { home, context } = fakeHome();
+      // `inside/..` is ~/.t3 on disk, although the path reads as `<home>/x`.
+      NodeFS.symlinkSync(NodePath.join(home, ".t3", "userdata"), NodePath.join(home, "inside"));
+      assert.throws(
+        () =>
+          assertEarlyscriptDataDirectory(`${NodePath.join(home, "inside")}/../new/child`, context),
+        T3CodeDataDirectoryError,
+      );
+    });
+
+    it("rejects a dangling link that would create its target inside T3 Code's home", () => {
+      const { home, context } = fakeHome();
+      const link = NodePath.join(home, "dangling");
+      NodeFS.symlinkSync(NodePath.join(home, ".t3", "not-yet"), link);
+      assert.throws(() => assertEarlyscriptDataDirectory(link, context), T3CodeDataDirectoryError);
+      assert.throws(
+        () => assertEarlyscriptDataDirectory(NodePath.join(link, "child"), context),
+        T3CodeDataDirectoryError,
+      );
+      const relative = NodePath.join(home, "relative");
+      NodeFS.symlinkSync(".t3/later", relative);
+      assert.throws(
+        () => assertEarlyscriptDataDirectory(NodePath.join(relative, "a"), context),
+        T3CodeDataDirectoryError,
+      );
+    });
+
+    it("refuses when a link on the way cannot be followed", () => {
+      const { home, context } = fakeHome();
+      const loop = NodePath.join(home, "loop");
+      NodeFS.symlinkSync(loop, loop);
+      const check = checkEarlyscriptDataDirectory(NodePath.join(loop, "child"), context);
+      assert.equal(check.kind, "unverifiable");
+      assert.throws(
+        () => assertEarlyscriptDataDirectory(NodePath.join(loop, "child"), context),
+        /no se pudo comprobar/,
+      );
+    });
+
+    it("still accepts new folders of Earlyscript's own", () => {
+      const { home, context } = fakeHome();
+      NodeFS.mkdirSync(NodePath.join(home, "real"));
+      NodeFS.symlinkSync(NodePath.join(home, "real"), NodePath.join(home, "safe-link"));
+      for (const candidate of [
+        NodePath.join(home, ".earlyscript-x"),
+        NodePath.join(home, "nueva", "carpeta"),
+        NodePath.join(home, "safe-link", "nueva", "carpeta"),
+        NodePath.join(home, ".t3code", "x"),
+      ]) {
+        assert.equal(assertEarlyscriptDataDirectory(candidate, context), candidate);
+      }
     });
   });
 });

@@ -12,6 +12,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { checkT3CodeDirectoryFor } from "../earlyscript/dataDirectory.ts";
+
 /**
  * Writes client-drawn figures into a picked folder: a real folder under `within`, names from the
  * contract pattern, a same-name regular file replaced by rename; a link or folder with that name
@@ -67,6 +69,18 @@ export const writeFigures = Effect.fn("EditorialFigures.write")(function* (
     resolved.startsWith(within.endsWith(path.sep) ? within : `${within}${path.sep}`);
   if (!inside) {
     return yield* refuse(`${target} is outside ${options.within}. Choose a folder there.`);
+  }
+  // Being under `within` (the user's home) is not enough: T3 Code's ~/.t3 is there too.
+  const t3Code = yield* checkT3CodeDirectoryFor(resolved);
+  if (t3Code.kind === "inside") {
+    return yield* refuse(
+      `${target} is inside T3 Code's data folder (${t3Code.t3CodeDirectory}). Choose another folder.`,
+    );
+  }
+  if (t3Code.kind === "unverifiable") {
+    return yield* refuse(
+      `Could not verify that ${target} is outside T3 Code's data folders (${t3Code.detail}). Choose another folder.`,
+    );
   }
 
   // Every existing name checked before the first write: nothing is half done on a refusal.
