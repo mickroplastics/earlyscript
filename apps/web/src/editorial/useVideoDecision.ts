@@ -41,8 +41,9 @@ export function useVideoDecision(input: {
 
   /**
    * Deciding starts when the operator turns to the block, not when the form is sent: any
-   * pointer, focus, click or key inside it opens Decidir once per clock state. Resolves when
-   * the clock is in Decidir, or when it could not be moved there.
+   * pointer, focus, click or key inside it opens Decidir once per clock state. The server
+   * records it as automatic and leaves the clock alone when the operator already left Decidir
+   * by hand. Resolves when the clock is in Decidir, or when it could not be moved there.
    */
   const engageDecide = (): Promise<void> => {
     const state = video.clock.state;
@@ -54,8 +55,8 @@ export function useVideoDecision(input: {
     const done = commands
       .clock(
         state._tag === "idle"
-          ? { _tag: "start", stage: "decide" }
-          : { _tag: "stage", stage: "decide" },
+          ? { _tag: "start", stage: "decide", cause: "decision-block" }
+          : { _tag: "stage", stage: "decide", cause: "decision-block" },
         null,
       )
       .then((outcome) => {

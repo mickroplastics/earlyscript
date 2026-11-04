@@ -19,6 +19,12 @@ import {
 
 export type IntervalEndReason = "paused" | "stage_changed" | "stopped" | "decided" | "resolved";
 
+/**
+ * Who opened a segment: the operator choosing its stage by hand, or a rule of the thread flow.
+ * Null for segments recorded before migration 016.
+ */
+export type IntervalSource = "manual" | "auto";
+
 export interface IntervalRow {
   readonly interval_id: string;
   readonly thread_id: string;
@@ -30,13 +36,14 @@ export interface IntervalRow {
   readonly pause_reason: string | null;
   readonly recovered_at: string | null;
   readonly pause_ended_at: string | null;
+  readonly source: IntervalSource | null;
 }
 
 export const loadIntervals = (sql: SqlClient.SqlClient, threadId: string) =>
   sql<IntervalRow>`
     SELECT
       interval_id, thread_id, stage, status, started_at, ended_at, end_reason,
-      pause_reason, recovered_at, pause_ended_at
+      pause_reason, recovered_at, pause_ended_at, source
     FROM editorial_work_intervals
     WHERE thread_id = ${threadId}
     ORDER BY started_at, rowid
@@ -123,16 +130,17 @@ export interface OpenIntervalInput {
   readonly stage: WorkStage;
   readonly startedAt: string;
   readonly actor: EditorialActor;
+  readonly source: IntervalSource | null;
 }
 
 export const openInterval = (sql: SqlClient.SqlClient, input: OpenIntervalInput) =>
   sql`
     INSERT INTO editorial_work_intervals (
-      interval_id, thread_id, stage, status, started_at, actor
+      interval_id, thread_id, stage, status, started_at, actor, source
     )
     VALUES (
       ${input.intervalId}, ${input.threadId}, ${input.stage}, 'open', ${input.startedAt},
-      ${input.actor}
+      ${input.actor}, ${input.source}
     )
   `;
 

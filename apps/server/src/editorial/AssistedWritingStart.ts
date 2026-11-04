@@ -18,10 +18,9 @@ export const isOperatorRun = (run: OperatorRun): boolean =>
   run.restartContinuationOfRunId === undefined && run.delegatedTaskId === undefined;
 
 /**
- * In an assisted video thread, reading the dossier ends when the operator first asks the agent
- * for something, usually the draft: from then on the clock counts Escribir. It applies only
- * while Leer runs, when Escribir never ran and before the decision, all checked in the stage
- * change's own transaction, so a stage chosen by hand is never overridden.
+ * In an assisted video thread, Leer ends at the operator's first request to the agent. Only
+ * from a Leer the operator did not choose by hand, when Escribir never ran and before the
+ * decision, all checked in the stage change's own transaction.
  */
 export const onRunCreated = Effect.fn("AssistedWritingStart.onRunCreated")(function* (
   threadId: string,
@@ -35,8 +34,10 @@ export const onRunCreated = Effect.fn("AssistedWritingStart.onRunCreated")(funct
   yield* clocks
     .changeStage(threadId, "write", {
       actor: "system",
+      source: "auto",
       onlyFrom: "read",
       onlyFirst: true,
+      unlessChosenByHand: true,
       cause: "agent-request",
       refuseWhenDecided: true,
     })

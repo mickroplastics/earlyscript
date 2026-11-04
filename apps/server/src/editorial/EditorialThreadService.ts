@@ -457,7 +457,8 @@ const make = Effect.gen(function* () {
     const summary = yield* clock.start(
       thread.threadId,
       thread.mode === "manual" ? "explore" : "read",
-      { operationId: `${thread.operationId}:clock` },
+      // The first stage comes with the thread, not from the operator's choice.
+      { operationId: `${thread.operationId}:clock`, source: "auto" },
     );
     return { thread, clock: summary, created: registered.created };
   });

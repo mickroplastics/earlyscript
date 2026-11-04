@@ -505,15 +505,26 @@ const makeHandlers = Effect.gen(function* () {
           actor: "operator" as const,
           refuseWhenDecided: true,
         };
+        // The decision block opens Decidir by itself (`cause: "decision-block"`): an automatic
+        // change, recorded as such, that never sends back to Decidir an operator who left it.
         switch (command._tag) {
           case "start":
-            return yield* clocks.start(thread.threadId, command.stage, options);
+            return yield* clocks.start(thread.threadId, command.stage, {
+              ...options,
+              source: command.cause === undefined ? "manual" : "auto",
+            });
           case "pause":
             return yield* clocks.pause(thread.threadId, { ...options, reason: command.reason });
           case "resume":
             return yield* clocks.resume(thread.threadId, options);
           case "stage":
-            return yield* clocks.changeStage(thread.threadId, command.stage, options);
+            return yield* clocks.changeStage(
+              thread.threadId,
+              command.stage,
+              command.cause === undefined
+                ? options
+                : { ...options, source: "auto", onlyFirst: true, cause: command.cause },
+            );
           case "stop":
             return yield* clocks.stop(thread.threadId, options);
           case "resolve": {
@@ -544,14 +555,16 @@ const makeHandlers = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* scripts.snapshot(thread.threadId);
         // Reading the dossier ends at the first saved script, unless the first request to the
-        // agent ended it before (`AssistedWritingStart.ts`). Leer running, Escribir never run
-        // and no decision are checked in the stage change's own transaction, so a stage the
-        // operator chose by hand stays.
+        // agent ended it before (`AssistedWritingStart.ts`). Leer running and not chosen by
+        // hand, Escribir never run and no decision are checked in the stage change's own
+        // transaction, so a stage the operator chose by hand stays.
         yield* clocks
           .changeStage(thread.threadId, "write", {
             actor: "operator",
+            source: "auto",
             onlyFrom: "read",
             onlyFirst: true,
+            unlessChosenByHand: true,
             cause: "script-version",
             refuseWhenDecided: true,
           })

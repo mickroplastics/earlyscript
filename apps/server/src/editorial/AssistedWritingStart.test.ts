@@ -37,7 +37,7 @@ describe("AssistedWritingStart", () => {
       Effect.gen(function* () {
         const clock = yield* WorkClockService;
         yield* register("assisted", "assisted");
-        yield* clock.start("assisted", "read");
+        yield* clock.start("assisted", "read", { source: "auto" });
         yield* TestClock.adjust(Duration.minutes(3));
 
         yield* onRunCreated("assisted");
@@ -49,7 +49,7 @@ describe("AssistedWritingStart", () => {
     ),
   );
 
-  it.effect("leaves manual threads, other stages and decided threads alone", () =>
+  it.effect("leaves manual threads, other stages and stages chosen by hand alone", () =>
     withEditorialDatabase(
       Effect.gen(function* () {
         const clock = yield* WorkClockService;
@@ -60,10 +60,25 @@ describe("AssistedWritingStart", () => {
 
         // The operator already moved to Decidir by hand.
         yield* register("deciding", "assisted");
-        yield* clock.start("deciding", "read");
+        yield* clock.start("deciding", "read", { source: "auto" });
         yield* clock.changeStage("deciding", "decide");
         yield* onRunCreated("deciding");
         assert.strictEqual(yield* stageOf("deciding"), "decide");
+
+        // Sol's sequence: Leer, Decidir by hand, back to Leer by hand, then the first request.
+        // Escribir never ran, but the operator chose Leer: it stays.
+        yield* register("back-to-read", "assisted");
+        yield* clock.start("back-to-read", "read", { source: "auto" });
+        yield* clock.changeStage("back-to-read", "decide");
+        yield* clock.changeStage("back-to-read", "read");
+        yield* onRunCreated("back-to-read");
+        assert.strictEqual(yield* stageOf("back-to-read"), "read");
+
+        // A clock restarted by hand in Leer (after a recovery stopped it) is a choice too.
+        yield* register("restarted", "assisted");
+        yield* clock.start("restarted", "read");
+        yield* onRunCreated("restarted");
+        assert.strictEqual(yield* stageOf("restarted"), "read");
 
         // An ordinary T3 thread has no editorial row.
         yield* onRunCreated("not-a-video-thread");

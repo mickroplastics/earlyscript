@@ -38,6 +38,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialVideoProject } from "./VideoProject.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { EditorialEventLog } from "./persistence/EditorialEventLog.ts";
 import { WorkClockService } from "./WorkClockService.ts";
 import { SCRIPT, SCRIPT_PATH, VIDEO_THREAD_ID, withVideoWorkspace } from "./videoThread.testkit.ts";
@@ -71,6 +72,12 @@ const withVideoRpc = <A, E, R>(
 
 const reasonOf = (error: EditorialVideoError | { readonly _tag: string }) =>
   "reason" in error ? error.reason : error._tag;
+
+/**
+ * Leer as the thread opens (`EditorialThreadService.createVideo`): a stage the flow chose, which
+ * the first saved version may end. Starting it from the clock control is a choice by hand.
+ */
+const openLeer = WorkClockService.use((clock) => clock.start(THREAD, "read", { source: "auto" }));
 
 describe("editorial video RPC authorization", () => {
   it("reads with orchestration:read and commands with orchestration:operate", () => {
@@ -151,12 +158,8 @@ describe("editorial video RPC", () => {
           command: Parameters<(typeof client)["editorial.video.clock"]>[0]["command"],
         ) => client[EDITORIAL_VIDEO_WS_METHODS.clock]({ threadId: THREAD, command });
 
-        const started = yield* clock({ _tag: "start", stage: "read" });
-        assert.deepStrictEqual(started.clock.state, {
-          _tag: "running",
-          stage: "read",
-          since: started.clock.asOf,
-        });
+        const started = yield* openLeer;
+        assert.deepInclude(started.state, { _tag: "running", stage: "read", since: started.asOf });
         yield* TestClock.adjust(4 * MINUTE);
         const paused = yield* clock({ _tag: "pause", reason: "phone call" });
         assert.strictEqual(paused.clock.state._tag, "paused");
@@ -204,10 +207,7 @@ describe("editorial video RPC", () => {
     withVideoRpc(({ write }) =>
       Effect.gen(function* () {
         const client = yield* operator;
-        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
-          threadId: THREAD,
-          command: { _tag: "start", stage: "read" },
-        });
+        yield* openLeer;
         yield* write(SCRIPT_PATH, SCRIPT);
         const first = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
         const read = first.script.head?.contentHash ?? null;
@@ -643,6 +643,71 @@ describe("editorial video RPC, review of 76967e71c6", () => {
     ),
   );
 
+  // Sol, hallazgo 2: the automatic changes never override a stage the operator chose by hand.
+  it.effect("keeps a stage chosen by hand through a save and the decision block", () =>
+    withVideoRpc(({ write }) =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        const clock = (
+          command: Parameters<(typeof client)["editorial.video.clock"]>[0]["command"],
+        ) => client[EDITORIAL_VIDEO_WS_METHODS.clock]({ threadId: THREAD, command });
+        const stageOf = (view: { readonly clock: { readonly state: object } }) =>
+          "stage" in view.clock.state ? view.clock.state.stage : "idle";
+
+        // Leer, Decidir by hand, back to Leer by hand: the first version keeps Leer.
+        yield* openLeer;
+        yield* clock({ _tag: "stage", stage: "decide" });
+        yield* clock({ _tag: "stage", stage: "read" });
+        yield* write(SCRIPT_PATH, SCRIPT);
+        const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
+        assert.strictEqual(saved.script.versionCount, 1);
+        assert.strictEqual(stageOf(saved), "read");
+
+        // The operator left Decidir by hand: touching the decision block does not send it back.
+        const touched = yield* clock({ _tag: "stage", stage: "decide", cause: "decision-block" });
+        assert.strictEqual(stageOf(touched), "read");
+
+        // Escribir by hand, then the decision block: Decidir already ran, so it stays too.
+        yield* clock({ _tag: "stage", stage: "write" });
+        const again = yield* clock({ _tag: "stage", stage: "decide", cause: "decision-block" });
+        assert.strictEqual(stageOf(again), "write");
+      }),
+    ),
+  );
+
+  it.effect("opens Decidir from the decision block once, as an automatic change", () =>
+    withVideoRpc(() =>
+      Effect.gen(function* () {
+        const client = yield* operator;
+        const clock = (
+          command: Parameters<(typeof client)["editorial.video.clock"]>[0]["command"],
+        ) => client[EDITORIAL_VIDEO_WS_METHODS.clock]({ threadId: THREAD, command });
+        yield* openLeer;
+        yield* clock({ _tag: "stage", stage: "write" });
+        const deciding = yield* clock({ _tag: "stage", stage: "decide", cause: "decision-block" });
+        assert.deepInclude(deciding.clock.state, { _tag: "running", stage: "decide" });
+        const sources = yield* EditorialSql.use(
+          (sql) => sql<{ readonly stage: string; readonly source: string | null }>`
+            SELECT stage, source FROM editorial_work_intervals ORDER BY started_at, rowid
+          `,
+        );
+        assert.deepStrictEqual(
+          sources.map((row) => [row.stage, row.source]),
+          [
+            ["read", "auto"],
+            ["write", "manual"],
+            ["decide", "auto"],
+          ],
+        );
+        const log = yield* EditorialEventLog;
+        const last = (yield* log.readSince(0)).findLast(
+          (event) => event.type === "work.stage-changed",
+        );
+        assert.deepInclude(last!.payload as object, { to: "decide", cause: "decision-block" });
+      }),
+    ),
+  );
+
   // H2, the read to write change: a save after the decision snapshots but leaves the clock.
   it.effect("keeps a decided clock stopped when the script is saved again", () =>
     withVideoRpc(({ write }) =>
@@ -674,10 +739,7 @@ describe("editorial video RPC, review of 76967e71c6", () => {
     withVideoRpc(({ write }) =>
       Effect.gen(function* () {
         const client = yield* operator;
-        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
-          threadId: THREAD,
-          command: { _tag: "start", stage: "read" },
-        });
+        yield* openLeer;
         yield* TestClock.adjust(MINUTE);
         yield* write(SCRIPT_PATH, SCRIPT);
         const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
@@ -826,10 +888,7 @@ describe("editorial video RPC, review of 76967e71c6", () => {
       Effect.gen(function* () {
         const client = yield* operator;
         yield* write(SCRIPT_PATH, SCRIPT);
-        yield* client[EDITORIAL_VIDEO_WS_METHODS.clock]({
-          threadId: THREAD,
-          command: { _tag: "start", stage: "read" },
-        });
+        yield* openLeer;
         yield* TestClock.adjust(MINUTE);
         const saved = yield* client[EDITORIAL_VIDEO_WS_METHODS.saveScript]({ threadId: THREAD });
         yield* TestClock.adjust(MINUTE);

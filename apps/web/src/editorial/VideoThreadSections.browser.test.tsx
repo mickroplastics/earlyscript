@@ -404,7 +404,11 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
     await userEvent.click(screen.getByRole("button", { name: "Editar" }));
     await expect
       .poll(() => callsOf(CLOCK))
-      .toEqual([expect.objectContaining({ command: { _tag: "stage", stage: "decide" } })]);
+      .toEqual([
+        expect.objectContaining({
+          command: { _tag: "stage", stage: "decide", cause: "decision-block" },
+        }),
+      ]);
   });
 
   /** A click alone, without pointer or focus, as scripted clicks and some assistive tools send. */
@@ -430,7 +434,9 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
     await expect.poll(() => callsOf(DECIDE).length).toBe(1);
     const order = testState.calls.map((call) => call.label);
     expect(callsOf(CLOCK)).toEqual([
-      expect.objectContaining({ command: { _tag: "stage", stage: "decide" } }),
+      expect.objectContaining({
+        command: { _tag: "stage", stage: "decide", cause: "decision-block" },
+      }),
     ]);
     expect(order.indexOf(CLOCK)).toBeLessThan(order.indexOf(SAVE_SCRIPT));
     expect(order.indexOf(SAVE_SCRIPT)).toBeLessThan(order.indexOf(DECIDE));
@@ -443,7 +449,11 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
     await userEvent.click(screen.getByRole("button", { name: "Aceptar" }));
     await expect
       .poll(() => callsOf(CLOCK))
-      .toEqual([expect.objectContaining({ command: { _tag: "start", stage: "decide" } })]);
+      .toEqual([
+        expect.objectContaining({
+          command: { _tag: "start", stage: "decide", cause: "decision-block" },
+        }),
+      ]);
   });
 
   // H4: once decided, the script opens as the decided snapshot, read-only.
