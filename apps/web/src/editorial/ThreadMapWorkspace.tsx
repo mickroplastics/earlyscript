@@ -242,9 +242,17 @@ function LiveMap({
   const snapshotCompletedRun = useEffectEvent(() => {
     if (video.decision === null) void outcome.commands.saveScript(null);
   });
+  // The completion seen when the thread opened: a run from an earlier session must not snapshot
+  // again, or opening a thread would record the empty template as a version.
+  const openedWithCompletedAt = useRef<string | null | undefined>(undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- captures filesystem writes made by a completed agent turn through the existing idempotent snapshot command
   useEffect(() => {
-    if (completedAt !== null) snapshotCompletedRun();
+    if (completedAt === null) return;
+    if (openedWithCompletedAt.current === undefined) {
+      openedWithCompletedAt.current = completedAt;
+      return;
+    }
+    if (completedAt !== openedWithCompletedAt.current) snapshotCompletedRun();
   }, [completedAt]);
 
   const contentHash = video.script.head?.contentHash ?? null;
