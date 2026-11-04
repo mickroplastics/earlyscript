@@ -33,6 +33,40 @@ describe("script checking", () => {
     ]);
   });
 
+  it("does not count a call to action in Close as a claim", () => {
+    const script = [
+      "# Hook",
+      "",
+      "Cisco says it is rewriting most of its legacy code with AI. [itm_hn_50061234]",
+      "",
+      "# Block 1",
+      "",
+      "Join the people who read the source before they believe the headline.",
+      "",
+      "# Close",
+      "",
+      "If this was useful, join SingulariDev as a member to get the next analysis first.",
+      "Subscribe for the follow-up on the rewrite.",
+      "Join 3,000 members who already read the full benchmark.",
+      "The rewrite still has no published quality assessment.",
+      "",
+      "# Sources",
+      "",
+      "- https://news.ycombinator.com/item?id=50061234",
+      "",
+    ].join("\n");
+    const report = checkScript(script);
+    expect(report.claimsMap.map((claim) => claim.text)).toEqual([
+      "Cisco says it is rewriting most of its legacy code with AI. [itm_hn_50061234]",
+      // Outside Close an imperative still counts.
+      "Join the people who read the source before they believe the headline.",
+      // A figure may be a claim.
+      "Join 3,000 members who already read the full benchmark.",
+      "The rewrite still has no published quality assessment.",
+    ]);
+    expect(report.counts).toEqual({ claims: 4, cited: 1, uncited: 3 });
+  });
+
   it("starts from a template whose only problems are its empty sections", () => {
     const report = checkScript(SCRIPT_TEMPLATE);
     expect(report.structure.map(({ code }) => code)).toEqual([

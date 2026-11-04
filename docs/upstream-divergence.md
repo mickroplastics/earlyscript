@@ -2164,3 +2164,7 @@ Causas, sin archivos de upstream nuevos:
 - `shellText.ts`: las cadenas del pliegue («Trabajó durante 35s», «Lo detuviste tras …»), del autor («Tú»), de las acciones del mensaje, del estado hablado del hilo («Listo», «Necesita aprobación»…) y del panel de archivos donde se edita el guion («Abrir», «Mostrar el markdown renderizado», «Mostrar el texto del markdown», «Cerrar guion.md», «Explorar videos», «Buscar archivos»…).
 
 Siguen en inglés: los resúmenes del registro de trabajo del agente («Used t3 code integration and ran 1 command»), que upstream compone con números y nombres de herramientas, y la hora de los mensajes («1:32 AM»).
+
+### Llamada a la acción contada como afirmación sin cita
+
+`checkScript` (`packages/editorial-script/src/script.ts`) contaba como afirmación toda frase de cuatro palabras o más que no fuera pregunta, así que «If this was useful, join SingulariDev as a member…» salía como afirmación sin cita y bajaba la proporción de citas en Resultados. Ahora, solo en la sección Close, una frase que empieza por un verbo de invitación (`join`, `subscribe`, `become`, `sign up`, `support`, `follow`, `share`, `comment`…, con «If …,», «So,» o «please» delante, y sus equivalentes en español) y no lleva cifras no cuenta como afirmación. Fuera de Close, o con una cifra («Join 3,000 members…»), sigue contando. Prueba en `script.test.ts`. Los conteos de versiones ya guardadas se recalculan al leerlas, porque la vista y Resultados aplican `checkScript` sobre el texto de la versión.

@@ -57,6 +57,18 @@ const ABBREVIATION = /(?:^|[^\p{L}.])(?:Inc|Dr|vs|e\.g|i\.e|U\.S)$/u;
 // URLs keep their trailing sentence punctuation outside the match.
 const URL = /\b[a-z][a-z0-9+.-]*:\/\/\S*?(?=[.!?"'”’»)*_~`]*(?:\s|$))/gi;
 const QUESTION = /\?[!?\s"'”’»)*_~`]*$/;
+/**
+ * A call to action in Close ("Join SingulariDev as a member", "If this helped, subscribe"):
+ * an invitation, not a claim, so it needs no citation. Only in Close, only when the sentence
+ * opens with one of these verbs, and never when it carries a figure, which may be a claim.
+ */
+const INVITATION =
+  /^(?:(?:so|and|now|if\b[^,]{1,80}),\s*)?(?:please\s+)?(?:join|subscribe|become|sign\s+up|support|follow|share|comment|leave|tell\s+us|let\s+us\s+know|hit|click|tap|consider|come|grab|check\s+out|únete|suscríbete|hazte|apóyanos|comenta|comparte)\b/iu;
+
+const isInvitation = (sentence: string): boolean =>
+  INVITATION.test(sentence.replace(/^[*_~>\s]+/, "")) &&
+  !/\d/.test(sentence.replace(/\[[^\]]*\]/g, ""));
+
 const ITEM = /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_-]+)|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
 
 function citationsIn(text: string): Array<{ offset: number; raw: string; ids: string[] }> {
@@ -289,7 +301,11 @@ export function checkScript(
   }
   const claimsMap = ast.sections
     .filter((section) => section.kind !== "sources")
-    .flatMap((section) => section.paragraphs.flatMap((paragraph) => paragraph.claims));
+    .flatMap((section) =>
+      section.paragraphs
+        .flatMap((paragraph) => paragraph.claims)
+        .filter((claim) => section.kind !== "close" || !isInvitation(claim.text)),
+    );
   const uncitedClaims = claimsMap.filter((claim) => !claim.citations.length);
   const allowed = options.dossier === undefined ? undefined : dossierIds(options.dossier);
   const unknownCitations = allowed
