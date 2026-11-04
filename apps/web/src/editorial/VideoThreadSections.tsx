@@ -58,6 +58,7 @@ interface VideoThreadSectionsControls {
   readonly onRequestDraft: (() => void) | null;
   /** Opens the read-only copy of the version the decision names. */
   readonly onOpenDecidedVersion: (contentHash: string) => void;
+  readonly onSetCohort?: () => void;
   readonly onSaveVersion: () => void;
   readonly onResolve: (intervalId: string, endedAt: string) => void;
   readonly decision: VideoDecisionControls;
@@ -183,10 +184,26 @@ function VideoThreadSectionsView({
             <Badge variant="outline" size="sm">
               {MODE_LABEL[video.thread.mode]}
             </Badge>
+            {video.thread.cohort === "trial" ? (
+              <Badge variant="outline" size="sm">
+                Ensayo
+              </Badge>
+            ) : null}
             <TrendLink environmentId={environmentId} video={video} />
           </div>
           <p className="text-muted-foreground text-xs tabular-nums" aria-label="Reloj">
             {clockLine}
+          </p>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={controls.busy}
+            onClick={controls.onSetCohort}
+          >
+            {video.thread.cohort === "trial" ? "Quitar marca de ensayo" : "Marcar como ensayo"}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Un ensayo se conserva como evidencia pero no cuenta en Resultados.
           </p>
           {clock.unresolved.map((interval) => (
             <UnresolvedInterval
@@ -353,6 +370,8 @@ function LiveVideoThreadSections({
       resultDraft={outcome.resultDraft}
       controls={{
         busy,
+        onSetCohort: () =>
+          void run(() => commands.setCohort(video.thread.cohort === "trial" ? "human" : "trial")),
         onOpenScript:
           workspaceRoot === null || scriptPath === null
             ? null

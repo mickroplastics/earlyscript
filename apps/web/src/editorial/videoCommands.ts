@@ -54,6 +54,7 @@ function outcomeOf(
  */
 export function useVideoCommands(threadRef: ScopedThreadRef) {
   const options = { reportFailure: false } as const;
+  const setCohort = useAtomCommand(editorialVideoEnvironment.setCohort, options);
   const clock = useAtomCommand(editorialVideoEnvironment.clock, options);
   const saveScript = useAtomCommand(editorialVideoEnvironment.saveScript, options);
   const decide = useAtomCommand(editorialVideoEnvironment.decide, options);
@@ -63,6 +64,11 @@ export function useVideoCommands(threadRef: ScopedThreadRef) {
   const removeCapture = useAtomCommand(editorialVideoEnvironment.removeCapture, options);
   const { environmentId, threadId } = threadRef;
   return {
+    setCohort: async (cohort: "human" | "trial") =>
+      outcomeOf(
+        await setCohort({ environmentId, input: { threadId, cohort } }),
+        "No se cambió la cohorte",
+      ),
     clock: async (command: EditorialVideoClockCommand, failureTitle: string | null) =>
       outcomeOf(
         await clock({

@@ -64,6 +64,7 @@ export const EDITORIAL_VIDEO_RPC_AGGREGATES = {
   [EDITORIAL_VIDEO_WS_METHODS.capture]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.purge]: "editorial",
+  [EDITORIAL_VIDEO_WS_METHODS.setCohort]: "editorial",
   [EDITORIAL_VIDEO_WS_METHODS.prepare]: "editorial",
 } as const;
 
@@ -106,6 +107,7 @@ export class EditorialVideoRpcHandlers extends Context.Reference<EditorialVideoH
       [EDITORIAL_VIDEO_WS_METHODS.capture]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.removeCapture]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.purge]: () => Effect.fail(unavailable),
+      [EDITORIAL_VIDEO_WS_METHODS.setCohort]: () => Effect.fail(unavailable),
       [EDITORIAL_VIDEO_WS_METHODS.prepare]: () => Effect.fail(unavailable),
     }),
   },
@@ -356,6 +358,7 @@ const makeHandlers = Effect.gen(function* () {
       thread: {
         threadId,
         mode: thread.mode,
+        cohort: thread.cohort ?? "human",
         launchState: thread.launchState,
         createdAt: thread.createdAt,
         trendKey: thread.trendKey,
@@ -729,6 +732,10 @@ const makeHandlers = Effect.gen(function* () {
           return Stream.concat(Stream.make(first), live);
         }),
       ),
+    [EDITORIAL_VIDEO_WS_METHODS.setCohort]: ({ threadId, cohort }) =>
+      threads
+        .setCohort(threadId, cohort)
+        .pipe(Effect.flatMap(stateOf), Effect.mapError(toVideoError)),
     [EDITORIAL_VIDEO_WS_METHODS.clock]: clock,
     [EDITORIAL_VIDEO_WS_METHODS.saveScript]: saveScript,
     [EDITORIAL_VIDEO_WS_METHODS.decide]: (input) =>

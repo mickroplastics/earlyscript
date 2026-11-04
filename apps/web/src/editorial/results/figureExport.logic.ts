@@ -346,7 +346,7 @@ function legend(draw: Draw, body: FigureBody, measure: MeasureText) {
   }
 }
 
-const SERIES_COLUMN = 96;
+const SERIES_COLUMN = 154;
 const TEXT_COLUMN = 250;
 const COLUMN_GAP = 12;
 const ROW_HEIGHT = 28;
@@ -378,13 +378,25 @@ function bars(draw: Draw, body: FigureBarsBody, measure: MeasureText) {
     for (const row of group.rows) {
       // A row text that does not fit wraps under itself: nothing is cut in print.
       const lines = wrapSegments(row.text, TEXT_COLUMN, size, measure);
-      const height = Math.max(ROW_HEIGHT, lines.length * lineHeight + 8);
+      const label = body.series.find((entry) => entry.key === row.series)?.label ?? row.series;
+      const labelLines = wrapSegments(label, SERIES_COLUMN - 24, size, measure);
+      const height = Math.max(
+        ROW_HEIGHT,
+        Math.max(lines.length, labelLines.length) * lineHeight + 8,
+      );
       const center = draw.y + height / 2;
       const color = seriesColor(body.series, row.series) ?? FIGURE_COLORS.series.neutral;
-      const label = body.series.find((entry) => entry.key === row.series)?.label ?? row.series;
       const baseline = center + size * 0.35;
       const side = swatch(draw, PAD, baseline, size, color);
-      text(draw, PAD + side + 6, baseline, label, { size, fill: FIGURE_COLORS.secondary });
+      labelLines.forEach((line, index) =>
+        text(
+          draw,
+          PAD + side + 6,
+          baseline - ((labelLines.length - 1) * lineHeight) / 2 + index * lineHeight,
+          line,
+          { size, fill: FIGURE_COLORS.secondary },
+        ),
+      );
       if (row.value === null) {
         marks.push(
           `<line x1="${plotLeft}" x2="${plotRight}" y1="${round(center)}" y2="${round(center)}" stroke="${FIGURE_COLORS.axis}" stroke-width="1.5" stroke-dasharray="3 4"/>`,

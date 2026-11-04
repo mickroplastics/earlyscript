@@ -12,6 +12,7 @@ import {
   decisionThreadLabel,
   decisionTotalText,
   emptySideText,
+  closingStrip,
   formatDuration,
   iqrText,
   medianDifferenceText,
@@ -317,5 +318,23 @@ describe("decisionsFailureText", () => {
     expect(domainNote({ ...summary([]), excludedByDomain: 2 })).toBe(
       "2 decisiones quedan fuera de los agregados: un valor guardado está fuera de su dominio (utilidad de 1 a 5, tiempos y conteos no negativos).",
     );
+  });
+});
+
+describe("closingStrip", () => {
+  it("states missing data without inventing achievements", () => {
+    const blocks = closingStrip({
+      modes: [],
+      comparisons: [],
+      inbox: { read: 0, observing: 0, dismissed: 0, production: 0 },
+      excludedByDomain: 0,
+      decisionCount: 0,
+      firstDecidedAt: null,
+      lastDecidedAt: null,
+      asOf: "2026-11-04T12:00:00.000Z",
+    });
+    expect(blocks[0]?.text).toContain("Todavía sin hilos manuales");
+    expect(blocks[1]?.text).toContain("0 bloques de línea base, todavía sin registro importado");
+    expect(blocks[2]?.text).toContain("no mide un efecto");
   });
 });

@@ -25,6 +25,7 @@ export function ThreadMapView({
   onChange,
   onEdit,
   onDecide,
+  onToggleCohort,
 }: {
   readonly video: EditorialVideoState;
   readonly active: MapStop;
@@ -42,6 +43,8 @@ export function ThreadMapView({
   readonly onChange: () => void;
   readonly onEdit: () => void;
   readonly onDecide: () => void;
+  /** Marks the thread as a trial (kept as evidence, out of Results) or back as human work. */
+  readonly onToggleCohort: () => void;
 }) {
   const [selection, setSelection] = useState<{ active: MapStop; stop: MapStop } | null>(null);
   const stop = selection?.active === active ? selection.stop : active;
@@ -63,9 +66,23 @@ export function ThreadMapView({
       <header className="space-y-4 border-b p-4">
         <div className="flex flex-wrap justify-between gap-2 pr-16">
           <h1 className="font-semibold">{video.thread.trendTitle ?? "Mapa del video"}</h1>
-          <span className="text-sm text-muted-foreground">
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            {video.thread.cohort === "trial" ? (
+              <span className="rounded border px-1.5 text-xs" data-testid="map-trial-badge">
+                Ensayo
+              </span>
+            ) : null}
             Con asistente ·{" "}
             {formatClock(interpolateClock(video.clock, receivedAtMs, nowMs).activeMs)}
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={working}
+              title="Un ensayo se conserva como evidencia pero no cuenta en Resultados."
+              onClick={onToggleCohort}
+            >
+              {video.thread.cohort === "trial" ? "Quitar marca de ensayo" : "Marcar como ensayo"}
+            </Button>
           </span>
         </div>
         <nav aria-label="Mapa del video" className="grid grid-cols-2 gap-2 lg:grid-cols-4">

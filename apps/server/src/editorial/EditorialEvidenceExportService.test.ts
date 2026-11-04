@@ -21,6 +21,7 @@ import * as RpcTest from "effect/rpc/RpcTest";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
+import { EditorialThreadService } from "./EditorialThreadService.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import * as EditorialEvidenceExportService from "./EditorialEvidenceExportService.ts";
 import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
@@ -55,6 +56,7 @@ const FROZEN_SHARE_COLUMNS = {
   "decisiones.csv": [
     "hilo",
     "modo",
+    "cohorte",
     "tendencia",
     "corrida",
     "accion",
@@ -127,6 +129,7 @@ const FROZEN_SHARE_COLUMNS = {
 
 /** Field paths `share` keeps of each event type, frozen like the columns. */
 const FROZEN_EVENT_PATHS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "video-thread.cohort-changed": ["cohort", "previous"],
   "browser.visited": ["origin", "titleOnly"],
   "capture.removed": [],
   "capture.saved": [],
@@ -784,7 +787,7 @@ describe("EditorialEvidenceExportService", () => {
         const share = yield* exportOf("share");
         const decisions = rowsOf(fileOf(share, "decisiones.csv")).map((line) => line.split(","));
         assert.deepStrictEqual(
-          decisions.map((row) => [row[0], row[1], row[2]]),
+          decisions.map((row) => [row[0], row[1], row[3]]),
           [
             ["h001", "assisted", "t003"],
             ["h002", "manual", ""],
@@ -1197,6 +1200,22 @@ describe("EditorialEvidenceExportService", () => {
         assert.include(full.manifest, "importar sus CSV como texto");
         const share = yield* exportOf("share");
         for (const file of share.files) assert.notInclude(file.content, "HYPERLINK", file.name);
+      }),
+    ),
+  );
+
+  it.effect("keeps trial rows in both exports but excludes their utility from aggregates", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        yield* seedResultsFixture;
+        yield* (yield* EditorialThreadService).setCohort("thread-assisted-1", "trial");
+        for (const mode of ["full", "share"] as const) {
+          const pkg = yield* exportOf(mode);
+          const csv = fileOf(pkg, "decisiones.csv");
+          assert.include(csv.split("\n")[0]!, "cohorte");
+          assert.include(csv, "trial");
+          assert.include(fileOf(pkg, "resumen.md"), "| Asistido | 2 | 2 | 4,00 |");
+        }
       }),
     ),
   );

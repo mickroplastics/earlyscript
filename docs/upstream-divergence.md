@@ -2327,3 +2327,15 @@ La ruta editorial monta `ThreadMapWorkspace` para los videos asistidos y conserv
 No se modificaron archivos de upstream. Los enganches existentes en `EditorialThreadRouteView` y `VideoThreadSections` bastan. `videoDeveloperTools`, en `packages/shared/src/earlyscriptFlags.ts`, permite mostrar los controles técnicos del espacio asistido. `apps/web/src/earlyscript/hiddenFeatures.ts` entrega la clase que los oculta por defecto. Las traducciones del compositor viven en `editorial/locale/shellText.ts` y se aplican solo al hilo asistido.
 
 La petición inicial se prepara en el compositor para que el operador la envíe. Las instrucciones del estudio siguen siendo responsables del expediente, las citas y la comprobación del guion.
+
+## Cohorte de ensayo y franja de cierre en Resultados (rama `es/results-cohort`, 4 de noviembre de 2026)
+
+Base: `36db2c6c24`. Migración editorial 017, `EditorialVideoThreadCohort`, registrada y reproducible. Añade `cohort`, `human` por defecto y `trial` para ensayos. No reclasifica datos históricos automáticamente ni borra pruebas por su título.
+
+RPC `editorial.video.setCohort`, con permiso `orchestration:operate`: recibe `threadId` y `cohort`, devuelve el estado del video. `EditorialThreadService.setCohort` cambia la fila y registra `video-thread.cohort-changed` en una transacción. Repetir el mismo valor no genera otro evento. Permite clasificar también evidencia cuyo hilo T3 se eliminó.
+
+El panel «Hilo de video» permite marcar y quitar la marca, explica su efecto y muestra «Ensayo». Resultados conserva las decisiones de ensayo al final, con insignia y enlace al hilo. Los agregados humanos, las comparaciones con la línea base y las figuras los excluyen. `decisiones.csv` conserva ambas cohortes con la columna `cohorte`; el resumen exportado aplica la misma exclusión.
+
+La franja inicial presenta logros observados, tamaño y fechas de la muestra, y límites. Distingue falta de hilos manuales y falta de línea base. Unifica el formato de duración con la línea base, las etiquetas de búsqueda y el conteo de frases con marcador de fuente. Las fechas de decisiones muestran hora local y zona. Los archivos de figuras mantienen el día local; las etiquetas largas de series se parten dentro de su columna para no invadir las barras.
+
+Solo archivos editoriales y contratos propios; ningún componente de upstream se modifica. La barra lateral heredada no recibe insignias. Verificación y capturas en `/home/miguel/earlyscript-data/results-cohort/informe.md`. La copia de datos `results-review` no estaba disponible; la evidencia visual usa fixtures identificadas como tales.

@@ -98,7 +98,7 @@ describe("ManualBaselineView", () => {
       screen.container.querySelector('[data-baseline-block="2026-10-05#2"]')!.textContent,
     ).toContain("sin separar");
     await expect
-      .element(screen.getByText("al menos 16 h 05 min en 9 bloques", { exact: false }))
+      .element(screen.getByText("al menos 16 h 5 min en 9 bloques", { exact: false }))
       .toBeVisible();
     // Notes stay folded until asked for.
     await expect.element(screen.getByText(/Desde el historial/)).not.toBeVisible();

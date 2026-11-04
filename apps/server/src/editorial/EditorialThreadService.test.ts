@@ -64,6 +64,7 @@ describe("EditorialThreadService", () => {
         });
         assert.isTrue(first.created);
         assert.strictEqual(first.thread.launchState, "pending");
+        assert.strictEqual(first.thread.cohort, "human");
 
         // A UI retry proposes a fresh ThreadId; the persisted one wins.
         const retry = yield* threads.registerVideoThread({
@@ -92,6 +93,14 @@ describe("EditorialThreadService", () => {
           (yield* log.readSince(0)).map((event) => [event.type, event.operationId]),
           [["video-thread.registered", "op-1"]],
         );
+        assert.strictEqual((yield* threads.setCohort("thread-1", "trial")).cohort, "trial");
+        yield* threads.setCohort("thread-1", "trial");
+        assert.strictEqual(
+          (yield* log.readSince(0)).filter((event) => event.type === "video-thread.cohort-changed")
+            .length,
+          1,
+        );
+        assert.strictEqual((yield* threads.setCohort("thread-1", "human")).cohort, "human");
       }),
     ),
   );

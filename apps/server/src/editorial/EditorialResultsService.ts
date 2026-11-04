@@ -94,6 +94,7 @@ export const coverageOf = (
 };
 
 interface DecisionRow {
+  readonly cohort: "human" | "trial";
   readonly decision_id: string;
   readonly thread_id: string;
   readonly environment_id: string;
@@ -133,7 +134,7 @@ const selectDecisions = (
   },
 ) => sql<DecisionRow>`
   SELECT
-    d.decision_id, d.thread_id, t.environment_id, t.mode, t.trend_key, t.run_id, t.dossier_id,
+    d.decision_id, d.thread_id, t.environment_id, t.mode, t.cohort, t.trend_key, t.run_id, t.dossier_id,
     COALESCE(
       (SELECT own.label FROM editorial_dossiers own
         WHERE own.run_id = t.run_id AND own.dossier_id = t.dossier_id),
@@ -160,7 +161,7 @@ const selectDecisions = (
   )
   WHERE (${options.mode ?? null} IS NULL OR t.mode = ${options.mode ?? null})
   ${options.currentOnly ? sql`AND is_current = 1` : sql``}
-  ORDER BY d.decided_at DESC, d.rowid DESC
+  ORDER BY t.cohort = 'trial', d.decided_at DESC, d.rowid DESC
   LIMIT ${options.limit} OFFSET ${options.offset}
 `;
 
@@ -201,6 +202,7 @@ const make = Effect.gen(function* () {
       threadId: row.thread_id,
       environmentId: row.environment_id,
       mode: row.mode,
+      cohort: row.cohort,
       trendKey: row.trend_key,
       trendLabel: row.trend_label,
       runId: row.run_id,
@@ -253,7 +255,7 @@ const make = Effect.gen(function* () {
     }>`
       SELECT COUNT(*) AS decisions, MIN(decided_at) AS first_decided_at,
         MAX(decided_at) AS last_decided_at
-      FROM editorial_decisions
+      FROM editorial_decisions d JOIN editorial_video_threads t ON t.thread_id = d.thread_id WHERE t.cohort = 'human'
     `;
     const inbox = yield* sql<{
       readonly read: number;
@@ -265,13 +267,31 @@ const make = Effect.gen(function* () {
         COALESCE(SUM(seen_at IS NOT NULL), 0) AS read,
         COALESCE(SUM(snoozed_at IS NOT NULL AND dismissed_at IS NULL), 0) AS observing,
         COALESCE(SUM(dismissed_at IS NOT NULL), 0) AS dismissed,
-        COALESCE(SUM(production_thread_id IS NOT NULL), 0) AS production
+        COALESCE(SUM(production_thread_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM editorial_video_threads t
+            WHERE t.thread_id = production_thread_id AND t.cohort = 'trial')), 0) AS production
       FROM editorial_trend_inbox
     `;
+    const trials = yield* sql<{
+      readonly threadId: string;
+      readonly environmentId: string;
+      readonly createdAt: string;
+    }>`SELECT thread_id AS threadId, environment_id AS environmentId, created_at AS createdAt FROM editorial_video_threads WHERE cohort = 'trial' ORDER BY created_at`;
+    const baseline = yield* sql<{
+      readonly blocks: number;
+      readonly firstDay: string | null;
+      readonly lastDay: string | null;
+    }>`SELECT COUNT(*) AS blocks, MIN(fecha) AS firstDay, MAX(fecha) AS lastDay FROM editorial_manual_baseline_blocks`;
+    const humans = yield* sql<{
+      readonly n: number;
+    }>`SELECT COUNT(*) AS n FROM editorial_video_threads WHERE cohort = 'human'`;
     const decisions = rows.map(toDecision);
     const summaryCounts = counts[0];
     return {
       ...summarizeDecisions(decisions),
+      trials,
+      baselineSample: baseline[0] ?? { blocks: 0, firstDay: null, lastDay: null },
+      humanThreads: humans[0]?.n ?? 0,
       inbox: inbox[0] ?? { read: 0, observing: 0, dismissed: 0, production: 0 },
       decisionCount: summaryCounts?.decisions ?? 0,
       firstDecidedAt: summaryCounts?.first_decided_at ?? null,
@@ -356,8 +376,9 @@ export const summarizeDecisions = (
 ): Pick<EditorialResultsSummary, "modes" | "comparisons" | "excludedByDomain"> => {
   // A current decision with a value out of its domain (a utility of 999, a negative time) is
   // counted apart and never enters a statistic.
-  const current = decisions.filter((decision) => decision.current && decisionInDomain(decision));
-  const excludedByDomain = decisions.filter(
+  const humans = decisions.filter((decision) => (decision.cohort ?? "human") === "human");
+  const current = humans.filter((decision) => decision.current && decisionInDomain(decision));
+  const excludedByDomain = humans.filter(
     (decision) => decision.current && !decisionInDomain(decision),
   ).length;
   const byMode = (mode: EditorialResultsMode) => current.filter((entry) => entry.mode === mode);

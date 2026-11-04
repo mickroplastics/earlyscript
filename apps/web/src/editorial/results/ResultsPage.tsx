@@ -31,7 +31,7 @@ import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useQuietThreadShells } from "../../state/entities";
-import { formatDate } from "../editorial.logic";
+
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
 import { EvidenceExportButton } from "./EvidenceExportButton";
@@ -64,7 +64,8 @@ import {
   formatCount,
   formatDuration,
   formatInteger,
-  formatPercent,
+  closingStrip,
+  localResultsDate as formatDate,
   hasDecisions,
   hasInboxActivity,
   iqrText,
@@ -169,7 +170,9 @@ function ComparisonCard({
           {modeLabel(mode)}
         </span>
         <span className="text-base font-medium text-foreground tabular-nums">
-          {stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)}
+          {stats.medianMs === null
+            ? "Consulta la línea base manual"
+            : formatDuration(stats.medianMs)}
         </span>
         {iqr ? <span className="text-xs text-muted-foreground tabular-nums">{iqr}</span> : null}
         <span className="text-xs text-muted-foreground tabular-nums">
@@ -432,7 +435,10 @@ function DecisionsTable({
             <TableCell>
               <ThreadCell decision={decision} title={threadTitles.get(decision.threadId)} />
             </TableCell>
-            <TableCell>{modeLabel(decision.mode)}</TableCell>
+            <TableCell>
+              {modeLabel(decision.mode)}{" "}
+              {decision.cohort === "trial" ? <Badge variant="outline">Ensayo</Badge> : null}
+            </TableCell>
             <TableCell>
               <span className="flex items-center gap-1.5">
                 {actionLabel(decision.action)}
@@ -586,6 +592,16 @@ export function ResultsView({
   /** «Línea base manual»; the page mounts it, the view only places it. */
   readonly baseline?: ReactNode;
 }) {
+  const strip = (
+    <div className="grid gap-4 rounded-lg border bg-muted/20 p-4 md:grid-cols-3">
+      {closingStrip(summary).map((block) => (
+        <div key={block.title}>
+          <h2 className="text-sm font-medium">{block.title}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{block.text}</p>
+        </div>
+      ))}
+    </div>
+  );
   const header = (
     <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 flex-col gap-1">
@@ -603,6 +619,19 @@ export function ResultsView({
     return (
       <>
         {header}
+        {strip}
+        {(summary.trials?.length ?? 0) > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            <a href="#decisiones" className="underline">
+              {formatCount(
+                summary.trials?.length ?? 0,
+                "ensayo de agente fuera",
+                "ensayos de agente fuera",
+              )}{" "}
+              de los indicadores
+            </a>
+          </p>
+        ) : null}
         <NoDecisions />
         {baseline}
         {hasInboxActivity(summary) ? (
@@ -629,6 +658,30 @@ export function ResultsView({
   return (
     <>
       {header}
+      {strip}
+      {(summary.trials?.length ?? 0) > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          <a href="#decisiones" className="underline">
+            {formatCount(
+              summary.trials?.length ?? 0,
+              "ensayo de agente fuera",
+              "ensayos de agente fuera",
+            )}{" "}
+            de los indicadores
+          </a>
+          {" · "}
+          {summary.trials?.map((trial, index) => (
+            <Link
+              key={trial.threadId}
+              to="/$environmentId/$threadId"
+              params={{ environmentId: trial.environmentId, threadId: trial.threadId }}
+              className="mr-2 underline"
+            >
+              {threadTitles.get(trial.threadId) ?? `Ensayo ${index + 1}`}
+            </Link>
+          ))}
+        </p>
+      ) : null}
 
       <Alert variant="info">
         <InfoIcon />
@@ -702,12 +755,8 @@ export function ResultsView({
             return (
               <ResultsMetric
                 key={`citations-${mode}`}
-                label={`Afirmaciones con cita, ${modeLabel(mode).toLowerCase()}`}
-                value={
-                  entry.citations.ratio === null
-                    ? "sin datos"
-                    : formatPercent(entry.citations.ratio)
-                }
+                label={`Marcadores de fuente, ${modeLabel(mode).toLowerCase()}`}
+                value={`${entry.citations.cited} de ${entry.citations.claims} frases con marcador de fuente`}
                 detail={citationDetail(entry)}
               />
             );

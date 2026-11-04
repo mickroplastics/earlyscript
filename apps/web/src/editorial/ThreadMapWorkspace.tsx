@@ -364,6 +364,11 @@ function LiveMap({
         onChange={change}
         onEdit={() => setEditing(true)}
         onDecide={outcome.decision.onEngage}
+        onToggleCohort={() =>
+          void run(() =>
+            outcome.commands.setCohort(video.thread.cohort === "trial" ? "human" : "trial"),
+          )
+        }
       />
     </div>
   );

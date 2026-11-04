@@ -32,16 +32,16 @@ const stats = (n: number, median: number): EditorialDurationStats => ({
 });
 
 describe("formatMinutes", () => {
-  it("reads hours and minutes as «1 h 05 min» and keeps a half minute", () => {
+  it("reads hours and minutes as «1 h 5 min» and keeps a half minute", () => {
     expect(formatMinutes(45)).toBe("45 min");
     expect(formatMinutes(60)).toBe("1 h");
-    expect(formatMinutes(65)).toBe("1 h 05 min");
-    expect(formatMinutes(62.5)).toBe("1 h 02,5 min");
+    expect(formatMinutes(65)).toBe("1 h 5 min");
+    expect(formatMinutes(62.5)).toBe("1 h 2,5 min");
     expect(formatMinutes(32.5)).toBe("32,5 min");
     expect(formatMinutes(850)).toBe("14 h 10 min");
     expect(formatMinutes(111.25)).toBe("1 h 51,5 min");
     expect(formatMinutes(0.75)).toBe("45 s");
-    expect(formatMinutes(0)).toBe("0 min");
+    expect(formatMinutes(0)).toBe("0 s");
   });
 });
 
@@ -137,7 +137,7 @@ describe("the blocks table", () => {
   it("gives weekly minutes as a lower bound when a block lacks a part", () => {
     expect(weekMinutesText(BASELINE_RECORD.weeks[0]!)).toBe("14 h 10 min en 8 bloques");
     expect(weekRangeText(BASELINE_RECORD.weeks[0]!)).toBe("1 al 7 de octubre");
-    expect(weekMinutesText(BASELINE_RECORD.weeks[1]!)).toBe("al menos 16 h 05 min en 9 bloques");
+    expect(weekMinutesText(BASELINE_RECORD.weeks[1]!)).toBe("al menos 16 h 5 min en 9 bloques");
   });
 });
 
