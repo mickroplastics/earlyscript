@@ -292,6 +292,7 @@ const THREAD_PATTERNS: LocaleTable["patterns"] = [
   [/^Permissions: (.+)$/, (match, translate) => `Permisos: ${translate(match[1] ?? "")}`],
   // The turn's fold; the duration is upstream's compact format («35s», «2m 5s»).
   [/^Worked for (.+)$/, "Trabajó durante $1"],
+  [/^Working for (.+)$/, "Trabajando desde hace $1"],
   [/^You stopped after (.+)$/, "Lo detuviste tras $1"],
   // File surface: the file or folder's name is a value.
   [/^Close (.+)$/, "Cerrar $1"],

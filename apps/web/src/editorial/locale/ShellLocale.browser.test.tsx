@@ -256,7 +256,11 @@ describe("shell locale scopes", () => {
     expect(bodyButton.getAttribute("aria-label")).toBe("Copy message");
     expect(bodyButton.textContent).toBe("Copy");
     expect(screen.getByTestId("message").element().textContent).toBe("Settled");
-    // A fold that updates in place stays in Spanish.
+    // A fold that updates in place stays in Spanish, while the turn runs and once it ends.
+    screen.getByTestId("fold").element().firstChild!.nodeValue = "Working for 40s";
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("fold").element().textContent).toBe("Trabajando desde hace 40s"),
+    );
     screen.getByTestId("fold").element().firstChild!.nodeValue = "Worked for 1m 2s";
     await vi.waitFor(() =>
       expect(screen.getByTestId("fold").element().textContent).toBe("Trabajó durante 1m 2s"),
