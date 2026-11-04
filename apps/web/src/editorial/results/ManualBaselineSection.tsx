@@ -52,6 +52,7 @@ import {
   seriesLabel,
   weekDaysText,
   weekMinutesText,
+  weekRangeText,
   type BaselineComparison,
   type BaselineSeries,
 } from "./manualBaseline.logic";
@@ -262,43 +263,43 @@ function ComparisonTable({
 }) {
   const both = groupOf(record, "conjunto");
   return (
-    <Table aria-label="Búsqueda y escritura, asistido frente al registro manual">
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-28">Etapa</TableHead>
-          {BASELINE_SERIES.map((series) => (
-            <TableHead key={series}>{seriesLabel(series)}: mediana · RIC · n</TableHead>
-          ))}
-          <TableHead>Manual, las dos semanas</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {comparisons.map((comparison) => (
-          <TableRow key={comparison.key}>
-            <TableCell>{comparison.title}</TableCell>
-            {BASELINE_SERIES.map((series) => {
-              const stats = comparison.stats[series];
-              return (
-                <TableCell key={series}>
-                  <span className="tabular-nums">
-                    {stats ? baselineStatsText(stats) : "sin datos"}
-                  </span>
-                </TableCell>
-              );
-            })}
-            <TableCell>
-              <span className="tabular-nums">
-                {both
-                  ? baselineStatsText(
-                      comparison.key === "search" ? both.search : both.writingNonZero,
-                    )
-                  : "sin datos"}
-              </span>
-            </TableCell>
+    <div className="flex min-w-0 flex-col gap-2">
+      <Table aria-label="Búsqueda y escritura, asistido frente al registro manual">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-28">Mediana · RIC · n</TableHead>
+            {BASELINE_SERIES.map((series) => (
+              <TableHead key={series}>{seriesLabel(series)}</TableHead>
+            ))}
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {comparisons.map((comparison) => (
+            <TableRow key={comparison.key}>
+              <TableCell>{comparison.title}</TableCell>
+              {BASELINE_SERIES.map((series) => {
+                const stats = comparison.stats[series];
+                return (
+                  <TableCell key={series} className="whitespace-normal">
+                    <span className="tabular-nums">
+                      {stats ? baselineStatsText(stats) : "sin datos"}
+                    </span>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {both ? (
+        <p className="text-xs text-muted-foreground tabular-nums">
+          Las dos semanas juntas, mezclando cronometrado y reconstruido: búsqueda{" "}
+          {baselineStatsText(both.search)}; escritura en bloques con escritura{" "}
+          {baselineStatsText(both.writingNonZero)}; escritura en todos los bloques, descartes con 0
+          min incluidos, {baselineStatsText(both.writing)}.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -311,9 +312,7 @@ function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord
         <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           {record.weeks.map((week) => (
             <li key={week.from} className="flex flex-wrap justify-between gap-x-3 tabular-nums">
-              <span className="text-foreground">
-                {dayText(week.from)} al {dayText(week.to)}
-              </span>
+              <span className="text-foreground">{weekRangeText(week)}</span>
               <span>
                 {weekMinutesText(week)} · {weekDaysText(week)}
               </span>

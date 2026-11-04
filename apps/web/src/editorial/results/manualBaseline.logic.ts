@@ -65,6 +65,7 @@ const halfFormat = new Intl.NumberFormat("es", { maximumFractionDigits: 1 });
  * minute, which stays visible; anything finer rounds to the half minute. Under a minute, "45 s".
  */
 export function formatMinutes(minutes: number): string {
+  if (minutes === 0) return "0 min";
   if (minutes < 1) return `${Math.round(minutes * 60)} s`;
   const half = Math.round(minutes * 2) / 2;
   if (half < 60) return `${halfFormat.format(half)} min`;
@@ -271,6 +272,13 @@ export function weekMinutesText(week: EditorialBaselineWeek): string {
   return week.incompleteBlocks > 0
     ? `al menos ${formatMinutes(week.knownMinutes)} en ${blocks}`
     : `${formatMinutes(week.completeMinutes)} en ${blocks}`;
+}
+
+/** "1 al 7 de octubre", the year left to the provenance line. */
+export function weekRangeText(week: EditorialBaselineWeek): string {
+  return rangeText(week.from, week.to)
+    .replace(/^del /, "")
+    .replace(/ de \d{4}$/, "");
 }
 
 export function weekDaysText(week: EditorialBaselineWeek): string {

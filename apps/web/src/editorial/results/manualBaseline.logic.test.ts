@@ -17,6 +17,7 @@ import {
   provenanceText,
   rangeText,
   weekMinutesText,
+  weekRangeText,
 } from "./manualBaseline.logic";
 
 const MINUTE = 60_000;
@@ -39,6 +40,7 @@ describe("formatMinutes", () => {
     expect(formatMinutes(850)).toBe("14 h 10 min");
     expect(formatMinutes(111.25)).toBe("1 h 51,5 min");
     expect(formatMinutes(0.75)).toBe("45 s");
+    expect(formatMinutes(0)).toBe("0 min");
   });
 });
 
@@ -133,6 +135,7 @@ describe("the blocks table", () => {
 
   it("gives weekly minutes as a lower bound when a block lacks a part", () => {
     expect(weekMinutesText(BASELINE_RECORD.weeks[0]!)).toBe("14 h 10 min en 8 bloques");
+    expect(weekRangeText(BASELINE_RECORD.weeks[0]!)).toBe("1 al 7 de octubre");
     expect(weekMinutesText(BASELINE_RECORD.weeks[1]!)).toBe("al menos 16 h 05 min en 9 bloques");
   });
 });
