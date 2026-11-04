@@ -3,6 +3,7 @@ import {
   EditorialDossierId,
   EditorialRunId,
   type EditorialVideoState,
+  type EditorialEvidenceItem,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -85,21 +86,50 @@ function LoadedDossier({
   dossierId,
   contents,
   topic,
+  offset = 0,
+  previous = [],
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly runId: EditorialRunId;
   readonly dossierId: EditorialDossierId;
   readonly contents: string;
   readonly topic: boolean;
+  readonly offset?: number;
+  readonly previous?: readonly EditorialEvidenceItem[];
 }) {
   const result = useAtomValue(
     editorialEnvironment.dossier({
       environmentId: threadRef.environmentId,
-      input: { runId, dossierId, evidenceLimit: 12 },
+      input: { runId, dossierId, evidenceLimit: 50, evidenceOffset: offset },
     }),
   );
   const dossier = AsyncResult.getOrElse(result, () => null);
-  if (!topic) return <ThreadMapScript contents={contents} evidence={dossier?.evidence ?? []} />;
+  if (!topic) {
+    if (dossier === null)
+      return (
+        <p>
+          {AsyncResult.isFailure(result)
+            ? "No se pudieron cargar las fuentes del guion."
+            : "Cargando las fuentes…"}
+        </p>
+      );
+    const evidence = [...previous, ...dossier.evidence];
+    const nextOffset = offset + dossier.evidence.length;
+    if (nextOffset < dossier.evidenceTotal && dossier.evidence.length > 0) {
+      return (
+        <LoadedDossier
+          threadRef={threadRef}
+          runId={runId}
+          dossierId={dossierId}
+          contents={contents}
+          topic={false}
+          offset={nextOffset}
+          previous={evidence}
+        />
+      );
+    }
+    return <ThreadMapScript contents={contents} evidence={evidence} />;
+  }
   return (
     <section className="space-y-4">
       <h2 className="font-semibold text-lg">Por qué está aquí</h2>
