@@ -264,7 +264,9 @@ const make = Effect.gen(function* () {
       readonly production: number;
     }>`
       SELECT
-        COALESCE(SUM(seen_at IS NOT NULL), 0) AS read,
+        COALESCE(SUM(seen_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM editorial_video_threads t
+            WHERE t.thread_id = production_thread_id AND t.cohort = 'trial')), 0) AS read,
         COALESCE(SUM(snoozed_at IS NOT NULL AND dismissed_at IS NULL), 0) AS observing,
         COALESCE(SUM(dismissed_at IS NOT NULL), 0) AS dismissed,
         COALESCE(SUM(production_thread_id IS NOT NULL

@@ -914,13 +914,17 @@ const make = Effect.gen(function* () {
         (
           SELECT COUNT(DISTINCT e.aggregate_id) FROM editorial_events e
           WHERE e.type = 'trend.read' AND CASE WHEN json_valid(e.payload_json) THEN json_extract(e.payload_json, '$.runId') END = r.run_id
+            AND NOT EXISTS (
+              SELECT 1 FROM editorial_trend_inbox i JOIN editorial_video_threads t ON t.thread_id = i.production_thread_id
+              WHERE i.trend_key = e.aggregate_id AND t.cohort = 'trial'
+            )
         ) AS seen,
         (
           SELECT COUNT(DISTINCT d.trend_key) FROM editorial_dossiers d
           JOIN editorial_trend_inbox i ON i.trend_key = d.trend_key
           WHERE d.run_id = r.run_id AND i.dismissed_at IS NOT NULL
         ) AS dismissed,
-        (SELECT COUNT(*) FROM editorial_video_threads t WHERE t.run_id = r.run_id) AS produced
+        (SELECT COUNT(*) FROM editorial_video_threads t WHERE t.run_id = r.run_id AND t.cohort = 'human') AS produced
       FROM editorial_runs r
       ORDER BY r.cutoff_at, r.run_id
     `.pipe(Effect.map((rows) => rows.filter((row) => inWindow(window, row.cutoff_at))));

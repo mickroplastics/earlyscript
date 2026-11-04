@@ -81,6 +81,8 @@ describe("EditorialResultsService", () => {
         assert.strictEqual(after.decisionCount, before.decisionCount - 1);
         // The trend linked to the trial thread no longer counts as "en producción".
         assert.strictEqual(after.inbox.production, before.inbox.production - 1);
+        // Its read mark no longer counts either: «Leídas» is a human figure too.
+        assert.strictEqual(after.inbox.read, before.inbox.read - 1);
         const decisions = yield* service.allDecisions;
         assert.strictEqual(decisions.at(-1)?.cohort, "trial");
         yield* threads.setCohort("thread-assisted-1", "human");
