@@ -52,6 +52,13 @@ export interface WorkClockCommandOptions {
 export interface WorkClockStageOptions extends WorkClockCommandOptions {
   /** Applies only while `onlyFrom` is running; otherwise records nothing. */
   readonly onlyFrom?: WorkStage | undefined;
+  /**
+   * Applies only when `stage` never ran on this thread; otherwise records nothing. The
+   * automatic stage changes use it, so an operator who chose a stage by hand keeps it.
+   */
+  readonly onlyFirst?: boolean | undefined;
+  /** Why an automatic change happened, kept in the event's payload. */
+  readonly cause?: "agent-request" | "script-version" | undefined;
 }
 
 export interface WorkClockPauseOptions extends WorkClockCommandOptions {
@@ -258,9 +265,13 @@ const make = Effect.gen(function* () {
   const changeStage: WorkClockService["Service"]["changeStage"] = (threadId, stage, options) =>
     command("workClock.changeStage", "work.stage-changed", threadId, options, (at, actor) =>
       Effect.gen(function* () {
-        const state = clockStateOf(yield* loadIntervals(sql, threadId));
+        const intervals = yield* loadIntervals(sql, threadId);
+        const state = clockStateOf(intervals);
         const onlyFrom = options?.onlyFrom;
         if (onlyFrom !== undefined && (state._tag !== "running" || state.stage !== onlyFrom)) {
+          return [];
+        }
+        if (options?.onlyFirst === true && intervals.some((row) => row.stage === stage)) {
           return [];
         }
         if (state._tag === "idle") {
@@ -281,7 +292,13 @@ const make = Effect.gen(function* () {
             aggregateId: threadId,
             operationId: options?.operationId,
             actor,
-            payload: { from: state.stage, to: stage, fromState: state._tag, intervalId },
+            payload: {
+              from: state.stage,
+              to: stage,
+              fromState: state._tag,
+              intervalId,
+              ...(options?.cause === undefined ? {} : { cause: options.cause }),
+            },
             createdAt: at,
           }),
         ];

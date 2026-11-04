@@ -398,6 +398,35 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
       .toEqual([expect.objectContaining({ command: { _tag: "stage", stage: "decide" } })]);
   });
 
+  /** A click alone, without pointer or focus, as scripted clicks and some assistive tools send. */
+  const clickOnly = (locator: Locator) => (locator.element() as HTMLElement).click();
+
+  // The decision's own snapshot ended Leer at submission and left Escribir and Decidir at zero.
+  it("opens Decidir before the snapshot when the form is sent without pointer or focus", async () => {
+    using _setup = setup({
+      ...WRITING,
+      clock: {
+        ...WRITING.clock,
+        state: { _tag: "running", stage: "read", since: "2026-10-31T13:05:00.000Z" },
+      },
+    });
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    clickOnly(screen.getByRole("button", { name: "Aceptar" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Aceptar" }))
+      .toHaveAttribute("aria-pressed", "true");
+    clickOnly(screen.getByRole("button", { name: "Utilidad 4" }));
+    await expect.element(screen.getByRole("button", { name: "Registrar decisión" })).toBeEnabled();
+    clickOnly(screen.getByRole("button", { name: "Registrar decisión" }));
+    await expect.poll(() => callsOf(DECIDE).length).toBe(1);
+    const order = testState.calls.map((call) => call.label);
+    expect(callsOf(CLOCK)).toEqual([
+      expect.objectContaining({ command: { _tag: "stage", stage: "decide" } }),
+    ]);
+    expect(order.indexOf(CLOCK)).toBeLessThan(order.indexOf(SAVE_SCRIPT));
+    expect(order.indexOf(SAVE_SCRIPT)).toBeLessThan(order.indexOf(DECIDE));
+  });
+
   // H3-R: a clock a resolved recovery left stopped starts again in Decidir, once.
   it("starts Decidir from a stopped clock when the operator turns to the block", async () => {
     using _setup = setup({ ...WRITING, clock: { ...WRITING.clock, state: { _tag: "idle" } } });

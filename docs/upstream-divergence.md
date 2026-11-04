@@ -2112,3 +2112,24 @@ Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `0113697e
 ### Una sola lista de lo que sale de la máquina (rama `es/onboarding-fix-data2`, 2 de noviembre de 2026)
 
 Corrección H5 de la verificación de Sol sobre `es/onboarding-integration` (`f3828c7b1c`): el paso «Datos y permisos» decía «Nada sale de esta máquina salvo dos cosas», mientras el diálogo «Cómo se tratan tus datos» listaba siete salidas. Ahora `apps/web/src/editorial/onboarding/dataOutbound.ts` (`DATA_OUTBOUND`) es la única lista: id, qué sale, a dónde, cuándo y si es del producto o heredado de T3 Code, con el archivo de código de cada entrada. El paso destaca las dos del producto (captura y redacción) y nombra el resto en una línea («Además, la app consulta: …»); el diálogo muestra la lista completa, en dos grupos. `policyHash` cubre `DATA_OUTBOUND` y la línea del paso. Una prueba de navegador comprueba que paso y diálogo renderizan los mismos ids. Cero archivos de upstream modificados.
+
+## Flujo del hilo asistido tras el ensayo de Astra (rama `es/thread-flow`, 4 de noviembre de 2026)
+
+Base: `4ceccb197c` (`main`). Corrige los defectos que encontró el ensayo de cinco vueltas tendencia → hilo → borrador → ajuste → decisión.
+
+### Etapas automáticas del reloj
+
+El reloj del hilo asistido se quedaba en Leer mientras el agente escribía el guion; solo «Guardar versión» lo pasaba a Escribir, y la propia decisión, que guarda una versión antes de registrarse, pasaba de Leer a Escribir y a Decidir en el mismo segundo. En Resultados, Escribir y Decidir salían en cero.
+
+Transiciones automáticas del hilo asistido:
+
+| Etapa    | Empieza                                                                                  | Quién la abre                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Leer     | al abrir el hilo desde la tendencia                                                      | `EditorialThreadService.createVideo` (sin cambios)                                                                         |
+| Escribir | en el primer mensaje enviado al agente, o en la primera versión del guion si llega antes | `AssistedWritingStart.ts` sigue `run.created` de T3 (sin reanudaciones ni tareas delegadas); `saveScript` en `videoRpc.ts` |
+| Decidir  | en la primera interacción con el bloque «Decisión»: puntero, foco, clic o tecla          | `useVideoDecision.ts`; al enviar, el cliente espera ese cambio antes de guardar la versión                                 |
+| (fin)    | al registrar la decisión                                                                 | `EditorialCommandService.recordDecision` (sin cambios)                                                                     |
+
+Los dos cambios automáticos de servidor usan `changeStage(…, { onlyFrom: "read", onlyFirst: true })`: solo desde Leer en marcha, solo si Escribir no corrió nunca en el hilo y antes de la decisión, todo comprobado en la transacción del cambio. Si el operador elige una etapa a mano, la automática no la pisa; en pausa tampoco cambia nada. El evento `work.stage-changed` guarda la causa (`agent-request` o `script-version`). El modo manual no tiene Leer, así que no le afecta.
+
+Archivos propios: `AssistedWritingStart.ts` (nuevo, montado en `videoRpc.ts` junto a `VideoThreadDeletion.ts`), `WorkClockService.ts` (opciones `onlyFirst` y `cause`), `videoRpc.ts`, `useVideoDecision.ts` y `VideoDecisionPanel.tsx` (clic y tecla también cuentan como interacción). Pruebas: `AssistedWritingStart.test.ts`, un caso en `WorkClockService.test.ts` y otro en `VideoThreadSections.browser.test.tsx` (decisión enviada con clics sin puntero ni foco: Decidir antes de la versión y de la decisión).

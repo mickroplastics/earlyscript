@@ -33,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as BrowserVisits from "./BrowserVisitService.ts";
 import { purgeVideoRecord } from "./EditorialPurge.ts";
+import * as AssistedWritingStart from "./AssistedWritingStart.ts";
 import * as VideoThreadDeletion from "./VideoThreadDeletion.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
@@ -549,12 +550,16 @@ const makeHandlers = Effect.gen(function* () {
     onThread(threadId, (thread) =>
       Effect.gen(function* () {
         yield* scripts.snapshot(thread.threadId);
-        // Reading the dossier ends at the first saved script. Both conditions, Leer running
-        // and no decision, are checked in the stage change's own transaction.
+        // Reading the dossier ends at the first saved script, unless the first request to the
+        // agent ended it before (`AssistedWritingStart.ts`). Leer running, Escribir never run
+        // and no decision are checked in the stage change's own transaction, so a stage the
+        // operator chose by hand stays.
         yield* clocks
           .changeStage(thread.threadId, "write", {
             actor: "operator",
             onlyFrom: "read",
+            onlyFirst: true,
+            cause: "script-version",
             refuseWhenDecided: true,
           })
           .pipe(
@@ -805,4 +810,6 @@ export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers).pipe(
   Layer.provideMerge(BrowserVisits.layer),
   // T3 deletions of video threads stop their clock and refresh their open views.
   Layer.provideMerge(VideoThreadDeletion.layer),
+  // The first request to the agent in an assisted thread moves its clock from Leer to Escribir.
+  Layer.provideMerge(AssistedWritingStart.layer),
 );

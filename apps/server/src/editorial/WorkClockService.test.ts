@@ -257,4 +257,35 @@ describe("WorkClockService", () => {
       }).pipe(Effect.provide(layerAt(dbPath)));
     }).pipe(Effect.ensuring(removeDir(dir)));
   });
+
+  it.effect("moves automatically only from the named stage and only the first time", () =>
+    withEditorialDatabase(
+      Effect.gen(function* () {
+        const clock = yield* WorkClockService;
+        yield* registerThread;
+        const auto = { onlyFrom: "read", onlyFirst: true, cause: "agent-request" } as const;
+
+        yield* clock.start(THREAD, "read");
+        yield* advance(4);
+        const first = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(first.state, { _tag: "running", stage: "write" });
+        yield* advance(6);
+        // The operator goes back to Leer by hand: a later automatic change leaves it there.
+        yield* clock.changeStage(THREAD, "read");
+        yield* advance(2);
+        const kept = yield* clock.changeStage(THREAD, "write", auto);
+        assert.deepInclude(kept.state, { _tag: "running", stage: "read" });
+        assert.strictEqual(stageMs(kept, "read"), Duration.toMillis(Duration.minutes(6)));
+        assert.strictEqual(stageMs(kept, "write"), Duration.toMillis(Duration.minutes(6)));
+
+        const log = yield* EditorialEventLog;
+        const changes = (yield* log.readSince(0)).filter(
+          (event) => event.type === "work.stage-changed",
+        );
+        assert.strictEqual(changes.length, 2);
+        assert.deepInclude(changes[0]!.payload as object, { to: "write", cause: "agent-request" });
+        assert.notProperty(changes[1]!.payload as object, "cause");
+      }),
+    ),
+  );
 });
