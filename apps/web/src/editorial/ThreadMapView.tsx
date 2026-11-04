@@ -134,7 +134,7 @@ export function ThreadMapView({
         </nav>
         <p className="text-sm">
           {decided
-            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total. La versión decidida está en «Revisar el guion».`
+            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total.`
             : stop === 1
               ? "Lee de qué va el tema y por qué está aquí."
               : stop === 2
