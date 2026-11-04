@@ -55,7 +55,7 @@ export async function rerunAndCheck(
   outDir: string,
   options: Pick<
     RunOptions,
-    "cacheFile" | "modelDir" | "workers" | "log" | "allowUnverifiedCorpus"
+    "cacheFile" | "cacheOnly" | "modelDir" | "workers" | "log" | "allowUnverifiedCorpus"
   > = {},
 ): Promise<CheckResult> {
   const checked = checkRun(runDir);

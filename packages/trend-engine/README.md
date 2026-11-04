@@ -11,6 +11,42 @@ pnpm --filter @earlyscript/trend-engine engine check --run <carpeta> [--rerun --
 
 pnpm ejecuta el script en la carpeta del paquete: usar rutas absolutas. Opciones: `--config` (por defecto `config/engine.v1.json`), `--workers` (procesos de Qwen, 2 por defecto porque la máquina se comparte; cada uno usa unos 1,2 a 1,9 GB), `--cache`, `--models`, `--allow-unverified-corpus` (copia del corpus que ya no coincide con su manifiesto, por ejemplo con un día quitado).
 
+`--cache-only` abre una caché existente en solo lectura. Un texto sin embedding interrumpe la operación antes de preparar el modelo. No descarga ni infiere; tampoco crea una base vacía.
+
+## Repetir backtests sin inferencias
+
+Repite `--candidate` para comparar varias combinaciones contra el mismo baseline. La matriz reutiliza los cálculos del baseline y guarda cada informe bajo el nombre de sus fuentes. Conserva la carpeta completa: los informes pueden referenciar una misma corrida base.
+
+```sh
+pnpm --filter @earlyscript/trend-engine engine backtest \
+  --corpus /ruta/corpus --profile /ruta/perfil.json \
+  --cache /ruta/embeddings.sqlite --cache-only --out /ruta/matriz \
+  --cutoffs 2026-10-17..2026-10-18 --baseline hn,github --truth hn \
+  --candidate hn,github,npm --candidate hn,github,huggingface
+```
+
+Los candidatos de una matriz deben contener todas las fuentes base. La reutilización dura una llamada y exige el mismo corte, configuración base, perfil, especificación de embeddings, corpus y seguimiento. Cada candidato verifica sus archivos de entrada antes de emitir el informe.
+
+Las referencias reutilizadas llevan `reused: true`; su duración corresponde a la ejecución original. `--allow-unverified-corpus` desactiva esta reutilización porque el manifiesto ya no identifica las entradas con garantías.
+
+Dentro de cada brazo, el agrupamiento continúa desde el corte anterior si sus entradas son un prefijo idéntico. Comprueba IDs, fechas y bytes de vectores mediante SHA-256. Un cambio de prefijo, umbral o ventana reinicia el agrupamiento. El estado vive solo durante el backtest; cada resultado se consume antes de avanzar al siguiente corte. `--independent-cuts` fuerza el cálculo completo de cada corte como referencia.
+
+Para repetir un informe después de mover sus entradas, pasa `--corpus` y `--profile` a `check --backtest ... --rerun --out ...`. Sus hashes deben coincidir con los registrados. El informe original permanece intacto.
+
+El banco `scripts/earlyscript/benchmark-trends.py`, ejecutado desde la raíz, compara ejecuciones independientes por fuente y corte con la matriz incremental. Recibe `--corpus`, `--profile`, `--cache`, `--cutoffs`, `--out` y un `--candidate` por combinación; admite `--truth`. Usa tres repeticiones, alterna el orden de las variantes y falla si sus hashes lógicos difieren. Guarda comandos, salidas, tiempos y hashes en la carpeta de salida, que debe ser nueva.
+
+Medición del 4 de noviembre de 2026 sobre `822dd475b6`: tres repeticiones de npm, Hugging Face, arXiv, Wikipedia y Stack Exchange, cortes del 17 al 19 de octubre, baseline HN/GitHub, verdad HN y embeddings en caché. En Linux x64, Intel Xeon E5-1620 v3 y Node v24.22.2, la mediana pasó de 748,3 a 217,8 segundos, un 70,9 % menos, con los mismos hashes lógicos en las cinco fuentes y las tres repeticiones. La mediana del máximo RSS registrado por las corridas pasó de 664 a 818 MiB. Esta comparación mide backtests repetidos, no una corrida diaria aislada ni tiempo humano. Evidencia local: `~/earlyscript-data/trend-performance/benchmark-combined/`, `benchmark-summary.json` y `benchmark-memory.json`.
+
+## Interpretar el seguimiento
+
+El informe `earlyscript.backtest/3` exige capturas `complete` de todas las fuentes de verdad durante los 14 días posteriores al corte. Una captura `partial`, incluso de una muestra prevista, deja ese corte en el grupo parcial. `--truth hn` permite evaluar seguimiento en HN mientras GitHub y otras fuentes aportan candidatos. Esto mide coincidencia con actividad posterior de HN, no calidad universal de las tendencias.
+
+P@5 sigue siendo condicional a los cortes donde ambos brazos emiten candidatos. El informe cuenta por separado los cortes vacíos. Si el candidato no emite ninguno en un corte completo donde el baseline sí emite, el veredicto es `worse` aunque los cortes emparejados tengan buena precisión.
+
+Los registros recuperados después del corte, especialmente los seleccionados por popularidad actual, no reconstruyen necesariamente lo que se conocía entonces. El backtest es un replay retrospectivo. Las etiquetas asignan cada noticia a un único candidato: añadir candidatos puede cambiar las etiquetas de los anteriores. No interpretar estos resultados como validación prospectiva ni como etiquetas independientes del conjunto emitido.
+
+Los informes de esquema 2 se conservan como evidencia histórica. `check --backtest ... --rerun` genera el esquema actual, pero informa que el hash cambió cuando cambian las reglas. No reemplaza ni aprueba silenciosamente el informe antiguo.
+
 ## Ciclo
 
 1. `sources/`: un adaptador por fuente y día. `fixture` reproduce `<fuente>/<día>.jsonl` y `coverage.jsonl`; los adaptadores en vivo de HN y GitHub implementan la misma interfaz `SourceAdapter`.

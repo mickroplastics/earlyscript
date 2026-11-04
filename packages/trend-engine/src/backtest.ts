@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 
 import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
 import { EngineConfig } from "@earlyscript/editorial-contracts/run";
-import type { CoverageStatus, SourceId } from "@earlyscript/editorial-contracts/source";
+import type { SourceId } from "@earlyscript/editorial-contracts/source";
 
 import {
   type ArmTotal,
@@ -45,6 +45,7 @@ import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
 import { prepare } from "./prepare.ts";
 import { round6 } from "./rank.ts";
+import { createStackReplay } from "./stack-replay.ts";
 import {
   DEFAULT_CONFIG_PATH,
   DEFAULT_DATA_DIR,
@@ -83,6 +84,9 @@ export interface BacktestOptions {
   /** Replaces the local Qwen embedder, for tests. The backtest disposes it. */
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
+  readonly cacheOnly?: boolean;
+  /** Reference execution: recompute every prefix, for equivalence and timing comparisons. */
+  readonly independentCuts?: boolean;
   readonly modelDir?: string;
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
@@ -125,6 +129,7 @@ interface RunEntry {
   readonly run_id: string;
   readonly run_dir: string;
   readonly duration_ms: number;
+  readonly reused?: boolean;
 }
 
 /** Parses a cutoff list: comma-separated days or instants, and `from..to` inclusive day ranges. */
@@ -150,8 +155,6 @@ const toInstant = (cutoff: string) =>
 const sameSet = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
   a.length === b.length && a.every((x) => b.includes(x));
 
-const COVERED: ReadonlySet<CoverageStatus> = new Set(["complete", "partial"]);
-
 export interface BacktestResult {
   readonly path: string;
   readonly report: Record<string, unknown> & {
@@ -164,6 +167,65 @@ export interface BacktestResult {
 }
 
 export async function runBacktest(options: BacktestOptions): Promise<BacktestResult> {
+  return runBacktestWithBaseline(options);
+}
+
+interface CachedBaseline {
+  readonly run: RunEntry;
+  readonly score: ArmCutoff;
+}
+
+/** Each comparison owns its report; identical baseline runs are shared within this matrix only. */
+export async function runBacktestMatrix(
+  options: Omit<BacktestOptions, "candidateSources"> & {
+    readonly candidateSourceSets: ReadonlyArray<ReadonlyArray<SourceId>>;
+  },
+): Promise<Array<BacktestResult>> {
+  const sets = options.candidateSourceSets.map((sources) => [...new Set(sources)]);
+  if (sets.length === 0 || sets.some((sources) => sources.length === 0)) {
+    throw new Error("backtest matrix needs non-empty candidate source sets");
+  }
+  if (new Set(sets.map((sources) => sources.toSorted().join("+"))).size !== sets.length) {
+    throw new Error("backtest matrix candidate source sets must be distinct");
+  }
+  if (sets.some((sources) => options.baselineSources.some((source) => !sources.includes(source)))) {
+    throw new Error("backtest matrix candidates must contain every baseline source");
+  }
+  const baseline = options.allowUnverifiedCorpus ? undefined : new Map<string, CachedBaseline>();
+  const results: Array<BacktestResult> = [];
+  const supplied = options.embedder;
+  const embedder = supplied
+    ? {
+        spec: supplied.spec,
+        key: supplied.key,
+        embed: (texts: ReadonlyArray<string>) => supplied.embed(texts),
+        dispose: async () => undefined,
+      }
+    : undefined;
+  try {
+    for (const candidateSources of sets) {
+      results.push(
+        await runBacktestWithBaseline(
+          {
+            ...options,
+            ...(embedder ? { embedder } : {}),
+            candidateSources,
+            outDir: NodePath.join(options.outDir, candidateSources.toSorted().join("+")),
+          },
+          baseline,
+        ),
+      );
+    }
+  } finally {
+    await supplied?.dispose();
+  }
+  return results;
+}
+
+async function runBacktestWithBaseline(
+  options: BacktestOptions,
+  baselineCache?: Map<string, CachedBaseline>,
+): Promise<BacktestResult> {
   const started = new Date();
   const t0 = performance.now();
   const log = options.log ?? (() => undefined);
@@ -199,6 +261,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
       modelDir: options.modelDir ?? defaultModelDir(DEFAULT_DATA_DIR, baseConfig.embedder.revision),
       workers: options.workers ?? 2,
       allowDownload: true,
+      cacheOnly: options.cacheOnly ?? false,
       log,
     });
   // Runs dispose the embedder they get; the backtest shares one and disposes it once.
@@ -211,6 +274,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
 
   NodeFS.mkdirSync(options.outDir, { recursive: true });
   const runs: Array<RunEntry> = [];
+  const stackers = { baseline: createStackReplay(), candidate: createStackReplay() };
   const perCutoff: Array<Record<Arm, ArmCutoff> & { cutoff_at: string }> = [];
   let truth: {
     usedHash: string;
@@ -247,7 +311,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
       })),
       covered: new Set(
         corpus.coverage
-          .filter((row) => COVERED.has(row.status))
+          .filter((row) => row.status === "complete")
           .map((row) => `${row.source}/${row.day}`),
       ),
     };
@@ -256,7 +320,23 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
     for (const cutoffAt of cutoffs) {
       const cutoffMs = Date.parse(cutoffAt);
       const entry = { cutoff_at: cutoffAt } as Record<Arm, ArmCutoff> & { cutoff_at: string };
+      const baselineKey = canonicalJson({
+        cutoffAt,
+        config: armConfig.baseline,
+        profileHash,
+        embedding: shared.key,
+        corpus: truth.manifestHash,
+        truth: truth.usedHash,
+        truthSources,
+      });
       for (const arm of ARMS) {
+        const cached = arm === "baseline" ? baselineCache?.get(baselineKey) : undefined;
+        if (cached) {
+          runs.push({ ...cached.run, reused: true });
+          entry[arm] = cached.score;
+          log(`backtest: ${cutoffAt.slice(0, 10)} baseline reused ${cached.run.run_id}`);
+          continue;
+        }
         let emitted: ReadonlyArray<EmittedTrend> = [];
         const armOut = NodePath.join(options.outDir, "runs", arm);
         NodeFS.mkdirSync(armOut, { recursive: true });
@@ -267,6 +347,7 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
           outDir: armOut,
           config: armConfig[arm],
           embedder: shared,
+          ...(options.independentCuts ? {} : { stack: stackers[arm] }),
           log,
           ...(options.allowUnverifiedCorpus ? { allowUnverifiedCorpus: true } : {}),
           onEmitted: (trends) => {
@@ -277,19 +358,21 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
           throw new Error(`${arm} run ${record.run_id} at ${cutoffAt} failed: ${record.error}`);
         }
         const dir = runDir(armOut, record);
-        runs.push({
+        const run: RunEntry = {
           arm,
           cutoff_at: cutoffAt,
           run_id: record.run_id,
           run_dir: dir,
           duration_ms: record.duration_ms,
-        });
+        };
+        runs.push(run);
         const { dossiers } = readRun(dir);
         entry[arm] = {
           run_logical_hash: record.logical_hash,
           corpus_used_hash: record.corpus?.corpus_used_hash ?? null,
           ...scoreArm(dossiers, emitted, truth.stories, vectorOf, cutoffMs, threshold),
         };
+        if (arm === "baseline") baselineCache?.set(baselineKey, { run, score: entry[arm] });
         log(
           `backtest: ${cutoffAt.slice(0, 10)} ${arm} candidates=${entry[arm].candidates} ` +
             `p@5=${entry[arm].weighted.p_at_5} (${record.duration_ms} ms)`,
@@ -336,9 +419,15 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
     items_7d_mean_p_at_5: mean(paired.map((row) => row[arm].items_7d.p_at_5)),
   });
   const group = (complete: boolean): CutoffGroupTotal & { cutoff_dates: Array<string> } => {
-    const paired = cutoffRows.filter((row) => row.paired && row.complete === complete);
+    const rows = cutoffRows.filter((row) => row.complete === complete);
+    const paired = rows.filter((row) => row.paired);
     return {
       cutoffs: paired.length,
+      baseline_empty_cutoffs: rows.filter((row) => row.baseline.candidates === 0).length,
+      candidate_empty_cutoffs: rows.filter((row) => row.candidate.candidates === 0).length,
+      emission_regressions: rows.filter(
+        (row) => row.baseline.candidates > 0 && row.candidate.candidates === 0,
+      ).length,
       cutoff_dates: paired.map((row) => row.cutoff_at.slice(0, 10)),
       baseline: armTotal(paired, "baseline"),
       candidate: armTotal(paired, "candidate"),
@@ -381,8 +470,10 @@ export async function runBacktest(options: BacktestOptions): Promise<BacktestRes
       precision:
         "P@k over min(k, candidates); mean over the paired cutoffs (both arms have candidates) of each group",
       lead: "lead_days = event day - cutoff day; median pooled over every positive candidate",
-      complete: `a cutoff is complete when its truth sources cover all ${LABEL_RULE.followup_days} follow-up days`,
-      verdict: `complete cutoffs only: not-worse when candidate mean P@5 >= baseline - ${P_AT_5_TOLERANCE} and candidate median lead_days >= baseline; worse with no complete cutoff`,
+      complete: `all truth sources must have complete captures on all ${LABEL_RULE.followup_days} follow-up days; partial samples do not close follow-up`,
+      verdict: `complete cutoffs only: not-worse when candidate mean P@5 >= baseline - ${P_AT_5_TOLERANCE}, candidate median lead_days >= baseline, and no cutoff loses all candidate emissions against a nonempty baseline; worse with no complete paired cutoff`,
+      interpretation:
+        "retrospective replay; publication timestamps do not establish historical availability or selection; exclusive labels depend on the emitted candidate set",
       status: `provisional with fewer than ${MIN_COMPLETE_CUTOFFS} complete cutoffs`,
     },
     cutoffs: cutoffRows,
@@ -488,9 +579,20 @@ export async function checkBacktest(
   file: string,
   rerun?: {
     readonly outDir: string;
-    readonly options?: Pick<
-      BacktestOptions,
-      "cacheFile" | "modelDir" | "workers" | "log" | "allowUnverifiedCorpus" | "embedder"
+    readonly options?: Partial<
+      Pick<
+        BacktestOptions,
+        | "cacheFile"
+        | "cacheOnly"
+        | "independentCuts"
+        | "modelDir"
+        | "workers"
+        | "log"
+        | "allowUnverifiedCorpus"
+        | "embedder"
+        | "corpusDir"
+        | "profilePath"
+      >
     >;
   },
 ): Promise<BacktestCheckResult> {
@@ -522,10 +624,26 @@ export async function checkBacktest(
       };
   if (!rerun) return result;
   const { corpus_dir, profile_path, logical } = decodeRerunInputs(json);
+  const corpusDir = rerun.options?.corpusDir ?? corpus_dir;
+  const profilePath = rerun.options?.profilePath ?? profile_path;
+  if (sha256(NodeFS.readFileSync(profilePath)) !== logical.inputs.profile_hash) {
+    throw new Error("Rerun profile hash differs from the recorded input");
+  }
+  const manifest: unknown = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(corpusDir, "corpus-manifest.json"), "utf8"),
+  );
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    !("corpus_hash" in manifest) ||
+    manifest.corpus_hash !== logical.inputs.corpus_manifest_hash
+  ) {
+    throw new Error("Rerun corpus hash differs from the recorded input");
+  }
   const again = await runBacktest({
     ...rerun.options,
-    corpusDir: corpus_dir,
-    profilePath: profile_path,
+    corpusDir,
+    profilePath,
     outDir: rerun.outDir,
     cutoffs: logical.inputs.cutoffs,
     baselineSources: logical.inputs.baseline_sources,

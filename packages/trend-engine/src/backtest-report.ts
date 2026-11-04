@@ -8,8 +8,8 @@ import { SourceId } from "@earlyscript/editorial-contracts/source";
 
 import { canonicalJson, sha256 } from "./hash.ts";
 
-/** 2: cutoffs split into complete and partial follow-up; the verdict reads complete ones only. */
-export const BACKTEST_SCHEMA_VERSION = "earlyscript.backtest/2";
+/** 3: only complete truth captures close follow-up; lost candidate emissions affect the verdict. */
+export const BACKTEST_SCHEMA_VERSION = "earlyscript.backtest/3";
 
 /**
  * Earlywindow's retrospective label (early-window/scripts/backtest.ts, RULE and labelOutcomes,
@@ -93,6 +93,9 @@ export function decideVerdict({ baseline, candidate }: VerdictInput): VerdictRes
 export interface CutoffGroupTotal {
   /** Paired cutoffs in the group: both arms have candidates. */
   readonly cutoffs: number;
+  readonly baseline_empty_cutoffs: number;
+  readonly candidate_empty_cutoffs: number;
+  readonly emission_regressions: number;
   readonly baseline: ArmTotal;
   readonly candidate: ArmTotal;
 }
@@ -104,6 +107,7 @@ export interface CutoffGroupTotal {
  */
 export function decideBacktest(complete: {
   readonly cutoffs: number;
+  readonly emission_regressions: number;
   readonly baseline: VerdictInput["baseline"];
   readonly candidate: VerdictInput["candidate"];
 }): { readonly status: BacktestStatus; readonly verdict: VerdictResult } {
@@ -119,7 +123,21 @@ export function decideBacktest(complete: {
       },
     };
   }
-  return { status, verdict: decideVerdict(complete) };
+  const verdict = decideVerdict(complete);
+  if (complete.emission_regressions > 0) {
+    return {
+      status,
+      verdict: {
+        ...verdict,
+        verdict: "worse",
+        reasons: [
+          ...verdict.reasons,
+          `candidate emits no candidates on ${complete.emission_regressions} complete cutoff(s) with baseline candidates`,
+        ],
+      },
+    };
+  }
+  return { status, verdict };
 }
 
 /** SHA-256 of the canonical `logical` block: what two backtests of the same inputs reproduce. */
@@ -135,6 +153,7 @@ const ArmTotalSchema = Schema.Struct({
 });
 const GroupSchema = Schema.Struct({
   cutoffs: Schema.Number,
+  emission_regressions: Schema.Number,
   baseline: ArmTotalSchema,
   candidate: ArmTotalSchema,
 });
@@ -255,6 +274,8 @@ export const BacktestRerunInputs = Schema.Struct({
   profile_path: Schema.String,
   logical: Schema.Struct({
     inputs: Schema.Struct({
+      corpus_manifest_hash: Schema.String,
+      profile_hash: Schema.String,
       config: Schema.Unknown,
       cutoffs: Schema.Array(Schema.String),
       baseline_sources: Schema.Array(SourceId),

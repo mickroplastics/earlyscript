@@ -21,6 +21,8 @@ export interface LocalEmbedderOptions {
   /** Child processes, each with intra_op_threads; a text's vector does not depend on which one embeds it. */
   readonly workers: number;
   readonly allowDownload?: boolean;
+  /** Read an existing cache without writes, inference, or model downloads. */
+  readonly cacheOnly?: boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -132,7 +134,7 @@ export function createLocalEmbedder(spec: EmbeddingSpec, options: LocalEmbedderO
   const threads = Number(/intra_op_threads=(\d+)/.exec(spec.runtime)?.[1] ?? Number.NaN);
   if (!Number.isInteger(threads)) throw new Error(`No intra_op_threads in runtime ${spec.runtime}`);
   const key = embeddingKey(spec);
-  const cache = new EmbeddingCache(options.cacheFile, key);
+  const cache = new EmbeddingCache(options.cacheFile, key, options.cacheOnly);
   const workers: Array<Worker> = [];
   let model: Promise<string> | undefined;
   let cacheHits = 0;
@@ -150,6 +152,9 @@ export function createLocalEmbedder(spec: EmbeddingSpec, options: LocalEmbedderO
       } else missing.set(text, [...(missing.get(text) ?? []), index]);
     });
     const unique = [...missing.keys()];
+    if (options.cacheOnly && unique.length > 0) {
+      throw new Error(`Cache-only mode missing ${unique.length} embedding(s) for ${key}`);
+    }
     const chunks: Array<Array<string>> = [];
     for (let start = 0; start < unique.length; start += CHUNK)
       chunks.push(unique.slice(start, start + CHUNK));
