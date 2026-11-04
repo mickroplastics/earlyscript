@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2";
+import { EarlyscriptBrand } from "./earlyscriptBrand.ts";
 
 export interface DesktopAppControlAddress {
   readonly address: string;
@@ -22,14 +23,14 @@ export function resolveDesktopAppControlAddress(input: {
   const stateHash = shortHash(input.stateDir);
   if (input.platform === "win32") {
     return {
-      address: `\\\\.\\pipe\\t3code-app-${stateHash}`,
+      address: `\\\\.\\pipe\\${EarlyscriptBrand.runtimeName}-app-${stateHash}`,
       directory: null,
     };
   }
 
   const userKey =
     input.userId === undefined ? shortHash(input.stateDir).slice(0, 12) : input.userId;
-  const directory = input.joinPath(input.tempDir, `t3code-${userKey}`);
+  const directory = input.joinPath(input.tempDir, `${EarlyscriptBrand.runtimeName}-${userKey}`);
   return {
     address: input.joinPath(directory, `${stateHash}.sock`),
     directory,
