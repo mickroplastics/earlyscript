@@ -248,6 +248,10 @@ const THREAD_TEXT: Readonly<Record<string, string>> = {
   "Copy message": "Copiar el mensaje",
   "Copy prompt link": "Copiar el enlace a la petición",
   "Fork from this response": "Bifurcar desde esta respuesta",
+  // The running turn's indicator (`WorkingTimelineRow`): «Working for » and its timer are two
+  // nodes, and the timer's own span is left as it ticks («7s»).
+  "Working for": "Trabajando desde hace",
+  "Working...": "Trabajando…",
   // The thread's spoken status (`threadActivityAnnouncement.ts`).
   Done: "Listo",
   "Needs approval": "Necesita aprobación",
@@ -292,7 +296,6 @@ const THREAD_PATTERNS: LocaleTable["patterns"] = [
   [/^Permissions: (.+)$/, (match, translate) => `Permisos: ${translate(match[1] ?? "")}`],
   // The turn's fold; the duration is upstream's compact format («35s», «2m 5s»).
   [/^Worked for (.+)$/, "Trabajó durante $1"],
-  [/^Working for (.+)$/, "Trabajando desde hace $1"],
   [/^You stopped after (.+)$/, "Lo detuviste tras $1"],
   // File surface: the file or folder's name is a value.
   [/^Close (.+)$/, "Cerrar $1"],

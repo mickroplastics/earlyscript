@@ -50,16 +50,20 @@ export const THREAD_LOCALE: ScopedLocaleOptions = {
     "[data-timeline-row-id]",
     // Message bodies, user and agent: skipped even inside an allowed control.
     "[data-thread-find-text]",
+    // The running turn's timer, rewritten every second by upstream: its «7s» stays.
+    '[data-timeline-row-kind="working"] span.tabular-nums',
     '[data-slot="workspace-breadcrumb-text"]',
     ".xterm",
   ].join(", "),
   // Upstream's own words in a timeline row: the author heading ("You"), the turn's fold
-  // ("Worked for 35s") and the icon buttons of the message actions.
+  // ("Worked for 35s"), the running turn's indicator ("Working for ") and the icon buttons of
+  // the message actions.
   allow: {
     within: "[data-timeline-row-id]",
     controls: [
       "[data-timeline-row-id] h3",
       '[data-timeline-row-kind="turn-fold"] button',
+      '[data-timeline-row-kind="working"] span',
       '[data-timeline-row-id] button[data-slot="tooltip-trigger"][aria-label]',
     ].join(", "),
   },

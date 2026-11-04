@@ -1,7 +1,12 @@
 import { useRef, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
+import { WorkingTimelineRow } from "../../components/chat/TimelineWorkGroupRows";
+import {
+  TimelineRowActivityCtx,
+  type TimelineRowActivityState,
+} from "../../components/chat/timelineRowContext";
 import { makeTranslator, useScopedLocale, type ScopedLocaleOptions } from "./scopedLocale";
 import {
   SIDEBAR_LOCALE,
@@ -121,6 +126,33 @@ function ThreadDouble({ mode }: { readonly mode?: string }) {
         Settled
       </div>
       <div>Ask anything. @ files, $ skills, / commands</div>
+    </div>
+  );
+}
+
+const WORKING_NOW = new Date("2026-11-04T12:00:10.000Z");
+
+const WORKING_ACTIVITY: TimelineRowActivityState = {
+  isWorking: true,
+  isCompacting: false,
+  isRevertingCheckpoint: false,
+  awaitingUser: false,
+  isPreparingWorktree: false,
+  latestRunId: null,
+  backgroundWorktreeSetup: null,
+};
+
+/** The thread area with upstream's running-turn row, as `MessagesTimeline` wraps it. */
+function WorkingDouble({ createdAt }: { readonly createdAt: string | null }) {
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  useThreadAreaLocale(area);
+  return (
+    <div ref={setArea} className="contents" data-testid="thread">
+      <TimelineRowActivityCtx value={WORKING_ACTIVITY}>
+        <div data-timeline-row-id="working-indicator-row" data-timeline-row-kind="working">
+          <WorkingTimelineRow row={{ kind: "working", id: "working-indicator-row", createdAt }} />
+        </div>
+      </TimelineRowActivityCtx>
     </div>
   );
 }
@@ -256,14 +288,42 @@ describe("shell locale scopes", () => {
     expect(bodyButton.getAttribute("aria-label")).toBe("Copy message");
     expect(bodyButton.textContent).toBe("Copy");
     expect(screen.getByTestId("message").element().textContent).toBe("Settled");
-    // A fold that updates in place stays in Spanish, while the turn runs and once it ends.
-    screen.getByTestId("fold").element().firstChild!.nodeValue = "Working for 40s";
-    await vi.waitFor(() =>
-      expect(screen.getByTestId("fold").element().textContent).toBe("Trabajando desde hace 40s"),
-    );
+    // A fold that updates in place stays in Spanish.
     screen.getByTestId("fold").element().firstChild!.nodeValue = "Worked for 1m 2s";
     await vi.waitFor(() =>
       expect(screen.getByTestId("fold").element().textContent).toBe("Trabajó durante 1m 2s"),
+    );
+  });
+
+  it("translates the running turn's indicator as upstream renders it, timer apart", async () => {
+    using _timers = fakeTimers();
+    vi.setSystemTime(WORKING_NOW);
+    // Upstream's own row (`WorkingTimelineRow`) inside the row wrapper of `MessagesTimeline`:
+    // «Working for » is a text node and the timer a sibling span that ticks every second.
+    await using screen = await render(<WorkingDouble createdAt="2026-11-04T12:00:03.000Z" />);
+    const row = screen.getByTestId("thread").element();
+    const timer = row.querySelector('[data-timeline-row-kind="working"] span.tabular-nums')!;
+    const label = timer.parentElement!;
+    await act(async () => {
+      await endBatch();
+    });
+    expect(label.firstChild!.nodeValue).toBe("Trabajando desde hace ");
+    expect(timer.textContent).toBe("7s");
+    // The timer keeps ticking in upstream's format; the words stay in Spanish.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(timer.textContent).toBe("9s");
+    expect(label.textContent).toBe("Trabajando desde hace 9s");
+  });
+
+  it("translates the running turn's indicator before its start time is known", async () => {
+    await using screen = await render(<WorkingDouble createdAt={null} />);
+    const row = screen.getByTestId("thread").element();
+    await vi.waitFor(() =>
+      expect(row.querySelector('[data-timeline-row-kind="working"]')!.textContent).toBe(
+        "Trabajando…",
+      ),
     );
   });
 
