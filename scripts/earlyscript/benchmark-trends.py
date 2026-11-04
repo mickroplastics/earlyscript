@@ -46,6 +46,8 @@ for repetition in range(args.repetitions):
         sets = [[candidate] for candidate in args.candidate] if mode == "independent" else [args.candidate]
         for index, candidates in enumerate(sets):
             command = common + ["--out", str(mode_out / str(index))]
+            if mode == "independent":
+                command += ["--independent-cuts"]
             for candidate in candidates:
                 command += ["--candidate", candidate]
             (mode_out / f"{index}-command.json").write_text(json.dumps(command) + "\n")

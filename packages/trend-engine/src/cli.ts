@@ -39,7 +39,7 @@ function sourceList(text: string): Array<SourceId> {
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
-  "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
+  "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--independent-cuts] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
   "       engine model status|prepare [--models <dir>]\n" +
@@ -101,6 +101,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       workers: { type: "string" },
       cache: { type: "string" },
       "cache-only": { type: "boolean" },
+      "independent-cuts": { type: "boolean" },
       models: { type: "string" },
       run: { type: "string" },
       rerun: { type: "boolean" },
@@ -202,6 +203,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       outDir: values.out,
       cutoffs: parseCutoffList(values.cutoffs),
       baselineSources: sourceList(values.baseline),
+      ...(values["independent-cuts"] ? { independentCuts: true } : {}),
       ...(values.truth ? { truthSources: sourceList(values.truth) } : {}),
       ...(values.config ? { configPath: values.config } : {}),
     };
@@ -237,6 +239,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
               ...common,
               ...(values.corpus ? { corpusDir: values.corpus } : {}),
               ...(values.profile ? { profilePath: values.profile } : {}),
+              ...(values["independent-cuts"] ? { independentCuts: true } : {}),
             },
           }
         : undefined,

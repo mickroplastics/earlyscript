@@ -188,6 +188,7 @@ it("reuses baseline runs across a matrix without changing independent backtest r
     const independent = await runBacktest({
       ...common,
       candidateSources: candidateSourceSets[index]!,
+      independentCuts: true,
       outDir: NodePath.join(s.root, `independent-${index}`),
       embedder: fingerprintEmbedder(),
     });

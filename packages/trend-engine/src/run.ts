@@ -62,6 +62,8 @@ export interface RunOptions {
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
   readonly cacheOnly?: boolean;
+  /** Backtests can reuse an unchanged prefix; normal runs stack independently. */
+  readonly stack?: typeof stackItems;
   readonly modelDir?: string;
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
@@ -198,7 +200,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
     const vectorOf = new Map(kept.map((item, k) => [item.id, vectors[k]!]));
     lap("embed");
 
-    const stacked = stackItems(
+    const stacked = (options.stack ?? stackItems)(
       kept.map((item) => ({
         id: item.id,
         publishedMs: item.publishedMs,

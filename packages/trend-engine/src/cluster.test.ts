@@ -11,6 +11,7 @@ import {
 import { DAY_MS } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import { prepare } from "./prepare.ts";
+import { createStackReplay } from "./stack-replay.ts";
 import { referenceStackItems } from "./testkit/cluster.reference.ts";
 import { syntheticItems, testConfig } from "./testkit/syntheticCorpus.ts";
 
@@ -100,6 +101,49 @@ function expectSameAsReference(items: ReadonlyArray<StackInput>, threshold: numb
 }
 
 describe("stackItems", () => {
+  it("replays exact prefixes across odd boundaries and resets when any prior input or configuration changes", () => {
+    const items = clusteredItems({
+      seed: 7,
+      count: 600,
+      dim: 64,
+      topics: 30,
+      days: 70,
+      duplicates: true,
+    });
+    const replay = createStackReplay();
+    const check = (input: ReadonlyArray<StackInput>, threshold = 0.7, days = 30) => {
+      expect(comparable(replay(input, threshold, days))).toEqual(
+        comparable(referenceStackItems(input, threshold, days)),
+      );
+    };
+    for (const count of [0, 1, 2, 65, 200, 201, 300, items.length]) check(items.slice(0, count));
+    check(items);
+    check(items.slice(0, 150));
+    check(items);
+    check(items.map((item, k) => (k === 0 ? { ...item, id: "changed-id" } : item)));
+    check(
+      items.map((item, k) => (k === 0 ? { ...item, publishedMs: item.publishedMs - 1 } : item)),
+    );
+    check(
+      items.map((item, k) => (k === 0 ? { ...item, vector: item.vector.map((v) => -v) } : item)),
+    );
+    check(items, 0.5);
+    check(items, 0.5, 3);
+    check(items.slice(0, 200));
+    expect(() =>
+      replay(
+        items
+          .slice(0, 250)
+          .map((item, k) => (k === 249 ? { ...item, vector: new Float32Array([1]) } : item)),
+        0.7,
+        30,
+      ),
+    ).toThrow(/dimensions/);
+    check(items.slice(0, 250));
+    check([]);
+    check(items);
+    check(clusteredItems({ seed: 8, count: 700, dim: 3, topics: 10, days: 50 }));
+  });
   it("returns the reference signals on clustered 1024-dimension vectors", () => {
     const items = clusteredItems({ seed: 1, count: 1500, dim: 1024, topics: 40, days: 70 });
     const result = expectSameAsReference(items, 0.7, 30);

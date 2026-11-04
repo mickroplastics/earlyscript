@@ -286,18 +286,16 @@ function accumulate(
  * highest cosine when strictly above the threshold, ties to the smaller id; otherwise it
  * opens a signal. Active means it received an item in the last `activeDays`.
  */
-export function stackItems(
-  items: ReadonlyArray<StackInput>,
+export function createStacker(
+  dim: number,
   threshold: number,
   activeDays: number,
-): StackResult {
+): { append(items: ReadonlyArray<StackInput>): StackResult } {
   // Same signals as dot() over every active centroid: sums keep dot()'s order, and the
   // bound only drops centroids whose cosine cannot pass the threshold.
   const signals: Array<StackedSignal> = [];
   let comparisons = 0;
-  if (items.length === 0) return { signals, comparisons };
   const windowMs = activeDays * DAY_MS;
-  const dim = items[0]!.vector.length;
   const cuts = [
     ...new Set(CHECKPOINTS.map((share) => Math.floor(dim * share)).filter((c) => c > 0)),
   ];
@@ -384,56 +382,70 @@ export function stackItems(
     }
   };
 
-  // Items go in pairs up to the first checkpoint; the second one rescans only the slot
-  // the first one changed or opened, which set() marks.
-  for (let n = 0; n < items.length; n += 2) {
-    const a = items[n]!;
-    const b = items[n + 1];
-    expire(a.publishedMs);
-    first.load(a, cuts);
-    first.reserve(activeCount);
-    first.slots.set(active.subarray(0, activeCount));
-    if (b === undefined) {
-      first.acc.fill(0, 0, activeCount);
-      accumulate(first.x, pool.data, dim, first.slots, first.acc, activeCount, 0, head);
-      place(a, first);
-      break;
-    }
+  return {
+    append(items: ReadonlyArray<StackInput>): StackResult {
+      // Items go in pairs up to the first checkpoint; the second one rescans only the slot
+      // the first one changed or opened, which set() marks.
+      for (let n = 0; n < items.length; n += 2) {
+        const a = items[n]!;
+        const b = items[n + 1];
+        expire(a.publishedMs);
+        first.load(a, cuts);
+        first.reserve(activeCount);
+        first.slots.set(active.subarray(0, activeCount));
+        if (b === undefined) {
+          first.acc.fill(0, 0, activeCount);
+          accumulate(first.x, pool.data, dim, first.slots, first.acc, activeCount, 0, head);
+          place(a, first);
+          break;
+        }
 
-    second.load(b, cuts);
-    if (pairAcc.length < activeCount) pairAcc = new Float64Array(first.slots.length);
-    prefixPair(
-      first.x,
-      second.x,
-      pool.data,
-      dim,
-      first.slots,
-      first.acc,
-      pairAcc,
-      activeCount,
-      head,
-    );
-    for (let k = 0; k < activeCount; k++) {
-      pool.scanned[active[k]!] = 1;
-      pool.scanAt[active[k]!] = k;
-    }
-    place(a, first);
+        second.load(b, cuts);
+        if (pairAcc.length < activeCount) pairAcc = new Float64Array(first.slots.length);
+        prefixPair(
+          first.x,
+          second.x,
+          pool.data,
+          dim,
+          first.slots,
+          first.acc,
+          pairAcc,
+          activeCount,
+          head,
+        );
+        for (let k = 0; k < activeCount; k++) {
+          pool.scanned[active[k]!] = 1;
+          pool.scanAt[active[k]!] = k;
+        }
+        place(a, first);
 
-    expire(b.publishedMs);
-    second.reserve(activeCount);
-    for (let k = 0; k < activeCount; k++) {
-      const slot = active[k]!;
-      second.slots[k] = slot;
-      if (pool.scanned[slot] === 1) {
-        second.acc[k] = pairAcc[pool.scanAt[slot]!]!;
-      } else {
-        const o = slot * dim;
-        let sum = 0;
-        for (let i = 0; i < head; i++) sum += second.x[i]! * pool.data[o + i]!;
-        second.acc[k] = sum;
+        expire(b.publishedMs);
+        second.reserve(activeCount);
+        for (let k = 0; k < activeCount; k++) {
+          const slot = active[k]!;
+          second.slots[k] = slot;
+          if (pool.scanned[slot] === 1) {
+            second.acc[k] = pairAcc[pool.scanAt[slot]!]!;
+          } else {
+            const o = slot * dim;
+            let sum = 0;
+            for (let i = 0; i < head; i++) sum += second.x[i]! * pool.data[o + i]!;
+            second.acc[k] = sum;
+          }
+        }
+        place(b, second);
       }
-    }
-    place(b, second);
-  }
-  return { signals, comparisons };
+      return { signals, comparisons };
+    },
+  };
+}
+
+export function stackItems(
+  items: ReadonlyArray<StackInput>,
+  threshold: number,
+  activeDays: number,
+): StackResult {
+  return items.length === 0
+    ? { signals: [], comparisons: 0 }
+    : createStacker(items[0]!.vector.length, threshold, activeDays).append(items);
 }

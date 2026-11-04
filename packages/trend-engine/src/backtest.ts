@@ -45,6 +45,7 @@ import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
 import { prepare } from "./prepare.ts";
 import { round6 } from "./rank.ts";
+import { createStackReplay } from "./stack-replay.ts";
 import {
   DEFAULT_CONFIG_PATH,
   DEFAULT_DATA_DIR,
@@ -84,6 +85,8 @@ export interface BacktestOptions {
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
   readonly cacheOnly?: boolean;
+  /** Reference execution: recompute every prefix, for equivalence and timing comparisons. */
+  readonly independentCuts?: boolean;
   readonly modelDir?: string;
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
@@ -271,6 +274,7 @@ async function runBacktestWithBaseline(
 
   NodeFS.mkdirSync(options.outDir, { recursive: true });
   const runs: Array<RunEntry> = [];
+  const stackers = { baseline: createStackReplay(), candidate: createStackReplay() };
   const perCutoff: Array<Record<Arm, ArmCutoff> & { cutoff_at: string }> = [];
   let truth: {
     usedHash: string;
@@ -343,6 +347,7 @@ async function runBacktestWithBaseline(
           outDir: armOut,
           config: armConfig[arm],
           embedder: shared,
+          ...(options.independentCuts ? {} : { stack: stackers[arm] }),
           log,
           ...(options.allowUnverifiedCorpus ? { allowUnverifiedCorpus: true } : {}),
           onEmitted: (trends) => {
@@ -579,6 +584,7 @@ export async function checkBacktest(
         BacktestOptions,
         | "cacheFile"
         | "cacheOnly"
+        | "independentCuts"
         | "modelDir"
         | "workers"
         | "log"

@@ -29,9 +29,11 @@ Los candidatos de una matriz deben contener todas las fuentes base. La reutiliza
 
 Las referencias reutilizadas llevan `reused: true`; su duración corresponde a la ejecución original. `--allow-unverified-corpus` desactiva esta reutilización porque el manifiesto ya no identifica las entradas con garantías.
 
+Dentro de cada brazo, el agrupamiento continúa desde el corte anterior si sus entradas son un prefijo idéntico. Comprueba IDs, fechas y bytes de vectores mediante SHA-256. Un cambio de prefijo, umbral o ventana reinicia el agrupamiento. El estado vive solo durante el backtest; cada resultado se consume antes de avanzar al siguiente corte. `--independent-cuts` fuerza el cálculo completo de cada corte como referencia.
+
 Para repetir un informe después de mover sus entradas, pasa `--corpus` y `--profile` a `check --backtest ... --rerun --out ...`. Sus hashes deben coincidir con los registrados. El informe original permanece intacto.
 
-El banco `scripts/earlyscript/benchmark-trends.py`, ejecutado desde la raíz, compara ejecuciones independientes con la matriz. Recibe `--corpus`, `--profile`, `--cache`, `--cutoffs`, `--out` y un `--candidate` por combinación. Usa tres repeticiones, alterna el orden de las variantes y falla si sus hashes lógicos difieren. Guarda comandos, salidas, tiempos y hashes en la carpeta de salida, que debe ser nueva.
+El banco `scripts/earlyscript/benchmark-trends.py`, ejecutado desde la raíz, compara ejecuciones independientes por fuente y corte con la matriz incremental. Recibe `--corpus`, `--profile`, `--cache`, `--cutoffs`, `--out` y un `--candidate` por combinación; admite `--truth`. Usa tres repeticiones, alterna el orden de las variantes y falla si sus hashes lógicos difieren. Guarda comandos, salidas, tiempos y hashes en la carpeta de salida, que debe ser nueva.
 
 ## Interpretar el seguimiento
 
