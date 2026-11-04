@@ -111,6 +111,13 @@ export interface ScopedLocaleOptions {
   readonly lateRoots?: string;
   /** Content never rewritten: user data, messages, editors, code. Matched with `closest`. */
   readonly skip?: string;
+  /**
+   * Upstream controls inside skipped content that are rewritten anyway: the author heading or
+   * the copy buttons of a message row. A node is allowed when its closest `controls` match
+   * lies inside its closest `skip` match and that skip match is a `within` container, so a
+   * control nested in other skipped content (a message body, a `[dir]` name) stays skipped.
+   */
+  readonly allow?: { readonly within: string; readonly controls: string };
   readonly attributes?: ReadonlyArray<string>;
 }
 
@@ -149,7 +156,7 @@ export function useScopedLocale(
       }
     }
     if (roots.length === 0) return;
-    const { translate, skip } = options;
+    const { translate, skip, allow } = options;
     const attributeNames = options.attributes ?? DEFAULT_ATTRIBUTES;
     const texts = new Map<Text, Rewrite>();
     const attributes = new Map<Element, Map<string, Rewrite>>();
@@ -161,8 +168,14 @@ export function useScopedLocale(
       node !== null &&
       (roots.some((root) => root.contains(node)) ||
         [...portals].some((portal) => portal.contains(node)));
-    const skipped = (element: Element | null) =>
-      skip !== undefined && element !== null && element.closest(skip) !== null;
+    const skipped = (element: Element | null) => {
+      if (skip === undefined || element === null) return false;
+      const skippedBy = element.closest(skip);
+      if (skippedBy === null) return false;
+      if (allow === undefined || !skippedBy.matches(allow.within)) return true;
+      const allowedBy = element.closest(allow.controls);
+      return !(allowedBy !== null && allowedBy !== skippedBy && skippedBy.contains(allowedBy));
+    };
 
     /*
      * Authorship by records, not values: our writes happen unobserved, so every characterData
@@ -200,7 +213,16 @@ export function useScopedLocale(
         translateText(node, false);
         return;
       }
-      if (!(node instanceof Element) || skipped(node)) return;
+      if (!(node instanceof Element)) return;
+      if (skipped(node)) {
+        // Allowed controls inside skipped content; `skipped` tells each one apart.
+        if (allow !== undefined) {
+          for (const allowed of node.querySelectorAll(allow.controls)) {
+            if (!skipped(allowed)) translateTree(allowed);
+          }
+        }
+        return;
+      }
       for (const name of attributeNames) translateAttribute(node, name, false);
       // Skipped descendants are pruned by the check at the top of each call.
       for (const child of node.childNodes) translateTree(child);

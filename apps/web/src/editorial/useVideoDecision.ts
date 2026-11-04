@@ -32,34 +32,44 @@ export function useVideoDecision(input: {
   const [refusedHash, setRefusedHash] = useState<string | null | undefined>(undefined);
   const [resultDraft, setResultDraft] = useState<ResultDraft>(() => emptyResultDraft());
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
-  /** The clock state the block already asked to leave, so focus and pointer ask once. */
-  const engagedSince = useRef<string | null>(null);
+  /**
+   * The clock state the block already asked to leave and that request, so focus and pointer
+   * ask once and the submission waits for a request still in flight.
+   */
+  const engaged = useRef<{ readonly key: string; readonly done: Promise<void> } | null>(null);
   const scriptPath = video.script.path;
+
+  /**
+   * Deciding starts when the operator turns to the block, not when the form is sent: any
+   * pointer, focus, click or key inside it opens Decidir once per clock state. The server
+   * records it as automatic and leaves the clock alone when the operator already left Decidir
+   * by hand. Resolves when the clock is in Decidir, or when it could not be moved there.
+   */
+  const engageDecide = (): Promise<void> => {
+    const state = video.clock.state;
+    if (state._tag !== "idle" && state.stage === "decide") return Promise.resolve();
+    // A stopped clock (after a recovery is resolved) has no `since`; the view's time
+    // stands in, so focus and pointer still ask once per view.
+    const key = state._tag === "idle" ? `idle:${video.clock.asOf}` : state.since;
+    if (engaged.current?.key === key) return engaged.current.done;
+    const done = commands
+      .clock(
+        state._tag === "idle"
+          ? { _tag: "start", stage: "decide", cause: "decision-block" }
+          : { _tag: "stage", stage: "decide", cause: "decision-block" },
+        null,
+      )
+      .then((outcome) => {
+        if (!outcome.ok && engaged.current?.key === key) engaged.current = null;
+      });
+    engaged.current = { key, done };
+    return done;
+  };
 
   const decision: VideoDecisionControls = {
     busy,
     onDraftChange: setDecisionDraft,
-    // Deciding starts when the operator turns to the block, not when the form is sent;
-    // the server still opens Decidir on submission if this never ran.
-    onEngage: () => {
-      const state = video.clock.state;
-      if (state._tag !== "idle" && state.stage === "decide") return;
-      // A stopped clock (after a recovery is resolved) has no `since`; the view's time
-      // stands in, so focus and pointer still ask once per view.
-      const key = state._tag === "idle" ? `idle:${video.clock.asOf}` : state.since;
-      if (engagedSince.current === key) return;
-      engagedSince.current = key;
-      void commands
-        .clock(
-          state._tag === "idle"
-            ? { _tag: "start", stage: "decide" }
-            : { _tag: "stage", stage: "decide" },
-          null,
-        )
-        .then((outcome) => {
-          if (!outcome.ok) engagedSince.current = null;
-        });
-    },
+    onEngage: () => void engageDecide(),
     onGoToResolution: (intervalId) =>
       document.getElementById(`video-resolve-${intervalId}`)?.focus(),
     onReviewNewVersion: () => setRefusedHash(undefined),
@@ -68,6 +78,9 @@ export function useVideoDecision(input: {
         const { action, utility, reason } = decisionDraft;
         if (action === null || utility === null) return;
         setDecisionNotice(null);
+        // Decidir first: the snapshot below would otherwise end Leer at this very moment and
+        // leave Escribir and Decidir at zero. The server still opens Decidir on submission.
+        await engageDecide();
         // The editor autosaves after a pause: what is on screen may not be on disk yet.
         // Write it, wait for the server, and decide only if the version is still the one
         // the operator read.

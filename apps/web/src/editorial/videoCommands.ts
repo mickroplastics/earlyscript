@@ -14,11 +14,14 @@ import type {
   EditorialVideoState,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useEffect, useEffectEvent } from "react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { RENDER_MARKDOWN_STORAGE_KEY } from "../components/files/filePreviewMode";
 import { flushFileSaveSession, type FileSaveTarget } from "../components/files/fileSaveSessions";
 import { toastManager } from "../components/ui/toast";
+import { writeLocalStorageValue } from "../hooks/useLocalStorage";
 import { randomUUID } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -173,13 +176,19 @@ export async function ensureScriptFile(
   return true;
 }
 
-/** Opens the script in the existing file surface, created from the template if missing. */
+/**
+ * Opens the script for editing in the existing file surface, created from the template if
+ * missing. The surface edits Markdown only in its text view, and whether Markdown opens
+ * rendered is one stored preference for every file; the script asks for the text view.
+ * "Mostrar el markdown renderizado" in the surface still turns the rendering back on.
+ */
 export async function openScript(
   threadRef: ScopedThreadRef,
   workspaceRoot: string,
   scriptPath: string,
 ): Promise<void> {
   if (await ensureScriptFile(threadRef, workspaceRoot, scriptPath)) {
+    writeLocalStorageValue(RENDER_MARKDOWN_STORAGE_KEY, false, false, Schema.Boolean);
     useRightPanelStore.getState().openFile(threadRef, scriptPath);
   }
 }
