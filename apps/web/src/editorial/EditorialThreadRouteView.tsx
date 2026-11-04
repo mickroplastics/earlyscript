@@ -1,3 +1,4 @@
+import { ThreadMapWorkspace } from "./ThreadMapWorkspace";
 import { useState } from "react";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -25,7 +26,7 @@ export function EditorialThreadRouteView({
   const mode = useVideoThreadMode(threadRef);
   // Upstream's thread area in Spanish while it is mounted (not the manual workspace's).
   const [threadArea, setThreadArea] = useState<HTMLDivElement | null>(null);
-  useThreadAreaLocale(threadArea);
+  useThreadAreaLocale(threadArea, mode === "assisted");
   if ((mode === "manual" || mode === "manual-deleted") && threadRef !== null) {
     return (
       <SidebarInset
@@ -51,7 +52,13 @@ export function EditorialThreadRouteView({
       aria-busy={pending || undefined}
       data-editorial-thread-mode={mode}
     >
-      <ThreadRouteView target={target} background={background} />
+      {mode === "assisted" && threadRef !== null ? (
+        <ThreadMapWorkspace threadRef={threadRef}>
+          <ThreadRouteView target={target} background={background} />
+        </ThreadMapWorkspace>
+      ) : (
+        <ThreadRouteView target={target} background={background} />
+      )}
     </div>
   );
 }

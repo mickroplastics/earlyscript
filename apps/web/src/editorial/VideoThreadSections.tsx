@@ -310,7 +310,7 @@ function VideoThreadSectionsView({
  * Mounted once in `ThreadDetailsPanel.tsx` with the thread reference. Renders nothing for a
  * thread with no editorial side, so ordinary T3 threads keep their details card unchanged.
  */
-export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+export function VideoThreadSectionsContent({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const live = useVideoThread(threadRef);
   const video = live?.view.video ?? null;
   if (live === null || video === null) return null;
@@ -362,9 +362,7 @@ function LiveVideoThreadSections({
             ? null
             : () => openDossier(threadRef, workspaceRoot, dossierPath),
         onRequestDraft:
-          draftPaths === null
-            ? null
-            : () => placeComposerMessage(threadRef, draftRequestPrompt(draftPaths)),
+          draftPaths === null ? null : () => placeComposerMessage(threadRef, draftRequestPrompt()),
         onOpenDecidedVersion: (contentHash) => void commands.openVersion(contentHash),
         onSaveVersion: () =>
           void run(() => commands.saveScript("No se guardó la versión del guion")),
@@ -376,5 +374,12 @@ function LiveVideoThreadSections({
         result: outcome.result,
       }}
     />
+  );
+}
+
+export function VideoThreadSections({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const live = useVideoThread(threadRef);
+  return live?.view.video?.thread.mode === "assisted" ? null : (
+    <VideoThreadSectionsContent threadRef={threadRef} />
   );
 }

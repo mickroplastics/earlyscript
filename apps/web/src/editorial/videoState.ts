@@ -91,7 +91,7 @@ export const editorialVideoEnvironment = {
  * failed read counts as not manual: the server refuses agent work in a manual thread anyway.
  * `manual-deleted` once T3 deleted it, by the server's view or this client's thread list.
  */
-export type VideoThreadModeState = "unknown" | "manual" | "manual-deleted" | "other";
+export type VideoThreadModeState = "unknown" | "manual" | "manual-deleted" | "assisted" | "other";
 
 export function useVideoThreadMode(threadRef: ScopedThreadRef | null): VideoThreadModeState {
   const result = useAtomValue(
@@ -108,6 +108,7 @@ export function useVideoThreadMode(threadRef: ScopedThreadRef | null): VideoThre
   // A view of another thread, kept while the next one loads, says nothing about this one.
   if (live !== null && live.view.threadId === threadRef.threadId) {
     const video = live.view.video;
+    if (video?.thread.mode === "assisted" && !video.thread.deleted) return "assisted";
     if (video?.thread.mode !== "manual") return "other";
     return video.thread.deleted || (shell?.deletedAt ?? null) !== null
       ? "manual-deleted"
