@@ -58,16 +58,57 @@ const ABBREVIATION = /(?:^|[^\p{L}.])(?:Inc|Dr|vs|e\.g|i\.e|U\.S)$/u;
 const URL = /\b[a-z][a-z0-9+.-]*:\/\/\S*?(?=[.!?"'”’»)*_~`]*(?:\s|$))/gi;
 const QUESTION = /\?[!?\s"'”’»)*_~`]*$/;
 /**
- * A call to action in Close ("Join SingulariDev as a member", "If this helped, subscribe"):
- * an invitation, not a claim, so it needs no citation. Only in Close, only when the sentence
- * opens with one of these verbs, and never when it carries a figure, which may be a claim.
+ * A membership or subscription invitation in Close ("Join SingulariDev as a member", "If this
+ * helped, subscribe"): not a claim, so it needs no citation. Anything that could carry a claim
+ * keeps the sentence counted: a subordinate clause, a comparison and a figure in digits or words.
  */
-const INVITATION =
-  /^(?:(?:so|and|now|if\b[^,]{1,80}),\s*)?(?:please\s+)?(?:join|subscribe|become|sign\s+up|support|follow|share|comment|leave|tell\s+us|let\s+us\s+know|hit|click|tap|consider|come|grab|check\s+out|únete|suscríbete|hazte|apóyanos|comenta|comparte)\b/iu;
+const INVITATION_LEAD = /^(?:(?:so|and|now|if\b[^,]{1,80}),\s*)?(?:please\s+)?/iu;
+/** Any of the words, whole: `\b` does not see accented letters as part of a word. */
+const anyWord = (words: string) =>
+  new RegExp(`(?<![\\p{L}\\p{N}])(?:${words})(?![\\p{L}\\p{N}])`, "iu");
+const SUBSCRIBE = anyWord("subscribe|suscr[ií]bete");
+const JOIN_VERB = anyWord("join|become|support|sign\\s+up|[úu]nete|hazte|ap[óo]yanos|apoya");
+const JOIN_TARGET = anyWord("singularidev|members?|membership|channel|miembros?|canal");
+const SUBORDINATE = anyWord(
+  "that|which|who|whom|whose|because|since|where|when|while|although|though|whereas|unless|que|porque|cual|cuales|quien|quienes|donde|cuando|aunque",
+);
+const COMPARISON = anyWord(
+  "more|most|less|least|fewer|better|best|worse|worst|than|leading|m[áa]s|mejor|mejores|mayor|mayores|menor|menos|peor|\\p{L}+[íi]sim[oa]s?",
+);
+const SUPERLATIVE = /(?<!\p{L})\p{L}{2,}est(?!\p{L})/giu;
+const NOT_SUPERLATIVE = new Set([
+  "interest",
+  "request",
+  "honest",
+  "contest",
+  "protest",
+  "suggest",
+  "digest",
+  "invest",
+  "harvest",
+  "manifest",
+]);
+const NUMBER_WORD = anyWord(
+  "two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\\p{L}+teen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|dozens?|half|percent|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cuarenta|cincuenta|cien|cientos|mil|miles|mill[oó]n|millones|docenas?|mitad",
+);
 
-const isInvitation = (sentence: string): boolean =>
-  INVITATION.test(sentence.replace(/^[*_~>\s]+/, "")) &&
-  !/\d/.test(sentence.replace(/\[[^\]]*\]/g, ""));
+const isInvitation = (sentence: string): boolean => {
+  // The lead ("If this helped,") is checked with the rest: it may carry a claim too.
+  const whole = sentence.replace(/\[[^\]]*\]/g, "").replace(/^[*_~>\s]+/, "");
+  const text = whole.replace(INVITATION_LEAD, "");
+  const opens = (verb: RegExp) => verb.exec(text)?.index === 0;
+  if (!opens(SUBSCRIBE) && !(opens(JOIN_VERB) && JOIN_TARGET.test(text))) return false;
+  const superlative = [...whole.matchAll(SUPERLATIVE)].some(
+    ([word]) => !NOT_SUPERLATIVE.has(word.toLowerCase()),
+  );
+  return (
+    !/\d/.test(whole) &&
+    !NUMBER_WORD.test(whole) &&
+    !SUBORDINATE.test(whole) &&
+    !COMPARISON.test(whole) &&
+    !superlative
+  );
+};
 
 const ITEM = /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_-]+)|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
 
