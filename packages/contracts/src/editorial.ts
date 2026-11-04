@@ -77,6 +77,10 @@ export const EditorialTrendInboxState = Schema.Struct({
   ),
   dismissed: Schema.NullOr(Schema.Struct({ at: IsoDateTime, reason: Schema.String })),
   production: Schema.NullOr(Schema.Struct({ threadId: Schema.String, linkedAt: IsoDateTime })),
+  /** A rehearsal link never occupies the human production slot. */
+  trial: Schema.optionalKey(
+    Schema.NullOr(Schema.Struct({ threadId: Schema.String, linkedAt: IsoDateTime })),
+  ),
 });
 export type EditorialTrendInboxState = typeof EditorialTrendInboxState.Type;
 

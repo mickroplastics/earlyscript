@@ -53,6 +53,8 @@ export const subscribeInbox = Effect.fn("EditorialInbox.subscribe")(function* (
   const toItems = (
     event: EditorialEvent,
   ): Effect.Effect<ReadonlyArray<EditorialStreamItem>, EditorialReadError> => {
+    if (event.type === "video-thread.cohort-changed")
+      return snapshot.pipe(Effect.map((item) => [item]));
     switch (event.aggregateKind) {
       case "run":
         return snapshot.pipe(Effect.map((item) => [item]));
@@ -75,7 +77,12 @@ export const subscribeInbox = Effect.fn("EditorialInbox.subscribe")(function* (
 
   let initial: ReadonlyArray<EditorialStreamItem>;
   let tailFrom: number;
-  if (!replayable || missed.some((event) => event.aggregateKind === "run")) {
+  if (
+    !replayable ||
+    missed.some(
+      (event) => event.aggregateKind === "run" || event.type === "video-thread.cohort-changed",
+    )
+  ) {
     const first = yield* snapshot;
     initial = [first];
     tailFrom = first.seq;

@@ -48,7 +48,7 @@ const toSnoozeReturn = (condition: SnoozeReturnCondition | null): EditorialSnooz
 
 /** The contract view of one stored inbox row. */
 export function toTrendInboxState(
-  state: TrendInboxState,
+  state: TrendInboxState & { readonly productionCohort?: "human" | "trial" },
   revision: TrendRevision | null,
   now: number,
 ): EditorialTrendInboxState {
@@ -68,8 +68,15 @@ export function toTrendInboxState(
       state.dismissedAt === null
         ? null
         : { at: state.dismissedAt, reason: state.dismissedReason ?? "" },
+    ...(state.productionCohort === "trial" &&
+    state.productionThreadId !== null &&
+    state.productionLinkedAt !== null
+      ? { trial: { threadId: state.productionThreadId, linkedAt: state.productionLinkedAt } }
+      : {}),
     production:
-      state.productionThreadId === null || state.productionLinkedAt === null
+      state.productionCohort === "trial" ||
+      state.productionThreadId === null ||
+      state.productionLinkedAt === null
         ? null
         : { threadId: state.productionThreadId, linkedAt: state.productionLinkedAt },
   };

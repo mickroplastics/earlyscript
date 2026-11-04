@@ -41,6 +41,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { EditorialImportService } from "./EditorialImportService.ts";
 import { purgeVideoRecord } from "./EditorialPurge.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
+import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialInboxCommands } from "./EditorialInboxCommands.ts";
 import { withEditorial } from "./editorialLayer.testkit.ts";
 import { subscribeInbox, SUBSCRIBE_MAX_REPLAY } from "./inboxStream.ts";
@@ -326,6 +327,28 @@ describe("editorial RPC authorization", () => {
               runId: RUN_ID,
               dossierId: QUANTUM,
             });
+
+            const threads = yield* EditorialThreadService;
+            const read = yield* EditorialReadService;
+            yield* threads.setCohort(first.threadId, "trial");
+            const trial = yield* read.getDossier({ runId: RUN_ID, dossierId: QUANTUM });
+            assert.isNull(trial.trend.inbox?.production);
+            assert.strictEqual(trial.trend.inbox?.trial?.threadId, first.threadId);
+            const trialUpdate = yield* Queue.take(live);
+            assert.strictEqual(trialUpdate._tag, "snapshot");
+            yield* threads.setCohort(first.threadId, "human");
+            assert.strictEqual(
+              (yield* read.getTrendState(QUANTUM_KEY)).state.production?.threadId,
+              first.threadId,
+            );
+            yield* threads.setCohort(first.threadId, "trial");
+            const human = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isTrue(human.created);
+            assert.notStrictEqual(human.threadId, first.threadId);
+            const retryHuman = yield* client[EDITORIAL_WS_METHODS.createVideo](VIDEO_INPUT);
+            assert.isFalse(retryHuman.created);
+            assert.strictEqual(retryHuman.threadId, human.threadId);
+            assert.strictEqual((yield* Ref.get(launch.calls)).length, 2);
 
             // A dossier of another trend never attaches to this one.
             const mismatch = yield* client[EDITORIAL_WS_METHODS.createVideo]({
