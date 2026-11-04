@@ -20,6 +20,11 @@ import {
   type FigureFormat,
   type FigureSpec,
 } from "./figureExport.logic";
+import {
+  isPermissionFailure,
+  PERMISSION_FAILURE_TEXT,
+  targetFailureText,
+} from "./evidenceExport.logic";
 import { downloadFigureFiles, figureFile, type FigureFile } from "./figureFiles";
 
 /** How a save ended: written or downloaded somewhere, cancelled in the folder dialog, or failed. */
@@ -59,6 +64,7 @@ const FiguresContext = createContext<FiguresContextValue>({
 });
 
 function figureSaveFailureText(error: unknown): string {
+  if (isPermissionFailure(error)) return PERMISSION_FAILURE_TEXT;
   const reason =
     typeof error === "object" && error !== null && "reason" in error
       ? (error as { readonly reason: unknown }).reason
@@ -69,7 +75,7 @@ function figureSaveFailureText(error: unknown): string {
       : null;
   switch (reason) {
     case "target":
-      return message ?? "No se pudo escribir en esa carpeta.";
+      return targetFailureText(message);
     case "too-large":
       return "Las figuras pesan demasiado para enviarlas en una sola llamada.";
     case "unavailable":

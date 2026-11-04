@@ -31,7 +31,22 @@ describe("evidence export copy", () => {
 
   it("explains each server reason", () => {
     expect(evidenceFailureText({ reason: "target", message: "/x is not empty" })).toBe(
-      "/x is not empty",
+      "Esa carpeta no está vacía. Elige una vacía.",
+    );
+    expect(
+      evidenceFailureText({
+        reason: "target",
+        message: "/x is a symbolic link. Choose a real folder.",
+      }),
+    ).toBe("Esa ruta es un enlace. Elige una carpeta real.");
+    expect(
+      evidenceFailureText({
+        reason: "target",
+        message: "/x is outside /home/m. Choose a folder there.",
+      }),
+    ).toBe("Esa carpeta está fuera de tu carpeta personal. Elige una dentro de ella.");
+    expect(evidenceFailureText({ _tag: "EnvironmentAuthorizationError" })).toBe(
+      "No tienes permiso para escribir en este entorno. Pide acceso de operación.",
     );
     expect(evidenceFailureText({ reason: "unreadable" })).toBe(
       "La base editorial no se pudo leer.",

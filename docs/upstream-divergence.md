@@ -2115,7 +2115,7 @@ Corrección H5 de la verificación de Sol sobre `es/onboarding-integration` (`f3
 
 ## Figuras de Resultados para el informe y la defensa (rama `es/results-figures`, 4 de noviembre de 2026)
 
-Base: `4ceccb197c`. No toca archivos de upstream: todo vive en `apps/web/src/editorial/`, `apps/server/src/editorial/` y `packages/contracts/src/editorialResults.ts`.
+Base: `4ceccb197c`. Un solo archivo de upstream: `packages/contracts/src/clientRpcPermissions.ts` recibe una línea más (`...EDITORIAL_RESULTS_CLIENT_GUARDED_SCOPES`), igual que el perfil, para que el cliente compruebe el permiso de operación antes de abrir el selector de carpeta de «Exportar evidencia» y «Guardar todas las figuras»; el servidor lo vuelve a comprobar. Los motivos de rechazo del destino (no existe, enlace, fuera de la carpeta personal, no vacía) se traducen en el cliente (`targetFailureText`), compartidos por la exportación de evidencia y las figuras; el servidor sigue registrando en inglés. El resto vive en `apps/web/src/editorial/`, `apps/server/src/editorial/` y `packages/contracts/src/editorialResults.ts`.
 
 Cada gráfica de Resultados se guarda como imagen para pegarla en el informe y en las diapositivas. No es una captura de pantalla: la figura se dibuja otra vez desde sus datos como un SVG autónomo, siempre en tema claro, fondo blanco, colores fijos (`FIGURE_COLORS`) y atributos en línea, porque las clases de Tailwind y las variables CSS no viajan dentro de un SVG. Exportar en tema oscuro da los mismos bytes.
 

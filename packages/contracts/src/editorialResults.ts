@@ -370,3 +370,12 @@ export const EDITORIAL_RESULTS_RPC_REQUIRED_SCOPES = {
   // Writes files on the server's machine.
   [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
 } as const;
+
+/**
+ * The writes the client checks before it opens a folder dialog or draws the figures, spread
+ * into `CLIENT_GUARDED_RPC_SCOPES` (`clientRpcPermissions.ts`); the server checks them again.
+ */
+export const EDITORIAL_RESULTS_CLIENT_GUARDED_SCOPES = {
+  [EDITORIAL_RESULTS_WS_METHODS.export]: AuthOrchestrationOperateScope,
+  [EDITORIAL_RESULTS_WS_METHODS.saveFigures]: AuthOrchestrationOperateScope,
+} as const;
