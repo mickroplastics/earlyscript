@@ -7,7 +7,13 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { FileSearchIcon, FileTextIcon, MessageSquarePlusIcon, SaveIcon } from "lucide-react";
+import {
+  FileSearchIcon,
+  FileTextIcon,
+  MessageSquarePlusIcon,
+  PencilIcon,
+  SaveIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { ThreadDetailsSection } from "../components/chat/ThreadDetailsSection";
@@ -214,8 +220,8 @@ function VideoThreadSectionsView({
                 disabled={controls.onOpenScript === null || script.path === null}
                 onClick={() => controls.onOpenScript?.()}
               >
-                <FileTextIcon aria-hidden />
-                Abrir guion
+                <PencilIcon aria-hidden />
+                Editar guion
               </Button>
             ) : (
               <Button
@@ -245,9 +251,16 @@ function VideoThreadSectionsView({
           <code className="truncate text-left text-muted-foreground [direction:rtl]">
             <bdi>{script.path ?? "Sin ruta de guion"}</bdi>
           </code>
+          {video.decision === null ? (
+            <p className="text-muted-foreground">
+              Se abre a la derecha en texto: escribe ahí. Cada pausa al escribir guarda una versión.
+            </p>
+          ) : null}
           {head === null ? (
             <p className="text-muted-foreground">
-              {script.exists ? "Sin versiones guardadas." : "Aún no existe: «Abrir guion» lo crea."}
+              {script.exists
+                ? "Sin versiones guardadas."
+                : "Aún no existe: «Editar guion» lo crea."}
             </p>
           ) : (
             <p className="text-muted-foreground" data-testid="video-script-version">

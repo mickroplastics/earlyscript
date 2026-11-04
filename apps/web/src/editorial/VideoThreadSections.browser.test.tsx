@@ -35,7 +35,7 @@ vi.mock(import("./videoState"), async (original) => ({
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
-  // No workspace unless a test sets one: auto-versioning stays off and "Abrir guion" disabled.
+  // No workspace unless a test sets one: auto-versioning stays off and "Editar guion" disabled.
   useQuietThreadShell: (() =>
     testState.shell ??
     (testState.workspace === null
@@ -148,6 +148,15 @@ describe("VideoThreadSections", () => {
     expect(version).toContain("10 de 11 afirmaciones con cita");
     // The result form waits for the decision.
     expect(screen.container.textContent).not.toContain("Guardar resultado");
+  });
+
+  it("offers to edit the script and says where it is edited", async () => {
+    using _setup = setup(WRITING);
+    await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
+    await expect.element(screen.getByRole("button", { name: "Editar guion" })).toBeVisible();
+    await expect
+      .element(screen.getByText(/Se abre a la derecha en texto: escribe ahí/))
+      .toBeVisible();
   });
 
   it("sends the decision with the version on screen", async () => {
@@ -444,7 +453,7 @@ describe("VideoThreadSections, review of 76967e71c6", () => {
       path: "/state/editorial/versions/9f2c1ab07d3e4c55aa10/computacion-cuantica-threadvi.md",
     });
     await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
-    expect(screen.container.textContent).not.toContain("Abrir guion");
+    expect(screen.container.textContent).not.toContain("Editar guion");
     await userEvent.click(screen.getByRole("button", { name: "Abrir versión decidida" }));
     expect(callsOf("environment-data:editorial:video-open-version")).toEqual([
       { threadId: "thread-video", contentHash: "9f2c1ab07d3e4c55aa10" },
