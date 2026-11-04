@@ -137,8 +137,8 @@ function EvidenceExportDialog({
         <DialogHeader>
           <DialogTitle>Exportar evidencia</DialogTitle>
           <DialogDescription>
-            Resumen, decisiones, tiempos, eventos y corridas en un paquete reproducible: la misma
-            base da los mismos archivos y la misma huella.
+            Resumen, decisiones, tiempos, eventos, corridas y la línea base manual en un paquete
+            reproducible: la misma base da los mismos archivos y la misma huella.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

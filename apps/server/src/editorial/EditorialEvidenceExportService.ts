@@ -6,7 +6,11 @@ import * as NodeURL from "node:url";
 
 import { SOURCE_CATALOG } from "@earlyscript/editorial-contracts/sourceCatalog";
 import {
+  EDITORIAL_BASELINE_OUTCOMES,
   EditorialEvidenceExportError,
+  type EditorialBaselineBlock,
+  type EditorialBaselineGroup,
+  type EditorialBaselineRecord,
   type EditorialEvidenceExportInput,
   type EditorialEvidenceMode,
   type EditorialResultsDecision,
@@ -21,11 +25,13 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import { COUNT_MAX, decisionInDomain } from "./decisionDomain.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import {
   ALL_EVIDENCE_FILES,
+  BASELINE_FILE,
   CAPTURES_FILE,
   DECISIONS_FILE,
   EVENTS_FILE,
@@ -54,6 +60,7 @@ import {
   type CsvValue,
   type ProjectedRow,
 } from "./evidenceFormat.ts";
+import { blockTotal, summarizeGroups } from "./manualBaselineFormat.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import type { EditorialEventType } from "./persistence/EditorialModel.ts";
 
@@ -345,6 +352,7 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
     mode,
     trendKey: null,
     runId: null,
+    trendLabel: null,
     dossierId: null,
     action: row.accion as EditorialResultsDecision["action"],
     utility,
@@ -363,6 +371,12 @@ const decisionFromRow = (row: ProjectedRow): EditorialResultsDecision | null => 
   };
 };
 
+const IMPORT_STATE_LABELS: Readonly<Record<string, string>> = {
+  imported: "completa",
+  partial: "parcial",
+  invalid: "no válida",
+};
+
 /**
  * Everything `resumen.md` shows, already projected: decisions and runs are the rows of
  * `decisiones.csv` and `corridas.csv` after `projectRow`, the sequence passed its rule. The
@@ -379,7 +393,139 @@ interface SummaryInput {
   readonly runRows: ReadonlyArray<ProjectedRow>;
   readonly sources: ReadonlyArray<EditorialSourceEntry>;
   readonly fileRows: ReadonlyArray<{ readonly name: string; readonly rows: number }>;
+  /** The rows of `linea-base-manual.csv` after `projectRow`. */
+  readonly baselineRows: ReadonlyArray<ProjectedRow>;
+  /** sha256 of the imported CSV, already through its rule in share; null without a log. */
+  readonly baselineHash: string | null;
 }
+
+/** One row per block and one per missing day, by day and block, as the CSV had them. */
+const baselineCsvRows = (record: EditorialBaselineRecord): ReadonlyArray<CsvRow> =>
+  [
+    ...record.blocks.map((block): CsvRow => ({
+      fecha: block.fecha,
+      bloque: block.bloque,
+      inicio: block.inicio,
+      fin: block.fin,
+      min_busqueda: block.minBusqueda,
+      min_escritura: block.minEscritura,
+      min_total_sin_separar: block.minTotalSinSeparar,
+      modo: block.modo,
+      resultado: block.resultado,
+      fuente_senal: block.fuente,
+      interrupciones: block.interrupciones,
+      observaciones: block.observaciones,
+    })),
+    ...record.missingDays.map((day): CsvRow => ({
+      fecha: day.fecha,
+      bloque: null,
+      inicio: null,
+      fin: null,
+      min_busqueda: null,
+      min_escritura: null,
+      min_total_sin_separar: null,
+      modo: "sin registro",
+      resultado: null,
+      fuente_senal: null,
+      interrupciones: null,
+      observaciones: day.observaciones,
+    })),
+  ].toSorted((a, b) => {
+    const [dayA, dayB] = [String(a.fecha), String(b.fecha)];
+    if (dayA !== dayB) return dayA < dayB ? -1 : 1;
+    return (Number(a.bloque) || 0) - (Number(b.bloque) || 0);
+  });
+
+/**
+ * The blocks rebuilt from projected `linea-base-manual.csv` rows, for the summary. A row whose
+ * mode, outcome, day or block did not pass its rule is left out.
+ */
+const baselineFromRows = (rows: ReadonlyArray<ProjectedRow>) => {
+  const blocks: Array<EditorialBaselineBlock> = [];
+  const days: Array<string> = [];
+  let missingDays = 0;
+  for (const row of rows) {
+    const fecha = typeof row.fecha === "string" ? row.fecha : null;
+    if (fecha !== null) days.push(fecha);
+    if (row.modo === "sin registro") {
+      missingDays++;
+      continue;
+    }
+    const bloque = numberOrNull(row.bloque ?? null);
+    const resultado = EDITORIAL_BASELINE_OUTCOMES.find((outcome) => outcome === row.resultado);
+    const modo = row.modo === "cronometrado" || row.modo === "reconstruido" ? row.modo : undefined;
+    if (fecha === null || bloque === null || resultado === undefined || modo === undefined) {
+      continue;
+    }
+    const parts = {
+      minBusqueda: numberOrNull(row.min_busqueda ?? null),
+      minEscritura: numberOrNull(row.min_escritura ?? null),
+      minTotalSinSeparar: numberOrNull(row.min_total_sin_separar ?? null),
+    };
+    blocks.push({
+      fecha,
+      bloque,
+      inicio: null,
+      fin: null,
+      ...parts,
+      minTotal: blockTotal(parts),
+      modo,
+      resultado,
+      fuente: null,
+      interrupciones: numberOrNull(row.interrupciones ?? null),
+      observaciones: null,
+    });
+  }
+  const sorted = days.toSorted();
+  return { blocks, missingDays, from: sorted[0] ?? null, to: sorted.at(-1) ?? null };
+};
+
+const BASELINE_GROUP_LABEL: Readonly<Record<EditorialBaselineGroup["key"], string>> = {
+  cronometrado: "Cronometrado",
+  reconstruido: "Reconstruido",
+  conjunto: "Conjunto",
+};
+
+const baselineSection = (input: SummaryInput): ReadonlyArray<string> => {
+  const baseline = baselineFromRows(input.baselineRows);
+  if (baseline.blocks.length === 0) {
+    return ["## Línea base manual", "", "Sin registro manual importado.", ""];
+  }
+  const stat = (stats: EditorialBaselineGroup["search"]) =>
+    `${formatMinutes(stats.medianMs)} (n = ${stats.n})`;
+  const rows = summarizeGroups(baseline.blocks).map((group) => [
+    BASELINE_GROUP_LABEL[group.key],
+    group.blocks,
+    group.daysRecorded,
+    stat(group.search),
+    stat(group.writing),
+    stat(group.writingNonZero),
+    stat(group.total),
+    group.knownMinutes,
+    group.interruptions,
+  ]);
+  return [
+    "## Línea base manual",
+    "",
+    `\`${BASELINE_FILE}\`: registro del proceso manual que llevó el operador antes de usar la app, importado de su CSV${input.baselineHash === null ? "" : ` (sha256 \`${input.baselineHash}\`)`}, del ${baseline.from ?? "?"} al ${baseline.to ?? "?"}, con ${baseline.missingDays} ${baseline.missingDays === 1 ? "día" : "días"} sin registro. Cronometrado: medido en el momento. Reconstruido: estimado después con historial y notas. Las interrupciones anotadas no se descontaron. Un día sin registro es un faltante, no un cero. Es un registro cerrado: el filtro de fechas no se le aplica. Un bloque manual no equivale a un hilo de video.`,
+    "",
+    markdownTable(
+      [
+        "Grupo",
+        "Bloques",
+        "Días con registro",
+        "Búsqueda, mediana",
+        "Escritura, mediana",
+        "Escritura > 0, mediana",
+        "Total por bloque, mediana",
+        "Minutos conocidos",
+        "Interrupciones",
+      ],
+      rows,
+    ),
+    "",
+  ];
+};
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -441,26 +587,14 @@ const renderSummary = (input: SummaryInput): string => {
       STAGE_LABEL[entry.stage] ?? entry.stage,
       entry.stats.n,
       formatMinutes(entry.stats.medianMs),
-      formatMinutes(entry.stats.q1Ms),
-      formatMinutes(entry.stats.q3Ms),
-      formatMinutes(
-        entry.stats.q1Ms === null || entry.stats.q3Ms === null
-          ? null
-          : entry.stats.q3Ms - entry.stats.q1Ms,
-      ),
+      ...spreadCells(entry.stats),
     ]),
     [
       MODE_LABEL[mode.mode],
       "Total registrado",
       mode.total.n,
       formatMinutes(mode.total.medianMs),
-      formatMinutes(mode.total.q1Ms),
-      formatMinutes(mode.total.q3Ms),
-      formatMinutes(
-        mode.total.q1Ms === null || mode.total.q3Ms === null
-          ? null
-          : mode.total.q3Ms - mode.total.q1Ms,
-      ),
+      ...spreadCells(mode.total),
     ],
   ]);
   const comparisonRows = comparisons.map((entry) => [
@@ -493,7 +627,7 @@ const renderSummary = (input: SummaryInput): string => {
   const runRows = input.runRows.map((run) => [
     cell(run.corrida),
     utcDay(typeof run.corte === "string" ? run.corte : null) ?? "sin corte",
-    cell(run.estado_importacion),
+    IMPORT_STATE_LABELS[String(run.estado_importacion)] ?? cell(run.estado_importacion),
     cell(run.expedientes),
     cell(run.vistas),
     cell(run.descartadas),
@@ -546,9 +680,9 @@ const renderSummary = (input: SummaryInput): string => {
         "3",
         "4",
         "5",
-        "accept",
-        "edit",
-        "reject",
+        "Aceptadas",
+        "Editadas",
+        "Rechazadas",
         "Reloj provisional",
         "Cobertura parcial",
       ],
@@ -581,6 +715,7 @@ const renderSummary = (input: SummaryInput): string => {
     "",
     markdownTable(["Fuente", "Captura", "Motor", "Backtest"], sourceRows),
     "",
+    ...baselineSection(input),
     "## Archivos",
     "",
     markdownTable(
@@ -599,6 +734,7 @@ const SHARE_RULES = [
   "Cada valor pasa por la regla de su columna (`columns[].rule`) o de su campo (`eventData`): enumeraciones cerradas, enteros, días, sha256 de 64 hexadecimales, versión x.y.z o engine.vX.Y e ids del catálogo de fuentes. Un valor que no cumple su regla queda vacío.",
   "Fechas redondeadas al día UTC, también las de los filtros (`filters`); las filas se filtraron con el instante pedido.",
   "Sin identificadores de entorno, operación ni sesión, y sin datos crudos de fuentes.",
+  "Del registro manual (`linea-base-manual.csv`) salen todas sus columnas salvo `observaciones`: modo y resultado como enumeraciones cerradas, horas HH:MM, minutos enteros y la fuente solo si es un nombre conocido.",
   "Una celda de texto que empiece por =, +, - o @ lleva delante una comilla simple (') para que una hoja de cálculo no la lea como fórmula; en share no debería haber ninguna.",
 ];
 
@@ -613,6 +749,7 @@ const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const results = yield* EditorialResultsService.EditorialResultsService;
   const sources = yield* EditorialSourcesService.EditorialSourcesService;
+  const baseline = yield* EditorialManualBaselineService.EditorialManualBaselineService;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const forkSha = resolveForkSha();
@@ -861,6 +998,9 @@ const make = Effect.gen(function* () {
       })
       .toReversed();
 
+    // A closed record: no date filter applies to it.
+    const manualLog = yield* baseline.read.pipe(Effect.catch(unreadable));
+
     const view = yield* sources.list.pipe(
       Effect.catch((cause) =>
         Effect.logWarning("editorial evidence: sources unreadable", { cause }).pipe(
@@ -875,6 +1015,7 @@ const make = Effect.gen(function* () {
       [EVENTS_FILE]: data.events,
       [RUNS_FILE]: data.runs.map(runRow),
       [CAPTURES_FILE]: data.captures,
+      [BASELINE_FILE]: baselineCsvRows(manualLog),
     };
     const csvNames = EVIDENCE_FILES[mode].filter((name) => name !== SUMMARY_FILE);
     const project = (file: string) =>
@@ -896,6 +1037,15 @@ const make = Effect.gen(function* () {
     const excludedByDomain = decisions.filter(
       (decision, index) => decision.current && !inDomain[index],
     ).length;
+    const baselineProvenance = manualLog.provenance;
+    const baselineHash =
+      baselineProvenance === null
+        ? null
+        : mode === "share"
+          ? (shareValue({ kind: "hash" }, baselineProvenance.sourceHash, data.names) as
+              | string
+              | null)
+          : baselineProvenance.sourceHash;
     const summary = renderSummary({
       mode,
       since: options.since ?? null,
@@ -906,6 +1056,8 @@ const make = Effect.gen(function* () {
       runRows: project(RUNS_FILE),
       sources: view.sources,
       fileRows: csvNames.map((name) => ({ name, rows: csv[name]?.length ?? 0 })),
+      baselineRows: project(BASELINE_FILE),
+      baselineHash,
     });
     const contents = new Map<string, { content: string; rows: number | null }>([
       [SUMMARY_FILE, { content: summary, rows: null }],
@@ -957,6 +1109,25 @@ const make = Effect.gen(function* () {
         },
       },
       state: { lastEventSeq },
+      baseline: {
+        file: BASELINE_FILE,
+        filtered: false,
+        sourceHash: baselineHash,
+        importedAt:
+          baselineProvenance === null
+            ? null
+            : mode === "share"
+              ? utcDay(
+                  shareValue({ kind: "day" }, baselineProvenance.importedAt, data.names) as
+                    | string
+                    | null,
+                )
+              : baselineProvenance.importedAt,
+        blocks: manualLog.blocks.length,
+        missingDays: manualLog.missingDays.length,
+        excludedByDomain: manualLog.excludedByDomain,
+        rule: "Registro manual del operador, anterior a la app, importado de su CSV: una fila por bloque y una por día sin registro. Es un registro cerrado y el filtro de fechas no se le aplica. Cronometrado se midió en el momento; reconstruido se estimó después. Las interrupciones anotadas no se descontaron. En share no sale la columna observaciones.",
+      },
       domain: {
         excludedDecisions: excludedByDomain,
         rule: "Una decisión vigente con un valor fuera de su dominio (utilidad de 1 a 5, tiempos de 0 a 7 días por etapa, conteos no negativos) queda fuera de los agregados del resumen; solo se cuenta. Las fechas fuera de 2020 a 2099 quedan vacías en share y no excluyen la decisión.",
@@ -1100,10 +1271,39 @@ const make = Effect.gen(function* () {
   return EditorialEvidenceExportService.of({ build, write });
 });
 
-/** Needs `EditorialResultsService` and `EditorialSourcesService`; tests pass their own. */
+/**
+ * Needs `EditorialResultsService`, `EditorialSourcesService` and
+ * `EditorialManualBaselineService`; tests pass their own.
+ */
 export const layerFromReads = Layer.effect(EditorialEvidenceExportService, make);
 
 /** Over the `EditorialSql` the server publishes; builds its own read services. */
 export const layer = layerFromReads.pipe(
-  Layer.provide(Layer.mergeAll(EditorialResultsService.layer, EditorialSourcesService.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      EditorialResultsService.layer,
+      EditorialSourcesService.layer,
+      EditorialManualBaselineService.layer,
+    ),
+  ),
 );
+
+/**
+ * Quartiles and their range need at least two threads; with one, the spread would be a
+ * meaningless `0,0 min`. The page applies the same rule.
+ */
+function spreadCells(stats: {
+  readonly n: number;
+  readonly q1Ms: number | null;
+  readonly q3Ms: number | null;
+}): [string, string, string] {
+  if (stats.n < 2 || stats.q1Ms === null || stats.q3Ms === null) {
+    const why = stats.n === 1 ? "un solo hilo" : "sin datos";
+    return [why, why, why];
+  }
+  return [
+    formatMinutes(stats.q1Ms),
+    formatMinutes(stats.q3Ms),
+    formatMinutes(stats.q3Ms - stats.q1Ms),
+  ];
+}

@@ -22,9 +22,12 @@ import * as TestClock from "effect/testing/TestClock";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import * as EditorialEvidenceExportService from "./EditorialEvidenceExportService.ts";
+import * as EditorialManualBaselineService from "./EditorialManualBaselineService.ts";
 import * as EditorialResultsService from "./EditorialResultsService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
 import {
+  BASELINE_FILE,
+  formatMinutes,
   EVIDENCE_COLUMNS,
   EVIDENCE_FILES,
   MANIFEST_FILE,
@@ -40,6 +43,7 @@ import { makeTempDir, withEditorialDatabase } from "./persistence/EditorialDatab
 import { appendEvent } from "./persistence/EditorialEventLog.ts";
 import { EDITORIAL_MIGRATIONS_TABLE } from "./persistence/Migrations.ts";
 import { runFixtureThread, seedResultsFixture } from "./resultsFixture.testkit.ts";
+import { BASELINE_FIXTURE_CSV, seedBaselineFixture } from "./manualBaseline.testkit.ts";
 import * as EditorialResultsRpc from "./resultsRpc.ts";
 
 /**
@@ -104,6 +108,19 @@ const FROZEN_SHARE_COLUMNS = {
     "descartadas",
     "producidas",
     "omitidos",
+  ],
+  "linea-base-manual.csv": [
+    "fecha",
+    "bloque",
+    "inicio",
+    "fin",
+    "min_busqueda",
+    "min_escritura",
+    "min_total_sin_separar",
+    "modo",
+    "resultado",
+    "fuente_senal",
+    "interrupciones",
   ],
 };
 
@@ -198,6 +215,7 @@ const withEvidence = <A, E, R>(body: Effect.Effect<A, E, R>) => {
   const reads = Layer.mergeAll(
     EditorialResultsService.layer,
     EditorialSourcesService.layerWithCorpusDir(corpusDir),
+    EditorialManualBaselineService.layer,
   );
   const handlers = Layer.effect(
     EditorialResultsRpc.EditorialResultsRpcHandlers,
@@ -221,6 +239,7 @@ const withEvidence = <A, E, R>(body: Effect.Effect<A, E, R>) => {
 /** The Results fixture plus what only the full package may carry, and one indexed run. */
 const seedEvidence = Effect.gen(function* () {
   yield* seedResultsFixture;
+  yield* seedBaselineFixture;
   const commands = yield* EditorialCommandService;
   const sql = yield* EditorialSql;
   // A seventh, manual thread with a capture, a visit and a pause with its reason.
@@ -476,6 +495,86 @@ describe("editorial.results.export", () => {
   );
 });
 
+describe("editorial.results.baseline in the evidence package", () => {
+  it.effect("imports over the RPC with operate only and exports the log in both modes", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        yield* seedResultsFixture;
+        const reader = yield* clientWith([AuthOrchestrationReadScope]);
+        const refused = yield* Effect.flip(
+          reader[EDITORIAL_RESULTS_WS_METHODS.baselineImport]({ csv: BASELINE_FIXTURE_CSV }),
+        );
+        assert.strictEqual(refused._tag, "EnvironmentAuthorizationError");
+        const empty = yield* reader[EDITORIAL_RESULTS_WS_METHODS.baseline]({});
+        assert.isNull(empty.provenance);
+
+        const operator = yield* clientWith([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        const imported = yield* operator[EDITORIAL_RESULTS_WS_METHODS.baselineImport]({
+          csv: BASELINE_FIXTURE_CSV,
+        });
+        assert.strictEqual(imported.status, "imported");
+        assert.strictEqual(
+          (yield* reader[EDITORIAL_RESULTS_WS_METHODS.baseline]({})).blocks.length,
+          17,
+        );
+
+        const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+        const full = yield* evidence.build({ mode: "full" });
+        const share = yield* evidence.build({ mode: "share", since: "2026-11-01" });
+        const fullCsv = fileOf(full, BASELINE_FILE);
+        const shareCsv = fileOf(share, BASELINE_FILE);
+        assert.deepStrictEqual(headerOf(fullCsv), [
+          ...FROZEN_SHARE_COLUMNS[BASELINE_FILE],
+          "observaciones",
+        ]);
+        assert.deepStrictEqual(headerOf(shareCsv), FROZEN_SHARE_COLUMNS[BASELINE_FILE]);
+        // 17 blocks and 2 missing days, by day; the date filter does not apply to a closed log.
+        assert.strictEqual(rowsOf(fullCsv).length, 19);
+        assert.strictEqual(rowsOf(shareCsv).length, 19);
+        assert.include(rowsOf(shareCsv)[4]!, "2026-10-04,,,,,,,sin registro");
+        assert.include(fullCsv, '"NOTA-04, con coma"');
+        assert.include(fullCsv, "NOTA-FALTA-10");
+        for (const file of [...share.files.map((entry) => entry.content), share.manifest]) {
+          assert.notInclude(file, "NOTA-");
+        }
+        assert.include(
+          rowsOf(shareCsv)[0]!,
+          "2026-10-01,1,07:30,09:10,65,35,,reconstruido,ficha escrita,Hacker News,0",
+        );
+        const summary = fileOf(share, "resumen.md");
+        assert.include(summary, "## Línea base manual");
+        assert.include(summary, "del 2026-10-01 al 2026-10-14, con 2 días sin registro");
+        assert.include(summary, "| Cronometrado | 9 | 6 | 55,0 min (n = 9) |");
+        const manifest = JSON.parse(share.manifest) as {
+          readonly baseline: { readonly sourceHash: string; readonly filtered: boolean };
+        };
+        assert.strictEqual(manifest.baseline.sourceHash, imported.sourceHash);
+        assert.isFalse(manifest.baseline.filtered);
+      }),
+    ),
+  );
+
+  it.effect("re-imports its own full export as the same log", () =>
+    withEvidence(
+      Effect.gen(function* () {
+        const baseline = yield* EditorialManualBaselineService.EditorialManualBaselineService;
+        yield* seedBaselineFixture;
+        const before = yield* baseline.read;
+        const evidence = yield* EditorialEvidenceExportService.EditorialEvidenceExportService;
+        const full = yield* evidence.build({ mode: "full" });
+        const again = yield* baseline.importCsv(fileOf(full, BASELINE_FILE));
+        assert.strictEqual(again.status, "imported");
+        const after = yield* baseline.read;
+        assert.deepStrictEqual(after.blocks, before.blocks);
+        assert.deepStrictEqual(after.missingDays, before.missingDays);
+      }),
+    ),
+  );
+});
+
 describe("EditorialEvidenceExportService", () => {
   it.effect("gives the same files and hashes for the same state", () =>
     withEvidence(
@@ -530,6 +629,7 @@ describe("EditorialEvidenceExportService", () => {
       "url",
       "titulo",
       "nota",
+      "observaciones",
     ];
     for (const specs of Object.values(EVIDENCE_COLUMNS)) {
       for (const spec of specs) {
@@ -549,10 +649,14 @@ describe("EditorialEvidenceExportService", () => {
         Object.entries(fields).flatMap(([key, rule]) => leaves(rule, `${type}.${key}`)),
       ),
     ];
+    // The manual log keeps the operator's own words for its closed lists ("idea descartada",
+    // "Hacker News"): constants of this build with spaces, never text read from the base.
+    const spaced = new Set((EVIDENCE_COLUMNS[BASELINE_FILE] ?? []).map((spec) => spec.name));
     for (const [name, rule] of rules) {
       if (rule.kind === "enum") {
         assert.isAbove(rule.values.length, 0, name);
-        for (const value of rule.values) assert.match(value, /^[a-z][a-z0-9_.-]*$/, name);
+        const format = spaced.has(name) ? /^[A-Za-z][A-Za-z0-9 .-]*$/ : /^[a-z][a-z0-9_.-]*$/;
+        for (const value of rule.values) assert.match(value, format, name);
       }
     }
   });
@@ -927,6 +1031,8 @@ describe("EditorialEvidenceExportService", () => {
           "editorial_browser_visits",
           "editorial_source_settings",
           "editorial_source_backtests",
+          "editorial_manual_baseline_blocks",
+          "editorial_manual_baseline_missing_days",
         ]) {
           assert.notInclude(empty, table, table);
         }
@@ -1083,5 +1189,14 @@ describe("EditorialEvidenceExportService", () => {
     ].filter((rule): rule is Extract<ShareRule, { kind: "int" }> => rule?.kind === "int");
     assert.isAbove(ints.length, 0);
     for (const rule of ints) assert.isAtLeast(rule.min, 0);
+  });
+});
+
+describe("formatMinutes", () => {
+  it("no redondea un tramo positivo a cero", () => {
+    assert.strictEqual(formatMinutes(100), "< 0,1 min");
+    assert.strictEqual(formatMinutes(0), "0,0 min");
+    assert.strictEqual(formatMinutes(null), "sin datos");
+    assert.strictEqual(formatMinutes(90_000), "1,5 min");
   });
 });

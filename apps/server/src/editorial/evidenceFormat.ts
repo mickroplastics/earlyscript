@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- sha256 of each exported file.
 import * as NodeCrypto from "node:crypto";
 
-import type { EditorialEvidenceMode } from "@t3tools/contracts";
+import { EDITORIAL_BASELINE_OUTCOMES, type EditorialEvidenceMode } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { SOURCE_IDS } from "@earlyscript/editorial-contracts/sourceCatalog";
@@ -41,6 +41,7 @@ export type ShareRule =
   | { readonly kind: "day" }
   | { readonly kind: "hash" }
   | { readonly kind: "version" }
+  | { readonly kind: "clock" }
   | { readonly kind: "sources" }
   | { readonly kind: "thread" }
   | { readonly kind: "trend" }
@@ -96,6 +97,29 @@ export const INTERVALS_FILE = "tiempos.csv";
 export const EVENTS_FILE = "eventos.csv";
 export const RUNS_FILE = "corridas.csv";
 export const CAPTURES_FILE = "capturas.csv";
+export const BASELINE_FILE = "linea-base-manual.csv";
+
+const BASELINE_MINUTES = int(0, 24 * 60);
+/**
+ * Signal sources the manual log may name. Free text in the CSV; share keeps only these names
+ * and leaves any other one empty.
+ */
+const BASELINE_SHARE_SOURCES = [
+  "Hacker News",
+  "GitHub",
+  "X",
+  "Reddit",
+  "YouTube",
+  "Bluesky",
+  "Lobste.rs",
+  "arXiv",
+  "Hugging Face",
+  "dev.to",
+  "Stack Exchange",
+  "npm",
+  "Wikipedia",
+  "RSS",
+] as const;
 
 export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>>> = {
   [DECISIONS_FILE]: [
@@ -205,12 +229,48 @@ export const EVIDENCE_COLUMNS: Readonly<Record<string, ReadonlyArray<ColumnSpec>
     column("capturada", null, "Momento de la captura."),
     column("retirada", null, "Momento en que se retiró, si se retiró."),
   ],
+  // The operator's manual log, with the columns of the CSV it was imported from, one row per
+  // block and one per missing day. A closed record: no date filter applies to it.
+  [BASELINE_FILE]: [
+    column("fecha", DAY, "Día del registro manual (día del operador)."),
+    column("bloque", ORDINAL, "Número de bloque dentro del día; vacío en un día sin registro."),
+    column("inicio", { kind: "clock" }, "Hora de inicio HH:MM; vacía si no se anotó."),
+    column("fin", { kind: "clock" }, "Hora de fin HH:MM; vacía si no se anotó."),
+    column("min_busqueda", BASELINE_MINUTES, "Minutos de búsqueda; vacío si falta el dato."),
+    column("min_escritura", BASELINE_MINUTES, "Minutos de escritura; vacío si falta el dato."),
+    column(
+      "min_total_sin_separar",
+      BASELINE_MINUTES,
+      "Minutos del bloque cuando búsqueda y escritura no se separaron.",
+    ),
+    column(
+      "modo",
+      oneOf("reconstruido", "cronometrado", "sin registro"),
+      "cronometrado (medido en el momento), reconstruido (estimado después) o sin registro.",
+    ),
+    column("resultado", oneOf(...EDITORIAL_BASELINE_OUTCOMES), "En qué terminó el bloque."),
+    column(
+      "fuente_senal",
+      oneOf(...BASELINE_SHARE_SOURCES),
+      "Fuente de la señal; en share, solo nombres conocidos de fuentes.",
+    ),
+    column("interrupciones", int(0, 100), "Interrupciones anotadas, no descontadas del tiempo."),
+    column("observaciones", null, "Notas del operador sobre el bloque o el día."),
+  ],
 };
 
 /** The files of each mode, in manifest order; `capturas.csv` is all free text. */
 export const EVIDENCE_FILES: Readonly<Record<EditorialEvidenceMode, ReadonlyArray<string>>> = {
-  full: [SUMMARY_FILE, DECISIONS_FILE, INTERVALS_FILE, EVENTS_FILE, RUNS_FILE, CAPTURES_FILE],
-  share: [SUMMARY_FILE, DECISIONS_FILE, INTERVALS_FILE, EVENTS_FILE, RUNS_FILE],
+  full: [
+    SUMMARY_FILE,
+    DECISIONS_FILE,
+    INTERVALS_FILE,
+    EVENTS_FILE,
+    RUNS_FILE,
+    CAPTURES_FILE,
+    BASELINE_FILE,
+  ],
+  share: [SUMMARY_FILE, DECISIONS_FILE, INTERVALS_FILE, EVENTS_FILE, RUNS_FILE, BASELINE_FILE],
 };
 
 /** Every name an export may write, so a new export over an old one leaves no stale file. */
@@ -327,6 +387,8 @@ export const describeRule = (rule: ShareRule): string => {
       return "sha256 de 64 hexadecimales, con o sin prefijo sha256:";
     case "version":
       return "x.y.z o engine.vX.Y";
+    case "clock":
+      return "hora HH:MM de 00:00 a 23:59";
     case "sources":
       return "ids del catálogo de fuentes";
     case "thread":
@@ -401,6 +463,7 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
 
 const HASH_FORMAT = /^(sha256:)?[0-9a-f]{64}$/;
 const VERSION_FORMAT = /^(\d{1,4}\.\d{1,4}\.\d{1,4}|engine\.v\d{1,4}\.\d{1,4})$/;
+const CLOCK_FORMAT = /^([01]\d|2[0-3]):[0-5]\d$/;
 const CATALOG_SOURCES: ReadonlySet<string> = new Set(SOURCE_IDS);
 
 const sharedObject = (
@@ -444,6 +507,8 @@ export const shareValue = (
       return typeof value === "string" && HASH_FORMAT.test(value) ? value : null;
     case "version":
       return typeof value === "string" && VERSION_FORMAT.test(value) ? value : null;
+    case "clock":
+      return typeof value === "string" && CLOCK_FORMAT.test(value) ? value : null;
     case "sources": {
       if (typeof value !== "string") return null;
       const kept = value.split(";").filter((source) => CATALOG_SOURCES.has(source));
@@ -581,9 +646,15 @@ export const packageHashOf = (
       .join(""),
   );
 
-/** Fixed formatting, independent of the host locale: `12,5 min`. */
-export const formatMinutes = (ms: number | null): string =>
-  ms === null ? "sin datos" : `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
+/**
+ * Fixed formatting, independent of the host locale: `12,5 min`. A positive span below the
+ * tenth of a minute reads `< 0,1 min`, never `0,0 min`: the CSV keeps the milliseconds.
+ */
+export const formatMinutes = (ms: number | null): string => {
+  if (ms === null) return "sin datos";
+  if (ms > 0 && ms < 6_000) return "< 0,1 min";
+  return `${(ms / 60_000).toFixed(1).replace(".", ",")} min`;
+};
 
 export const formatDecimal = (value: number | null, digits = 2): string =>
   value === null ? "sin datos" : value.toFixed(digits).replace(".", ",");

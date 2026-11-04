@@ -35,19 +35,32 @@ import { formatDate } from "../editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
 import { EvidenceExportButton } from "./EvidenceExportButton";
+import { ManualBaselineSection } from "./ManualBaselineSection";
+import { FigureFrame, FiguresProvider } from "./FigureFrame";
+import { FiguresExportButton } from "./FiguresExportButton";
+import {
+  RESULTS_FIGURE_TEXT,
+  inboxFigure,
+  resultsThreadCount,
+  stagesFigure,
+  timesFigure,
+  utilityFigure,
+  videoFigure,
+} from "./resultsFigures.logic";
 import {
   COMPARISON_TEXT,
   RESULTS_MODES,
   RESULTS_STAGES,
   actionLabel,
-  actionsText,
+  decisionRangeText,
   decisionTotalText,
   citationDetail,
   comparisonCards,
   coverageNote,
   decisionsFailureText,
-  decisionThreadFallback,
+  decisionThreadLabel,
   domainNote,
+  emptySideText,
   formatCount,
   formatDuration,
   formatInteger,
@@ -61,11 +74,14 @@ import {
   pageRangeText,
   provisionalNote,
   recordedTotalText,
+  sizeText,
   stageChartMaxMs,
   stageLabel,
   stageStats,
   statsText,
+  utilityDetail,
   utilityText,
+  videoCoverageText,
   type ResultsSectionId,
 } from "./results.logic";
 
@@ -98,8 +114,9 @@ function ResultsSection({
   return (
     <section
       id={id}
+      tabIndex={-1}
       aria-labelledby={`${id}-title`}
-      className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+      className="flex min-w-0 scroll-mt-4 flex-col gap-3 outline-none"
     >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <h2 id={`${id}-title`} className="text-sm font-medium text-foreground">
@@ -135,37 +152,47 @@ function ModeSwatch({ mode }: { readonly mode: EditorialResultsMode }) {
   return <span aria-hidden className={cn("size-2 shrink-0 rounded-xs", MODE_SWATCH[mode])} />;
 }
 
-function ComparisonCard({ comparison }: { readonly comparison: EditorialResultsComparison }) {
+function ComparisonCard({
+  comparison,
+  summary,
+}: {
+  readonly comparison: EditorialResultsComparison;
+  readonly summary: EditorialResultsSummary;
+}) {
   const text = COMPARISON_TEXT[comparison.key];
-  const difference = medianDifferenceText(comparison.assisted, comparison.manual);
-  const coverage = coverageNote(comparison);
-  const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) => (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <ModeSwatch mode={mode} />
-        {mode === "assisted" ? text.assisted : text.manual}
-      </span>
-      <span className="text-base font-medium text-foreground tabular-nums">
-        {stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)}
-      </span>
-      <span className="text-xs text-muted-foreground tabular-nums">
-        {[iqrText(stats), `n = ${stats.n}`].filter(Boolean).join(" · ")}
-      </span>
-    </div>
-  );
+  const side = (mode: EditorialResultsMode, stats: EditorialDurationStats) => {
+    const iqr = iqrText(stats);
+    return (
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ModeSwatch mode={mode} />
+          {modeLabel(mode)}
+        </span>
+        <span className="text-base font-medium text-foreground tabular-nums">
+          {stats.medianMs === null ? "sin datos" : formatDuration(stats.medianMs)}
+        </span>
+        {iqr ? <span className="text-xs text-muted-foreground tabular-nums">{iqr}</span> : null}
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {emptySideText(stats, modeSummary(summary, mode)?.provisionalClock ?? 0)}
+        </span>
+      </div>
+    );
+  };
   return (
     <div
       data-comparison={comparison.key}
       className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-3"
     >
-      <h3 className="text-xs font-medium text-foreground">{text.title} · mediana</h3>
+      <div className="flex flex-col gap-0.5">
+        <h3 className="text-xs font-medium text-foreground">{text.title} · mediana</h3>
+        <p className="text-xs text-muted-foreground">{text.measures}</p>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         {side("assisted", comparison.assisted)}
         {side("manual", comparison.manual)}
       </div>
-      <p className="border-t border-border pt-2 text-xs text-muted-foreground">
-        {difference ?? "Sin las dos medianas no hay diferencia que describir."}
-        {coverage ? ` ${coverage}` : null}
+      <p className="mt-auto border-t border-border pt-2 text-xs text-muted-foreground">
+        {medianDifferenceText(comparison.assisted, comparison.manual)}
       </p>
     </div>
   );
@@ -255,7 +282,7 @@ function StageBar({
       </Tooltip>
       <span className="truncate text-xs text-foreground tabular-nums">
         {median === null ? "sin datos" : formatDuration(median)}
-        {stats ? <span className="text-muted-foreground"> · n = {stats.n}</span> : null}
+        {stats ? <span className="text-muted-foreground"> · {sizeText(stats.n)}</span> : null}
       </span>
     </div>
   );
@@ -287,7 +314,7 @@ function StageChart({ summary }: { readonly summary: EditorialResultsSummary }) 
       </div>
       <figcaption className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-muted-foreground">
         <span>Barra: mediana · trazo: rango intercuartílico</span>
-        <span>Línea discontinua: la etapa no se registró en ese modo</span>
+        <span>Línea discontinua: sin hilos medidos en esa etapa y modo</span>
         <span className="tabular-nums">Escala común hasta {formatDuration(maxMs)}</span>
       </figcaption>
     </figure>
@@ -343,17 +370,31 @@ function ThreadCell({
   readonly decision: EditorialResultsDecision;
   readonly title: string | undefined;
 }) {
-  const label = title ?? decisionThreadFallback(decision);
-  return title === undefined ? (
-    <span className="block max-w-56 truncate text-foreground">{label}</span>
-  ) : (
-    <Link
-      to="/$environmentId/$threadId"
-      params={{ environmentId: decision.environmentId, threadId: decision.threadId }}
-      className="block max-w-56 truncate rounded-sm text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-    >
-      {label}
-    </Link>
+  const label = decisionThreadLabel(decision, title);
+  const className = "block max-w-44 truncate text-foreground xl:max-w-72";
+  // The table truncates long titles; the tooltip carries the whole one.
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          title === undefined ? (
+            <span className={className} />
+          ) : (
+            <Link
+              to="/$environmentId/$threadId"
+              params={{ environmentId: decision.environmentId, threadId: decision.threadId }}
+              className={cn(
+                className,
+                "rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+              )}
+            />
+          )
+        }
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -457,7 +498,8 @@ function NoDecisions() {
         <EmptyHeader className="max-w-none">
           <EmptyTitle>Aún no hay decisiones registradas</EmptyTitle>
           <EmptyDescription>
-            Resultados se llena con cada hilo de video que cierres.
+            Al registrar la decisión de un hilo de video aparecen aquí sus tiempos por etapa, su
+            utilidad y las afirmaciones con cita del guion.
           </EmptyDescription>
         </EmptyHeader>
       </div>
@@ -534,57 +576,66 @@ export function ResultsView({
   decisions,
   threadTitles,
   exportAction,
+  baseline,
 }: {
   readonly summary: EditorialResultsSummary;
   readonly decisions: ResultsDecisionsControls;
   readonly threadTitles: ReadonlyMap<string, string>;
   /** «Exportar evidencia»; the page mounts it, the view only places it. */
   readonly exportAction?: ReactNode;
+  /** «Línea base manual»; the page mounts it, the view only places it. */
+  readonly baseline?: ReactNode;
 }) {
+  const header = (
+    <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">Resultados</h1>
+        <p className="text-sm text-muted-foreground">
+          {hasDecisions(summary)
+            ? `${decisionRangeText(summary, formatDate)} · ${formatCount(modeSummary(summary, "assisted")?.threads ?? 0, "hilo asistido", "hilos asistidos")} y ${formatCount(modeSummary(summary, "manual")?.threads ?? 0, "manual", "manuales")} cerrados`
+            : "Ninguna decisión registrada todavía."}
+        </p>
+      </div>
+      {exportAction}
+    </header>
+  );
   if (!hasDecisions(summary)) {
     return (
       <>
+        {header}
         <NoDecisions />
+        {baseline}
         {hasInboxActivity(summary) ? (
           <ResultsSection
             id="bandeja"
             title="Bandeja de tendencias"
             note="Los conteos son independientes: una tendencia leída puede estar también en producción."
           >
+            <FigureFrame
+              id="bandeja"
+              {...RESULTS_FIGURE_TEXT.bandeja}
+              figure={inboxFigure(summary)}
+            />
             <InboxMetrics summary={summary} />
           </ResultsSection>
         ) : null}
       </>
     );
   }
-  const assisted = modeSummary(summary, "assisted");
-  const manual = modeSummary(summary, "manual");
   const provisional = provisionalNote(summary);
   const outOfDomain = domainNote(summary);
   const state = decisions.state;
   const recorded = summary.comparisons.find((comparison) => comparison.key === "recorded");
   return (
     <>
-      <header className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-xl font-semibold text-foreground">Resultados</h1>
-          <p className="text-sm text-muted-foreground">
-            {formatCount(summary.decisionCount, "decisión", "decisiones")}
-            {summary.firstDecidedAt && summary.lastDecidedAt
-              ? ` entre el ${formatDate(summary.firstDecidedAt)} y el ${formatDate(summary.lastDecidedAt)}`
-              : null}
-            {` · ${formatCount(assisted?.threads ?? 0, "hilo asistido", "hilos asistidos")} y ${formatCount(manual?.threads ?? 0, "manual", "manuales")} cerrados`}
-          </p>
-        </div>
-        {exportAction}
-      </header>
+      {header}
 
       <Alert variant="info">
         <InfoIcon />
         <AlertDescription>
-          Comparación descriptiva sobre la decisión vigente de cada hilo, con hilos y temas
-          distintos en cada modo. Estas diferencias son descriptivas: la comparación de la tesis es
-          por pares, sobre el mismo tema y con revisores externos.
+          Cifras descriptivas sobre la decisión vigente de cada hilo. Cada modo tiene hilos y temas
+          distintos, así que una diferencia describe este registro y no mide un efecto: la
+          comparación de la tesis es por pares, sobre el mismo tema y con revisores externos.
         </AlertDescription>
       </Alert>
       {outOfDomain ? (
@@ -599,29 +650,39 @@ export function ResultsView({
         title="Tiempo por ficha"
         note={
           <>
-            Tiempo activo registrado por el reloj del hilo, sin pausas.
+            Tiempo activo registrado por el reloj del hilo, sin pausas. RIC: rango intercuartílico,
+            del primer al tercer cuartil (la mitad central de los hilos); solo con dos hilos o más.
             {provisional ? ` ${provisional}` : null}
           </>
         }
       >
+        <FigureFrame id="tiempos" {...RESULTS_FIGURE_TEXT.tiempos} figure={timesFigure(summary)} />
         <div className="grid gap-3 lg:grid-cols-3">
           {comparisonCards(summary.comparisons).map((comparison) => (
-            <ComparisonCard key={comparison.key} comparison={comparison} />
+            <ComparisonCard key={comparison.key} comparison={comparison} summary={summary} />
           ))}
         </div>
         {recorded ? <RecordedTotal comparison={recorded} /> : null}
       </ResultsSection>
 
       <ResultsSection id="etapas" title="Mediana por etapa">
+        <FigureFrame id="etapas" {...RESULTS_FIGURE_TEXT.etapas} figure={stagesFigure(summary)} />
         <StageChart summary={summary} />
         <StageTable summary={summary} />
       </ResultsSection>
+
+      {baseline}
 
       <ResultsSection
         id="utilidad"
         title="Utilidad y citas"
         note="Utilidad: la que registra el operador al decidir; las valoraciones de revisores externos no están aquí. Con cita: oraciones del guion decidido que llevan un marcador de evidencia. Es un conteo mecánico, no mide si la fuente respalda la afirmación."
       >
+        <FigureFrame
+          id="utilidad"
+          {...RESULTS_FIGURE_TEXT.utilidad}
+          figure={utilityFigure(summary)}
+        />
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
           {RESULTS_MODES.map((mode) => {
             const entry = modeSummary(summary, mode);
@@ -631,7 +692,7 @@ export function ResultsView({
                 key={`utility-${mode}`}
                 label={`Utilidad media, ${modeLabel(mode).toLowerCase()}`}
                 value={utilityText(entry)}
-                detail={`n = ${entry.utility.n} · ${actionsText(entry.actions)}`}
+                detail={utilityDetail(entry)}
               />
             );
           })}
@@ -659,6 +720,7 @@ export function ResultsView({
         title="Bandeja de tendencias"
         note="Los conteos son independientes: una tendencia leída puede estar también en producción."
       >
+        <FigureFrame id="bandeja" {...RESULTS_FIGURE_TEXT.bandeja} figure={inboxFigure(summary)} />
         <InboxMetrics summary={summary} />
       </ResultsSection>
 
@@ -667,6 +729,7 @@ export function ResultsView({
         title="Métricas de video"
         note="Registradas a mano en el hilo cerrado. Son descriptivas: no se atribuyen al sistema ni al modo de trabajo."
       >
+        <FigureFrame id="video" {...RESULTS_FIGURE_TEXT.video} figure={videoFigure(summary)} />
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
           {RESULTS_MODES.map((mode) => {
             const entry = modeSummary(summary, mode);
@@ -675,7 +738,7 @@ export function ResultsView({
               <ResultsMetric
                 key={mode}
                 label={`Con métricas, ${modeLabel(mode).toLowerCase()}`}
-                value={`${entry.withVideoResults} de ${entry.threads}`}
+                value={videoCoverageText(entry)}
                 detail="hilos con al menos una observación"
               />
             );
@@ -686,7 +749,7 @@ export function ResultsView({
       <ResultsSection
         id="decisiones"
         title="Decisiones"
-        note="Las reemplazadas siguen en el registro y no cuentan en los agregados. «≥» marca un total con un tramo sin resolver."
+        note="Utilidad de 1 a 5. Las reemplazadas siguen en el registro y no cuentan en los agregados. «≥» marca un total con un tramo sin resolver: es un mínimo."
         actions={
           <ToggleGroup
             aria-label="Filtrar decisiones por modo"
@@ -776,21 +839,29 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
   }
   return (
     <EditorialPage space={SPACE_LABEL}>
-      <ResultsView
-        summary={summary}
-        threadTitles={threadTitles}
-        exportAction={<EvidenceExportButton environmentId={environmentId} />}
-        decisions={{
-          state: decisionsState,
-          onRetry: retryDecisions,
-          filter,
-          onFilter: (next) => {
-            setFilter(next);
-            setOffset(0);
-          },
-          onPage: setOffset,
-        }}
-      />
+      <FiguresProvider environmentId={environmentId} threads={resultsThreadCount(summary)}>
+        <ResultsView
+          summary={summary}
+          threadTitles={threadTitles}
+          exportAction={
+            <div className="flex flex-wrap gap-2">
+              <EvidenceExportButton environmentId={environmentId} />
+              <FiguresExportButton />
+            </div>
+          }
+          baseline={<ManualBaselineSection environmentId={environmentId} summary={summary} />}
+          decisions={{
+            state: decisionsState,
+            onRetry: retryDecisions,
+            filter,
+            onFilter: (next) => {
+              setFilter(next);
+              setOffset(0);
+            },
+            onPage: setOffset,
+          }}
+        />
+      </FiguresProvider>
     </EditorialPage>
   );
 }
