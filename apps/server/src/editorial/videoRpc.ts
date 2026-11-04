@@ -5,8 +5,6 @@ import * as NodePath from "node:path";
 import { checkScript } from "@earlyscript/editorial-script";
 import {
   EDITORIAL_VIDEO_WS_METHODS,
-  EditorialDossierId,
-  EditorialRunId,
   EditorialVideoError,
   type EditorialVideoCapture,
   type EditorialVideoClockInput,
@@ -35,6 +33,8 @@ import * as BrowserVisits from "./BrowserVisitService.ts";
 import { purgeVideoRecord } from "./EditorialPurge.ts";
 import * as AssistedWritingStart from "./AssistedWritingStart.ts";
 import * as VideoThreadDeletion from "./VideoThreadDeletion.ts";
+import * as VideoThreadTitle from "./VideoThreadTitle.ts";
+import { readTrendTitle } from "./VideoThreadTitle.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialReadService } from "./EditorialReadService.ts";
 import { EditorialThreadService } from "./EditorialThreadService.ts";
@@ -277,15 +277,8 @@ const makeHandlers = Effect.gen(function* () {
     const key = `${runId}\u0000${dossierId}`;
     const cached = trendTitles.get(key);
     if (cached !== undefined) return cached;
-    const dossier = yield* reader.value
-      .getDossier({
-        runId: EditorialRunId.make(runId),
-        dossierId: EditorialDossierId.make(dossierId),
-        evidenceLimit: 1,
-      })
-      .pipe(Effect.option);
-    if (Option.isNone(dossier)) return null;
-    const title = dossier.value.trend.presentation?.title ?? dossier.value.trend.label;
+    const title = yield* readTrendTitle(reader, runId, dossierId);
+    if (title === null) return null;
     trendTitles.set(key, title);
     return title;
   });
@@ -812,4 +805,6 @@ export const layer = Layer.effect(EditorialVideoRpcHandlers, makeHandlers).pipe(
   Layer.provideMerge(VideoThreadDeletion.layer),
   // The first request to the agent in an assisted thread moves its clock from Leer to Escribir.
   Layer.provideMerge(AssistedWritingStart.layer),
+  // An assisted thread whose generated title is empty or a filler word takes its trend's.
+  Layer.provideMerge(VideoThreadTitle.layer),
 );
