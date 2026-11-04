@@ -25,7 +25,6 @@ export function ThreadMapView({
   onChange,
   onEdit,
   onDecide,
-  onOpenDecided,
 }: {
   readonly video: EditorialVideoState;
   readonly active: MapStop;
@@ -43,12 +42,13 @@ export function ThreadMapView({
   readonly onChange: () => void;
   readonly onEdit: () => void;
   readonly onDecide: () => void;
-  readonly onOpenDecided: () => void;
 }) {
   const [selection, setSelection] = useState<{ active: MapStop; stop: MapStop } | null>(null);
   const stop = selection?.active === active ? selection.stop : active;
   const [tab, setTab] = useState("script");
   const decided = video.decision;
+  // Visiting «② Pedir el borrador» once the draft exists shows the script, not the empty state.
+  const drafted = active > 2;
   const focusChat = () => {
     setTab("chat");
     onChange();
@@ -94,21 +94,21 @@ export function ThreadMapView({
         </nav>
         <p className="text-sm">
           {decided
-            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total.`
+            ? `Decidido: ${ACTION_LABEL[decided.action]} · utilidad ${decided.utility} de 5 · ${decided.durations.totalMs === null ? "Tiempo pendiente" : formatClock(decided.durations.totalMs)} en total. El guion de abajo es la versión decidida.`
             : stop === 1
               ? "Lee de qué va el tema y por qué está aquí."
               : stop === 2
-                ? working
-                  ? "El asistente está escribiendo el borrador."
-                  : "Prepara la petición y envíala desde la conversación para pedir el borrador."
+                ? drafted
+                  ? "El borrador ya está escrito. Sigue en «Revisar el guion»."
+                  : working
+                    ? "El asistente está escribiendo el borrador."
+                    : "Prepara la petición y envíala desde la conversación para pedir el borrador."
                 : stop === 3
                   ? "Lee el guion. Si quieres cambios, díselos al asistente o edítalo tú."
                   : "Decide qué hacer con este guion."}
         </p>
         <div className="flex flex-wrap gap-2">
-          {decided ? (
-            <Button onClick={onOpenDecided}>Abrir la versión decidida</Button>
-          ) : stop === 1 ? (
+          {decided ? null : stop === 1 ? (
             <Button
               onClick={() => {
                 setSelection({ active, stop: 2 });
@@ -116,6 +116,10 @@ export function ThreadMapView({
               }}
             >
               Ya lo leí, pedir el borrador
+            </Button>
+          ) : stop === 2 && drafted ? (
+            <Button variant="outline" onClick={() => setSelection({ active, stop: 3 })}>
+              Ver el guion
             </Button>
           ) : stop === 2 ? (
             <Button
@@ -165,7 +169,7 @@ export function ThreadMapView({
         >
           {stop === 1 && !decided ? (
             topic
-          ) : stop === 2 && !decided ? (
+          ) : stop === 2 && !decided && !drafted ? (
             <p className="text-muted-foreground">
               Todavía no hay guion. Aparecerá aquí cuando el asistente lo escriba.
             </p>

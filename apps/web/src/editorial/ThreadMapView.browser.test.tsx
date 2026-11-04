@@ -29,7 +29,6 @@ it("keeps the conversation mounted while visiting completed stops and requesting
       onChange={change}
       onEdit={vi.fn()}
       onDecide={vi.fn()}
-      onOpenDecided={vi.fn()}
     />,
   );
   await expect.element(screen.getByRole("link", { name: "Fuente 1" })).toBeVisible();

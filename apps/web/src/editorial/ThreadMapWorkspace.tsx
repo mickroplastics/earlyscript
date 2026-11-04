@@ -364,10 +364,6 @@ function LiveMap({
         onChange={change}
         onEdit={() => setEditing(true)}
         onDecide={outcome.decision.onEngage}
-        onOpenDecided={() => {
-          const hash = video.decision?.scriptVersionHash;
-          if (hash) void outcome.commands.openVersion(hash);
-        }}
       />
     </div>
   );
