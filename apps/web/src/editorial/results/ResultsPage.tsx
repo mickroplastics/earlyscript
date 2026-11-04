@@ -35,6 +35,17 @@ import { formatDate } from "../editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
 import { editorialResultsEnvironment } from "../resultsState";
 import { EvidenceExportButton } from "./EvidenceExportButton";
+import { FigureFrame, FiguresProvider } from "./FigureFrame";
+import { FiguresExportButton } from "./FiguresExportButton";
+import {
+  RESULTS_FIGURE_TEXT,
+  inboxFigure,
+  resultsThreadCount,
+  stagesFigure,
+  timesFigure,
+  utilityFigure,
+  videoFigure,
+} from "./resultsFigures.logic";
 import {
   COMPARISON_TEXT,
   RESULTS_MODES,
@@ -595,6 +606,11 @@ export function ResultsView({
             title="Bandeja de tendencias"
             note="Los conteos son independientes: una tendencia leída puede estar también en producción."
           >
+            <FigureFrame
+              id="bandeja"
+              {...RESULTS_FIGURE_TEXT.bandeja}
+              figure={inboxFigure(summary)}
+            />
             <InboxMetrics summary={summary} />
           </ResultsSection>
         ) : null}
@@ -635,6 +651,7 @@ export function ResultsView({
           </>
         }
       >
+        <FigureFrame id="tiempos" {...RESULTS_FIGURE_TEXT.tiempos} figure={timesFigure(summary)} />
         <div className="grid gap-3 lg:grid-cols-3">
           {comparisonCards(summary.comparisons).map((comparison) => (
             <ComparisonCard key={comparison.key} comparison={comparison} summary={summary} />
@@ -644,6 +661,7 @@ export function ResultsView({
       </ResultsSection>
 
       <ResultsSection id="etapas" title="Mediana por etapa">
+        <FigureFrame id="etapas" {...RESULTS_FIGURE_TEXT.etapas} figure={stagesFigure(summary)} />
         <StageChart summary={summary} />
         <StageTable summary={summary} />
       </ResultsSection>
@@ -653,6 +671,11 @@ export function ResultsView({
         title="Utilidad y citas"
         note="Utilidad: la que registra el operador al decidir; las valoraciones de revisores externos no están aquí. Con cita: oraciones del guion decidido que llevan un marcador de evidencia. Es un conteo mecánico, no mide si la fuente respalda la afirmación."
       >
+        <FigureFrame
+          id="utilidad"
+          {...RESULTS_FIGURE_TEXT.utilidad}
+          figure={utilityFigure(summary)}
+        />
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
           {RESULTS_MODES.map((mode) => {
             const entry = modeSummary(summary, mode);
@@ -690,6 +713,7 @@ export function ResultsView({
         title="Bandeja de tendencias"
         note="Los conteos son independientes: una tendencia leída puede estar también en producción."
       >
+        <FigureFrame id="bandeja" {...RESULTS_FIGURE_TEXT.bandeja} figure={inboxFigure(summary)} />
         <InboxMetrics summary={summary} />
       </ResultsSection>
 
@@ -698,6 +722,7 @@ export function ResultsView({
         title="Métricas de video"
         note="Registradas a mano en el hilo cerrado. Son descriptivas: no se atribuyen al sistema ni al modo de trabajo."
       >
+        <FigureFrame id="video" {...RESULTS_FIGURE_TEXT.video} figure={videoFigure(summary)} />
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
           {RESULTS_MODES.map((mode) => {
             const entry = modeSummary(summary, mode);
@@ -807,21 +832,28 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
   }
   return (
     <EditorialPage space={SPACE_LABEL}>
-      <ResultsView
-        summary={summary}
-        threadTitles={threadTitles}
-        exportAction={<EvidenceExportButton environmentId={environmentId} />}
-        decisions={{
-          state: decisionsState,
-          onRetry: retryDecisions,
-          filter,
-          onFilter: (next) => {
-            setFilter(next);
-            setOffset(0);
-          },
-          onPage: setOffset,
-        }}
-      />
+      <FiguresProvider environmentId={environmentId} threads={resultsThreadCount(summary)}>
+        <ResultsView
+          summary={summary}
+          threadTitles={threadTitles}
+          exportAction={
+            <div className="flex flex-wrap gap-2">
+              <EvidenceExportButton environmentId={environmentId} />
+              <FiguresExportButton />
+            </div>
+          }
+          decisions={{
+            state: decisionsState,
+            onRetry: retryDecisions,
+            filter,
+            onFilter: (next) => {
+              setFilter(next);
+              setOffset(0);
+            },
+            onPage: setOffset,
+          }}
+        />
+      </FiguresProvider>
     </EditorialPage>
   );
 }
