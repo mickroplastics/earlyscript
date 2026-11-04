@@ -42,6 +42,8 @@ interface ManualWorkspaceControls {
   readonly onStage: (stage: ManualStage) => void;
   readonly onSaveVersion: () => void;
   readonly onResolve: (intervalId: string, endedAt: string) => void;
+  /** Marks the thread as a trial (kept as evidence, out of Results) or back as human work. */
+  readonly onToggleCohort: () => void;
   readonly capture: ManualCaptureControls;
   readonly decision: VideoDecisionControls;
   readonly result: VideoResultControls;
@@ -224,6 +226,20 @@ function ManualVideoWorkspaceView({
         <Badge variant="outline" size="sm">
           manual
         </Badge>
+        {video.thread.cohort === "trial" ? (
+          <Badge variant="outline" size="sm" data-testid="manual-trial-badge">
+            Ensayo
+          </Badge>
+        ) : null}
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={controls.busy}
+          title="Un ensayo se conserva como evidencia pero no cuenta en Resultados."
+          onClick={controls.onToggleCohort}
+        >
+          {video.thread.cohort === "trial" ? "Quitar marca de ensayo" : "Marcar como ensayo"}
+        </Button>
         {video.thread.trendKey !== null ? (
           <span className="text-muted-foreground text-xs">
             mismo tema que una tendencia (comparación por pares)
@@ -399,6 +415,8 @@ function LiveManualWorkspace({
           void run(() =>
             commands.clock({ _tag: "resolve", intervalId, endedAt }, "No se resolvió el tramo"),
           ),
+        onToggleCohort: () =>
+          void run(() => commands.setCohort(video.thread.cohort === "trial" ? "human" : "trial")),
         capture: {
           busy,
           onCapture: (capture) =>
