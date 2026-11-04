@@ -75,7 +75,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { createFileSaveSessions, type FileSaveTarget } from "../components/files/fileSaveSessions";
 import { DECIDED, JUST_CREATED, WRITING } from "./videoThread.fixture";
 import { draftRequestPrompt } from "./videoThread.logic";
-import { VideoThreadSections } from "./VideoThreadSections";
+import { VideoThreadSectionsContent as VideoThreadSections } from "./VideoThreadSections";
 import { WorkClock } from "./WorkClock";
 
 const THREAD_REF = {
@@ -236,10 +236,7 @@ describe("VideoThreadSections", () => {
     expect(screen.container.textContent).not.toContain("Aún no existe");
 
     await userEvent.click(screen.getByRole("button", { name: "Pedir un borrador del guion" }));
-    const prompt = draftRequestPrompt({
-      dossierPath: "videos/computacion-cuantica-threadvi/expediente.md",
-      scriptPath: "videos/computacion-cuantica-threadvi/guion.md",
-    });
+    const prompt = draftRequestPrompt();
     expect(useComposerDraftStore.getState().getComposerDraft(THREAD_REF)?.prompt).toBe(prompt);
     // Filling the composer runs no command: the operator sends it.
     expect(testState.calls).toEqual([]);

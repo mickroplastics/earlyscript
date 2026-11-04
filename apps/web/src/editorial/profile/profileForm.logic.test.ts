@@ -17,6 +17,7 @@ import {
 const V1: EditorialProfileVersion = {
   version: 1,
   name: "SingulariDev",
+  language: "en",
   audience: "Solo founders and developers building products with AI agents",
   include: ["AI coding agents", "local language models"],
   exclude: ["cryptocurrency prices"],
@@ -27,10 +28,24 @@ const V1: EditorialProfileVersion = {
 };
 
 describe("profile form", () => {
+  it("saves a channel language change and rejects invalid codes", () => {
+    const form = formFromProfile(V1);
+    expect(profileFormChanged({ ...form, language: "es" }, V1)).toBe(true);
+    expect(draftFromForm({ ...form, language: "pt-BR" }).language).toBe("pt-br");
+    expect(profileFormIssues({ ...form, language: "en-abc" })).toContainEqual({
+      field: "language",
+      code: "invalid",
+    });
+    expect(profileFormIssues({ ...form, language: "Spanish" })).toContainEqual({
+      field: "language",
+      code: "invalid",
+    });
+  });
   it("round-trips a version through the form", () => {
     const form = formFromProfile(V1);
     expect(form.include).toEqual(["AI coding agents", "local language models"]);
     expect(draftFromForm(form)).toEqual({
+      language: "en",
       name: V1.name,
       audience: V1.audience,
       include: V1.include,
@@ -59,7 +74,13 @@ describe("profile form", () => {
   });
 
   it("requires name, audience and one topic, in Spanish", () => {
-    const issues = profileFormIssues({ name: " ", audience: "", include: ["", " "], exclude: [] });
+    const issues = profileFormIssues({
+      language: "en",
+      name: " ",
+      audience: "",
+      include: ["", " "],
+      exclude: [],
+    });
     expect(issuesByField(issues)).toEqual({
       name: "Escribe el nombre del canal.",
       audience: "Describe la audiencia en una frase.",

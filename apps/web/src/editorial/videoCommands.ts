@@ -289,3 +289,20 @@ export function openDossier(
     .getState()
     .openFile(threadRef, `${root}${separator}${dossierPath.split("/").join(separator)}`);
 }
+
+/** Resolves the immutable copy without opening a technical file panel. */
+export async function resolveScriptVersionPath(
+  threadRef: ScopedThreadRef,
+  contentHash: string,
+): Promise<string | null> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    editorialVideoEnvironment.openVersion,
+    {
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, contentHash },
+    },
+    { reportFailure: false },
+  );
+  return result._tag === "Success" ? result.value.path : null;
+}

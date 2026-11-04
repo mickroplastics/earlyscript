@@ -49,7 +49,7 @@ export interface ScriptCheckReport {
 
 /**
  * The empty script a video thread starts from: the headings `checkScript` expects, in order.
- * Scripts are written in English.
+ * Heading identifiers stay fixed in every channel language.
  */
 export const SCRIPT_TEMPLATE = "# Hook\n\n# Block 1\n\n# Close\n\n# Sources\n";
 

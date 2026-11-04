@@ -170,6 +170,14 @@ describe("video folder paths", () => {
 });
 
 describe("renderDossierMarkdown", () => {
+  it("includes the channel language for the assistant without changing evidence", () => {
+    const input = { dossier: DOSSIER, dossierHash: "sha256:one", trendKey: "trend-terra" };
+    assert.include(renderDossierMarkdown(input), "Idioma del guion: inglés (en)");
+    assert.include(
+      renderDossierMarkdown({ ...input, language: "es" }),
+      "Idioma del guion: español (es)",
+    );
+  });
   const markdown = renderDossierMarkdown({
     dossier: DOSSIER,
     dossierHash: "sha256:one",

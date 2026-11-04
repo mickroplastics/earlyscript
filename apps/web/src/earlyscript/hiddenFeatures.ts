@@ -146,3 +146,8 @@ export function mergeVisibleRightPanelState<
     ),
   };
 }
+
+/** CSS scope for technical controls inside the assisted video workspace. */
+export function videoDeveloperToolsHidden(): boolean {
+  return !earlyscriptFlags.videoDeveloperTools;
+}

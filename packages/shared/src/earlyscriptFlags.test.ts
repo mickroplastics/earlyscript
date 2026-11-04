@@ -11,6 +11,7 @@ describe("earlyscript flags", () => {
   it("defaults every flag off, so nothing leaves the machine unless asked", () => {
     expect(readEarlyscriptFlags({})).toEqual({
       telemetry: false,
+      videoDeveloperTools: false,
       thirdPartyAnalytics: false,
       updateChecks: false,
       relay: false,

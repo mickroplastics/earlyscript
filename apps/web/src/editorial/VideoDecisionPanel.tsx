@@ -57,7 +57,13 @@ function StageTimes({
   );
 }
 
-function VersionLine({ video }: { readonly video: EditorialVideoState }) {
+function VersionLine({
+  video,
+  plainVersion,
+}: {
+  readonly video: EditorialVideoState;
+  readonly plainVersion: boolean;
+}) {
   const head = video.script.head;
   if (head === null) {
     return <p className="text-muted-foreground text-xs">Sin versión guardada del guion.</p>;
@@ -65,8 +71,11 @@ function VersionLine({ video }: { readonly video: EditorialVideoState }) {
   const claims = claimsLabel(head.claims, head.cited);
   return (
     <p className="text-muted-foreground text-xs">
-      Versión <code className="text-foreground">{shortHash(head.contentHash)}</code> ·{" "}
-      {formatSavedAt(head.savedAt)}
+      Versión{" "}
+      <code className="text-foreground">
+        {plainVersion ? video.script.versionCount : shortHash(head.contentHash)}
+      </code>{" "}
+      · {formatSavedAt(head.savedAt)}
       {claims ? ` · ${claims}` : ""}
     </p>
   );
@@ -83,7 +92,9 @@ export function VideoDecisionPanel({
   refusedHash,
   notice,
   controls,
+  plainVersion = false,
 }: {
+  readonly plainVersion?: boolean;
   readonly video: EditorialVideoState;
   readonly draft: DecisionDraft;
   readonly refusedHash: string | null | undefined;
@@ -110,7 +121,9 @@ export function VideoDecisionPanel({
           ) : (
             <>
               Versión decidida{" "}
-              <code className="text-foreground">{shortHash(decision.scriptVersionHash)}</code>
+              <code className="text-foreground">
+                {plainVersion ? "guardada" : shortHash(decision.scriptVersionHash)}
+              </code>
             </>
           )}
         </p>
@@ -139,13 +152,16 @@ export function VideoDecisionPanel({
           <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
           <span>
             El guion cambió después de la versión que leíste
-            {block.from === null ? "" : ` (${shortHash(block.from)})`}. No se registró la decisión.
+            {block.from === null || plainVersion ? "" : ` (${shortHash(block.from)})`}. No se
+            registró la decisión.
           </span>
         </p>
         <p className="text-muted-foreground text-xs">
           {block.to === null
             ? "Leyendo la versión nueva…"
-            : `Versión actual: ${shortHash(block.to)}. Revísala en el guion antes de decidir.`}
+            : plainVersion
+              ? "El guion cambió. Revísalo antes de decidir."
+              : `Versión actual: ${shortHash(block.to)}. Revísala en el guion antes de decidir.`}
         </p>
         <Button
           size="xs"
@@ -199,7 +215,7 @@ export function VideoDecisionPanel({
       }}
     >
       <StageTimes mode={video.thread.mode} durations={durations} />
-      <VersionLine video={video} />
+      <VersionLine video={video} plainVersion={plainVersion} />
       <ToggleGroup
         aria-label="Acción"
         size="sm"
