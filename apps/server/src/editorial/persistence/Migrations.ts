@@ -22,6 +22,8 @@ import Migration0014 from "./Migrations/014_EditorialProfile.ts";
 import Migration0015 from "./Migrations/015_EditorialManualBaseline.ts";
 import Migration0016 from "./Migrations/016_EditorialWorkIntervalSource.ts";
 
+import Migration0017 from "./Migrations/017_EditorialVideoThreadCohort.ts";
+
 // Own numbering in editorial.sqlite, never colliding with T3's. Never renumber an
 // applied migration. Ids are 1..n: the Migrator skips ids at or below the latest
 // applied one, so checkEditorialMigrationContinuity refuses a hole at startup.
@@ -42,6 +44,7 @@ export const editorialMigrationEntries: ReadonlyArray<EditorialMigrationEntry> =
   [14, "EditorialProfile", Migration0014],
   [15, "EditorialManualBaseline", Migration0015],
   [16, "EditorialWorkIntervalSource", Migration0016],
+  [17, "EditorialVideoThreadCohort", Migration0017],
 ];
 
 export const editorialMigrationManifest = editorialMigrationEntries.map(
@@ -63,6 +66,7 @@ const REPLAYABLE_MIGRATION_NAMES: ReadonlySet<string> = new Set([
   "EditorialProfile",
   "EditorialManualBaseline",
   "EditorialWorkIntervalSource",
+  "EditorialVideoThreadCohort",
 ]);
 
 /** A table name of its own, so a misrouted client never reads T3's history as ours. */

@@ -158,6 +158,10 @@ export class EditorialThreadService extends Context.Service<
       RegisterVideoThreadResult,
       EditorialPersistenceError | EditorialInvalidInputError | EditorialConflictError
     >;
+    readonly setCohort: (
+      threadId: string,
+      cohort: "human" | "trial",
+    ) => Effect.Effect<VideoThread, EditorialPersistenceError | EditorialNotFoundError>;
     readonly getVideoThread: (
       threadId: string,
     ) => Effect.Effect<Option.Option<VideoThread>, EditorialPersistenceError>;
@@ -178,6 +182,7 @@ export class EditorialThreadService extends Context.Service<
 >()("t3/editorial/EditorialThreadService") {}
 
 interface VideoThreadRow {
+  readonly cohort: "human" | "trial";
   readonly thread_id: string;
   readonly environment_id: string;
   readonly operation_id: string;
@@ -197,6 +202,7 @@ const toVideoThread = (row: VideoThreadRow): VideoThread => ({
   environmentId: row.environment_id,
   operationId: row.operation_id,
   mode: row.mode,
+  cohort: row.cohort,
   trendKey: row.trend_key,
   runId: row.run_id,
   dossierId: row.dossier_id,
@@ -210,7 +216,7 @@ const toVideoThread = (row: VideoThreadRow): VideoThread => ({
 const selectBy = (sql: SqlClient.SqlClient, column: "thread_id" | "operation_id", value: string) =>
   sql<VideoThreadRow>`
     SELECT
-      thread_id, environment_id, operation_id, mode, trend_key, run_id, dossier_id,
+      thread_id, environment_id, operation_id, mode, cohort, trend_key, run_id, dossier_id,
       dossier_hash, script_path, launch_state, created_by, created_at
     FROM editorial_video_threads
     WHERE ${sql(column)} = ${value}
@@ -288,6 +294,7 @@ const make = Effect.gen(function* () {
           environmentId: input.environmentId,
           operationId: input.operationId,
           mode: input.mode,
+          cohort: "human",
           trendKey: nullable(input.trendKey),
           runId: nullable(input.runId),
           dossierId: nullable(input.dossierId),
@@ -331,6 +338,27 @@ const make = Effect.gen(function* () {
   const getVideoThread: EditorialThreadService["Service"]["getVideoThread"] = (threadId) =>
     selectBy(sql, "thread_id", threadId).pipe(
       Effect.mapError(toPersistenceError("editorial.getVideoThread")),
+    );
+
+  const setCohort: EditorialThreadService["Service"]["setCohort"] = (threadId, cohort) =>
+    eventLog.transact(
+      "editorial.setCohort",
+      Effect.gen(function* () {
+        const current = yield* selectBy(sql, "thread_id", threadId);
+        if (Option.isNone(current))
+          return yield* new EditorialNotFoundError({ entity: "video_thread", id: threadId });
+        if (current.value.cohort === cohort) return { result: current.value, events: [] };
+        yield* sql`UPDATE editorial_video_threads SET cohort = ${cohort} WHERE thread_id = ${threadId}`;
+        const event = yield* appendEvent(sql, {
+          type: "video-thread.cohort-changed",
+          aggregateKind: "video_thread",
+          aggregateId: threadId,
+          actor: "operator",
+          payload: { previous: current.value.cohort, cohort },
+          createdAt: yield* nowIso,
+        });
+        return { result: { ...current.value, cohort }, events: [event] };
+      }),
     );
 
   const markLaunchState: EditorialThreadService["Service"]["markLaunchState"] = Effect.fn(
@@ -464,6 +492,7 @@ const make = Effect.gen(function* () {
   });
 
   return EditorialThreadService.of({
+    setCohort,
     registerVideoThread,
     getVideoThread,
     markLaunchState,

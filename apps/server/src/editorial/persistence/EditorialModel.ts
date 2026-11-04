@@ -54,6 +54,7 @@ export const TrendInboxState = Schema.Struct({
 export type TrendInboxState = typeof TrendInboxState.Type;
 
 export const VideoThread = Schema.Struct({
+  cohort: Schema.optionalKey(Schema.Literals(["human", "trial"])),
   threadId: Schema.String,
   environmentId: Schema.String,
   operationId: Schema.String,
@@ -76,6 +77,7 @@ export const EditorialEventType = Schema.Literals([
   "trend.dismissed",
   "trend.reopened",
   "trend.production-linked",
+  "video-thread.cohort-changed",
   "video-thread.registered",
   "video-thread.launched",
   "video-thread.launch-failed",

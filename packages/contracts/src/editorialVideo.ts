@@ -11,6 +11,7 @@ import { IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.
 import { EditorialTrendKey } from "./editorial.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
+  EditorialVideoCohort,
   EditorialResultsAction,
   EditorialResultsMode,
   EditorialResultsStage,
@@ -22,6 +23,7 @@ import {
 // thread cannot pause the clock, snapshot the script or decide.
 
 export const EDITORIAL_VIDEO_WS_METHODS = {
+  setCohort: "editorial.video.setCohort",
   get: "editorial.video.get",
   subscribe: "editorial.video.subscribe",
   clock: "editorial.video.clock",
@@ -138,6 +140,7 @@ export const EditorialVideoResult = Schema.Struct({
 export type EditorialVideoResult = typeof EditorialVideoResult.Type;
 
 export const EditorialVideoThread = Schema.Struct({
+  cohort: Schema.optionalKey(EditorialVideoCohort),
   threadId: Schema.String,
   mode: EditorialResultsMode,
   launchState: Schema.Literals(["pending", "launched", "failed"]),
@@ -469,6 +472,11 @@ const EditorialVideoPrepareRpc = Rpc.make(EDITORIAL_VIDEO_WS_METHODS.prepare, {
 
 /** Merged into `WsRpcGroup` next to the editorial and Results groups. */
 export const EditorialVideoRpcGroup = RpcGroup.make(
+  Rpc.make(EDITORIAL_VIDEO_WS_METHODS.setCohort, {
+    payload: Schema.Struct({ threadId: ThreadId, cohort: EditorialVideoCohort }),
+    success: EditorialVideoState,
+    error: videoError,
+  }),
   EditorialVideoGetRpc,
   EditorialVideoSubscribeRpc,
   EditorialVideoClockRpc,
@@ -484,6 +492,7 @@ export const EditorialVideoRpcGroup = RpcGroup.make(
 );
 
 export const EDITORIAL_VIDEO_RPC_REQUIRED_SCOPES = {
+  [EDITORIAL_VIDEO_WS_METHODS.setCohort]: AuthOrchestrationOperateScope,
   [EDITORIAL_VIDEO_WS_METHODS.get]: AuthOrchestrationReadScope,
   [EDITORIAL_VIDEO_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [EDITORIAL_VIDEO_WS_METHODS.clock]: AuthOrchestrationOperateScope,

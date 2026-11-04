@@ -30,6 +30,9 @@ export const EDITORIAL_RESULTS_WS_METHODS = {
   saveFigures: "editorial.results.saveFigures",
 } as const;
 
+export const EditorialVideoCohort = Schema.Literals(["human", "trial"]);
+export type EditorialVideoCohort = typeof EditorialVideoCohort.Type;
+
 export const EditorialResultsMode = Schema.Literals(["assisted", "manual"]);
 export type EditorialResultsMode = typeof EditorialResultsMode.Type;
 
@@ -145,6 +148,23 @@ export const EditorialResultsInbox = Schema.Struct({
 export type EditorialResultsInbox = typeof EditorialResultsInbox.Type;
 
 export const EditorialResultsSummary = Schema.Struct({
+  trials: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        threadId: Schema.String,
+        environmentId: Schema.String,
+        createdAt: IsoDateTime,
+      }),
+    ),
+  ),
+  humanThreads: Schema.optionalKey(NonNegativeInt),
+  baselineSample: Schema.optionalKey(
+    Schema.Struct({
+      blocks: NonNegativeInt,
+      firstDay: Schema.NullOr(Schema.String),
+      lastDay: Schema.NullOr(Schema.String),
+    }),
+  ),
   modes: Schema.Array(EditorialResultsModeSummary),
   comparisons: Schema.Array(EditorialResultsComparison),
   inbox: EditorialResultsInbox,
@@ -171,6 +191,7 @@ export const EditorialResultsVideoMetrics = Schema.Struct({
 export type EditorialResultsVideoMetrics = typeof EditorialResultsVideoMetrics.Type;
 
 export const EditorialResultsDecision = Schema.Struct({
+  cohort: Schema.optionalKey(EditorialVideoCohort),
   decisionId: Schema.String,
   threadId: Schema.String,
   environmentId: Schema.String,

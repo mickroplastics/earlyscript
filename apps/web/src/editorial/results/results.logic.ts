@@ -65,7 +65,7 @@ const MODE_LABELS: Readonly<Record<EditorialResultsMode, string>> = {
 };
 
 const STAGE_LABELS: Readonly<Record<EditorialResultsStage, string>> = {
-  explore: "Explorar",
+  explore: "Buscar ideas",
   read: "Leer",
   write: "Escribir",
   decide: "Decidir",
@@ -98,7 +98,7 @@ export const COMPARISON_TEXT: Readonly<
   Record<EditorialResultsComparisonKey, { readonly title: string; readonly measures: string }>
 > = {
   explore: {
-    title: "Explorar",
+    title: "Buscar ideas",
     measures: "Asistido: explorar y leer la ficha de tendencia. Manual: explorar a mano.",
   },
   write: {
@@ -168,14 +168,16 @@ export function decisionsFailureText(error: unknown): string {
 
 /** "26 min", "1 h 40 min", "45 s"; rounded to the minute from one minute up. */
 export function formatDuration(ms: number): string {
-  // A stage recorded for a few milliseconds ran: it reads as under a second, never as zero.
   if (ms > 0 && ms < 500) return `<${NBSP}1${NBSP}s`;
   if (ms < MINUTE_MS) return `${Math.round(ms / 1000)}${NBSP}s`;
-  const minutes = Math.round(ms / MINUTE_MS);
-  if (minutes < 60) return `${minutes}${NBSP}min`;
+  const minutes = Math.round(ms / 30_000) / 2;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? `${hours}${NBSP}h` : `${hours}${NBSP}h${NBSP}${rest}${NBSP}min`;
+  const number = new Intl.NumberFormat("es", { maximumFractionDigits: 1 });
+  if (hours === 0) return `${number.format(rest)}${NBSP}min`;
+  return rest === 0
+    ? `${hours}${NBSP}h`
+    : `${hours}${NBSP}h${NBSP}${number.format(rest).padStart(2, "0")}${NBSP}min`;
 }
 
 export function formatCount(n: number, singular: string, plural: string): string {
@@ -300,7 +302,7 @@ export function utilityText(summary: EditorialResultsModeSummary): string {
 export function citationDetail(summary: EditorialResultsModeSummary): string {
   const { claims, cited, threads } = summary.citations;
   if (threads === 0) return "sin versión decidida del guion";
-  return `${cited} de ${formatCount(claims, "afirmación", "afirmaciones")} · ${formatCount(threads, "guion", "guiones")}`;
+  return `${cited} de ${claims} frases con marcador de fuente · ${formatCount(threads, "guion", "guiones")}`;
 }
 
 /** "14 decisiones entre el 20 oct 2026 y el 3 nov 2026", "2 decisiones el 3 nov 2026". */
@@ -316,7 +318,7 @@ export function decisionRangeText(
 }
 
 export function hasDecisions(summary: EditorialResultsSummary): boolean {
-  return summary.decisionCount > 0;
+  return summary.decisionCount > 0 || (summary.trials?.length ?? 0) > 0;
 }
 
 /** Trends get read and dismissed before any decision; the counters show once one moved. */
@@ -405,4 +407,49 @@ export function decisionTotalText(decision: {
 }): string {
   if (decision.durations.totalMs === null) return "sin reloj";
   return `${decision.clockDefinitive ? "" : "≥ "}${formatDuration(decision.durations.totalMs)}`;
+}
+
+export function localResultsDate(iso: string): string {
+  return (
+    new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" }).format(
+      new Date(iso),
+    ) +
+    " · " +
+    Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
+}
+
+export function closingStrip(summary: EditorialResultsSummary) {
+  const human = summary.humanThreads ?? summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
+  const closed = summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
+  const baseline = summary.baselineSample;
+  const manual = modeSummary(summary, "manual")?.threads ?? 0;
+  const trialThreads = summary.trials ?? [];
+  const trials = trialThreads.length;
+  const firstTrial = trialThreads[0];
+  const lastTrial = trialThreads.at(-1);
+  return [
+    {
+      title: "Logros",
+      text: `${closed} hilos humanos con decisión registrada. ${manual === 0 ? "Todavía sin hilos manuales cerrados; consulta la línea base manual." : `${manual} hilos manuales cerrados.`} ${
+        closed === 0
+          ? "Todavía sin tiempos ni utilidad humana para comparar."
+          : `${summary.modes
+              .filter((mode) => mode.threads > 0)
+              .map(
+                (mode) =>
+                  `${modeLabel(mode.mode)}: ${mode.total.medianMs === null ? "tiempo todavía sin reloj definitivo" : `mediana registrada ${formatDuration(mode.total.medianMs)}`}; ${mode.utility.mean === null ? "sin utilidad" : `utilidad ${formatMean(mode.utility.mean)} de 5`}.`,
+              )
+              .join(" ")}`
+      }`,
+    },
+    {
+      title: "Muestra",
+      text: `${human} hilos humanos. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${trials} ensayos excluidos${firstTrial && lastTrial ? `, creados entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+    },
+    {
+      title: "Límites",
+      text: "Una persona; tiempos autoinformados; línea base reconstruida en parte cuando así consta en el registro. Ensayos de agente fuera de los indicadores. Este registro no mide un efecto.",
+    },
+  ];
 }

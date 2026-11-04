@@ -42,6 +42,10 @@ export const editorialVideoEnvironment = {
         ),
       ),
   }),
+  setCohort: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:editorial:video-cohort",
+    tag: EDITORIAL_VIDEO_WS_METHODS.setCohort,
+  }),
   clock: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:video-clock",
     tag: EDITORIAL_VIDEO_WS_METHODS.clock,
