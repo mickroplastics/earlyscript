@@ -58,17 +58,36 @@ const V1_HASH = `sha256:${NodeCrypto.createHash("sha256").update(SINGULARIDEV_PR
 
 const EDITED = {
   name: "SingulariDev",
+  language: "en",
   audience: "Solo founders and developers building products with AI agents, in English",
   include: ["AI coding agents", "local language models", "developer tooling for AI products"],
   exclude: ["cryptocurrency prices"],
 };
 
 describe("EditorialProfileService", () => {
+  it.effect("persists channel language in a new version and keeps the original bytes", () =>
+    withProfiles(
+      Effect.gen(function* () {
+        const profiles = yield* EditorialProfileService.EditorialProfileService;
+        const original = yield* profiles.activeFile;
+        const active = yield* profiles.get;
+        assert.strictEqual((yield* profiles.update(active)).changed, false);
+        const saved = yield* profiles.update({ ...active, language: "es" });
+        assert.strictEqual(saved.active.language, "es");
+        assert.strictEqual(saved.active.version, 2);
+        assert.notStrictEqual(saved.active.hash, original.hash);
+        assert.include((yield* profiles.activeFile).bytes, '"language": "es"');
+        const previous = yield* profiles.fileByHash(original.hash);
+        assert.isTrue(previous._tag === "Some" && previous.value.bytes === original.bytes);
+      }),
+    ),
+  );
   it.effect("seeds version 1 with Earlywindow's bytes, so its hash is the runs' hash", () =>
     withProfiles(
       Effect.gen(function* () {
         const profiles = yield* EditorialProfileService.EditorialProfileService;
         const active = yield* profiles.get;
+        assert.strictEqual(active.language, "en");
         assert.strictEqual(active.version, 1);
         assert.strictEqual(active.origin, "earlywindow");
         assert.strictEqual(active.hash, V1_HASH);
@@ -138,6 +157,7 @@ describe("EditorialProfileService", () => {
         const profiles = yield* EditorialProfileService.EditorialProfileService;
         const active = yield* profiles.get;
         const result = yield* profiles.update({
+          language: active.language,
           name: ` ${active.name} `,
           audience: active.audience.replace(" ", "  "),
           include: [...active.include, ""],
@@ -155,7 +175,7 @@ describe("EditorialProfileService", () => {
       Effect.gen(function* () {
         const profiles = yield* EditorialProfileService.EditorialProfileService;
         const error = yield* profiles
-          .update({ name: " ", audience: "", include: [], exclude: ["crypto"] })
+          .update({ language: "en", name: " ", audience: "", include: [], exclude: ["crypto"] })
           .pipe(Effect.flip);
         assert.strictEqual(error.reason, "invalid-profile");
         assert.deepStrictEqual(error.issues, [

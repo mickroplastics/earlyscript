@@ -1,5 +1,6 @@
 import { SCRIPT_TEMPLATE } from "@earlyscript/editorial-script";
 import {
+  scriptLanguageInstruction,
   EditorialDossierId,
   EditorialRunId,
   type EditorialGetDossierInput,
@@ -13,6 +14,7 @@ import * as Option from "effect/Option";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { EditorialProfileService } from "./EditorialProfileService.ts";
 import type { VideoThread } from "./persistence/EditorialModel.ts";
 import { threadWorkspaceRoot } from "./threadWorkspace.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
@@ -130,6 +132,16 @@ const make = Effect.gen(function* () {
     rootOf(thread.threadId).pipe(Effect.orElseSucceed(() => null));
   // Absent in tests that mount no editorial storage; their threads are never decided.
   const sql = yield* Effect.serviceOption(EditorialSql);
+  const profiles = yield* Effect.serviceOption(EditorialProfileService);
+  const language = Option.isSome(profiles)
+    ? profiles.value.get.pipe(
+        Effect.map((profile) => profile.language),
+        Effect.tapError((error) =>
+          Effect.logWarning("Cannot read the channel language", { error }),
+        ),
+        Effect.orElseSucceed(() => null),
+      )
+    : Effect.succeed("en");
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
   /**
@@ -159,11 +171,14 @@ const make = Effect.gen(function* () {
     const scriptPath = thread.scriptPath;
     const root = yield* workspaceRootOf(thread);
     if (root === null || scriptPath === null) return none;
+    const channelLanguage = yield* language;
+    if (channelLanguage === null) return none;
     const dossierPath = dossierPathOf(thread);
     const contents =
       dossier === null || dossierPath === null
         ? null
         : renderDossierMarkdown({
+            language: channelLanguage,
             dossier,
             dossierHash: thread.dossierHash,
             trendKey: thread.trendKey,
@@ -214,10 +229,16 @@ const make = Effect.gen(function* () {
     if (!(yield* Effect.promise(() => videoFileExists(root, scriptPath).catch(() => true)))) {
       return true;
     }
+    const channelLanguage = yield* language;
+    if (channelLanguage === null) return false;
     const dossierPath = dossierPathOf(thread);
     if (thread.mode !== "assisted" || dossierPath === null) return false;
     const dossier = yield* readFile({ thread, path: dossierPath });
-    return !dossier.ok || !isDossierFileOf(dossier.value, thread);
+    return (
+      !dossier.ok ||
+      !isDossierFileOf(dossier.value, thread) ||
+      !dossier.value.includes(scriptLanguageInstruction(channelLanguage))
+    );
   });
 
   const prepareIfNeeded: EditorialVideoWorkspace["Service"]["prepareIfNeeded"] = Effect.fn(

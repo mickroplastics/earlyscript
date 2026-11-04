@@ -1,10 +1,18 @@
+import { CHANNEL_LANGUAGES } from "@t3tools/contracts";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectPopup,
+  SelectItem,
+} from "../../components/ui/select";
 import type {
   EditorialEngineScoring,
   EditorialProfileField,
   EditorialProfileVersion,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, LockIcon, XIcon } from "lucide-react";
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
 import { Badge } from "../../components/ui/badge";
@@ -225,6 +233,9 @@ export function ProfileForm({
   disabled: busy = false,
   readOnly = false,
 }: ProfileFormProps) {
+  const [customLanguage, setCustomLanguage] = useState(false);
+  const showCode =
+    customLanguage || !CHANNEL_LANGUAGES.some((item) => item.code === values.language);
   const disabled = busy || readOnly;
   const id = (field: EditorialProfileField) => profileFieldId(formId, field);
   const describedBy = (field: EditorialProfileField) =>
@@ -260,6 +271,49 @@ export function ProfileForm({
           aria-describedby={describedBy("name")}
           onChange={(event) => onChange({ ...values, name: event.target.value })}
         />
+      </Field>
+      <Field
+        id={id("language")}
+        label="Idioma del canal"
+        hint="El asistente escribe los guiones en este idioma."
+        error={errors.language}
+      >
+        <Select
+          value={showCode ? "other" : values.language}
+          onValueChange={(value) => {
+            if (value !== null) {
+              setCustomLanguage(value === "other");
+              onChange({ ...values, language: value === "other" ? "" : value });
+            }
+          }}
+          disabled={disabled}
+        >
+          <SelectTrigger id={id("language")} aria-describedby={describedBy("language")}>
+            <SelectValue>
+              {showCode
+                ? "Otro"
+                : CHANNEL_LANGUAGES.find((item) => item.code === values.language)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {CHANNEL_LANGUAGES.map((item) => (
+              <SelectItem key={item.code} value={item.code}>
+                {item.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="other">Otro</SelectItem>
+          </SelectPopup>
+        </Select>
+        {showCode ? (
+          <Input
+            nativeInput
+            aria-label="Código del idioma"
+            value={values.language}
+            disabled={disabled}
+            placeholder="pt-BR"
+            onChange={(event) => onChange({ ...values, language: event.target.value })}
+          />
+        ) : null}
       </Field>
       <Field
         id={id("audience")}

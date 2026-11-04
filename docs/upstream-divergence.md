@@ -2306,6 +2306,20 @@ Pruebas de upstream ajustadas a los nombres nuevos: `bootService.test.ts` (tambi
 
 Archivos nuevos: `packages/shared/src/earlyscriptEnv.ts`, `earlyscriptHome.ts` y sus pruebas; `apps/server/src/earlyscript/cliCommands.ts`, `dataDirectory.ts`, `childProcessEnvironment.ts` y sus pruebas; `apps/server/scripts/earlyscriptDataDirectory.test.ts`; `apps/desktop/src/earlyscript/dataDirectory.test.ts` y `legacyLocalStorage.test.ts`; `scripts/earlyscript/devRunnerIsolation.test.ts`. Cambian `apps/desktop/src/earlyscript/inheritedHome.ts` (ahora `adoptInheritedEnvironment`) y su prueba `apps/desktop/src/earlyscript/inheritedHome.test.ts`, `packages/shared/src/earlyscriptBrand.ts` (`runtimeName`, `bootServiceName`, `bootServiceLaunchdLabel`) `apps/server/src/editorial/EditorialEvidenceExportService.ts` y `figuresWrite.ts` (destinos dentro de T3 Code rechazados, también bajo un enlace y en carpetas que aún no existen).
 
+## Idioma del canal en el perfil (rama `es/channel-language`, 4 de noviembre de 2026)
+
+Base: `36db2c6c24`. El perfil incorpora `language`, con `en` por defecto al decodificar perfiles anteriores. El formulario compartido por Ajustes y el paso Estudio ofrece nombres en español y «Otro» con código BCP 47. La interfaz solo explica el idioma junto al selector.
+
+Los bytes de perfiles existentes y la migración 014 permanecen intactos. `EditorialProfileService` obtiene el idioma desde los bytes al presentar la versión; `presentationProfileFromBytes` calcula el hash sobre los bytes originales antes de interpretarlos. Guardar sin cambios no crea una versión. Cambiar el idioma, o cualquier otro campo, crea una versión nueva cuyo JSON contiene `language`. La serialización de la semilla v1 sigue reproduciendo sus bytes históricos; no se usa para crear versiones nuevas. No hace falta otra migración SQL.
+
+`VideoWorkspace` incluye el idioma en `expediente.md` y prepara de nuevo un expediente sin esa indicación o con otro idioma al abrir un hilo pendiente. Los hilos decididos conservan sus archivos. `dossier_read` devuelve además `scriptLanguage` con nombre en español y código desde el perfil activo, incluso sin expediente en un hilo manual. No añade evidencia del motor al control manual.
+
+`STUDIO_AGENTS_MD` remite al idioma indicado por `dossier_read` o el expediente. Se conserva la política de no sobrescribir instrucciones de estudios existentes: el operador debe respaldar y borrar solo el `AGENTS.md` del Estudio y abrir de nuevo un hilo para regenerarlo; después puede reponer sus personalizaciones sin la línea antigua «Se escribe en inglés.». `CLAUDE.md` sigue importando ese archivo. Se elige regeneración explícita para conservar las ediciones del operador.
+
+La plantilla mantiene `Hook`, `Block N`, `Close` y `Sources` como identificadores estructurales en cualquier idioma. `script_check` no exige idioma para la prosa. Su excepción conservadora para invitaciones sin afirmaciones en Close ya cubre inglés y español; no cubre portugués ni los otros idiomas. Tampoco es un verificador semántico ni un segmentador universal de oraciones.
+
+Archivos propios afectados: contrato `editorialProfile.ts`; servicio del perfil; `VideoWorkspace.ts` y `videoWorkspaceFormat.ts`; herramientas MCP editoriales; `studioInstructions.ts`; formulario y lógica de perfil, pruebas de perfil y Estudio; comentario de la plantilla en `editorial-script`. Sin cambios nuevos en archivos de upstream ni dependencias.
+
 ## Mapa del video (rama `es/thread-map`, 4 de noviembre de 2026)
 
 La ruta editorial monta `ThreadMapWorkspace` para los videos asistidos y conserva `ThreadRouteView` como conversación. Los hilos manuales mantienen su espacio. El mapa consume el reloj, la decisión, el editor y el RPC de expedientes existentes. Las secciones editoriales del panel de detalles quedan ocultas en los hilos asistidos.

@@ -17,6 +17,7 @@ import { ONBOARDING_STAGES } from "./steps";
 
 const V1: EditorialProfileVersion = {
   version: 1,
+  language: "en",
   name: "SingulariDev",
   audience:
     "Solo founders and developers building products with AI agents and automation, in English",
@@ -177,6 +178,16 @@ describe.each([
   ["desktop", 1280, 800],
   ["mobile", 390, 844],
 ] as const)("StudioStep at %s", (size, width, height) => {
+  it("saves the selected channel language from Studio", async () => {
+    await page.viewport(width, height);
+    const { screen, saveDraft } = await renderStep();
+    await using _screen = screen;
+    await page.getByRole("combobox", { name: "Idioma del canal" }).click();
+    await page.getByRole("option", { name: "Español", exact: true }).click();
+    await page.getByRole("button", { name: "Guardar y continuar" }).click();
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ language: "es" }));
+  });
+
   it("starts from Earlywindow's version and continues without saving when unchanged", async () => {
     await page.viewport(width, height);
     const { screen, onContinue, saveDraft } = await renderStep();
@@ -261,6 +272,7 @@ describe("StudioStep", () => {
     await userEvent.click(page.getByRole("button", { name: "Guardar y continuar" }));
     await vi.waitFor(() => expect(onContinue).toHaveBeenCalled());
     expect(saveDraft).toHaveBeenCalledWith({
+      language: "en",
       name: V1.name,
       audience: V1.audience,
       include: [...V1.include, "evaluation of LLM apps", "AI evals"],
