@@ -417,6 +417,8 @@ it.live("evaluates in the background and reports both engines over the same cuto
         "include_score",
       ]);
       expect(run.candidate[0].top[0]).not.toHaveProperty("item_ids");
+      expect(run.candidate[0].top.length).toBeLessThanOrEqual(5);
+      expect(run.candidate[0].top[0].human_label).toBeTypeOf("string");
     }),
   ),
 );

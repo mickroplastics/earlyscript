@@ -5,7 +5,11 @@
 import * as NodeFS from "node:fs";
 
 import type { EngineJobView } from "@earlyscript/editorial-contracts/engineLab";
-import { developmentReport, reportHash } from "@earlyscript/engine-lab/compare";
+import {
+  type DevelopmentReport,
+  developmentReport,
+  reportHash,
+} from "@earlyscript/engine-lab/compare";
 import {
   evaluateGate,
   type CardLabel,
@@ -557,22 +561,31 @@ const make = Effect.gen(function* () {
         "not-found",
         `Job ${input.jobId} has no result yet (${row.status}).`,
       );
-    const rows = yield* sql<{ readonly result_json: string }>`
-      SELECT result_json FROM editorial_engine_reports WHERE report_id = ${row.report_id}
+    const rows = yield* sql<{ readonly result_json: string; readonly report_json: string }>`
+      SELECT result_json, report_json FROM editorial_engine_reports WHERE report_id = ${row.report_id}
     `.pipe(storage);
     const result = parseJson(rows[0]!.result_json) as WorkerResult;
-    const side = (arms: WorkerResult["arms"]["reference"]) =>
-      arms.map((arm) => ({
+    const report = parseJson(rows[0]!.report_json) as DevelopmentReport;
+    // The label state of each position, from the human labels the report used.
+    const labelOf = (side: "reference" | "candidate", cutoff: string, position: number) =>
+      report.human?.slots[side]
+        .find((entry) => entry.cutoff === cutoff)
+        ?.slots.find((slot) => slot.position === position)?.state ?? null;
+    const side = (name: "reference" | "candidate") =>
+      result.arms[name].map((arm) => ({
         cutoff: arm.cutoff,
         run_id: arm.run_id,
         eligible: arm.eligible,
-        top: arm.top.map(({ item_ids: _ids, member_keys: _keys, ...trend }) => trend),
+        // The top 5 the report scores, two headlines each: enough to read, small enough to fit.
+        top: arm.top
+          .filter((trend) => trend.position <= 5)
+          .map(({ item_ids: _ids, member_keys: _keys, headlines, ...trend }) => ({
+            ...trend,
+            headlines: headlines.slice(0, 2),
+            human_label: labelOf(name, arm.cutoff, trend.position),
+          })),
       }));
-    return {
-      jobId: row.job_id,
-      reference: side(result.arms.reference),
-      candidate: side(result.arms.candidate),
-    };
+    return { jobId: row.job_id, reference: side("reference"), candidate: side("candidate") };
   });
 
   const shadowReport = Effect.fn("EngineExperimentService.shadowReport")(function* (jobId: string) {
