@@ -23,7 +23,7 @@ import type { SourceId } from "@earlyscript/editorial-contracts/source";
 
 import { dot, stackItems } from "./cluster.ts";
 import { readCorpus } from "./corpus.ts";
-import { dayOf, daysBefore } from "./days.ts";
+import { dayOf, daysBefore, daysBetween } from "./days.ts";
 import { dossierId, logicalHash, topTerms } from "./dossier.ts";
 import { createLocalEmbedder } from "./embed/local.ts";
 import { defaultModelDir } from "./embed/model.ts";
@@ -33,7 +33,13 @@ import { HOST } from "./host.ts";
 import { prepare } from "./prepare.ts";
 import { scoreProfile } from "./profile.ts";
 import { dedupe, positions, round6, score } from "./rank.ts";
-import { type LoadedRelevance, loadRelevance, relevanceOf } from "./relevance.ts";
+import {
+  aggregateRelevance,
+  distinctTitles,
+  type LoadedRelevance,
+  loadRelevance,
+  relevanceOf,
+} from "./relevance.ts";
 import {
   classify,
   corroboration,
@@ -90,9 +96,6 @@ export function loadConfig(path: string): { config: EngineConfig; hash: string }
 /** Qwen3-Embedding's query format; documents are embedded as they are. */
 export const asQuery = (instruction: string | undefined, text: string): string =>
   instruction === undefined ? text : `Instruct: ${instruction}\nQuery:${text}`;
-
-const mean = (values: ReadonlyArray<number>): number =>
-  values.reduce((sum, v) => sum + v, 0) / values.length;
 
 export function parseCutoff(cutoff: string): {
   cutoffAt: string;
@@ -235,6 +238,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
     const byId = new Map(kept.map((item) => [item.id, item]));
     const curveDays = daysBefore(cutoffDay, config.emit.curve_days);
     const last7 = new Set(daysBefore(cutoffDay, 7));
+    const itemMinOf = relevanceRef?.item_min ?? 0;
     const relevanceById = relevance
       ? new Map(kept.map((item) => [item.id, relevanceOf(relevance, vectorOf.get(item.id)!)]))
       : null;
@@ -259,13 +263,20 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         : seriesItems;
       const stage = classify(counted, cutoffDay, coverage, sources, config.stage);
       const raw = rawStage ? classify(seriesItems, cutoffDay, coverage, sources, rawStage) : stage;
-      let signalRelevance: { score: number; scored: number } | null = null;
+      let signalRelevance: { score: number; scored: number; distinct: number } | null = null;
       if (relevanceById) {
         const recent = members.filter((m) => last7.has(m.day));
         const scored = recent.length > 0 ? recent : members;
         signalRelevance = {
-          score: mean(scored.map((m) => relevanceById.get(m.id)!)),
+          score: aggregateRelevance(
+            scored.map((m) => relevanceById.get(m.id)!),
+            relevanceRef?.aggregate ?? "mean",
+            itemMin,
+          ),
           scored: scored.length,
+          distinct: distinctTitles(
+            recent.filter((m) => relevanceById.get(m.id)! >= itemMin).map((m) => m.title),
+          ),
         };
       }
       const fit = scoreProfile(
@@ -300,10 +311,59 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
     const profileOk = (s: Signal) =>
       !relevanceRef || relevanceRef.profile_gate ? s.fit.passes : true;
     const relevant = (s: Signal) =>
-      s.relevance === null || s.relevance.score >= relevanceRef!.signal_min;
+      s.relevance === null ||
+      (s.relevance.score >= relevanceRef!.signal_min &&
+        s.relevance.distinct >= (relevanceRef!.min_relevant_distinct ?? 0));
     let eligible = signals.filter(
       (s) => s.stage.stage === "growing" && profileOk(s) && relevant(s),
     );
+    const novelty = new Map<string, { prior_top_days: Array<string>; grew: boolean }>();
+    const recurrent = new Set<string>();
+    if (relevanceRef?.novelty && relevanceById) {
+      const rule = relevanceRef.novelty;
+      const priorTop = priorTopDays(signals, cutoffDay, rule, {
+        eligibleAt: (s, day) => {
+          const stageAt = classify(
+            s.counted.filter((item) => item.day < day),
+            day,
+            coverage,
+            sources,
+            config.stage,
+          );
+          if (stageAt.stage !== "growing" || !profileOk(s)) return null;
+          const week = new Set(daysBefore(day, 7));
+          const recent = s.members.filter((m) => week.has(m.day));
+          const probs = recent.map((m) => relevanceById.get(m.id)!);
+          const rel = aggregateRelevance(probs, relevanceRef.aggregate ?? "mean", itemMinOf);
+          const distinct = distinctTitles(
+            recent.filter((m) => relevanceById.get(m.id)! >= itemMinOf).map((m) => m.title),
+          );
+          if (rel < relevanceRef.signal_min || distinct < (relevanceRef.min_relevant_distinct ?? 0))
+            return null;
+          return score(config.rank.weighted.method, config.rank.weighted.weights, {
+            items_7d: stageAt.items_7d,
+            growth: stageAt.growth,
+            log_authors_7d: Math.log(1 + stageAt.authors_7d),
+            include_score: s.fit.include_score,
+            log_items_7d: Math.log(1 + stageAt.items_7d),
+            relevance: rel,
+          }).score;
+        },
+      });
+      for (const s of eligible) {
+        const days = priorTop.get(s.id);
+        if (!days) continue;
+        const last = days[days.length - 1]!;
+        const since = daysBetween(last, cutoffDay);
+        const before = new Set(daysBefore(last, 7));
+        const rateSince = s.counted.filter((i) => i.day >= last).length / since.length;
+        const rateBefore = s.counted.filter((i) => before.has(i.day)).length / 7;
+        const grew = rateSince > 0 && rateSince >= rule.growth_ratio * rateBefore;
+        novelty.set(s.id, { prior_top_days: days, grew });
+        if (!grew) recurrent.add(s.id);
+      }
+      eligible = eligible.filter((s) => !recurrent.has(s.id));
+    }
     const relatedTo = new Map<string, Array<{ signal: Signal; cosine: number }>>();
     const backfilled = new Set<string>();
     const dedupCosine = config.emit.dedup_cosine;
@@ -334,7 +394,13 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
           b.relevance!.score - a.relevance!.score || (a.id < b.id ? -1 : 1);
         const pool = [
           ...signals
-            .filter((s) => s.stage.stage === "growing" && profileOk(s) && !taken.has(s))
+            .filter(
+              (s) =>
+                s.stage.stage === "growing" &&
+                profileOk(s) &&
+                !taken.has(s) &&
+                !recurrent.has(s.id),
+            )
             .toSorted(byRelevance),
           ...signals
             .filter(
@@ -342,9 +408,12 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
                 s.stage.stage === "steady" &&
                 s.stage.items_7d >= config.stage.growing_min_items_7d &&
                 profileOk(s) &&
-                !taken.has(s),
+                !taken.has(s) &&
+                !recurrent.has(s.id),
             )
             .toSorted(byRelevance),
+          // Recurrent trends that did not grow come last.
+          ...signals.filter((s) => recurrent.has(s.id) && !taken.has(s)).toSorted(byRelevance),
         ];
         const fill: Array<Signal> = [];
         for (const s of pool) {
@@ -454,6 +523,13 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
                 growth: round6(s.stage.growth),
                 growth_sources: s.stage.growth_sources ?? [],
                 eligibility: backfilled.has(s.id) ? ("backfill" as const) : ("relevant" as const),
+                ...(relevanceRef.aggregate ? { aggregate: relevanceRef.aggregate } : {}),
+                ...(relevanceRef.min_relevant_distinct !== undefined
+                  ? { relevant_distinct_7d: s.relevance.distinct }
+                  : {}),
+                ...(relevanceRef.novelty
+                  ? { novelty: novelty.get(s.id) ?? { prior_top_days: [], grew: false } }
+                  : {}),
               },
             }
           : {}),
@@ -548,6 +624,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
                   (s) => s.relevance !== null && s.relevance.score >= relevanceRef.signal_min,
                 ).length,
                 backfilled: backfilled.size,
+                ...(relevanceRef.novelty ? { recurrent: recurrent.size } : {}),
                 folded: [...relatedTo.values()].flat().length,
               }
             : {}),
@@ -591,3 +668,38 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
 }
 
 export const runDir = (outDir: string, record: RunRecord) => NodePath.join(outDir, record.run_id);
+
+/**
+ * For each signal, the previous cut days (cutoff - lookback_days .. cutoff - 1, ascending)
+ * where it ranked in the top `top` of the trends eligible then, from items before each day.
+ */
+export function priorTopDays<
+  T extends { readonly id: string; readonly members: ReadonlyArray<{ readonly day: string }> },
+>(
+  signals: ReadonlyArray<T>,
+  cutoffDay: string,
+  rule: { readonly lookback_days: number; readonly top: number },
+  at: {
+    /** The trend's weighted score at that cut when it was eligible then, else null. */
+    readonly eligibleAt: (signal: T, day: string) => number | null;
+  },
+): Map<string, Array<string>> {
+  const out = new Map<string, Array<string>>();
+  for (const day of daysBefore(cutoffDay, rule.lookback_days)) {
+    const week = new Set(daysBefore(day, 7));
+    const scored: Array<{ id: string; score: number }> = [];
+    for (const s of signals) {
+      if (!s.members.some((m) => week.has(m.day))) continue;
+      const value = at.eligibleAt(s, day);
+      if (value !== null) scored.push({ id: s.id, score: value });
+    }
+    const order = positions(scored, (e) => e.score);
+    for (const e of scored) {
+      if (order.get(e.id)! > rule.top) continue;
+      const days = out.get(e.id) ?? [];
+      days.push(day);
+      out.set(e.id, days);
+    }
+  }
+  return out;
+}

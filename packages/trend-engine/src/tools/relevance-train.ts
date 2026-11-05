@@ -2,6 +2,7 @@
 //   node src/tools/relevance-train.ts --sample sample.jsonl --labels labels.jsonl --cache <sqlite> \
 //     --models <dir> --out config/relevance.v1.json --report report.json \
 //     [--profile profile.json --query-instruction "<text>"] [--workers 3] [--calibration provisional|accepted]
+//     [--lambdas 0.03,0.1,0.3]
 // Trains the relevance probe on judge labels ("unsure" dropped) over the Qwen vectors of
 // the run's own item texts, chooses the penalty and the item threshold by cross-validation
 // over blocks of whole days, and writes the model file the engine configuration names.
@@ -124,6 +125,7 @@ async function main() {
       judge: { type: "string" },
       "model-id": { type: "string" },
       calibration: { type: "string" },
+      lambdas: { type: "string" },
     },
   });
   if (!values.sample || !values.labels || !values.cache || !values.models || !values.out) {
@@ -179,7 +181,8 @@ async function main() {
     rows.map((row) => row.day),
     FOLDS,
   );
-  const grid = LAMBDAS.map((lambda) => {
+  const lambdas = values.lambdas ? values.lambdas.split(",").map(Number) : LAMBDAS;
+  const grid = lambdas.map((lambda) => {
     const t0 = performance.now();
     const oof = crossValidate(vectors, labels, fold, lambda);
     log(`lambda ${lambda}: ${Math.round(performance.now() - t0)} ms`);

@@ -62,7 +62,10 @@ export function readOperatorLabels(text: string, cardsBytes: Uint8Array): Array<
     cards_hash?: string;
     labels?: Array<OperatorLabel>;
   };
-  if (exported.schema_version !== "earlyscript.editorial-labels/1" || !Array.isArray(exported.labels))
+  if (
+    exported.schema_version !== "earlyscript.editorial-labels/1" ||
+    !Array.isArray(exported.labels)
+  )
     throw new Error("labels are not an earlyscript.editorial-labels/1 export");
   if (exported.cards_hash !== sha256(cardsBytes))
     throw new Error("labels were exported for other cards (cards_hash does not match)");
@@ -96,7 +99,9 @@ export function splitCalibration(
     const take = new Map(exact.map((e) => [e.label, Math.floor(e.quota)]));
     let left = revisionSize[unit] - [...take.values()].reduce((a, b) => a + b, 0);
     for (const e of exact.toSorted(
-      (a, b) => b.quota - Math.floor(b.quota) - (a.quota - Math.floor(a.quota)) || (a.label < b.label ? -1 : 1),
+      (a, b) =>
+        b.quota - Math.floor(b.quota) - (a.quota - Math.floor(a.quota)) ||
+        (a.label < b.label ? -1 : 1),
     )) {
       if (left === 0) break;
       take.set(e.label, take.get(e.label)! + 1);
@@ -137,7 +142,11 @@ function kappaOf(pairs: ReadonlyArray<{ operator: string; judge: string }>) {
   return { agreement: po, kappa: pe === 1 ? null : (po - pe) / (1 - pe) };
 }
 
-/** Preregistered gate: every card answered, agreement and kappa among resolved and with doubts as no. */
+/**
+ * Gate: every card answered, the judge resolves most of what the operator resolved, and
+ * agreement and kappa among cards both resolved. Agreement with doubts as no is reported;
+ * the coordinator added it as a second gate and withdrew it after seeing judge v2 (5 Nov).
+ */
 export const GATE = {
   agreement: 0.8,
   kappa: 0.5,
@@ -160,7 +169,10 @@ export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
   const judgeResolvedShare =
     operatorResolved.length === 0 ? null : resolved.length / operatorResolved.length;
   const pass = (k: { agreement: number | null; kappa: number | null }) =>
-    k.agreement !== null && k.kappa !== null && k.agreement >= GATE.agreement && k.kappa >= GATE.kappa;
+    k.agreement !== null &&
+    k.kappa !== null &&
+    k.agreement >= GATE.agreement &&
+    k.kappa >= GATE.kappa;
   return {
     cards: expected,
     answered: pairs.length,
@@ -185,8 +197,7 @@ export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
       missing === 0 &&
       judgeResolvedShare !== null &&
       judgeResolvedShare >= GATE.judge_resolved_share &&
-      pass(strict) &&
-      pass(doubtsAsNo),
+      pass(strict),
   };
 }
 
@@ -228,13 +239,24 @@ async function main() {
     };
     const text = `${JSON.stringify(record, null, 2)}\n`;
     NodeFS.writeFileSync(values.out, text);
-    console.log(JSON.stringify({ split_sha256: sha256(text), revision: split.revision.length, validation: split.validation.length }));
+    console.log(
+      JSON.stringify({
+        split_sha256: sha256(text),
+        revision: split.revision.length,
+        validation: split.validation.length,
+      }),
+    );
     return 0;
   }
   const split = values.split
-    ? (JSON.parse(NodeFS.readFileSync(values.split, "utf8")) as { revision: string[]; validation: string[]; cards_hash: string })
+    ? (JSON.parse(NodeFS.readFileSync(values.split, "utf8")) as {
+        revision: string[];
+        validation: string[];
+        cards_hash: string;
+      })
     : null;
-  if (split && split.cards_hash !== sha256(cardsBytes)) throw new Error("split was made for other cards");
+  if (split && split.cards_hash !== sha256(cardsBytes))
+    throw new Error("split was made for other cards");
   const half = values.half === "revision" ? split?.revision : split?.validation;
   if (command === "judge" && half && values.out) {
     NodeFS.writeFileSync(
@@ -246,7 +268,10 @@ async function main() {
   }
   if (command === "agree" && half && values.labels && values["judge-labels"]) {
     const operator = new Map(
-      readOperatorLabels(NodeFS.readFileSync(values.labels, "utf8"), cardsBytes).map((l) => [l.card_id, l]),
+      readOperatorLabels(NodeFS.readFileSync(values.labels, "utf8"), cardsBytes).map((l) => [
+        l.card_id,
+        l,
+      ]),
     );
     const judged = new Map(
       readJsonl<{ id: string; label: string }>(values["judge-labels"]).map((l) => [l.id, l.label]),
@@ -255,14 +280,26 @@ async function main() {
       const ids = half.filter((id) => unit === null || operator.get(id)?.unit === unit);
       const pairs = ids.flatMap((id) =>
         judged.has(id) && operator.has(id)
-          ? [{ operator: operator.get(id)!.label, judge: judged.get(id)!, stratum: operator.get(id)!.unit }]
+          ? [
+              {
+                operator: operator.get(id)!.label,
+                judge: judged.get(id)!,
+                stratum: operator.get(id)!.unit,
+              },
+            ]
           : [],
       );
       return agreement(pairs, ids.length);
     };
     console.log(
       JSON.stringify(
-        { half: values.half ?? "validation", gate: GATE, overall: pairsOf(null), topic: pairsOf("topic"), item: pairsOf("item") },
+        {
+          half: values.half ?? "validation",
+          gate: GATE,
+          overall: pairsOf(null),
+          topic: pairsOf("topic"),
+          item: pairsOf("item"),
+        },
         null,
         2,
       ),

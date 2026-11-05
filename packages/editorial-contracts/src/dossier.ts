@@ -142,6 +142,14 @@ export const RelevanceFit = Schema.Struct({
   growth_sources: Schema.Array(GrowthSource),
   /** relevant: passed signal_min. backfill: added so the cut reaches emit.min_dossiers. */
   eligibility: Schema.Literals(["relevant", "backfill"]),
+  /** How `score` aggregates item relevance; absent means mean. */
+  aggregate: Schema.optionalKey(Schema.Literals(["mean", "share", "trimmed_mean"])),
+  /** Relevant items of the last 7 days with distinct titles. */
+  relevant_distinct_7d: Schema.optionalKey(Schema.Int),
+  /** Previous cuts (relevance.novelty) where the trend was in the top, and whether it grew since. */
+  novelty: Schema.optionalKey(
+    Schema.Struct({ prior_top_days: Schema.Array(UtcDay), grew: Schema.Boolean }),
+  ),
 });
 export type RelevanceFit = typeof RelevanceFit.Type;
 

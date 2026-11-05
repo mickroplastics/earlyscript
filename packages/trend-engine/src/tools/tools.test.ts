@@ -8,7 +8,7 @@ import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
 
 import { sha256 } from "../hash.ts";
 import { tempDir } from "../testkit/syntheticCorpus.ts";
-import { agreement } from "./calibration-agreement.ts";
+import { agreement, readOperatorLabels, splitCalibration } from "./calibration-agreement.ts";
 import { AI_TERMS, pickCalibration } from "./calibration-items.ts";
 import { topicText } from "./dev-compare.ts";
 import { type CliRunner, judgeEntries, loadJudge } from "./judge.ts";
@@ -156,22 +156,93 @@ describe("calibration cards", () => {
 });
 
 describe("calibration agreement", () => {
-  it("measures agreement and kappa on cards both answered, counting unsure apart", () => {
-    const pair = (operator: string, judge: string) => ({ operator, judge, stratum: "hn:yes" });
+  const pair = (operator: string, judge: string) => ({ operator, judge, stratum: "item" });
+
+  it("measures agreement and kappa among resolved cards and with doubts as no", () => {
     const result = agreement([
-      ...Array.from({ length: 8 }, () => pair("yes", "yes")),
+      ...Array.from({ length: 8 }, () => pair("yes", "core")),
       ...Array.from({ length: 8 }, () => pair("no", "no")),
       pair("yes", "no"),
-      pair("no", "yes"),
-      pair("unsure", "yes"),
+      pair("no", "adjacent"),
+      pair("unsure", "core"),
     ]);
     expect(result.resolved).toBe(18);
     expect(result.operator_unsure).toBe(1);
-    expect(result.agreement).toBeCloseTo(16 / 18, 12);
+    expect(result.resolved_agreement).toBeCloseTo(16 / 18, 12);
     // Both sides say yes half the time: kappa = (po - 0.5) / 0.5.
-    expect(result.kappa).toBeCloseTo((16 / 18 - 0.5) / 0.5, 12);
+    expect(result.resolved_kappa).toBeCloseTo((16 / 18 - 0.5) / 0.5, 12);
+    expect(result.doubts_as_no_agreement).toBeCloseTo(16 / 19, 12);
     expect(result.accepted).toBe(true);
-    expect(agreement([pair("yes", "no"), pair("no", "yes")]).accepted).toBe(false);
+  });
+
+  it("does not accept a judge on a few resolved cards or with cards missing (Sol U2-B2)", () => {
+    const fewResolved = agreement([
+      pair("yes", "core"),
+      pair("no", "no"),
+      ...Array.from({ length: 38 }, () => pair("yes", "unsure")),
+    ]);
+    expect(fewResolved.resolved_agreement).toBe(1);
+    expect(fewResolved.judge_resolved_share).toBeCloseTo(2 / 40, 12);
+    expect(fewResolved.accepted).toBe(false);
+    const complete = Array.from({ length: 10 }, (_, k) =>
+      pair(k % 2 ? "yes" : "no", k % 2 ? "core" : "no"),
+    );
+    expect(agreement(complete).accepted).toBe(true);
+    expect(agreement(complete, 40).missing).toBe(30);
+    expect(agreement(complete, 40).accepted).toBe(false);
+  });
+
+  it("reads the labelling page export and checks it was made for these cards (Sol U2-B1)", () => {
+    const cards = new TextEncoder().encode('{"unit":"item","card_id":"itemcal-01"}\n');
+    const exported = (cardsHash: string) =>
+      JSON.stringify(
+        {
+          schema_version: "earlyscript.editorial-labels/1",
+          labeler: "miguel",
+          set_name: "calibracion-100",
+          cards_hash: cardsHash,
+          universe_hash: null,
+          exported_at: "2026-11-05T03:58:56.562Z",
+          cards: 1,
+          labels: [
+            { card_id: "itemcal-01", unit: "item", label: "unsure", labeled_at: "t1" },
+            { card_id: "itemcal-01", unit: "item", label: "yes", labeled_at: "t2" },
+          ],
+        },
+        null,
+        2,
+      );
+    expect(readOperatorLabels(exported(sha256(cards)), cards)).toEqual([
+      { card_id: "itemcal-01", unit: "item", label: "yes", labeled_at: "t2" },
+    ]);
+    expect(() => readOperatorLabels(exported("sha256:other"), cards)).toThrow(/cards_hash/);
+    expect(() => readOperatorLabels('{"labels":[]}', cards)).toThrow(/editorial-labels/);
+  });
+
+  it("splits every unit and label stratum in half with a fixed order", () => {
+    const labels = [
+      ...Array.from({ length: 6 }, (_, k) => ({
+        card_id: `t${k}`,
+        unit: "topic" as const,
+        label: "yes",
+      })),
+      ...Array.from({ length: 4 }, (_, k) => ({
+        card_id: `n${k}`,
+        unit: "topic" as const,
+        label: "no",
+      })),
+      ...Array.from({ length: 4 }, (_, k) => ({
+        card_id: `i${k}`,
+        unit: "item" as const,
+        label: "yes",
+      })),
+    ];
+    const split = splitCalibration(labels, { topic: 5, item: 2 });
+    expect(split).toEqual(splitCalibration(labels, { topic: 5, item: 2 }));
+    expect(split.revision.length).toBe(7);
+    expect(split.revision.filter((id) => id.startsWith("t")).length).toBe(3);
+    expect(split.revision.filter((id) => id.startsWith("n")).length).toBe(2);
+    expect(new Set([...split.revision, ...split.validation]).size).toBe(labels.length);
   });
 });
 
