@@ -336,7 +336,10 @@ export async function runScore(options: ScoreOptions) {
     rankings_hash: rankings.rankings_hash,
     labels: labelSets.map((l) => ({
       labeler: l.labeler,
-      sha256: l.path.split(",").map((path) => sha256(NodeFS.readFileSync(path))).join(","),
+      sha256: l.path
+        .split(",")
+        .map((path) => sha256(NodeFS.readFileSync(path)))
+        .join(","),
       universe_hash: l.universe_hash,
       universe_match: l.universe_hash === universe.universe_hash,
       topics: l.labels.size,

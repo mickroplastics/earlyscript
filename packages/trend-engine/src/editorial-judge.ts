@@ -46,7 +46,10 @@ export function judgeLabelsFile(options: {
   const missing = cards.filter((card) => !judged.has(card.card_id)).length;
   if (missing > 0) throw new Error(`${missing} cards have no judge label`);
   for (const card of cards) {
-    if (judged.get(card.card_id)!.key !== labelKey(options.judge, cardText(card).slice(0, options.judge.config.max_text_chars)))
+    if (
+      judged.get(card.card_id)!.key !==
+      labelKey(options.judge, cardText(card).slice(0, options.judge.config.max_text_chars))
+    )
       throw new Error(`judge label of ${card.card_id} is for another text, rubric or model`);
   }
   return {

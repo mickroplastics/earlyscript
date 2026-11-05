@@ -234,7 +234,10 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
   }
   if (sub === "judge" && values.cards && values["entries-out"]) {
     const entries = cardEntries(topicCards(values.cards));
-    NodeFS.writeFileSync(values["entries-out"], entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+    NodeFS.writeFileSync(
+      values["entries-out"],
+      entries.map((e) => `${JSON.stringify(e)}\n`).join(""),
+    );
     console.log(JSON.stringify({ entries: entries.length, path: values["entries-out"] }));
     return 0;
   }
