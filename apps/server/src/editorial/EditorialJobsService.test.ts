@@ -20,6 +20,8 @@ import { SINGULARIDEV_PROFILE_V1 } from "./channelProfile.ts";
 import { NATIVE_FIXTURE_RUN_ID } from "./editorialLayer.testkit.ts";
 import * as EditorialImportService from "./EditorialImportService.ts";
 import * as EditorialJobsService from "./EditorialJobsService.ts";
+import { EnginePromotionService } from "./EnginePromotionService.ts";
+import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import * as EditorialProfileService from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
@@ -255,6 +257,8 @@ const withJobs = <A, E>(
     /** The real importer over the fixture's runs directory, instead of a double. */
     readonly realImport?: boolean;
     readonly engine?: EditorialJobsService.EditorialJobsOptions["engine"];
+    /** The engine lab's active code, changed by the test: null cli runs the installed engine. */
+    readonly code?: { current: { cli: string | null; hash: string | null } };
   } = {},
 ) => {
   let draftsAwaited = 0;
@@ -293,6 +297,19 @@ const withJobs = <A, E>(
         EditorialSourcesService.layerWithCorpusDir(fx.corpusDir),
         EditorialProfileService.layer,
         importer,
+        options.code === undefined
+          ? Layer.empty
+          : Layer.mock(EnginePromotionService)({
+              planEngine: (input) =>
+                Effect.sync(() => ({
+                  config: { ...input.defaultConfig, sources: [...input.enabled.rank] },
+                  manifestHash: options.code!.current.cli === null ? null : "sha256:code-manifest",
+                  engineSourceHash: options.code!.current.hash,
+                  cli: options.code!.current.cli,
+                  blocked: null,
+                  stale: [],
+                })),
+            }),
         Layer.mock(EditorialPresentationService)({
           startRun: (runId) =>
             Effect.suspend(() => {
@@ -807,6 +824,104 @@ describe("EditorialJobsService", () => {
           new EngineNotFound({ message: "No trend engine CLI at /missing/cli.mjs" }),
         ),
       },
+    );
+  });
+
+  it.live(
+    "keys the job with the active code: approved code replaces a job whose run already finished (S2)",
+    () => {
+      const fx = makeFixture();
+      const code = { current: { cli: null as string | null, hash: null as string | null } };
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          // The installed engine runs and its check fails: the job waits with `run` done.
+          fx.flag("check", true);
+          const before = yield* jobs.runNow;
+          yield* jobs.runDue;
+          assert.deepStrictEqual(phaseStatuses(yield* onlyJob), [
+            "done",
+            "done",
+            "failed",
+            "pending",
+            "pending",
+          ]);
+          // Code approved: its artifact (here, the stand-in engine) is the plan's engine.
+          code.current = { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) };
+          const after = yield* jobs.runNow;
+          assert.notStrictEqual(after.jobId, before.jobId);
+          fx.flag("check", false);
+          yield* sql`UPDATE editorial_jobs SET scheduled_for = ${PAST}`;
+          yield* jobs.runDue;
+          yield* jobs.runDue;
+          const { jobs: list } = yield* jobs.list;
+          const replaced = list.find((job) => job.jobId === before.jobId);
+          assert.strictEqual(replaced?.status, "skipped");
+          assert.deepStrictEqual(replaced?.artifacts.notices, [{ code: "config_changed" }]);
+          assert.strictEqual(list.find((job) => job.jobId === after.jobId)?.status, "done");
+          // The new code ran its own engine run; the installed engine's finished run was not reused.
+          assert.strictEqual(fx.trace().filter((line) => line === "run").length, 2);
+        }),
+        { code },
+      );
+    },
+  );
+
+  it.live(
+    "a job reactivated after a code revert runs its own engine, never another code's run",
+    () => {
+      const fx = makeFixture();
+      const code = { current: { cli: null as string | null, hash: null as string | null } };
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const installed = yield* jobs.runNow;
+          code.current = { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) };
+          const artifact = yield* jobs.runNow;
+          // The oldest due job is the installed one: replaced; then the artifact's job runs.
+          yield* jobs.runDue;
+          yield* jobs.runDue;
+          const ran = (yield* jobs.list).jobs.find((job) => job.jobId === artifact.jobId);
+          assert.strictEqual(ran?.status, "done");
+          // Reverted: the installed job again, at the same cutoff, configuration and profile.
+          code.current = { cli: null, hash: null };
+          const again = yield* jobs.runNow;
+          assert.strictEqual(again.jobId, installed.jobId);
+          yield* jobs.runDue;
+          const done = (yield* jobs.list).jobs.find((job) => job.jobId === installed.jobId);
+          assert.strictEqual(done?.status, "done");
+          assert.notStrictEqual(done?.artifacts.runId, ran?.artifacts.runId);
+          assert.strictEqual(fx.trace().filter((line) => line === "run").length, 2);
+        }),
+        { code },
+      );
+    },
+  );
+
+  it.live("checks the artifact's hash again just before the launch, and runs nothing else", () => {
+    const fx = makeFixture();
+    // Planned with a hash the artifact no longer has: edited after the plan was made.
+    const code = {
+      current: {
+        cli: fx.engine as string | null,
+        hash: "sha256:approved-before-the-edit" as string | null,
+      },
+    };
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        yield* jobs.runNow;
+        yield* jobs.runDue;
+        const job = yield* onlyJob;
+        assert.include(job.error ?? "", "no longer hashes");
+        assert.deepStrictEqual(job.artifacts.failure, { code: "engine_failed", phase: "run" });
+        assert.notInclude(fx.trace(), "run");
+      }),
+      { code },
     );
   });
 

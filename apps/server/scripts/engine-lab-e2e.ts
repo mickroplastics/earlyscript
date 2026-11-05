@@ -19,7 +19,6 @@ import { REPO_ROOT } from "@earlyscript/engine-lab/testkit";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -219,24 +218,8 @@ const write = (name: string, value: unknown) =>
   );
 
 /** A real nightly run: the job's plan, the engine's run.json and the manifest file beside it. */
-/**
- * The real nightly run of `label`, `days` after today: the job key is the profile, cutoff and
- * configuration, so a code-only change runs at the next cutoff, as it would in production.
- */
-const realNightly = Effect.fn("EngineLabE2e.realNightly")(function* (label: string, days = 0) {
-  const base = yield* Clock.Clock;
-  const shift = days * 86_400_000;
-  // The default clock is a class instance: keep its prototype, override the wall time only.
-  const shifted: Clock.Clock = Object.assign(Object.create(base) as Clock.Clock, {
-    currentTimeMillisUnsafe: () => base.currentTimeMillisUnsafe() + shift,
-    currentTimeMillis: Effect.map(base.currentTimeMillis, (ms) => ms + shift),
-    currentTimeNanosUnsafe: () => base.currentTimeNanosUnsafe() + BigInt(shift) * 1_000_000n,
-    currentTimeNanos: Effect.map(base.currentTimeNanos, (ns) => ns + BigInt(shift) * 1_000_000n),
-  });
-  return yield* nightlyOnce(label).pipe(Effect.provideService(Clock.Clock, shifted));
-});
-
-const nightlyOnce = Effect.fn("EngineLabE2e.nightlyOnce")(function* (label: string) {
+/** A real nightly run: the job, the engine's run.json and the manifest file beside it. */
+const realNightly = Effect.fn("EngineLabE2e.realNightly")(function* (label: string) {
   const jobs = yield* EditorialJobsService.EditorialJobsService;
   const job = yield* jobs.runNow;
   // One job per pass, oldest first: a job keyed with an older plan is replaced before ours.
@@ -440,31 +423,34 @@ const program = Effect.gen(function* () {
     );
     refusals[name] = Result.isFailure(outcome) ? outcome.failure : "approved";
   }
-  const approved = yield* promotion.approve({
-    requestId: askBetter.requestId,
-    actor: "operator",
-    reason: "Shadow passed.",
-  });
-  const afterApproval = yield* realNightly("1-approved");
-  const reverted = yield* promotion.revert({
-    actor: "operator",
-    reason: "Back to the installed engine.",
-    expectedActive: approved.manifest_hash,
-  });
-  const afterRevert = yield* realNightly("2-reverted");
-  // Code: approved into its artifact (the installed engine is never touched), run, reverted.
+  // Code first: approved into its artifact (the installed engine is never touched), run, and
+  // reverted, which runs the installed engine again at the same cutoff: two fresh runs.
   const codeApproved = yield* promotion.approve({
     requestId: askCode.requestId,
     actor: "operator",
     reason: "Logically equal outputs; reviewed patch.",
   });
-  const afterCode = yield* realNightly("3-code-approved", 3);
+  const afterCode = yield* realNightly("1-code-approved");
   const codeReverted = yield* promotion.revert({
     actor: "operator",
     reason: "Back to the installed engine's code.",
     expectedActive: codeApproved.manifest_hash,
   });
-  const afterCodeRevert = yield* realNightly("4-code-reverted", 4);
+  const afterCodeRevert = yield* realNightly("2-code-reverted");
+  // Then configuration. Its revert lands on the identity the code revert already ran today,
+  // and the nightly run answers that finished job instead of running it twice.
+  const approved = yield* promotion.approve({
+    requestId: askBetter.requestId,
+    actor: "operator",
+    reason: "Shadow passed.",
+  });
+  const afterApproval = yield* realNightly("3-config-approved");
+  const reverted = yield* promotion.revert({
+    actor: "operator",
+    reason: "Back to the installed engine.",
+    expectedActive: approved.manifest_hash,
+  });
+  const afterRevert = yield* realNightly("4-config-reverted");
   const liveCode = engineSourceHash(NodePath.join(REPO_ROOT, "packages/trend-engine/src"));
   const ledger = yield* verifyLabLedger;
   const summary = {
@@ -549,6 +535,10 @@ const program = Effect.gen(function* () {
         afterCodeRevert.manifest?.engine_source_hash === liveCode &&
         !String(afterCodeRevert.command).includes("/artifacts/"),
       installedEngineUntouched: liveCode === active.engineSourceHash,
+      // The job key holds the code: the same cutoff, profile and configuration run again.
+      codeRunsSameCutoff:
+        String(afterCode.runId).slice(0, 12) === String(afterApproval.runId).slice(0, 12) &&
+        String(afterCodeRevert.runId).slice(0, 12) === String(afterApproval.runId).slice(0, 12),
       approvedRunUsesCandidateConfig:
         afterApproval.runConfigHash ===
         (yield* changes.candidate(PROJECT, better.candidate.manifestHash)).configHash,
@@ -565,7 +555,10 @@ const program = Effect.gen(function* () {
           afterRevert.manifest?.engine_source_hash,
           active.engineSourceHash,
         ]).size === 1,
-      freshRuns: afterApproval.runId !== afterRevert.runId && afterRevert.status === "done",
+      freshRuns:
+        new Set([afterCode.runId, afterCodeRevert.runId, afterApproval.runId]).size === 3 &&
+        afterRevert.status === "done",
+      configRevertReusesSameIdentity: afterRevert.jobId === afterCodeRevert.jobId,
       ledger: ledger.ok,
     },
     ledger,

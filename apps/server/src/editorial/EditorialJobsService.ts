@@ -38,6 +38,7 @@ import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
+import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import {
   EngineSpawnRejected,
   killProcess,
@@ -137,6 +138,8 @@ interface JobRow {
   readonly profile_hash: string;
   readonly cutoff_at: string;
   readonly config_hash: string;
+  /** The artifact source hash the job runs; empty for the installed engine. */
+  readonly code_hash: string;
   readonly timezone: string;
   readonly scheduled_for: string;
   readonly started_at: string | null;
@@ -153,7 +156,7 @@ interface JobRow {
 }
 
 const JOB_COLUMNS =
-  "job_id, kind, profile_hash, cutoff_at, config_hash, timezone, scheduled_for, started_at, " +
+  "job_id, kind, profile_hash, cutoff_at, config_hash, code_hash, timezone, scheduled_for, started_at, " +
   "finished_at, attempt, lease_until, lease_owner, lease_generation, prev_engine_token, " +
   "accepted_run_id, status, " +
   "error, artifacts_json";
@@ -299,6 +302,8 @@ interface JobPlan {
   readonly config: Record<string, unknown>;
   readonly configHash: string;
   readonly profileHash: string;
+  /** Enters the job key: the artifact's source hash, or empty for the installed engine. */
+  readonly codeHash: string;
   /** The active engine manifest the configuration came from (the engine lab's pointer). */
   readonly engine: Omit<PlannedEngine, "config">;
 }
@@ -474,7 +479,15 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           };
     // The active profile enters the job key: a new version replaces a pending job.
     const profileHash = (yield* profiles.activeFile.pipe(Effect.mapError(storage))).hash;
-    return { enabled, config, configHash: sha256(canonicalJson(config)), profileHash, engine };
+    const codeHash = engine.cli === null ? "" : (engine.engineSourceHash ?? "");
+    return {
+      enabled,
+      config,
+      configHash: sha256(canonicalJson(config)),
+      profileHash,
+      codeHash,
+      engine,
+    };
   });
 
   const selectJob = (jobId: string) =>
@@ -507,20 +520,21 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     };
     yield* sql`
       INSERT INTO editorial_jobs (
-        job_id, kind, profile_hash, cutoff_at, config_hash, timezone, scheduled_for,
+        job_id, kind, profile_hash, cutoff_at, config_hash, code_hash, timezone, scheduled_for,
         attempt, status, error, artifacts_json, created_at
       )
       VALUES (
         ${jobId}, 'daily', ${input.plan.profileHash}, ${input.cutoffAt}, ${input.plan.configHash},
-        ${input.timezone}, ${input.scheduledFor}, 0, ${input.status ?? "pending"},
+        ${input.plan.codeHash}, ${input.timezone}, ${input.scheduledFor}, 0, ${input.status ?? "pending"},
         ${input.error ?? null}, ${encodeArtifacts(artifacts)}, ${createdAt}
       )
-      ON CONFLICT (kind, profile_hash, cutoff_at, config_hash) DO NOTHING
+      ON CONFLICT (kind, profile_hash, cutoff_at, config_hash, code_hash) DO NOTHING
     `.pipe(Effect.mapError(storage));
     const rows = yield* sql<JobRow>`
       SELECT ${sql.literal(JOB_COLUMNS)} FROM editorial_jobs
       WHERE kind = 'daily' AND profile_hash = ${input.plan.profileHash}
         AND cutoff_at = ${input.cutoffAt} AND config_hash = ${input.plan.configHash}
+        AND code_hash = ${input.plan.codeHash}
     `.pipe(Effect.mapError(storage));
     const row = rows[0];
     if (row === undefined) return yield* storage("the job was not stored");
@@ -562,6 +576,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           status = 'pending',
           scheduled_for = ${now},
           attempt = CASE WHEN status = 'pending' THEN attempt ELSE 0 END,
+          -- A replaced job starts over: a run found on disk from before now is another plan's,
+          -- maybe another code's with the same configuration, never this job's.
+          started_at = CASE WHEN status = 'skipped' THEN NULL ELSE started_at END,
           finished_at = NULL
         WHERE job_id = ${row.job_id} AND status IN ('pending', 'failed', 'skipped')
       `.pipe(Effect.mapError(storage));
@@ -809,7 +826,11 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       }
 
       const current = yield* plan;
-      if (current.configHash !== row.config_hash || current.profileHash !== row.profile_hash) {
+      if (
+        current.configHash !== row.config_hash ||
+        current.profileHash !== row.profile_hash ||
+        current.codeHash !== row.code_hash
+      ) {
         // The switches changed since the job was created: a job of the new key takes its place.
         yield* save({
           notes: [...artifacts.notes, "The engine configuration changed; replaced."],
@@ -1226,9 +1247,16 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     if (ctx.plan.enabled.rank.length === 0) {
       return yield* fail("No source is enabled for the engine.", { code: "no_sources" });
     }
-    // The active manifest's code, or no run: never another engine in its place.
-    if (ctx.plan.engine.blocked !== null) {
-      return yield* fail(`The active engine's code cannot run: ${ctx.plan.engine.blocked}.`, {
+    // The active manifest's code, or no run: never another engine in its place. Checked again
+    // here, just before the launch, not only when the job was planned.
+    const cli = ctx.plan.engine.cli;
+    const blocked =
+      ctx.plan.engine.blocked ??
+      (cli !== null && engineSourceHash(path.dirname(cli)) !== ctx.plan.engine.engineSourceHash
+        ? `the artifact at ${cli} no longer hashes ${ctx.plan.engine.engineSourceHash}`
+        : null);
+    if (blocked !== null) {
+      return yield* fail(`The active engine's code cannot run: ${blocked}.`, {
         code: "engine_failed",
         phase: "run",
       });
