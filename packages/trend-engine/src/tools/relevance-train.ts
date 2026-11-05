@@ -5,6 +5,8 @@
 // Trains the relevance probe on judge labels ("unsure" dropped) over the Qwen vectors of
 // the run's own item texts, chooses the penalty and the item threshold by cross-validation
 // over blocks of whole days, and writes the model file the engine configuration names.
+// The repo formatter repacks the weights array without changing a number: record in the
+// configuration the sha256 of the file as committed, after `vp fmt`.
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
