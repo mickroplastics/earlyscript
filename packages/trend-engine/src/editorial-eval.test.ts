@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Story } from "./backtest-label.ts";
+import { readCorpus } from "./corpus.ts";
 import { DAY_MS, dayStart } from "./days.ts";
 import { captureDay } from "./editorial-capture.ts";
 import {
@@ -461,5 +462,55 @@ describe("prospective pool and score", () => {
       replicates: 10,
     });
     expect(late.metrics.logical.excluded_prospective).toHaveLength(1);
+  });
+});
+
+describe("cross-day duplicate ids in the prospective capture", () => {
+  it("leaves out an item already stored on another day and records it", async () => {
+    const root = tempDir("editorial-dup");
+    const source = NodePath.join(root, "source");
+    const seed = NodePath.join(root, "seed");
+    await writeSyntheticCorpus(source, { toDay: "2026-10-12" });
+    await writeSyntheticCorpus(seed, {
+      toDay: "2026-10-10",
+      items: syntheticItems().filter((i) => i.published_at < "2026-10-10"),
+    });
+    const stored = syntheticItems().find(
+      (i) => i.source === "hn" && i.published_at.startsWith("2026-10-05"),
+    )!;
+    const corpusDir = NodePath.join(root, "corpus");
+    const ledgerPath = NodePath.join(root, "ledger.jsonl");
+    const result = await captureDay({
+      corpusDir,
+      ledgerPath,
+      snapshotsDir: NodePath.join(root, "snapshots"),
+      sources: ["hn", "github"],
+      // The provider serves, on 10 Oct, an item the corpus already holds on 5 Oct.
+      adapters: (ids) =>
+        fixtureSources(source, ids).map((adapter) => ({
+          descriptor: adapter.descriptor,
+          collectDay: async (day: string) => {
+            const r = await adapter.collectDay(day);
+            if (adapter.descriptor.id !== "hn") return r;
+            return {
+              ...r,
+              items: [...r.items, { ...stored, published_at: `${day}T05:00:00.000Z` }],
+            };
+          },
+        })),
+      day: "2026-10-10",
+      seedFrom: seed,
+      now: () => new Date("2026-10-11T00:05:00Z"),
+    });
+    expect(result.skipped).toBe(false);
+    const entry = readLedger(ledgerPath)[0]!;
+    expect(entry["skipped_duplicates"]).toEqual([
+      { source: "hn", day: "2026-10-10", id: stored.id, existing_day: "2026-10-05" },
+    ]);
+    expect(entry["duplicate_ids_after"]).toEqual([]);
+    // The corpus still reads: no id appears twice.
+    await expect(
+      readCorpus({ dir: corpusDir, adapters: fixtureSources(corpusDir, ["hn", "github"]), untilDay: "2026-10-11" }),
+    ).resolves.toBeDefined();
   });
 });

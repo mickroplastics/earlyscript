@@ -35,6 +35,74 @@ export function linkSnapshot(from: string, to: string) {
   walk("");
 }
 
+export interface SkippedDuplicate {
+  readonly source: string;
+  readonly day: string;
+  readonly id: string;
+  readonly existing_day: string;
+}
+
+/** Ids of a source's day files other than `day`, with the day that holds each. */
+function idsOutside(corpusDir: string, source: string, day: string): Map<string, string> {
+  const dir = NodePath.join(corpusDir, source);
+  const ids = new Map<string, string>();
+  if (!NodeFS.existsSync(dir)) return ids;
+  for (const name of NodeFS.readdirSync(dir).toSorted()) {
+    const other = name.replace(/\.jsonl$/, "");
+    if (other === day || !/^\d{4}-\d{2}-\d{2}$/.test(other)) continue;
+    for (const line of NodeFS.readFileSync(NodePath.join(dir, name), "utf8").split("\n")) {
+      if (line.length > 0) ids.set((JSON.parse(line) as { id: string }).id, other);
+    }
+  }
+  return ids;
+}
+
+/**
+ * corpus/1 ids are unique across days, but a provider can return an item already stored on
+ * another day (Hugging Face did: the same model on 20 Sep and 9 Oct), and `collect` would store
+ * it twice, breaking every later read. The capture leaves such an item out and records it.
+ */
+export function withoutCrossDayDuplicates(
+  adapter: SourceAdapter,
+  corpusDir: string,
+  skipped: Array<SkippedDuplicate>,
+): SourceAdapter {
+  return {
+    descriptor: adapter.descriptor,
+    collectDay: async (day) => {
+      const result = await adapter.collectDay(day);
+      const outside = idsOutside(corpusDir, adapter.descriptor.id, day);
+      const items = result.items.filter((item) => {
+        const existing = outside.get(item.id);
+        if (existing === undefined) return true;
+        skipped.push({ source: adapter.descriptor.id, day, id: item.id, existing_day: existing });
+        return false;
+      });
+      return { ...result, items };
+    },
+  };
+}
+
+/** Every id that appears in more than one day file of its source (a corpus readCorpus rejects). */
+export function crossDayDuplicates(corpusDir: string, sources: ReadonlyArray<string>) {
+  const found: Array<{ source: string; id: string }> = [];
+  for (const source of sources) {
+    const dir = NodePath.join(corpusDir, source);
+    if (!NodeFS.existsSync(dir)) continue;
+    const seen = new Set<string>();
+    for (const name of NodeFS.readdirSync(dir).toSorted()) {
+      if (!/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)) continue;
+      for (const line of NodeFS.readFileSync(NodePath.join(dir, name), "utf8").split("\n")) {
+        if (line.length === 0) continue;
+        const { id } = JSON.parse(line) as { id: string };
+        if (seen.has(id)) found.push({ source, id });
+        seen.add(id);
+      }
+    }
+  }
+  return found;
+}
+
 export interface CaptureOptions {
   readonly corpusDir: string;
   readonly ledgerPath: string;
@@ -89,13 +157,16 @@ export async function captureDay(options: CaptureOptions) {
     };
     log(`capture: seeded ${options.corpusDir} from ${options.seedFrom}`);
   }
+  const skipped: Array<SkippedDuplicate> = [];
+  const adapters = (ids: ReadonlyArray<SourceId>) =>
+    options.adapters(ids).map((a) => withoutCrossDayDuplicates(a, options.corpusDir, skipped));
   const startedAt = now().toISOString();
   const nextDay = cutoffDay;
   const rows = await collectCorpus({
     dir: options.corpusDir,
     from: day,
     to: nextDay,
-    adapters: options.adapters(options.sources),
+    adapters: adapters(options.sources),
   });
   // A late source's previous day, only when it was unavailable: append-only, never a refresh.
   const previous = dayOf(dayStart(day) - DAY_MS);
@@ -118,7 +189,7 @@ export async function captureDay(options: CaptureOptions) {
           dir: options.corpusDir,
           from: previous,
           to: day,
-          adapters: options.adapters(late),
+          adapters: adapters(late),
         })
       : [];
   const closedAt = now().toISOString();
@@ -141,6 +212,8 @@ export async function captureDay(options: CaptureOptions) {
     corpus_hash: manifest.corpus_hash,
     manifest_sha256: sha256(manifestBytes),
     snapshot_dir: snapshotDir,
+    skipped_duplicates: skipped,
+    duplicate_ids_after: crossDayDuplicates(snapshotDir, options.sources),
     ...(seed ? { seeded_from: seed } : {}),
   });
   log(`capture: ${day} closed at ${closedAt}, corpus ${manifest.corpus_hash}`);
