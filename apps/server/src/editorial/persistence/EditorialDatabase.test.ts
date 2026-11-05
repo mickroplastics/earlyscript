@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -15,6 +16,7 @@ import { applyOnly, layerAt, makeTempDir, removeDir } from "./EditorialDatabase.
 import {
   checkEditorialMigrationContinuity,
   EDITORIAL_MIGRATIONS_TABLE,
+  editorialMigrationEntries,
   editorialMigrationManifest,
   runEditorialMigrations,
 } from "./Migrations.ts";
@@ -22,6 +24,7 @@ import Migration0001 from "./Migrations/001_EditorialFoundation.ts";
 import Migration0002 from "./Migrations/002_EditorialOrdering.ts";
 import Migration0003 from "./Migrations/003_EditorialScriptHead.ts";
 import Migration0004 from "./Migrations/004_EditorialRuns.ts";
+import Migration0019 from "./Migrations/019_EditorialJobsCodeHash.ts";
 
 const EXPECTED_TABLES = [
   "editorial_captures",
@@ -202,6 +205,57 @@ describe("editorial migration continuity", () => {
       assert.deepStrictEqual(yield* schemaOf(dbPath), before);
     }).pipe(Effect.ensuring(removeDir(dir)));
   });
+
+  it.effect(
+    "019 keys nightly jobs by code too, keeping every earlier job with an empty one",
+    () => {
+      const dir = makeTempDir();
+      const dbPath = NodePath.join(dir, "jobs.sqlite");
+      // A database as 018 left it, with one job, then 019 over it, twice.
+      const upTo018 = Migrator.make({})({
+        loader: Migrator.fromRecord(
+          Object.fromEntries(
+            editorialMigrationEntries
+              .filter(([id]) => id <= 18)
+              .map(([id, name, migration]) => [`${id}_${name}`, migration] as const),
+          ),
+        ),
+        table: EDITORIAL_MIGRATIONS_TABLE,
+      });
+      const insert = (id: string, code: string, status: string) =>
+        SqlClient.SqlClient.pipe(
+          Effect.flatMap(
+            (sql) => sql`
+            INSERT INTO editorial_jobs (job_id, kind, profile_hash, cutoff_at, config_hash, code_hash,
+              timezone, scheduled_for, status, artifacts_json, created_at)
+            VALUES (${id}, 'daily', 'p', 'c', 'h', ${code}, 'UTC', 'c', ${status}, '{}', 'c')
+          `,
+          ),
+        );
+      return Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* upTo018;
+        yield* sql`
+        INSERT INTO editorial_jobs (job_id, kind, profile_hash, cutoff_at, config_hash, timezone,
+          scheduled_for, status, artifacts_json, created_at)
+        VALUES ('job-1', 'daily', 'p', 'c', 'h', 'UTC', 'c', 'done', '{}', 'c')
+      `;
+        yield* Migration0019;
+        yield* Migration0019;
+        const rows = yield* sql<{ job_id: string; code_hash: string; status: string }>`
+        SELECT job_id, code_hash, status FROM editorial_jobs
+      `;
+        assert.deepStrictEqual([...rows], [{ job_id: "job-1", code_hash: "", status: "done" }]);
+        // The same plan with other code is another job; the same code is still one job.
+        yield* insert("job-2", "sha256:artifact", "pending");
+        const duplicate = yield* Effect.flip(insert("job-3", "", "pending"));
+        assert.strictEqual(duplicate._tag, "SqlError");
+      }).pipe(
+        Effect.provide(NodeSqliteClient.layer({ filename: dbPath })),
+        Effect.ensuring(removeDir(dir)),
+      );
+    },
+  );
 });
 
 describe("EditorialDatabase", () => {
