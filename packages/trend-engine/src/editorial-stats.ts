@@ -83,6 +83,8 @@ export function topSlots(
     readonly label: LabelValue | null;
     readonly grade?: Grade | null;
     readonly unavailable: boolean;
+    /** Set by the pool from a direct comparison within the arm; absent: same opportunity. */
+    readonly duplicate?: boolean;
   }>,
   k: number,
 ): Array<Slot> {
@@ -101,7 +103,7 @@ export function topSlots(
         zero: "empty",
       };
     }
-    const duplicate = seen.has(entry.topicId);
+    const duplicate = entry.duplicate ?? seen.has(entry.topicId);
     seen.add(entry.topicId);
     return {
       arm,

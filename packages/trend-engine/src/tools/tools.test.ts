@@ -193,6 +193,20 @@ describe("calibration agreement", () => {
     expect(agreement(complete, 40).accepted).toBe(false);
   });
 
+  it("does not accept a calibration the operator barely resolved (Sol motor-v2 S1)", () => {
+    // Two resolved, agreeing cards and 38 operator doubts: perfect agreement, insufficient.
+    const doubts = agreement([
+      pair("yes", "core"),
+      pair("no", "no"),
+      ...Array.from({ length: 38 }, () => pair("unsure", "core")),
+    ]);
+    expect(doubts.resolved_agreement).toBe(1);
+    expect(doubts.resolved_kappa).toBe(1);
+    expect(doubts.operator_resolved_share).toBeCloseTo(2 / 40, 12);
+    expect(doubts.accepted).toBe(false);
+    expect(doubts.reason).toMatch(/^insuficiente/);
+  });
+
   it("reads the labelling page export and checks it was made for these cards (Sol U2-B1)", () => {
     const cards = new TextEncoder().encode('{"unit":"item","card_id":"itemcal-01"}\n');
     const exported = (cardsHash: string) =>

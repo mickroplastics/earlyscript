@@ -17,6 +17,7 @@ import { runScore } from "./editorial-score.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
 import {
   appendLedger,
+  assertCheckout,
   assertSealed,
   buildTopicCards,
   freezeEntry,
@@ -149,6 +150,7 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values["no-cards"] ? { cards: false } : {}),
       ...(values.seed ? { cardSeed: Number(values.seed) } : {}),
       ...(values.registry ? { registries: namedPaths(values.registry) } : {}),
+      ...(values.ledger ? { checkout: true } : {}),
     });
     console.log(
       JSON.stringify({
@@ -179,7 +181,7 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       if (!values.ledger || !values.rankings) {
         throw new Error("sealed or prospective cards need --ledger and --rankings");
       }
-      assertSealed(universe, readRankings(values.rankings), values.ledger);
+      assertCheckout(assertSealed(universe, readRankings(values.rankings), values.ledger));
     }
     const name = values.name ?? "cards";
     const written = writeCardSet(cards, values.out, name, {
@@ -251,7 +253,7 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
         : {}),
       ...(values.candidate ? { candidates: values.candidate } : {}),
       ...(values.reference ? { references: values.reference } : {}),
-      ...(values.ledger ? { ledgerPath: values.ledger } : {}),
+      ...(values.ledger ? { ledgerPath: values.ledger, checkout: true } : {}),
       ...(values.bootstrap ? { replicates: Number(values.bootstrap) } : {}),
       ...(values.seed ? { seed: Number(values.seed) } : {}),
       ...(values["block-days"] ? { blockDays: Number(values["block-days"]) } : {}),

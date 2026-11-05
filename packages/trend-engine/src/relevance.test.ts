@@ -7,7 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 
 import { readRun } from "./check.ts";
-import { normalized } from "./cluster.ts";
+import { dot, normalized } from "./cluster.ts";
 import { daysBefore } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
@@ -201,10 +201,18 @@ describe("dedupe", () => {
       { id: "a2", v: v(1, 0.1, 0) },
       { id: "c", v: v(0.7, 0.7, 0.1) },
     ];
-    const { kept, related } = dedupe(entries, [], (e) => e.v, 0.8);
+    const near = (a: { v: Float32Array }, b: { v: Float32Array }) => dot(a.v, b.v) > 0.8;
+    const { kept, related } = dedupe(entries, [], (e) => e.v, near);
     expect(kept.map((e) => e.id)).toEqual(["a", "b", "c"]);
     expect(related.map(([primary, link]) => [primary, link.signal.id])).toEqual([["a", "a2"]]);
-    expect(dedupe(entries, [], (e) => e.v, Infinity).kept.length).toBe(4);
+    expect(
+      dedupe(
+        entries,
+        [],
+        (e) => e.v,
+        () => false,
+      ).kept.length,
+    ).toBe(4);
   });
 });
 

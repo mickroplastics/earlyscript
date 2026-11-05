@@ -9,13 +9,16 @@ import { readCorpus } from "./corpus.ts";
 import { DAY_MS, dayStart } from "./days.ts";
 import { captureDay } from "./editorial-capture.ts";
 import { readRun } from "./check.ts";
+import { dot } from "./cluster.ts";
 import { dedupe } from "./rank.ts";
 import { parseRelevanceModel, RELEVANCE_SCHEMA_VERSION } from "./relevance.ts";
 import { DEFAULT_CONFIG_PATH, loadConfig, runEngine } from "./run.ts";
 import {
   appendLedger,
+  assertCheckout,
   assertSealed,
   ENGINE_SOURCE_HASH,
+  EVAL_SOURCE_HASH,
   freezeEntry,
   lateOnly,
   type Rankings,
@@ -23,7 +26,8 @@ import {
   repeatCardId,
   sameTopic,
   withRepeats,
-  groupMembers,
+  anchorGroups,
+  fromBase64,
   keywordMatcher,
   parseArm,
   readLedger,
@@ -32,7 +36,7 @@ import {
   type TopicMember,
   type Universe,
 } from "./editorial-eval.ts";
-import { followupLabels } from "./editorial-followup.ts";
+import { followupLabels, followupSpan, writeFollowupLabels } from "./editorial-followup.ts";
 import { runScore } from "./editorial-score.ts";
 import {
   blockDraws,
@@ -76,31 +80,67 @@ const member = (
   terms,
 });
 
-describe("same-topic grouping", () => {
+describe("topic identity (one rule for F's emission and the evaluation)", () => {
   const rare = (t: string) => t === "saudi" || t === "arrested" || t === "bugging";
-  const members = [
-    member("a", [1, 0, 0], ["i1", "i2", "i3", "i4"], ["openai", "saudi", "arrested"]),
-    // Shares 2 of its 3 items with a: the same topic whatever the centroid.
-    member("b", [0, 1, 0], ["i2", "i3", "i9"], ["model"]),
-    // Close centroid and two shared rare terms: the same event clustered apart.
-    member("c", [0.95, 0.05, 0.3], ["j1", "j2"], ["openai", "saudi", "bugging", "arrested"]),
-    // Close centroid but only common terms: a different topic (the case 0.80 alone merged).
-    member("d", [0.97, 0, 0.25], ["k1", "k2"], ["openai", "model", "models"]),
-    member("e", [0, 0, 1], ["l1"], ["chess"]),
-  ];
+  const a = member("a", [1, 0, 0], ["i1", "i2", "i3", "i4"], ["openai", "saudi", "arrested"]);
 
-  it("merges by shared items or by cosine with rare terms, never by cosine alone", () => {
-    const groups = groupMembers(members, rare).map((g) => g.map((m) => m.key));
-    expect(groups).toEqual([["a", "b", "c"], ["d"], ["e"]]);
+  it("needs cosine above 0.80 and two shared rare terms or half the smaller's members", () => {
+    // Close centroid and two shared rare terms: the same event clustered apart.
+    const c = member("c", [0.95, 0.05, 0.3], ["j1"], ["openai", "saudi", "bugging", "arrested"]);
+    // Close centroid, half of its members shared, no rare term.
+    const h = member("h", [0.97, 0.1, 0.1], ["i2", "i3", "z"], ["model"]);
+    // Close centroid but only common terms: a different topic (the case cosine alone merged).
+    const d = member("d", [0.97, 0, 0.25], ["k1", "k2"], ["openai", "model", "models"]);
+    // Every member shared but a distant centroid: not the same topic any more.
+    const far = member("far", [0, 1, 0], ["i1", "i2", "i3", "i4"], ["openai", "saudi", "arrested"]);
+    expect(sameTopic(a, c, rare)).toBe(true);
+    expect(sameTopic(a, h, rare)).toBe(true);
+    expect(sameTopic(a, d, rare)).toBe(false);
+    expect(sameTopic(a, far, rare)).toBe(false);
   });
 
-  it("does not depend on the order of the positions", () => {
-    const forward = groupMembers(members, rare).map((g) => g.map((m) => m.key));
-    for (const seed of [1, 2, 3]) {
-      const shuffled = members.toSorted(
-        (x, y) => ((x.key.charCodeAt(0) * seed) % 7) - ((y.key.charCodeAt(0) * seed) % 7),
-      );
-      expect(groupMembers(shuffled, rare).map((g) => g.map((m) => m.key))).toEqual(forward);
+  it("keeps apart the real 17 Oct pair F used to fold by cosine alone", () => {
+    // sig_bee4abaebcd0 (openai lawsuit anthropic google) and sig_a218e7749283 (nvidia chips
+    // platform agents): cosine 0.8318, no shared top term, disjoint members.
+    const pair = JSON.parse(
+      NodeFS.readFileSync(
+        NodePath.join(import.meta.dirname, "testkit/dev-2026-10-17-pair.json"),
+        "utf8",
+      ),
+    ) as Record<string, { centroid: string; terms: Array<string> }>;
+    const [lawsuit, chips] = ["sig_bee4abaebcd0", "sig_a218e7749283"].map((id) => ({
+      id,
+      key: id,
+      trendId: id,
+      centroid: fromBase64(pair[id]!.centroid),
+      itemIds: new Set([`${id}-item`]),
+      terms: pair[id]!.terms,
+    }));
+    expect(dot(lawsuit!.centroid, chips!.centroid)).toBeGreaterThan(0.8);
+    const everyTermRare = () => true;
+    expect(sameTopic(lawsuit!, chips!, everyTermRare)).toBe(false);
+    // F's emission folds with this same function: both stay.
+    const same = (x: TopicMember, y: TopicMember) => sameTopic(x, y, everyTermRare);
+    expect(dedupe([chips!, lawsuit!], [], (m) => m.centroid, same).kept).toHaveLength(2);
+  });
+
+  it("forms opportunities by direct match with an anchor, never through a bridge (Sol's A/B/C)", () => {
+    // A, B, C at 0, 0.6 and 1.2 radians: A~B and B~C (0.8253), A and C far (0.3624).
+    const at = (key: string, angle: number) =>
+      member(key, [Math.cos(angle), Math.sin(angle)], [`${key}1`], ["alpha", "beta"]);
+    const all = () => true;
+    const [A, B, C] = [at("A", 0), at("B", 0.6), at("C", 1.2)];
+    expect(sameTopic(A, C, all)).toBe(false);
+    // Whichever position anchors, A and C never land in one group through B.
+    for (const order of [
+      ["A", "B", "C"],
+      ["B", "A", "C"],
+      ["C", "B", "A"],
+    ]) {
+      const groups = anchorGroups([A, B, C], all, (m) => String(order.indexOf(m.key)));
+      const together = groups.some((g) => g.includes(A) && g.includes(C));
+      // Only when B anchors do A and C share its card; they are still not duplicates (below).
+      expect(together).toBe(order[0] === "B");
     }
   });
 });
@@ -509,7 +549,12 @@ function miniEvaluation(
     members: ReadonlyArray<{ config: string; trend: string; late?: boolean }>;
     terms?: ReadonlyArray<string>;
   }>,
-  tops: Readonly<Record<string, Readonly<Record<string, ReadonlyArray<[string, string]>>>>>,
+  tops: Readonly<
+    Record<
+      string,
+      Readonly<Record<string, ReadonlyArray<[string, string] | [string, string, number | null]>>>
+    >
+  >,
   options: { prospective?: { cutoff: string; closed: string; corpus: string } } = {},
 ) {
   const cutoffs = [...new Set(Object.keys(tops))].toSorted();
@@ -523,7 +568,7 @@ function miniEvaluation(
       sources: ["hn"],
       configs: {},
       followup_threshold: 0.7,
-      text: {},
+      text: testConfig().text,
       centroids_hash: "c",
       engine_source_hash: ENGINE_SOURCE_HASH,
       registries: {},
@@ -588,10 +633,11 @@ function miniEvaluation(
             arm,
             {
               ranked: entries.length,
-              top: entries.map(([trend, topic], k) => ({
+              top: entries.map(([trend, topic, duplicateOf], k) => ({
                 position: k + 1,
                 trend_id: trend,
                 topic_id: topic,
+                ...(duplicateOf !== undefined ? { duplicate_of: duplicateOf } : {}),
               })),
             },
           ]),
@@ -691,6 +737,7 @@ describe("Sol's U1 findings (regressions)", () => {
       arms: e.rankings.logical.arms,
       profile_hash: "sha256:p",
       engine_source_hash: ENGINE_SOURCE_HASH,
+      eval_source_hash: EVAL_SOURCE_HASH,
       registries: {},
       files: [{ path: frozen, sha256: sha256("{}") }],
     };
@@ -756,6 +803,18 @@ describe("Sol's U1 findings (regressions)", () => {
     lines[0] = lines[0]!.replace("12:00:00", "12:00:01");
     NodeFS.writeFileSync(broken, lines.join("\n"));
     expect(() => assertSealed(e.universe, e.rankings, broken)).toThrow(/breaks the chain/);
+    expect(() =>
+      assertSealed(
+        e.universe,
+        e.rankings,
+        ledger("evalcode", [
+          { ...freeze, eval_source_hash: "sha256:other-scorer" },
+          captureEntry,
+          sealEntry,
+        ]),
+      ),
+    ).toThrow(/evaluation code/);
+    expect(() => assertCheckout({ ...freeze, prev_sha256: null })).toThrow(/no git tree/);
     NodeFS.writeFileSync(frozen, '{"changed":true}');
     expect(() =>
       assertSealed(e.universe, e.rankings, ledger("changed", [freeze, captureEntry, sealEntry])),
@@ -1126,7 +1185,14 @@ describe("council round 2a (regressions)", () => {
     });
     const dev = (out.metrics.logical.results["m"] as any).dev;
     expect(dev.arms.R.g_at_5).toBeCloseTo(0.2);
-    expect(dev.consistency).toEqual({ pairs: 1, binary: 1, graded: 0, core_vs_rest: 0 });
+    expect(dev.consistency).toEqual({
+      pairs: 1,
+      met: false,
+      binary: 1,
+      graded: 0,
+      core_vs_rest: 0,
+    });
+    expect(dev.consistency_met).toBe(false);
   });
 
   it("reports the sensitivity of G@5, G@5 without the top family and new families honestly", async () => {
@@ -1265,12 +1331,119 @@ describe("council round 2a (regressions)", () => {
           terms: ["alpha", "beta"],
         };
       });
-      const kept = dedupe(members, [], (m) => m.centroid, 0.8).kept.slice(0, 5);
+      const same = (x: TopicMember, y: TopicMember) => sameTopic(x, y, all);
+      const kept = dedupe(members, [], (m) => m.centroid, same).kept.slice(0, 5);
       for (let i = 0; i < kept.length; i++) {
         for (let j = i + 1; j < kept.length; j++) {
           expect(sameTopic(kept[i]!, kept[j]!, all)).toBe(false);
         }
       }
     }
+  });
+});
+
+describe("Sol's motor-v2 findings (regressions)", () => {
+  it("B1: a bridge from another arm never makes two positions of C duplicates", async () => {
+    const root = tempDir("u1-v2-b1");
+    // B anchors one opportunity holding C's A and C positions and R's B (Sol's worst case): the
+    // pool marks C's second position as not a duplicate, since A and C do not match directly.
+    const e = miniEvaluation(
+      root,
+      [
+        {
+          id: "O",
+          family: "F",
+          members: [
+            { config: "cfg-C", trend: "a" },
+            { config: "cfg-C", trend: "c" },
+            { config: "cfg-R", trend: "b" },
+          ],
+        },
+      ],
+      {
+        "2026-10-20": {
+          C: [
+            ["a", "O", null],
+            ["c", "O", null],
+          ],
+          R: [["b", "O", null]],
+        },
+      },
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [e.labels("m", { O: "yes" })],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    });
+    const arm = (out.metrics.logical.results["m"] as any).dev.arms.C;
+    expect(arm.p_at_5).toBeCloseTo(0.4);
+    expect(arm.duplicates_at_5).toBe(0);
+  });
+});
+
+describe("Sol's motor-v2 S3 (regression)", () => {
+  it("does not call valid a partition with unanswered cards", async () => {
+    const root = tempDir("u1-v2-s3");
+    const e = miniEvaluation(
+      root,
+      [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
+      { "2026-10-20": { R: [["a", "A", null]] } },
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [e.labels("m", {})],
+      outDir: NodePath.join(root, "s"),
+      partitions: { test: ["2026-10-20"] },
+      dev: ["2026-10-20"],
+      replicates: 10,
+    });
+    const test = (out.metrics.logical.results["m"] as any).test;
+    expect(test.unsure_limit_met).toBe(true);
+    expect(test.all_answered).toBe(false);
+    expect(test.valid).toBe(false);
+    expect(test.consistency_met).toBe(false);
+  });
+});
+
+describe("Sol's motor-v2 S4 (regression)", () => {
+  it("loads the last partial day of a prospective follow-up and can close a negative", async () => {
+    const root = tempDir("u1-v2-s4");
+    const corpusDir = NodePath.join(root, "corpus");
+    await writeSyntheticCorpus(corpusDir, { fromDay: "2026-09-20", toDay: "2026-10-12" });
+    // A prospective cutoff decided at 00:05: its window runs to 9 Oct 00:05 and spans 15 days.
+    const e = miniEvaluation(
+      root,
+      [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
+      { "2026-09-25": { R: [["a", "A", null]] } },
+      { prospective: { cutoff: "2026-09-25", closed: "2026-09-25T00:05:00.000Z", corpus: "m" } },
+    );
+    expect(followupSpan(e.universe)).toEqual({
+      endMs: Date.parse("2026-10-09T00:05:00.000Z"),
+      untilDay: "2026-10-10",
+    });
+    const embedder = fingerprintEmbedder();
+    const [far] = await embedder.embed(["zzz unrelated qqq"]);
+    NodeFS.writeFileSync(
+      NodePath.join(root, "centroids.json"),
+      JSON.stringify({
+        embedding_key: embedder.key,
+        topics: {
+          A: Buffer.from(far!.buffer, far!.byteOffset, far!.byteLength).toString("base64"),
+        },
+      }),
+    );
+    const result = await writeFollowupLabels({
+      universePath: e.universePath,
+      corpusDir,
+      out: NodePath.join(root, "labels-hn.json"),
+      embedder,
+    });
+    // No story is close; all 15 days are captured complete: a final no, not pending.
+    expect(result.labels[0]!.label).toBe("no");
+    expect(result.labels[0]!.complete_days).toBe(15);
   });
 });

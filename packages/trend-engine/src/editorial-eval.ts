@@ -4,6 +4,7 @@
 // same topic at the same cutoff into one opportunity (the labelled unit: topic and cutoff), links
 // opportunities of different cutoffs into families, and writes universe.json and rankings.json
 // with their hashes before any label or metric exists. Blind cards come from the universe only.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -23,6 +24,12 @@ import { createLocalEmbedder } from "./embed/local.ts";
 import { defaultModelDir } from "./embed/model.ts";
 import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
+import {
+  rareTermsByCutoff,
+  sameTopic,
+  TOPIC_IDENTITY,
+  type TopicMember,
+} from "./topic-identity.ts";
 import type { LoadedRelevance } from "./relevance.ts";
 import {
   DEFAULT_DATA_DIR,
@@ -50,21 +57,18 @@ export const EVAL_SOURCES: ReadonlyArray<SourceId> = [
 ];
 
 /**
- * Same topic: at least half the smaller one's members shared, or centroid cosine >= 0.80 plus two
- * shared rare top terms (in <= 1 % of the items of the 30 days before the later cutoff). Cosine
- * alone merged unrelated 30-day clusters in development (README). Closed transitively.
+ * The engine's topic identity (topic-identity.ts) and how this evaluation applies it: an
+ * opportunity is an anchor plus the positions that match that anchor directly (never through
+ * another arm's bridge), a duplicate is a position of the same arm that matches an earlier one
+ * directly, and families link opportunities of different cutoffs for dependence only.
  */
 export const SAME_TOPIC_RULE = {
-  shared_items_min_fraction: 0.5,
-  centroid_cosine_min: 0.8,
-  centroid_cosine_strict: true,
-  rare_terms_min_shared: 2,
-  rare_term_max_item_share: 0.01,
-  rare_term_window_days: 30,
-  terms: "top_terms of each position's dossier (10)",
-  closure: "connected components (transitive)",
-  within_cutoff: "opportunity: the labelled unit (topic, cutoff)",
-  across_cutoffs: "family: dependence and new versus recurrent topics; labels never travel",
+  ...TOPIC_IDENTITY,
+  opportunities:
+    "positions in anchor-key order; each joins the existing anchor it matches with the highest cosine, else it becomes an anchor (no transitive closure)",
+  duplicates: "a position matching an earlier position of the same arm and cutoff directly",
+  families:
+    "connected components of the identity across cutoffs; bootstrap units and new versus recurrent only",
 } as const;
 
 /** P1.1 rule 5: card evidence is fixed and independent of the arm. */
@@ -86,6 +90,59 @@ export const DEFAULT_TOP = 5;
  * SHA-256 of the engine's source files (src without tests, tools, testkit and this
  * evaluation): a reused run must come from the same code, not only the same configuration.
  */
+/**
+ * SHA-256 of the evaluation's own code: src/editorial-*.ts and src/tools/*.ts without tests
+ * (Sol, motor-v2 S2). The freeze records it with the engine's; a changed scorer or card
+ * generator no longer passes for the frozen one.
+ */
+export const EVAL_SOURCE_HASH = (() => {
+  const root = import.meta.dirname;
+  const files = [
+    ...NodeFS.readdirSync(root).filter((name) => /^editorial-.*\.ts$/.test(name)),
+    ...NodeFS.readdirSync(NodePath.join(root, "tools")).map((name) => `tools/${name}`),
+  ]
+    .filter((path) => path.endsWith(".ts") && !path.endsWith(".test.ts"))
+    .toSorted();
+  return sha256(
+    files
+      .map((path) => `${path}\n${sha256(NodeFS.readFileSync(NodePath.join(root, path)))}`)
+      .join("\n"),
+  );
+})();
+
+/** The git checkout this code runs from: commit, tree and whether tracked files are unchanged. */
+export function checkoutIdentity(): { commit: string; tree: string; clean: boolean } | null {
+  const git = (...args: Array<string>) =>
+    NodeChildProcess.execFileSync("git", args, {
+      cwd: import.meta.dirname,
+      encoding: "utf8",
+    }).trim();
+  try {
+    return {
+      commit: git("rev-parse", "HEAD"),
+      tree: git("rev-parse", "HEAD^{tree}"),
+      clean: git("status", "--porcelain", "--untracked-files=no") === "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Before cards or metrics from the command line: the checkout is the frozen git tree, with no
+ * tracked change. The library checks content hashes; this checks the whole tree as well.
+ */
+export function assertCheckout(freeze: LedgerEntry) {
+  const frozen = freeze["git"] as { tree?: string } | undefined;
+  const here = checkoutIdentity();
+  if (!frozen?.tree) throw new Error("the freeze records no git tree");
+  if (!here) throw new Error("this checkout is not a git checkout");
+  if (!here.clean) throw new Error("this checkout has tracked changes since the freeze");
+  if (here.tree !== frozen.tree) {
+    throw new Error(`checkout tree ${here.tree} is not the frozen ${frozen.tree}`);
+  }
+}
+
 export const ENGINE_SOURCE_HASH = (() => {
   const root = import.meta.dirname;
   const files: Array<string> = [];
@@ -283,6 +340,8 @@ export interface PoolOptions {
   readonly cardSeed?: number;
   /** Family registries of earlier universes (`families.json`), by name: dev, train… */
   readonly registries?: Readonly<Record<string, string>>;
+  /** Also require the checkout to be the frozen git tree (the command line sets it). */
+  readonly checkout?: boolean;
   /** Replaces the relevance model file a configuration names, for tests (its hash must match). */
   readonly relevanceModel?: LoadedRelevance;
   /** Replaces the local Qwen embedder, for tests. The pool disposes it. */
@@ -360,87 +419,35 @@ class Components {
   }
 }
 
-export interface TopicMember {
-  readonly key: string;
-  readonly trendId: string;
-  readonly centroid: Float32Array;
-  readonly itemIds: ReadonlySet<string>;
-  readonly terms: ReadonlyArray<string>;
-}
-
-/** SAME_TOPIC_RULE for two members, given the rare terms of the (later) cutoff. */
-export function sameTopic(
-  a: TopicMember,
-  b: TopicMember,
-  rare: (term: string) => boolean,
-): boolean {
-  const [small, large] = a.itemIds.size <= b.itemIds.size ? [a, b] : [b, a];
-  if (small.itemIds.size > 0) {
-    let shared = 0;
-    for (const id of small.itemIds) if (large.itemIds.has(id)) shared++;
-    if (shared >= SAME_TOPIC_RULE.shared_items_min_fraction * small.itemIds.size) return true;
-  }
-  // Strictly above, as the v2 emit deduplication (rank.ts dedupe): within a run signals share no
-  // items, so every pair this rule merges in one ranking was already folded by v2 at emission.
-  if (dot(a.centroid, b.centroid) <= SAME_TOPIC_RULE.centroid_cosine_min) return false;
-  const bTerms = new Set(b.terms);
-  const sharedRare = new Set(a.terms.filter((t) => bTerms.has(t) && rare(t)));
-  return sharedRare.size >= SAME_TOPIC_RULE.rare_terms_min_shared;
-}
-
-const termTokens = (text: string): Array<string> =>
-  text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [];
-
 /**
- * Item document frequency of the candidate terms in the window before each cutoff; a term is
- * rare at a cutoff when its share is at most SAME_TOPIC_RULE.rare_term_max_item_share.
+ * Opportunities of one cutoff (U1-B1 of the second verification): positions sorted by
+ * `keyOf`; each joins the anchor it is directly the same topic as (highest cosine, then smaller
+ * key), else it becomes a new anchor. No transitive closure: a position never joins through a
+ * third one, so another arm cannot bridge two topics into one opportunity.
  */
-export function rareTermsByCutoff(
-  items: ReadonlyArray<Pick<Item, "published_at" | "title" | "body">>,
-  terms: ReadonlySet<string>,
-  cutoffDays: ReadonlyArray<string>,
-): Map<string, Set<string>> {
-  const tokens = items.map((item) => ({
-    ms: Date.parse(item.published_at),
-    terms: new Set(termTokens(`${item.title} ${item.body}`).filter((t) => terms.has(t))),
-  }));
-  return new Map(
-    cutoffDays.map((day) => {
-      const end = dayStart(day);
-      const start = end - SAME_TOPIC_RULE.rare_term_window_days * DAY_MS;
-      const df = new Map<string, number>();
-      let n = 0;
-      for (const t of tokens) {
-        if (t.ms < start || t.ms >= end) continue;
-        n++;
-        for (const term of t.terms) df.set(term, (df.get(term) ?? 0) + 1);
-      }
-      const rare = new Set(
-        [...terms].filter(
-          (term) => (df.get(term) ?? 0) <= SAME_TOPIC_RULE.rare_term_max_item_share * n,
-        ),
-      );
-      return [day, rare] as const;
-    }),
-  );
-}
-
-/** Connected components of SAME_TOPIC_RULE; members are listed by key, groups by first key. */
-export function groupMembers<T extends TopicMember>(
+export function anchorGroups<T extends TopicMember>(
   members: ReadonlyArray<T>,
   rare: (term: string) => boolean,
+  keyOf: (member: T) => string = (m) => m.key,
 ): Array<Array<T>> {
-  const byKey = new Map(members.map((m) => [m.key, m]));
-  const sorted = [...byKey.values()].toSorted((a, b) => (a.key < b.key ? -1 : 1));
-  const components = new Components();
-  for (const m of sorted) components.add(m.key);
-  for (let i = 0; i < sorted.length; i++) {
-    for (let j = i + 1; j < sorted.length; j++) {
-      if (sameTopic(sorted[i]!, sorted[j]!, rare)) components.union(sorted[i]!.key, sorted[j]!.key);
+  const sorted = [...new Map(members.map((m) => [m.key, m])).values()].toSorted((a, b) =>
+    keyOf(a) < keyOf(b) ? -1 : 1,
+  );
+  const groups: Array<Array<T>> = [];
+  for (const m of sorted) {
+    let best: { group: Array<T>; cosine: number } | null = null;
+    for (const group of groups) {
+      if (!sameTopic(m, group[0]!, rare)) continue;
+      const cosine = dot(m.centroid, group[0]!.centroid);
+      if (best === null || cosine > best.cosine) best = { group, cosine };
     }
+    if (best) best.group.push(m);
+    else groups.push([m]);
   }
-  return components.groups().map((keys) => keys.map((key) => byKey.get(key)!));
+  return groups;
 }
+
+export { sameTopic, type TopicMember } from "./topic-identity.ts";
 
 export interface Headline {
   readonly title: string;
@@ -541,6 +548,8 @@ export interface RankingEntry {
   readonly position: number;
   readonly trend_id: string;
   readonly topic_id: string;
+  /** The earlier position of the same arm this one is directly the same topic as, if any. */
+  readonly duplicate_of: number | null;
 }
 
 export interface Rankings {
@@ -822,11 +831,13 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
     const cutoffMs = dayStart(cutoffDay);
     const corpus = corpora.get(corpusOf(cutoffDay))!;
     const rare = rareOf.get(cutoffDay)!;
-    for (const group of groupMembers([...positionsByCutoff.get(cutoffDay)!.values()], (t) =>
-      rare.has(t),
+    const anchorKey = (p: Position) => `${p.trendId}|${vectorSha(p.centroid)}`;
+    for (const group of anchorGroups(
+      [...positionsByCutoff.get(cutoffDay)!.values()],
+      (t) => rare.has(t),
+      anchorKey,
     )) {
-      const anchorKey = (p: Position) => `${p.trendId}|${vectorSha(p.centroid)}`;
-      const anchor = group.toSorted((a, b) => (anchorKey(a) < anchorKey(b) ? -1 : 1))[0]!;
+      const anchor = group[0]!;
       const topicId = `top_${sha256(`${cutoffDay}\n${anchorKey(anchor)}`).slice(7, 23)}`;
       const ids = [...new Set(group.flatMap((p) => [...p.itemIds]))];
       const items = ids
@@ -1000,11 +1011,19 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
             arm,
             {
               ranked,
-              top: entries.map(({ position, trend_id, key }) => ({
-                position,
-                trend_id,
-                topic_id: topicOfKey.get(`${day}|${key}`)!,
-              })),
+              top: entries.map(({ position, trend_id, key }, k) => {
+                const here = positionsByCutoff.get(day)!;
+                const rare = rareOf.get(day)!;
+                const earlier = entries
+                  .slice(0, k)
+                  .find((e) => sameTopic(here.get(e.key)!, here.get(key)!, (t) => rare.has(t)));
+                return {
+                  position,
+                  trend_id,
+                  topic_id: topicOfKey.get(`${day}|${key}`)!,
+                  duplicate_of: earlier ? earlier.position : null,
+                };
+              }),
             },
           ]),
         ),
@@ -1017,7 +1036,10 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
     universe_hash: universe.universe_hash,
     logical: rankingsLogical,
   };
-  if (options.ledgerPath) verifyFreeze(readLedger(options.ledgerPath), universe, rankings);
+  if (options.ledgerPath) {
+    const freeze = verifyFreeze(readLedger(options.ledgerPath), universe, rankings);
+    if (options.checkout) assertCheckout(freeze);
+  }
   const registry = buildRegistry(
     universe,
     opportunities.flatMap((o) =>
@@ -1356,6 +1378,9 @@ export function verifyFreeze(
   if (freeze["engine_source_hash"] !== inputs.engine_source_hash) {
     throw new Error("engine source differs from the freeze");
   }
+  if (freeze["eval_source_hash"] !== EVAL_SOURCE_HASH) {
+    throw new Error("evaluation code (editorial-*.ts, tools/*) differs from the freeze");
+  }
   if (canonicalJson(freeze["registries"] ?? {}) !== canonicalJson(inputs.registries)) {
     throw new Error("family registries differ from the freeze");
   }
@@ -1399,6 +1424,8 @@ export function freezeEntry(options: {
     arms: armIdentities(options.arms, options.sources).map(({ config: _config, ...id }) => id),
     profile_hash: fileSha256(options.profilePath),
     engine_source_hash: ENGINE_SOURCE_HASH,
+    eval_source_hash: EVAL_SOURCE_HASH,
+    git: checkoutIdentity(),
     registries: Object.fromEntries(
       Object.entries(options.registries ?? {})
         .toSorted(([a], [b]) => (a < b ? -1 : 1))

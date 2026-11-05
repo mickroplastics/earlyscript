@@ -34,6 +34,12 @@ import { prepare } from "./prepare.ts";
 import { scoreProfile } from "./profile.ts";
 import { dedupe, positions, round6, score } from "./rank.ts";
 import {
+  rareTermsByCutoff,
+  sameTopic,
+  TOPIC_IDENTITY,
+  type TopicMember,
+} from "./topic-identity.ts";
+import {
   aggregateRelevance,
   distinctTitles,
   type LoadedRelevance,
@@ -310,6 +316,19 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       };
     });
     type Signal = (typeof signals)[number];
+    // The dossier's top terms, computed once per signal for the topic identity.
+    const termsMemo = new Map<string, Array<string>>();
+    const termsOf = (s: Signal) => {
+      let terms = termsMemo.get(s.id);
+      if (!terms) {
+        terms = topTerms(
+          s.members.map((m) => `${m.title} ${m.cleanBody}`),
+          config.emit.top_terms,
+        );
+        termsMemo.set(s.id, terms);
+      }
+      return terms;
+    };
     const profileOk = (s: Signal) =>
       !relevanceRef || relevanceRef.profile_gate ? s.fit.passes : true;
     const relevant = (s: Signal) =>
@@ -373,8 +392,36 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       // The candidate ranking decides which of two near-identical trends keeps the position.
       const order = positions(eligible, (s) => s.weighted.score);
       const ordered = eligible.toSorted((a, b) => order.get(a.id)! - order.get(b.id)!);
+      // Folding is the engine's topic identity (topic-identity.ts), the same function the
+      // evaluation uses for opportunities and families; dedup_cosine must be its cosine.
+      if (dedupCosine !== undefined && dedupCosine !== TOPIC_IDENTITY.centroid_cosine_above) {
+        throw new Error(
+          `emit.dedup_cosine ${dedupCosine} differs from the topic identity's ${TOPIC_IDENTITY.centroid_cosine_above}`,
+        );
+      }
+      const rare =
+        dedupCosine === undefined
+          ? new Set<string>()
+          : rareTermsByCutoff(
+              beforeCutoff,
+              new Set(
+                signals
+                  .filter((s) => s.stage.stage === "growing" || s.stage.stage === "steady")
+                  .flatMap((s) => termsOf(s)),
+              ),
+              [cutoffDay],
+            ).get(cutoffDay)!;
+      const memberOf = (s: Signal): TopicMember => ({
+        key: s.id,
+        trendId: s.id,
+        centroid: s.signal.centroid,
+        itemIds: new Set(s.signal.itemIds),
+        terms: termsOf(s),
+      });
+      const same = (a: Signal, b: Signal) =>
+        dedupCosine !== undefined && sameTopic(memberOf(a), memberOf(b), (t) => rare.has(t));
       const fold = (list: ReadonlyArray<Signal>, kept: Array<Signal>) => {
-        const result = dedupe(list, kept, (s) => s.signal.centroid, dedupCosine ?? Infinity);
+        const result = dedupe(list, kept, (s) => s.signal.centroid, same);
         for (const [id, link] of result.related) {
           const entry = relatedTo.get(id) ?? [];
           entry.push(link);

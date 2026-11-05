@@ -27,6 +27,7 @@ import {
   weightedPrecision,
 } from "./editorial-stats.ts";
 import {
+  assertCheckout,
   assertSealed,
   captureEntries,
   type Rankings,
@@ -57,7 +58,8 @@ export const SCORE_RULE = {
   duplicates:
     "a second position of the same opportunity (topic at that cutoff, merged only with that cutoff's data) counts 0; families serve only the bootstrap and new versus recurrent",
   labels: "only labels of this universe, or migrated from cards whose content is identical here",
-  invalid_test: "a test partition is not valid when more than 10 % of its cards are unsure",
+  invalid_test:
+    "valid = every card answered (no unlabelled or pending) and at most 10 % unsure; unsure_limit_met and consistency_met (at least 8 of 10 blind repeats agree on core against the rest) are reported apart",
   source_evaluated:
     "a source is evaluated in a partition when, at every cutoff, both 7-day windows have at least 5 captured (complete or partial) days",
 } as const;
@@ -209,6 +211,8 @@ export interface ScoreOptions {
   readonly candidates?: ReadonlyArray<string>;
   readonly references?: ReadonlyArray<string>;
   readonly ledgerPath?: string;
+  /** Also require the checkout to be the frozen git tree (the command line sets it). */
+  readonly checkout?: boolean;
   readonly replicates?: number;
   readonly seed?: number;
   readonly blockDays?: number;
@@ -309,6 +313,7 @@ export async function runScore(options: ScoreOptions) {
   }
   if (options.ledgerPath) {
     const freeze = assertSealed(universe, rankings, options.ledgerPath);
+    if (options.checkout) assertCheckout(freeze);
     const captures = new Map(
       captureEntries(readLedger(options.ledgerPath)).map((e) => [e.cutoff_day, e]),
     );
@@ -376,6 +381,8 @@ export async function runScore(options: ScoreOptions) {
             label: labels.labels.get(e.topic_id) ?? null,
             grade: labels.grades.get(e.topic_id) ?? null,
             unavailable: b6 && member.late_popularity_only,
+            // U1-B1 (second verification): only a direct match within the arm is a duplicate.
+            ...(e.duplicate_of !== undefined ? { duplicate: e.duplicate_of !== null } : {}),
           };
         }),
         rankings.logical.top,
@@ -470,6 +477,7 @@ export async function runScore(options: ScoreOptions) {
           };
         }),
       }));
+      const partitionConsistency = consistency(labels, cutoffs, topics);
       // Cards of the partition: each topic once (P1.1 rule 1: the topic at its cutoff).
       const cards = universe.logical.topics.filter((t) => cutoffs.includes(t.cutoff));
       const status = { yes: 0, no: 0, unsure: 0, pending: 0, unlabelled: 0 };
@@ -483,8 +491,17 @@ export async function runScore(options: ScoreOptions) {
         cards: cards.length,
         card_labels: status,
         unsure_share: cards.length === 0 ? null : round4(status.unsure / cards.length),
-        valid: name === "dev" || cards.length === 0 || status.unsure / cards.length <= 0.1,
-        consistency: consistency(labels, cutoffs, topics),
+        // P1.3 (Sol, motor-v2 S3): valid needs every card answered and at most 10 % unsure;
+        // the labeler's self-consistency is reported apart.
+        all_answered: cards.length > 0 && status.unlabelled === 0 && status.pending === 0,
+        unsure_limit_met: cards.length > 0 && status.unsure / cards.length <= 0.1,
+        valid:
+          cards.length > 0 &&
+          status.unlabelled === 0 &&
+          status.pending === 0 &&
+          status.unsure / cards.length <= 0.1,
+        consistency: partitionConsistency,
+        consistency_met: partitionConsistency.met,
         families: new Set(cards.map((t) => t.family_id)).size,
         arms: perArm,
         best_reference: bestReference,
@@ -739,8 +756,15 @@ function consistency(
               f(r.label, r.grade),
           ).length / pairs.length,
         );
+  const coreAgreements = pairs.filter(
+    ([topic, r]) =>
+      (classOf(labels.labels.get(topic)!, labels.grades.get(topic) ?? null) === "core") ===
+      (classOf(r.label, r.grade) === "core"),
+  ).length;
   return {
     pairs: pairs.length,
+    /** Opus M3: at least 8 of 10 repeats agree on core against the rest. */
+    met: pairs.length >= 10 && coreAgreements >= 0.8 * pairs.length,
     binary: agree((label) => label),
     graded: agree(classOf),
     core_vs_rest: agree((label, grade) => (classOf(label, grade) === "core" ? "core" : "rest")),
@@ -812,7 +836,7 @@ function renderReport(
       lines.push(
         `## ${labeler} · ${name} (${p.cutoffs} cortes, ${p.cards} tarjetas, ${p.families} familias)`,
         "",
-        `Etiquetas de las tarjetas: sí ${p.card_labels.yes}, no ${p.card_labels.no}, no sé ${p.card_labels.unsure}, pendiente ${p.card_labels.pending}, sin juicio ${p.card_labels.unlabelled}.${p.valid ? "" : " **Partición no válida: más del 10 % de «no sé».**"}`,
+        `Etiquetas de las tarjetas: sí ${p.card_labels.yes}, no ${p.card_labels.no}, no sé ${p.card_labels.unsure}, pendiente ${p.card_labels.pending}, sin juicio ${p.card_labels.unlabelled}. Todas respondidas: ${p.all_answered ? "sí" : "no"}; «no sé» ≤ 10 %: ${p.unsure_limit_met ? "sí" : "no"}; válida: ${p.valid ? "sí" : "**no**"}; consistencia ≥ 8/10: ${p.consistency_met ? "sí" : "no"}.`,
         "",
         "| Brazo | P@5 | IC 95 % familias | IC 95 % bloques | G@5 | IC 95 % familias (G) | Núcleo | Cota sup. | Prec. resueltas | P@5 con etiqueta (puestos etiquetados) | Cobertura | Duplicados | B6 | Familias nuevas (P, puestos) | Dep. semana previa incompleta |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",

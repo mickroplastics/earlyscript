@@ -83,6 +83,24 @@ export function followupLabels(
   });
 }
 
+/** When a cutoff's follow-up starts: its capture's closing time when prospective (U1-S1). */
+const followupStart = (c: {
+  cutoff: string;
+  prospective: boolean;
+  operational_cutoff_at: string;
+}) => (c.prospective ? Date.parse(c.operational_cutoff_at) : dayStart(c.cutoff));
+
+/**
+ * The stories the labels need (Sol, motor-v2 S4): up to the latest follow-up end, taken from the
+ * operational instants, and every day file that holds part of it, the last partial day included.
+ */
+export function followupSpan(universe: Universe): { endMs: number; untilDay: string } {
+  const endMs = Math.max(
+    ...universe.logical.cutoffs.map((c) => followupStart(c) + LABEL_RULE.followup_days * DAY_MS),
+  );
+  return { endMs, untilDay: dayOf(Math.ceil(endMs / DAY_MS) * DAY_MS) };
+}
+
 export async function writeFollowupLabels(options: {
   readonly universePath: string;
   readonly corpusDir: string;
@@ -107,15 +125,11 @@ export async function writeFollowupLabels(options: {
   );
   const config = Object.values(universe.logical.inputs.configs)[0]!;
   const sources: Array<SourceId> = ["hn"];
-  const lastCutoff = universe.logical.cutoffs
-    .map((c) => c.cutoff)
-    .toSorted()
-    .at(-1)!;
-  const endMs = dayStart(lastCutoff) + LABEL_RULE.followup_days * DAY_MS;
+  const { endMs, untilDay } = followupSpan(universe);
   const corpus = await readCorpus({
     dir: options.corpusDir,
     adapters: fixtureSources(options.corpusDir, sources),
-    untilDay: dayOf(endMs),
+    untilDay,
     ...(options.allowUnverifiedCorpus ? { allowUnverified: true } : {}),
   });
   const firstMs = dayStart(universe.logical.cutoffs.map((c) => c.cutoff).toSorted()[0]!);

@@ -41,9 +41,9 @@ Medición del 4 de noviembre de 2026 sobre `822dd475b6`: tres repeticiones de np
 
 `config/engine.v2.json` (`earlyscript.engine.v2`) no cambia v1: con `config/engine.v1.json` el `logical_hash` es el mismo que antes. v2 añade, sin modelo de lenguaje en tiempo de corrida:
 
-- `relevance`: sonda logística L2 sobre el vector Qwen de cada ítem (`config/relevance.v1.json`, nombrada por su SHA-256 en la configuración, así que `config_hash` cubre los pesos). Relevancia del ítem = `sigmoid(w·x + b)`; la del tema, la media de sus ítems de los últimos 7 días. Un tema es elegible si crece y su relevancia es ≥ `signal_min`; `profile_gate: false` quita el filtro de afinidad de perfil.
+- `relevance`: sonda logística L2 sobre el vector Qwen de cada ítem (`config/relevance.v2.json` en F, nombrada por su SHA-256 en la configuración, así que `config_hash` cubre los pesos). Relevancia del ítem = `sigmoid(w·x + b)`; la del tema, la media de sus ítems de los últimos 7 días. Un tema es elegible si crece y su relevancia es ≥ `signal_min`; `profile_gate: false` quita el filtro de afinidad de perfil.
 - Serie sobre ítems relevantes (≥ `item_min`) con `stage.coverage_rule: equivalent`: cada fuente cuenta solo en días capturados por completo (o su muestra declarada) y solo si ambas ventanas de 7 días tienen alguno; los conteos pasan a tasas por día × 7. Una fuente que empieza a capturar dentro de la última ventana no genera crecimiento. Los campos `trend.*` conservan su sentido de v1; los de v2 están en `relevance`.
-- `emit.dedup_cosine`: un tema con coseno de centroide mayor que el umbral con otro mejor situado en el ranking ponderado se emite en `related` de ese expediente y no ocupa puesto. `emit.min_dossiers`: si hay menos elegibles, se completan con los temas en crecimiento más relevantes bajo `signal_min` y después con estables con ítems suficientes, marcados `eligibility: "backfill"` y ordenados al final.
+- `emit.dedup_cosine` (debe ser 0,80): un tema que es el mismo que otro mejor situado en el ranking ponderado, según la identidad de tema de `topic-identity.ts` (coseno > 0,80 y dos términos raros o la mitad de los miembros), se emite en `related` de ese expediente y no ocupa puesto. `emit.min_dossiers`: si hay menos elegibles, se completan con los temas en crecimiento más relevantes bajo `signal_min` y después con estables con ítems suficientes, marcados `eligibility: "backfill"` y ordenados al final.
 - `relevance.aggregate` (`mean`, `share` = fracción de ítems de 7 días con relevancia ≥ `item_min`, `trimmed_mean` sin el quinto más alto ni el más bajo) y `relevance.min_relevant_distinct` (ítems relevantes de 7 días con títulos distintos, sin contar dígitos: las versiones de un paquete cuentan una vez).
 - `relevance.novelty`: un tema que estuvo en el top `top` de alguno de los `lookback_days` cortes anteriores (recalculados con los ítems anteriores a cada uno, sin esta regla) solo ocupa puesto si sus ítems relevantes por día desde ese corte llegan a `growth_ratio` veces su tasa de los 7 días previos; si no, solo puede rellenar al final.
 - `weighted_sum.v0.02`: crecimiento 0,25, relevancia 1,0 y ln(1 + ítems relevantes en 7 días) 0,15, sin el término de autores. Cada expediente lleva la relevancia como componente y la de cada evidencia.
@@ -52,7 +52,7 @@ Herramientas fuera del motor, en `src/tools/` (se ejecutan con `node src/tools/<
 
 - `judge.ts`: juez editorial con el CLI `claude -p` de la suscripción, sin herramientas, web, ajustes ni MCP. Cada versión congela rúbrica, modelo y etiquetas en `judge/judge.vN.json` (el archivo guarda el hash de la rúbrica y la carga falla si cambió). v1: yes/no/unsure, no pasó la calibración con Miguel. v2: core/adjacent/no/unsure, adoptado (acuerdo 0,838, κ 0,656 en la mitad de validación). v3: revisión descartada. Caché por hash de (rúbrica, modelo, texto) y cada llamada con su prompt y respuesta.
 - `relevance-sample.ts`, `relevance-train.ts`: muestra estratificada por fuente y entrenamiento con validación cruzada por bloques de días, con objetivo binario o graduado (`--targets core=1,adjacent=0.6,no=0`); escriben el modelo y un informe con la separación frente a la afinidad de perfil. El formateador reempaqueta los pesos: registrar el hash del archivo ya formateado.
-- `calibration-items.ts`, `calibration-agreement.ts`: tarjetas de ítem para calibrar al juez; división fija revisión/validación de las etiquetas exportadas por la página de U1 (se valida `cards_hash`) y compuerta: todas las tarjetas respondidas, el juez resuelve al menos el 80 % de lo que resolvió el operador, acuerdo ≥ 0,80 y κ ≥ 0,5 entre resueltas.
+- `calibration-items.ts`, `calibration-agreement.ts`: tarjetas de ítem para calibrar al juez; división fija revisión/validación de las etiquetas exportadas por la página de U1 (se valida `cards_hash`) y compuerta: todas las tarjetas respondidas, el operador resuelve al menos el 80 % («insuficiente» si no), el juez resuelve al menos el 80 % de lo que resolvió el operador, acuerdo ≥ 0,80 y κ ≥ 0,5 entre resueltas.
 - `training-families.ts`: registro de familias de entrenamiento (señales con algún ítem de entrenamiento, con su centroide) para cruzar con desarrollo y prueba.
 - `dev-compare.ts`: comparación de variantes en desarrollo con el juez (P@5 con denominador 5). No es la evaluación de referencia.
 
@@ -131,14 +131,23 @@ engine eval-editorial capture --corpus <dir> --ledger <ledger.jsonl> --snapshots
 - Escribe `universe.json` y `rankings.json`, con el hash de su parte lógica. También escribe `centroids.json`, las tarjetas y `families.json`.
 - `families.json` es el registro congelado de los miembros del top 5, con centroide, ítems y términos. Otro `pool` lo importa con `--registry dev=<ruta>` y marca en `seen_in.dev` cada tema que coincide con una familia de desarrollo según la misma regla, usando la rareza del corte del tema. Con `--registry train=…` hace lo mismo para el registro de familias de entrenamiento, que debe tener el mismo formato (`earlyscript.editorial-families/1`).
 
-### Regla de mismo tema
+### Identidad de tema (una sola regla para el motor y la evaluación)
 
-Dos puestos son el mismo tema si se cumple una de estas condiciones:
+`src/topic-identity.ts` define la identidad de tema que usan cuatro cosas: la deduplicación de v2 al emitir (`rank.ts` `dedupe`, desde `run.ts`), las oportunidades, los duplicados y las familias de esta evaluación, y los registros. Dos temas son el mismo si se cumplen las dos condiciones:
 
-- comparten al menos la mitad de los ítems del menor;
-- el coseno de sus centroides es ≥ 0,80 **y** comparten al menos dos términos principales raros. Un término es raro si aparece en ≤ 1 % de los ítems del corpus de los 30 días anteriores al corte.
+- el coseno de sus centroides es **mayor** que 0,80;
+- comparten al menos dos términos principales raros, **o** al menos la mitad de los miembros del menor.
 
-P1 pedía solo coseno ≥ 0,80. En el desarrollo eso fundía grupos sin relación, porque los grupos de 30 días tienen centroides cercanos a la media del corpus. Por ejemplo, «prediction markets» y «attention cache compression» daban 0,87, mientras los dos grupos del mismo arresto en OpenAI daban 0,84. La relación se cierra por componentes conexas.
+Un término es raro si aparece en ≤ 1 % de los ítems del corpus de los 30 días anteriores al corte. Depende del corpus, no de los brazos. `emit.dedup_cosine` debe valer 0,80; si no, la corrida falla.
+
+El coseno solo fundía grupos sin relación, porque los grupos de 30 días tienen centroides cercanos a la media del corpus. Un caso real del 17 de octubre: «openai lawsuit anthropic google» frente a «nvidia chips platform agents», con coseno 0,83 y ningún término en común. Una prueba conserva ese par como fixture.
+
+**Cómo se aplica la regla:**
+
+- Una **oportunidad** es un ancla más los puestos que coinciden directamente con ella. El orden es por clave de ancla, y en caso de varias coincidencias gana la de mayor coseno. No hay clausura transitiva: otro brazo no puede unir dos temas actuando de puente.
+- Un **duplicado** es un puesto que coincide directamente con un puesto anterior del mismo brazo y corte (`duplicate_of` en `rankings.json`).
+- Las **familias** unen oportunidades de cortes distintos por componentes conexas. Solo sirven como unidades del bootstrap y para separar temas nuevos de recurrentes.
+- Un **registro** coincide con un tema por el mismo id de señal o por la identidad.
 
 ### Tarjeta de tema (ciega)
 
@@ -229,9 +238,11 @@ Las ventanas no se calculan desde `closed_at`.
 
 **Memoria de novedad de F.** F no guarda estado entre corridas. Cada corrida recalcula, desde sus propias señales, si cada tema estuvo en el top 5 de los 7 días previos (`priorTopDays` en `run.ts`). Para cada uno de esos días filtra los miembros anteriores; el apilado es en línea, así que son exactamente los miembros de ese día. La relevancia se calcula por ítem. Con cortes espaciados no hacen falta días intermedios en `pool`. Una prueba comprueba que el mismo corte da el mismo `logical_hash` y el mismo ranking en cuatro casos: solo, junto con otros cortes en cualquier orden, reutilizado desde la caché de corridas y con `runEngine` directo.
 
-**Una regla de tema para U1 y U2.**
+**Una regla de tema para U1 y U2.** Es la identidad de `topic-identity.ts` descrita arriba. La deduplicación de F la importa. Las pruebas cubren tres casos: el puente A/B/C de Sol, el par real del 17 de octubre y la regla de duplicados por comparación directa.
 
-- La deduplicación de F al emitir (`rank.ts` `dedupe`) pliega un tema cuyo centroide tiene coseno > 0,80 con uno ya conservado.
-- La regla de esta evaluación funde con coseno > 0,80 más dos términos raros, o con la mitad de los ítems compartidos.
-- Dentro de una corrida las señales no comparten ítems. Por eso todo par que esta regla llama el mismo tema en un mismo ranking ya fue plegado por F, y el top 5 de F no puede tener duplicados según esta regla. Lo comprueba una prueba con fixtures.
-- Entre cortes, y entre configuraciones distintas, manda la regla de esta evaluación, que es la que define oportunidades y familias.
+**Validez y congelación (verificación de Sol sobre motor-v2).**
+
+- La validez se descompone en varios campos. `valid` exige todas las tarjetas respondidas y como mucho 10 % de «no sé». `unsure_limit_met` y `consistency_met` (al menos 8 de 10 repeticiones coinciden en núcleo frente al resto) se informan aparte.
+- El asiento `freeze` registra cuatro cosas: `eval_source_hash` (`editorial-*.ts` y `tools/*.ts`, sin pruebas), `engine_source_hash`, el commit y el árbol de git. La verificación comprueba los hashes. Desde la línea de órdenes (`pool --ledger`, `cards` y `score` con `--ledger`) comprueba además que el checkout sea ese árbol y no tenga cambios.
+- La calibración del juez exige además que el operador resuelva al menos el 80 % de las tarjetas. Si no, devuelve `accepted: false` con un motivo «insuficiente…».
+- El seguimiento HN toma el final de la ventana de los instantes operativos y lee también el último día parcial.

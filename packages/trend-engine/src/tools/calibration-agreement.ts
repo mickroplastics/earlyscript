@@ -152,6 +152,11 @@ export const GATE = {
   kappa: 0.5,
   /** Share of the operator's resolved cards the judge must also resolve. */
   judge_resolved_share: 0.8,
+  /**
+   * Share of all calibration cards the operator must resolve (yes or no), fixed before any
+   * answer is read (Sol, motor-v2 S1): a few resolved cards among many doubts prove nothing.
+   */
+  operator_resolved_share: 0.8,
 } as const;
 
 export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
@@ -168,6 +173,7 @@ export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
   const missing = expected - pairs.length;
   const judgeResolvedShare =
     operatorResolved.length === 0 ? null : resolved.length / operatorResolved.length;
+  const operatorResolvedShare = expected === 0 ? null : operatorResolved.length / expected;
   const pass = (k: { agreement: number | null; kappa: number | null }) =>
     k.agreement !== null &&
     k.kappa !== null &&
@@ -181,6 +187,7 @@ export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
     judge_unsure: norm.filter((p) => p.judge === "unsure").length,
     resolved: resolved.length,
     judge_resolved_share: judgeResolvedShare,
+    operator_resolved_share: operatorResolvedShare,
     resolved_agreement: strict.agreement,
     resolved_kappa: strict.kappa,
     doubts_as_no_agreement: doubtsAsNo.agreement,
@@ -195,9 +202,21 @@ export function agreement(pairs: ReadonlyArray<Pair>, expected = pairs.length) {
     },
     accepted:
       missing === 0 &&
+      operatorResolvedShare !== null &&
+      operatorResolvedShare >= GATE.operator_resolved_share &&
       judgeResolvedShare !== null &&
       judgeResolvedShare >= GATE.judge_resolved_share &&
       pass(strict),
+    reason:
+      missing > 0
+        ? `insuficiente: faltan ${missing} tarjetas`
+        : operatorResolvedShare === null || operatorResolvedShare < GATE.operator_resolved_share
+          ? `insuficiente: el operador resolvió ${operatorResolved.length} de ${expected} tarjetas (mínimo ${GATE.operator_resolved_share * 100} %)`
+          : judgeResolvedShare === null || judgeResolvedShare < GATE.judge_resolved_share
+            ? "insuficiente: el juez dejó en duda demasiadas tarjetas que el operador resolvió"
+            : pass(strict)
+              ? "aceptado"
+              : "acuerdo o kappa por debajo del umbral",
   };
 }
 

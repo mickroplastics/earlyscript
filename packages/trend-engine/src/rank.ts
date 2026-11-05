@@ -42,15 +42,15 @@ export function positions<T extends { readonly id: string }>(
 }
 
 /**
- * Walks `ordered` best first and keeps an entry unless its vector has a cosine above
- * `threshold` with one already kept (`alreadyKept` first, then earlier entries); a folded
- * entry is linked to the kept one it is closest to.
+ * Walks `ordered` best first and keeps an entry unless it is the same topic (`same`, the
+ * engine's topic identity) as one already kept (`alreadyKept` first, then earlier entries); a
+ * folded entry is linked to the matching kept one with the highest cosine.
  */
 export function dedupe<T extends { readonly id: string }>(
   ordered: ReadonlyArray<T>,
   alreadyKept: ReadonlyArray<T>,
   vectorOf: (entry: T) => Float32Array,
-  threshold: number,
+  same: (entry: T, kept: T) => boolean,
 ): { kept: Array<T>; related: Array<[string, { signal: T; cosine: number }]> } {
   const pool = [...alreadyKept];
   const kept: Array<T> = [];
@@ -58,8 +58,9 @@ export function dedupe<T extends { readonly id: string }>(
   for (const entry of ordered) {
     let best: { primary: T; cosine: number } | null = null;
     for (const primary of pool) {
+      if (!same(entry, primary)) continue;
       const cosine = dot(vectorOf(entry), vectorOf(primary));
-      if (cosine > threshold && (best === null || cosine > best.cosine)) best = { primary, cosine };
+      if (best === null || cosine > best.cosine) best = { primary, cosine };
     }
     if (best) related.push([best.primary.id, { signal: entry, cosine: best.cosine }]);
     else {
