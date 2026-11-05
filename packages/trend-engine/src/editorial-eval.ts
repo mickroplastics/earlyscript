@@ -124,6 +124,13 @@ export function referenceArms(dir = REFERENCE_CONFIG_DIR): Array<ArmSpec> {
   ];
 }
 
+/** C of protocol P1: the v2 candidate with its weighted ranking. */
+export const candidateArm = (dir = REFERENCE_CONFIG_DIR): ArmSpec => ({
+  name: "C",
+  configPath: NodePath.join(dir, "engine.v2.json"),
+  method: "weighted",
+});
+
 export interface KeywordList {
   readonly version: string;
   readonly terms: ReadonlyArray<string>;

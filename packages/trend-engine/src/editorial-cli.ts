@@ -10,12 +10,14 @@ import { SourceId } from "@earlyscript/editorial-contracts/source";
 import { httpTraceWriter } from "./collect.ts";
 import { captureDay } from "./editorial-capture.ts";
 import { writeFollowupLabels } from "./editorial-followup.ts";
+import { judgeCards } from "./editorial-judge.ts";
 import { runScore } from "./editorial-score.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
 import {
   appendLedger,
   assertSealed,
   buildTopicCards,
+  candidateArm,
   DEFAULT_CARD_SEED,
   EVAL_SOURCES,
   fileSha256,
@@ -31,11 +33,12 @@ import {
 const isSourceId = Schema.is(SourceId);
 
 export const EDITORIAL_USAGE =
-  "usage: engine eval-editorial pool --corpus <dir> --profile <file> --out <dir> --cutoffs <days> (--references | --arm <name>=<config.json>[:baseline|:weighted|:keywords=<file>] ...) [--sources <ids>] [--top 5] [--ledger <ledger.jsonl>] [--no-cards] [--seed n] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]\n" +
+  "usage: engine eval-editorial pool --corpus <dir> --profile <file> --out <dir> --cutoffs <days> (--references | --candidate-v2 | --arm <name>=<config.json>[:baseline|:weighted|:keywords=<file>] ...) [--sources <ids>] [--top 5] [--ledger <ledger.jsonl>] [--no-cards] [--seed n] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]\n" +
   "       engine eval-editorial cards --universe <universe.json> --out <dir> [--name <set>] [--cutoffs <days>] [--sample N] [--seed S] [--ledger <ledger.jsonl>]\n" +
   "       engine eval-editorial cards-html --cards <cards.jsonl> --out <dir> [--name <set>] [--title <text>]\n" +
   "       engine eval-editorial hn-labels --universe <universe.json> --corpus <dir> --out <labels-hn.json> [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
   "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> --labels <file> [--labels <file> ...] --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
+  "       engine eval-editorial judge --cards <cards.jsonl> --out <labels-judge.json> --judge-cache <dir> [--universe <universe.json>] [--judge <judge.json>] [--concurrency n]\n" +
   "       engine eval-editorial seal --ledger <ledger.jsonl> --kind <freeze|rankings|note> [--file <path> ...] [--note <text>]\n" +
   "       engine eval-editorial capture --corpus <dir> --ledger <ledger.jsonl> --snapshots <dir> [--day <YYYY-MM-DD>] [--first-day <day>] [--last-day <day>] [--sources <ids>] [--rss-feeds <file.json>] [--seed-from <corpus>]";
 
@@ -56,6 +59,10 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       cutoffs: { type: "string" },
       arm: { type: "string", multiple: true },
       references: { type: "boolean" },
+      "candidate-v2": { type: "boolean" },
+      judge: { type: "string" },
+      "judge-cache": { type: "string" },
+      concurrency: { type: "string" },
       sources: { type: "string" },
       top: { type: "string" },
       ledger: { type: "string" },
@@ -102,6 +109,7 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
   if (sub === "pool" && values.corpus && values.profile && values.out && values.cutoffs) {
     const arms = [
       ...(values.references ? referenceArms() : []),
+      ...(values["candidate-v2"] ? [candidateArm()] : []),
       ...(values.arm ?? []).map(parseArm),
     ];
     const result = await runPool({
@@ -218,6 +226,21 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values["seed-from"] ? { seedFrom: values["seed-from"] } : {}),
     });
     console.log(JSON.stringify(result));
+    return 0;
+  }
+  if (sub === "judge" && values.cards && values.out && values["judge-cache"]) {
+    const result = await judgeCards({
+      log,
+      cardsPath: values.cards,
+      out: values.out,
+      cacheDir: values["judge-cache"],
+      ...(values.judge ? { judgePath: values.judge } : {}),
+      ...(values.concurrency ? { concurrency: Number(values.concurrency) } : {}),
+      ...(values.universe ? { universeHash: readUniverse(values.universe).universe_hash } : {}),
+    });
+    const counts: Record<string, number> = {};
+    for (const l of result.labels) counts[l.label] = (counts[l.label] ?? 0) + 1;
+    console.log(JSON.stringify({ path: result.path, stats: result.stats, labels: counts }));
     return 0;
   }
   if (sub === "seal" && values.ledger && values.kind) {
