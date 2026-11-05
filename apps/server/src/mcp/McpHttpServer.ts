@@ -1169,7 +1169,7 @@ export const layerTools = Layer.mergeAll(
 export const layerEditorialToolkit = toolkitRegistration(EditorialToolkit, EditorialHandlers.layer);
 
 /** Earlyscript: the engine lab (candidates, evaluations, promotion requests), also outside layerTools. */
-const layerEngineLabToolkit = toolkitRegistration(EngineLabToolkit, EngineLabHandlers.layer);
+export const layerEngineLabToolkit = toolkitRegistration(EngineLabToolkit, EngineLabHandlers.layer);
 
 export const layer = Layer.mergeAll(layerTools, layerEditorialToolkit, layerEngineLabToolkit).pipe(
   Layer.provideMerge(layerMcpTransport),
