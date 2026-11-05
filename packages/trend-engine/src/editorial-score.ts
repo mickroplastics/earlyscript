@@ -606,8 +606,8 @@ function renderReport(
     `- Universo: \`${universe.universe_hash}\` (${universe.logical.topics.length} oportunidades (tema y corte), ${universe.logical.families.length} familias)`,
     `- Rankings: \`${rankings.rankings_hash}\`; métricas: \`${hash}\``,
     `- Brazos: ${rankings.logical.arms.map((a) => `${a.name} (${a.method})`).join(", ")}`,
-    "- P@5 con denominador 5: vacíos, «no sé», sin etiqueta, segunda aparición de una familia y (solo retrospectiva) puestos B6 valen 0. «Cota sup.» cuenta las dudas como sí.",
-    "- IC 95 % por bootstrap pareado de familias de temas; sensibilidad con bloques móviles de cortes. Diferencias contra referencias con límite de Bonferroni.",
+    "- P@5 con denominador 5: vacíos, «no sé», sin etiqueta, segunda aparición de la misma oportunidad (tema y corte) y, solo en la retrospectiva, puestos B6 del propio brazo valen 0. «Cota sup.» cuenta las dudas como sí. «P@5 con etiqueta» divide entre los puestos que tienen etiqueta (cobertura entre paréntesis).",
+    "- IC 95 % por bootstrap pareado de familias de temas; sensibilidad con bloques móviles de 7 días de calendario. Diferencias contra referencias con límite de Bonferroni. Familias nuevas: sin coincidencia con el registro congelado de desarrollo.",
     "",
   ];
   if (logical.excluded_prospective.length > 0) {

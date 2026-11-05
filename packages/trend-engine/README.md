@@ -95,26 +95,116 @@ El fixture `src/testkit/hn-live-reference.jsonl` contiene 20 líneas públicas d
 
 ## Evaluación editorial (`eval-editorial`, protocolo P1.1)
 
-Mide si el motor propone, en el corte, temas sobre los que SingulariDev haría un video. Cada brazo es una configuración del motor más un método de orden: `--arm <nombre>=<config.json>[:weighted|:baseline|:keywords=<términos.json>]`. `--references` añade R1 (`engine.v1.json:weighted`), R2 (`engine.v1.json:baseline`), R3 (`editorial-eval/engine.v1-noprofile.json:baseline`, umbrales de perfil inalcanzables y todas las tendencias que crecen emitidas) y R4 (palabras clave de `editorial-eval/keywords.v1.json`, escritas el 5 de noviembre de 2026 antes de ordenar ningún corte de prueba, sobre los términos del expediente y los títulos de los 7 días previos, orden `items_7d`). Ninguno cambia código del motor; `engine.v1.json` sigue dando el mismo `logical_hash`.
+Mide si el motor propone, en el corte, temas sobre los que SingulariDev haría un video. Cada brazo es una configuración del motor más un método de orden: `--arm <nombre>=<config.json>[:weighted|:baseline|:keywords=<términos.json>]`.
+
+- `--references` añade:
+  - R1: `engine.v1.json:weighted`.
+  - R2: `engine.v1.json:baseline`.
+  - R3: `editorial-eval/engine.v1-noprofile.json:baseline`. Usa umbrales de perfil inalcanzables y emite todas las tendencias que crecen.
+  - R4: palabras clave de `editorial-eval/keywords.v1.json`. La lista se escribió el 5 de noviembre de 2026, antes de ordenar ningún corte de prueba. Se aplica sobre los términos del expediente y los títulos de los 7 días previos, con orden `items_7d`.
+- `--candidate-v2` añade C: `engine.v2.json:weighted`.
+
+Ninguno cambia código del motor. `engine.v1.json` sigue dando el mismo `logical_hash`.
 
 ```sh
-engine eval-editorial pool --corpus <dir> --profile <perfil> --out <dir> --cutoffs 2026-10-17..2026-10-26 --references [--arm C=<v2.json>] [--ledger <ledger.jsonl>] --cache <sqlite> --workers 3
-engine eval-editorial cards --universe <dir>/universe.json --out <dir> --name calibracion-60 --cutoffs 2026-10-17..2026-10-26 --sample 60 --seed 20261105
-engine eval-editorial cards-html --cards items-calibration-40.jsonl --out <dir>
+engine eval-editorial pool --corpus <dir> --profile <perfil> --out <dir> --cutoffs 2026-10-17..2026-10-26 --references --candidate-v2 --cache <sqlite> --workers 3
+engine eval-editorial cards --universe <dir>/universe.json --out <dir> --name calibracion-60 --cutoffs … --sample 60 --seed 20261105
+engine eval-editorial judge --cards <dir>/cards.jsonl --entries-out entries.jsonl        # entradas para node src/tools/judge.ts
+engine eval-editorial judge --cards <dir>/cards.jsonl --judged salida.jsonl --out labels-juez.json --universe <dir>/universe.json [--judge judge/judge.vN.json]
 engine eval-editorial hn-labels --universe <dir>/universe.json --corpus <dir> --out labels-hn.json --cache <sqlite> --cache-only
-engine eval-editorial score --universe … --rankings … --labels labels-miguel.json [--labels labels-juez.json] --out <dir> --dev <días> --retro <días> --prospective <días> --candidate C --ledger <ledger.jsonl>
-engine eval-editorial seal --ledger <ledger.jsonl> --kind freeze --file <config> --file <perfil> …
+engine eval-editorial freeze --ledger <ledger.jsonl> --profile <perfil> --references --candidate-v2 --registry dev=<dev>/families.json --file config/relevance.v1.json --file judge/judge.v1.json …
+engine eval-editorial pool … --ledger <ledger.jsonl> --registry dev=<dev>/families.json      # prueba: verifica la congelación y sella
+engine eval-editorial score --universe … --rankings … --labels labels.json [--migrate-labels <labels>=<tarjetas.jsonl>] --out <dir> --dev <días> | --retro <días> --prospective <días> --ledger … --candidate C
 engine eval-editorial capture --corpus <dir> --ledger <ledger.jsonl> --snapshots <dir> --first-day … --last-day … [--seed-from <corpus>]
 ```
 
-`pool` corre el motor una vez por corte y configuración distinta (los brazos que comparten configuración comparten corrida), con continuación incremental del apilado y reutilización de corridas: cada corrida deja `runs/<corte>/<config>/emitted.json` con centroides e ítems, y una segunda llamada con las mismas entradas la reutiliza. Toma el top 5 de cada brazo y fusiona en una **oportunidad** (tema, corte) los puestos de un mismo corte que son el mismo tema. Las oportunidades de cortes distintos forman **familias**, que solo sirven para la dependencia y para separar temas nuevos de recurrentes: una etiqueta nunca pasa de un corte a otro. Escribe `universe.json` y `rankings.json` con hash SHA-256 de su parte lógica (sin rutas, horas ni ids de corrida), `centroids.json` y las tarjetas, sin etiquetas ni métricas.
+### `pool`
 
-Mismo tema: comparten al menos la mitad de los ítems del menor, o el coseno de sus centroides es ≥ 0,80 **y** comparten al menos dos términos principales raros (presentes en ≤ 1 % de los ítems del corpus de los 30 días anteriores al corte). P1 pedía solo coseno ≥ 0,80: en el desarrollo fundía grupos sin relación, porque los grupos de 30 días tienen centroides cercanos a la media del corpus («prediction markets» frente a «attention cache compression», 0,87; los dos grupos del mismo arresto en OpenAI, 0,84). La relación se cierra por componentes conexas y no depende del orden de brazos ni puestos. La rareza depende del corpus, no de los brazos.
+- Corre el motor una vez por corte y por configuración distinta. Los brazos que comparten configuración comparten la corrida.
+- Continúa el apilado de forma incremental entre cortes.
+- Reutiliza una corrida (`runs/<corte>/<config>/emitted.json`) solo si coinciden el corte, la configuración, el perfil, el embedder, el corpus y el hash del código del motor (`ENGINE_SOURCE_HASH`, los `.ts` de `src` sin pruebas, `tools`, `testkit` ni `editorial-*`).
+- Toma el top 5 de cada brazo y fusiona en una **oportunidad** (tema, corte) los puestos de un mismo corte que son el mismo tema. La fusión usa solo los datos de ese corte.
+- Las oportunidades de cortes distintos forman **familias**. Las familias sirven únicamente para dos cosas: el bootstrap y separar temas nuevos de recurrentes. Ni una etiqueta ni un crédito pasan de un corte a otro.
+- Escribe `universe.json` y `rankings.json`, con el hash de su parte lógica. También escribe `centroids.json`, las tarjetas y `families.json`.
+- `families.json` es el registro congelado de los miembros del top 5, con centroide, ítems y términos. Otro `pool` lo importa con `--registry dev=<ruta>` y marca en `seen_in.dev` cada tema que coincide con una familia de desarrollo según la misma regla, usando la rareza del corte del tema. Con `--registry train=…` hace lo mismo para el registro de familias de entrenamiento, que debe tener el mismo formato (`earlyscript.editorial-families/1`).
 
-Tarjeta de tema (ciega): términos del expediente ancla (el puesto con menor `trend_id|sha256(centroide)`), los 5 ítems más recientes publicados antes del corte de la unión de miembros (desempate por id) y la fecha del corte. No muestra puntuación, posición, brazo ni familia. `cards.html` es una página autocontenida: teclas `s`, `n`, `?` y flechas, guardado en `localStorage` y «Exportar etiquetas», que descarga `{labeler, cards_hash, universe_hash, labels: [{card_id, unit, topic_id|item_id, cutoff, label, labeled_at}]}`. Admite tarjetas de ítem (`unit: "item"`, título y extracto). `--sample` reparte la muestra entre familias por turnos.
+### Regla de mismo tema
 
-`score` (denominador 5): un puesto vacío, «no sé», sin juicio, la segunda aparición de una familia en el top 5 y, en la retrospectiva, un puesto cuyos titulares son todos de GitHub o Hugging Face recuperados después del corte (B6) valen 0. Informa la cota con las dudas como sí, la precisión entre respuestas resueltas, la cobertura, P@5 de familias nuevas y recurrentes, la dependencia de fuentes con la semana previa incompleta y la cobertura por fuente («no evaluada» si algún corte tiene menos de 5 días capturados en alguna ventana de 7). Intervalos: bootstrap pareado por familias (los vacíos de un corte forman una unidad), semilla fija, Bonferroni para las diferencias contra las referencias y sensibilidad con bloques móviles de 7 cortes. Una partición de prueba con más del 10 % de «no sé» queda no válida. Con `--ledger`, solo cuentan los cortes prospectivos cuya captura cerró después del último asiento `freeze`. Acuerdo: porcentaje y κ de Cohen por pares de etiquetadores.
+Dos puestos son el mismo tema si se cumple una de estas condiciones:
 
-`hn-labels` da la etiqueta secundaria de seguimiento en HN a cada oportunidad del universo: historias de los 14 días siguientes con coseno sobre el umbral contra su propio centroide, sin competir con otras, así que añadir temas o brazos no cambia etiquetas ajenas. Sin los 14 días capturados `complete`, un negativo queda `pending`.
+- comparten al menos la mitad de los ítems del menor;
+- el coseno de sus centroides es ≥ 0,80 **y** comparten al menos dos términos principales raros. Un término es raro si aparece en ≤ 1 % de los ítems del corpus de los 30 días anteriores al corte.
 
-Captura prospectiva: `capture` captura el día UTC anterior ya cerrado, reintenta una vez Wikipedia del día previo si quedó `unavailable` (su lista se publica horas después), hace una instantánea con enlaces duros (`collect` reemplaza por renombre, así que una captura posterior no altera la instantánea) y añade a `ledger.jsonl` el hash del corpus, la instantánea y la hora de cierre, que es el corte operativo del corte siguiente. Cada línea lleva el SHA-256 de la anterior. `pool --ledger` lee esa instantánea para los cortes prospectivos y sella universo y rankings en el libro antes de escribir tarjetas; `cards` rechaza tarjetas prospectivas sin ese sello.
+P1 pedía solo coseno ≥ 0,80. En el desarrollo eso fundía grupos sin relación, porque los grupos de 30 días tienen centroides cercanos a la media del corpus. Por ejemplo, «prediction markets» y «attention cache compression» daban 0,87, mientras los dos grupos del mismo arresto en OpenAI daban 0,84. La relación se cierra por componentes conexas.
+
+### Tarjeta de tema (ciega)
+
+- Muestra los términos del expediente ancla: el puesto con menor `trend_id|sha256(centroide)`.
+- Muestra los 5 ítems más recientes publicados antes del corte, tomados de la unión de miembros, con desempate por id.
+- Muestra la fecha del corte.
+- No muestra puntuación, posición, brazo ni familia.
+
+Al añadir un brazo, el contenido de una tarjeta puede cambiar. Por eso `score` acepta solo etiquetas del mismo `universe_hash`. Para etiquetas de otro universo existe la migración explícita `--migrate-labels <labels>=<tarjetas.jsonl>`:
+
+- el `sha256` del archivo de tarjetas debe ser el `cards_hash` de las etiquetas;
+- una etiqueta pasa solo si su tarjeta es idéntica (corte, términos y titulares);
+- el resto se descarta y se cuenta.
+
+`cards.html` es la página de etiquetado. Admite tarjetas de ítem (`unit: "item"`). `--sample` reparte la muestra por turnos entre familias.
+
+### `score`
+
+Las reglas son de P1.1, con las correcciones de la verificación de Sol.
+
+- **Denominador 5.** Valen 0:
+  - un puesto vacío;
+  - una tarjeta en «no sé», pendiente o sin juicio;
+  - la segunda aparición de la **misma oportunidad** en el top 5;
+  - en la retrospectiva, un puesto cuyo soporte **propio** está formado solo por ítems de GitHub o Hugging Face recuperados después del corte (B6). El soporte son los ítems del miembro de ese brazo en los 7 días previos, o sus 5 más recientes si no tiene. Nunca se mira la tarjeta compartida.
+- **Medidas secundarias.** Informa además:
+  - la cota con las dudas como sí;
+  - la precisión entre las respuestas resueltas;
+  - P@5 entre los puestos con etiqueta, junto a su cobertura;
+  - las familias nuevas y las recurrentes;
+  - la dependencia de fuentes con la semana previa incompleta;
+  - la cobertura por fuente.
+- **Intervalos.**
+  - Bootstrap pareado por familias, con semilla fija.
+  - Bonferroni para las diferencias contra las referencias.
+  - Sensibilidad con bloques móviles de 7 días de calendario. El inicio se sortea entre el primer día menos 6 y el último. Un bloque sobre un hueco no aporta nada. Los extremos del calendario no se unen.
+- **Cortes pedidos.** Un corte que no está en el universo es un error. Una partición de prueba sin `--registry dev` en su `pool` ni `--dev` en el mismo universo también es un error.
+- **Con `--ledger`.** `score` y `cards` verifican, en este orden:
+  1. la cadena del libro;
+  2. que la última congelación no esté vacía;
+  3. que cada archivo congelado conserve su hash;
+  4. que coincidan los brazos (configuraciones efectivas, métodos y palabras clave), el perfil, el código del motor y los registros;
+  5. que cada corte prospectivo haya leído su captura (`corpus_hash` y `closed_at`);
+  6. que el par exacto universo/rankings esté sellado después de esa congelación.
+
+  Además, un corte prospectivo cuenta solo si su captura cerró después de la congelación.
+
+### `hn-labels`
+
+Da la etiqueta de seguimiento en HN a cada oportunidad, sin competencia entre temas. Un negativo queda `pending` hasta tener todos los días del seguimiento capturados como `complete`.
+
+### Modificación del protocolo sobre el corte operativo (U1-S1)
+
+El motor sigue cortando a las 00:00 UTC: publicaciones, ventanas de 7 días y evidencia. En un corte prospectivo, `closed_at` del asiento de captura es el instante de disponibilidad: los datos y el ranking existen desde entonces. P1.1 decía que el corte operativo es `closed_at`. Esta implementación lo aplica en dos lugares:
+
+- la congelación debe preceder a `closed_at`;
+- el seguimiento HN de un corte prospectivo empieza en `closed_at`, de modo que una historia publicada entre las 00:00 y el cierre no cuenta como posterior.
+
+Las ventanas no se calculan desde `closed_at`.
+
+### Captura prospectiva
+
+`capture` hace, en orden:
+
+1. Captura el día UTC anterior, ya cerrado.
+2. Reintenta una vez Wikipedia del día previo si quedó `unavailable`.
+3. Omite y registra (`skipped_duplicates`) cualquier ítem cuyo id ya existe en otro día de la misma fuente. Hugging Face llegó a devolver el mismo modelo dos días, y `collect` lo guardaría dos veces, lo que rompe toda lectura posterior.
+4. Comprueba que no quedan ids repetidos (`duplicate_ids_after`).
+5. Hace una instantánea con enlaces duros.
+6. Añade el asiento encadenado al libro.
+
+`pool --ledger` lee esa instantánea en los cortes prospectivos.
