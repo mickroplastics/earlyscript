@@ -57,6 +57,7 @@ import * as EditorialJobsRpc from "./editorial/jobsRpc.ts";
 import * as EditorialOnboardingRpc from "./editorial/onboardingRpc.ts";
 import * as EditorialProfileRpc from "./editorial/profileRpc.ts";
 import * as EditorialEngineRpc from "./editorial/engineRpc.ts";
+import * as EditorialEngineLab from "./editorial/engineLabLayer.ts";
 import * as EditorialRuntime from "./editorial/runtimeLayer.ts";
 import * as EditorialPresentation from "./editorial/EditorialPresentationService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -641,7 +642,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   EditorialPresentation.layer,
-  EditorialJobsRpc.layer,
+  // The nightly plan reads the engine lab's active engine; the MCP toolkit reaches it too.
+  EditorialJobsRpc.layer.pipe(Layer.provideMerge(EditorialEngineLab.layer)),
   EditorialEngineRpc.layer,
 ).pipe(
   // Read side, importer, inbox commands and Results, all over the storage aroundOrchestration mounts.

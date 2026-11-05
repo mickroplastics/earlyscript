@@ -37,6 +37,7 @@ import { EditorialImportService } from "./EditorialImportService.ts";
 import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
+import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import {
   EngineSpawnRejected,
   killProcess,
@@ -298,6 +299,8 @@ interface JobPlan {
   readonly config: Record<string, unknown>;
   readonly configHash: string;
   readonly profileHash: string;
+  /** The active engine manifest the configuration came from (the engine lab's pointer). */
+  readonly engine: Omit<PlannedEngine, "config">;
 }
 
 const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: EditorialJobsOptions) {
@@ -317,6 +320,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   const runsDir = directory.runsDir;
   const corpusDir = sources.corpusDir;
   const profiles = yield* EditorialProfileService;
+  // Optional so the jobs service builds without the engine lab, as before it existed.
+  const engineLab = yield* Effect.serviceOption(EnginePromotionService);
 
   const fallbackArtifacts = (jobDir: string, enabled?: EnabledSources): EditorialJobArtifacts => ({
     jobDir,
@@ -454,11 +459,20 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       if (Option.isNone(decoded)) return yield* storage(`${defaultConfig} is not a JSON object`);
       base = decoded.value;
     }
-    // The engine reads its sources from the configuration, so the switches enter its hash.
-    const config = { ...base, sources: enabled.rank };
+    // The engine reads its sources from the configuration, so the switches enter its hash. The
+    // active engine manifest (EnginePromotionService) chooses the rest; with none, the default.
+    const { config, ...engine } =
+      Option.isSome(engineLab) && Result.isSuccess(options.engine)
+        ? yield* engineLab.value.planEngine({ defaultConfig: base, enabled })
+        : {
+            config: { ...base, sources: enabled.rank },
+            manifestHash: null,
+            engineSourceHash: null,
+            stale: [] as ReadonlyArray<string>,
+          };
     // The active profile enters the job key: a new version replaces a pending job.
     const profileHash = (yield* profiles.activeFile.pipe(Effect.mapError(storage))).hash;
-    return { enabled, config, configHash: sha256(canonicalJson(config)), profileHash };
+    return { enabled, config, configHash: sha256(canonicalJson(config)), profileHash, engine };
   });
 
   const selectJob = (jobId: string) =>
@@ -1211,6 +1225,19 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     const configFile = jobFile(ctx, "engine-config", "json");
     yield* fs
       .writeFileString(configFile, `${encodeJson(ctx.plan.config)}\n`)
+      .pipe(Effect.mapError(storage));
+    // Which active engine manifest this run executes, beside the configuration it was given.
+    yield* fs
+      .writeFileString(
+        jobFile(ctx, "engine-manifest", "json"),
+        `${encodeJson({
+          manifest_hash: ctx.plan.engine.manifestHash,
+          config_hash: ctx.job.config_hash,
+          profile_hash: ctx.job.profile_hash,
+          engine_source_hash: ctx.plan.engine.engineSourceHash,
+          stale: ctx.plan.engine.stale,
+        })}\n`,
+      )
       .pipe(Effect.mapError(storage));
     const args = [
       "run",

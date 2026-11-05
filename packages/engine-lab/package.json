@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./hash": {
+      "types": "./src/hash.ts",
+      "import": "./src/hash.ts"
+    },
     "./policy": {
       "types": "./src/policy.ts",
       "import": "./src/policy.ts"

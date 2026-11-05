@@ -80,6 +80,8 @@ import {
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import * as EditorialHandlers from "../editorial/mcp/handlers.ts";
+import * as EngineLabHandlers from "../editorial/engine-mcp/handlers.ts";
+import { EngineLabToolkit } from "../editorial/engine-mcp/tools.ts";
 import { EditorialToolkit } from "../editorial/mcp/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -1166,6 +1168,9 @@ export const layerTools = Layer.mergeAll(
 /** Earlyscript: read-only editorial tools, kept out of layerTools and its upstream budget. */
 export const layerEditorialToolkit = toolkitRegistration(EditorialToolkit, EditorialHandlers.layer);
 
-export const layer = Layer.merge(layerTools, layerEditorialToolkit).pipe(
+/** Earlyscript: the engine lab (candidates, evaluations, promotion requests), also outside layerTools. */
+const layerEngineLabToolkit = toolkitRegistration(EngineLabToolkit, EngineLabHandlers.layer);
+
+export const layer = Layer.mergeAll(layerTools, layerEditorialToolkit, layerEngineLabToolkit).pipe(
   Layer.provideMerge(layerMcpTransport),
 );

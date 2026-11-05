@@ -177,9 +177,10 @@ export function applyConfigChange(base: EngineConfig, change: unknown): ConfigCh
           "Weight relevance needs a relevance model, which this base has not.",
         );
       }
+      const weight = Number(value);
       const from = weights[name] ?? null;
-      if (from !== value) diff.push({ path: `rank.weighted.weights.${name}`, from, to: value });
-      weights[name] = value;
+      if (from !== weight) diff.push({ path: `rank.weighted.weights.${name}`, from, to: weight });
+      weights[name] = weight;
     }
   }
   if (!Object.values(weights).some((weight) => weight > 0)) {
@@ -212,7 +213,7 @@ export function applyConfigChange(base: EngineConfig, change: unknown): ConfigCh
       if (!finiteIn(value, 0, 1)) {
         throw new LabPolicyError("invalid-change", `relevance.${key} must be from 0 to 1.`);
       }
-      const typed = value as number;
+      const typed = Number(value);
       if (next[key] !== typed) diff.push({ path: `relevance.${key}`, from: next[key], to: typed });
       next[key] = typed;
     }

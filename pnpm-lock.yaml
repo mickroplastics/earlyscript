@@ -946,6 +946,9 @@ importers:
       '@earlyscript/editorial-script':
         specifier: workspace:*
         version: link:../../packages/editorial-script
+      '@earlyscript/engine-lab':
+        specifier: workspace:*
+        version: link:../../packages/engine-lab
       '@earlyscript/trend-engine':
         specifier: workspace:*
         version: link:../../packages/trend-engine

@@ -23,6 +23,10 @@
       "types": "./src/dossier.ts",
       "import": "./src/dossier.ts"
     },
+    "./engineLab": {
+      "types": "./src/engineLab.ts",
+      "import": "./src/engineLab.ts"
+    },
     "./run": {
       "types": "./src/run.ts",
       "import": "./src/run.ts"
