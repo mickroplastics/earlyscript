@@ -19,6 +19,10 @@
       "types": "./src/patch.ts",
       "import": "./src/patch.ts"
     },
+    "./artifact": {
+      "types": "./src/artifact.ts",
+      "import": "./src/artifact.ts"
+    },
     "./compare": {
       "types": "./src/compare.ts",
       "import": "./src/compare.ts"

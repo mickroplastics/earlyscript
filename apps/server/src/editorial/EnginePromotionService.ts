@@ -4,6 +4,7 @@ import type { EnginePromotionView } from "@earlyscript/editorial-contracts/engin
 import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 import type { DevelopmentReport } from "@earlyscript/engine-lab/compare";
 import { reportHash } from "@earlyscript/engine-lab/compare";
+import { artifactCli, artifactProblem, prepareArtifact } from "@earlyscript/engine-lab/artifact";
 import type { GateResult } from "@earlyscript/engine-lab/gate";
 import {
   diffManifests,
@@ -25,6 +26,7 @@ import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import {
   EngineLabOptions,
+  filesOf,
   insertManifest,
   installedSourceHash,
   labFailure,
@@ -49,7 +51,12 @@ export interface PlannedEngine {
   readonly config: Record<string, unknown>;
   /** Null while the lab was never used: the plan is exactly the one before the lab. */
   readonly manifestHash: string | null;
+  /** The source hash of the code the run executes: the installed engine's or the artifact's. */
   readonly engineSourceHash: string | null;
+  /** The artifact CLI of a code manifest; null runs the installed engine. */
+  readonly cli: string | null;
+  /** Set when the active manifest's code cannot run as approved: the run fails instead. */
+  readonly blocked: string | null;
   /** Why the active manifest no longer matches the product's inputs; empty when it does. */
   readonly stale: ReadonlyArray<string>;
 }
@@ -295,27 +302,26 @@ const make = Effect.gen(function* () {
         SELECT manifest_hash FROM editorial_engine_active WHERE id = 1
       `;
     const current = rows[0];
-    if (current === undefined)
-      return { config: today, manifestHash: null, engineSourceHash: code, stale: [] };
+    const live = { engineSourceHash: code, cli: null, blocked: null };
+    if (current === undefined) return { config: today, manifestHash: null, ...live, stale: [] };
     const row = yield* selectManifest(sql, current.manifest_hash);
     if (Option.isNone(row))
-      return {
-        config: today,
-        manifestHash: null,
-        engineSourceHash: code,
-        stale: ["missing-manifest"],
-      };
+      return { config: today, manifestHash: null, ...live, stale: ["missing-manifest"] };
     const manifest = manifestOf(row.value);
     // The installed manifest records today's engine; it never freezes the product's switches.
     if (manifest.kind === "installed") {
-      return {
-        config: today,
-        manifestHash: current.manifest_hash,
-        engineSourceHash: code,
-        stale: [],
-      };
+      return { config: today, manifestHash: current.manifest_hash, ...live, stale: [] };
     }
     const context = yield* productContext;
+    // Approved code runs from its artifact, verified now; the installed engine stays as it is.
+    const patched = Object.keys(manifest.code.files).length > 0;
+    const engine = patched
+      ? {
+          engineSourceHash: manifest.code.engine_source_hash,
+          cli: artifactCli(options.artifactsRoot, manifest.code.engine_source_hash),
+          blocked: artifactProblem(options.artifactsRoot, manifest.code.engine_source_hash),
+        }
+      : live;
     // A promoted manifest keeps its configuration; the product's switches stay the sources.
     return {
       config: {
@@ -323,7 +329,7 @@ const make = Effect.gen(function* () {
         sources: [...input.enabled.rank],
       },
       manifestHash: current.manifest_hash,
-      engineSourceHash: code,
+      ...engine,
       stale: staleReasons(manifest, context),
     } satisfies PlannedEngine;
   });
@@ -339,6 +345,8 @@ const make = Effect.gen(function* () {
             config: { ...input.defaultConfig, sources: [...input.enabled.rank] },
             manifestHash: null,
             engineSourceHash: installedSourceHash(options),
+            cli: null,
+            blocked: null,
             stale: ["unreadable"],
           }),
         ),
@@ -405,14 +413,6 @@ const make = Effect.gen(function* () {
       } else if (gate.value.verdict !== "pass") {
         checks.push(
           `shadow gate is ${gate.value.verdict}: ${(parseJson(gate.value.gate_json) as GateResult).reasons.join(" ")}`,
-        );
-      }
-    }
-    if (candidate.kind === "code") {
-      const installed = installedSourceHash(options);
-      if (installed !== candidate.code.engine_source_hash) {
-        checks.push(
-          "deploy: install the reviewed engine code whose source hash is the candidate's",
         );
       }
     }
@@ -529,7 +529,12 @@ const make = Effect.gen(function* () {
     const tampered = reportTampering(report, spec.spec);
     if (tampered !== null)
       return yield* labFailure("artifact-mismatch", `The report does not verify: ${tampered}.`);
-    const current = yield* active;
+    // The pointer as it is: reading it must not install anything, or approving would move the
+    // very engine the request expects.
+    const pointer = yield* sql<{ readonly manifest_hash: string }>`
+      SELECT manifest_hash FROM editorial_engine_active WHERE id = 1
+    `.pipe(storage);
+    const current = { hash: pointer[0]?.manifest_hash ?? "" };
     if (current.hash !== request.expected_active_hash) {
       return yield* markStale(request.request_id, "The active engine changed after the request.");
     }
@@ -542,20 +547,40 @@ const make = Effect.gen(function* () {
       );
     }
     if (reasons.includes("engine-code")) {
-      return yield* candidate.kind === "code"
-        ? labFailure(
-            "artifact-mismatch",
-            "The installed engine is not the candidate's code: deploy the reviewed code first.",
-          )
-        : markStale(
-            request.request_id,
-            "Another engine was installed since the candidate was made.",
-          );
+      return yield* markStale(
+        request.request_id,
+        "Another engine was installed since the candidate was made.",
+      );
     }
     const checks = (yield* pendingChecks(request, candidate, report).pipe(storage)).filter(
       (check) => !check.startsWith("operator:"),
     );
     if (checks.length > 0) return yield* labFailure("insufficient-evidence", checks.join(" "));
+    // Code: build its artifact by hash, away from the installed engine, before the pointer moves.
+    if (Object.keys(candidate.code.files).length > 0) {
+      const engineRoot = options.engineRoot;
+      if (engineRoot === null) {
+        return yield* labFailure("unsupported-change", "Code artifacts need the engine's sources.");
+      }
+      const row = Option.getOrThrow(
+        yield* selectManifest(sql, request.candidate_hash).pipe(storage),
+      );
+      yield* Effect.try({
+        try: () =>
+          prepareArtifact({
+            root: options.artifactsRoot,
+            engineRoot,
+            files: filesOf(row),
+            fileHashes: candidate.code.files,
+            sourceHash: candidate.code.engine_source_hash,
+          }),
+        catch: (cause) =>
+          labFailure(
+            "artifact-mismatch",
+            `The code artifact could not be built: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
+      });
+    }
     const gate = yield* shadowGate(request.request_id).pipe(storage);
     return yield* sql
       .withTransaction(

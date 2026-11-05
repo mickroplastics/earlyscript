@@ -51,6 +51,7 @@ export function labHarness(
       }),
       engineRoot: REPO_ROOT,
       jobsRoot: NodePath.join(dir, "jobs"),
+      artifactsRoot: NodePath.join(dir, "artifacts"),
       remote: null,
       ...DEFAULT_LAB_TIMING,
       ...overrides,

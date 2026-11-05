@@ -468,6 +468,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
             config: { ...base, sources: enabled.rank },
             manifestHash: null,
             engineSourceHash: null,
+            cli: null,
+            blocked: null,
             stale: [] as ReadonlyArray<string>,
           };
     // The active profile enters the job key: a new version replaces a pending job.
@@ -988,10 +990,13 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     logName: string,
     args: ReadonlyArray<string>,
     onStderrLine?: (line: string) => Effect.Effect<void>,
+    /** Another CLI of the same engine layout: an approved code manifest's artifact. */
+    cli?: string,
   ) => {
     const logFile = jobFile(ctx, logName, "log");
     const tail: Array<string> = [];
     return Effect.fromResult(options.engine).pipe(
+      Effect.map((engine) => (cli === undefined ? engine : { ...engine, cli })),
       Effect.mapError(
         (cause) => new PhaseFailure({ message: cause.message, notice: { code: "engine_missing" } }),
       ),
@@ -1221,6 +1226,13 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     if (ctx.plan.enabled.rank.length === 0) {
       return yield* fail("No source is enabled for the engine.", { code: "no_sources" });
     }
+    // The active manifest's code, or no run: never another engine in its place.
+    if (ctx.plan.engine.blocked !== null) {
+      return yield* fail(`The active engine's code cannot run: ${ctx.plan.engine.blocked}.`, {
+        code: "engine_failed",
+        phase: "run",
+      });
+    }
     const profileFile = yield* ensureProfileFile(ctx.job.profile_hash);
     const configFile = jobFile(ctx, "engine-config", "json");
     yield* fs
@@ -1235,6 +1247,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           config_hash: ctx.job.config_hash,
           profile_hash: ctx.job.profile_hash,
           engine_source_hash: ctx.plan.engine.engineSourceHash,
+          engine_cli:
+            ctx.plan.engine.cli ??
+            (Result.isSuccess(options.engine) ? options.engine.success.cli : null),
           stale: ctx.plan.engine.stale,
         })}\n`,
       )
@@ -1257,15 +1272,20 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       options.cacheFile,
       ...modelsArgs(options.modelsDir),
     ];
-    const output = yield* engineRun(ctx, "run", args, (line) =>
-      Option.match(Option.flatMap(decodeJsonOption(line), decodeEmbedProgress), {
-        onNone: () => Effect.void,
-        onSome: (progress) =>
-          ctx
-            .save({ progress: { phase: "run", done: progress.inferred, total: progress.total } })
-            // Progress only; a lost lease surfaces at the next renewal or guarded write.
-            .pipe(Effect.ignore),
-      }),
+    const output = yield* engineRun(
+      ctx,
+      "run",
+      args,
+      (line) =>
+        Option.match(Option.flatMap(decodeJsonOption(line), decodeEmbedProgress), {
+          onNone: () => Effect.void,
+          onSome: (progress) =>
+            ctx
+              .save({ progress: { phase: "run", done: progress.inferred, total: progress.total } })
+              // Progress only; a lost lease surfaces at the next renewal or guarded write.
+              .pipe(Effect.ignore),
+        }),
+      ctx.plan.engine.cli ?? undefined,
     );
     const result = decodeRunResult(lastJsonLine(output.stdout));
     const engineFailed = { code: "engine_failed", phase: "run" } as const;

@@ -187,6 +187,7 @@ const layer = Effect.gen(function* () {
     engine,
     engineRoot: Result.isSuccess(engine) ? engineRootOf(engine.success) : null,
     jobsRoot: NodePath.join(NodePath.dirname(db), "editorial-engine-lab", "jobs"),
+    artifactsRoot: NodePath.join(NodePath.dirname(db), "editorial-engine-lab", "artifacts"),
     remote: Option.match(remote, { onNone: () => null, onSome: parseRemote }),
     ...DEFAULT_LAB_TIMING,
   });

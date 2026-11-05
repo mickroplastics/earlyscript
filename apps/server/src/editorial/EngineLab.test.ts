@@ -2,7 +2,10 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { artifactCli } from "@earlyscript/engine-lab/artifact";
+import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import { labelSyntheticCards } from "@earlyscript/engine-lab/synthetic";
+import { REPO_ROOT } from "@earlyscript/engine-lab/testkit";
 import { evaluateJob } from "@earlyscript/engine-lab/worker";
 import type { JobSpec } from "@earlyscript/engine-lab/result";
 import { expect, it } from "@effect/vitest";
@@ -26,6 +29,7 @@ import {
   type LabHarness,
 } from "./engineLab.testkit.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
+import { EditorialSourcesService } from "./EditorialSourcesService.ts";
 import { makeTempDir, removeDir } from "./persistence/EditorialDatabase.testkit.ts";
 import { EditorialRunDirectory } from "./RunDirectory.ts";
 
@@ -453,7 +457,7 @@ it.live(
 );
 
 it.live(
-  "a code candidate with equal outputs is promotable only once its code is the installed engine's",
+  "promotes code through a versioned artifact without touching the installed engine, and reverts to it (Sol, B4)",
   () =>
     withHarness((harness) =>
       Effect.gen(function* () {
@@ -499,11 +503,48 @@ it.live(
           expectedActive: active.hash,
           reason: "equal outputs",
         });
-        expect(request.pendingChecks.join(" ")).toContain("deploy");
-        const refused = yield* Effect.flip(
-          promotion.approve({ requestId: request.requestId, actor: "miguel", reason: "x" }),
+        const liveBefore = engineSourceHash(NodePath.join(REPO_ROOT, "packages/trend-engine/src"));
+        expect(request.pendingChecks.join(" ")).not.toContain("deploy");
+        const activation = yield* promotion.approve({
+          requestId: request.requestId,
+          actor: "miguel",
+          reason: "equal outputs, reviewed",
+        });
+        expect(activation).toMatchObject({ kind: "promote", previous_hash: active.hash });
+        // Sol's repro: approving no longer installs a manifest of its own and stales itself.
+        expect((yield* promotion.history).map((row) => row.kind)).toEqual(["promote", "install"]);
+        expect(engineSourceHash(NodePath.join(REPO_ROOT, "packages/trend-engine/src"))).toBe(
+          liveBefore,
         );
-        expect(refused.code).toBe("artifact-mismatch");
+        const sourceHash = created.candidate.engineSourceHash;
+        expect(sourceHash).not.toBe(liveBefore);
+        const enabled = yield* (yield* EditorialSourcesService).enabledSources;
+        const defaultConfig = harness.fixture.config as unknown as Record<string, unknown>;
+        const planned = yield* promotion.planEngine({ defaultConfig, enabled });
+        expect(planned).toMatchObject({
+          manifestHash: created.candidate.manifestHash,
+          engineSourceHash: sourceHash,
+          cli: artifactCli(harness.options.artifactsRoot, sourceHash),
+          blocked: null,
+        });
+        // An artifact edited after it was built never runs: the nightly fails instead.
+        const rankFile = NodePath.join(NodePath.dirname(planned.cli!), "rank.ts");
+        NodeFS.chmodSync(rankFile, 0o644);
+        NodeFS.appendFileSync(rankFile, "\n// edited\n");
+        expect((yield* promotion.planEngine({ defaultConfig, enabled })).blocked).toContain(
+          "hashes",
+        );
+        const reverted = yield* promotion.revert({
+          actor: "miguel",
+          reason: "back",
+          expectedActive: created.candidate.manifestHash,
+        });
+        expect(reverted.manifest_hash).toBe(active.hash);
+        expect(yield* promotion.planEngine({ defaultConfig, enabled })).toMatchObject({
+          engineSourceHash: liveBefore,
+          cli: null,
+          blocked: null,
+        });
       }),
     ),
 );

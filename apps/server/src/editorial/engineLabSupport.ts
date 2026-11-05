@@ -43,6 +43,8 @@ export interface EngineLabOptionsShape {
   /** The checkout whose packages/engine-lab runs local jobs; null in the desktop bundle. */
   readonly engineRoot: string | null;
   readonly jobsRoot: string;
+  /** Approved code candidates' engines, one directory per source hash, away from the live one. */
+  readonly artifactsRoot: string;
   readonly remote: RemoteExecutor | null;
   readonly leaseMs: number;
   readonly heartbeatMs: number;
@@ -92,6 +94,7 @@ const resolveLabOptions = Effect.gen(function* () {
     engine,
     engineRoot: Result.isSuccess(engine) ? engineRootOf(engine.success) : null,
     jobsRoot: path.join(stateDir, "editorial-engine-lab", "jobs"),
+    artifactsRoot: path.join(stateDir, "editorial-engine-lab", "artifacts"),
     remote: Option.match(remote, { onNone: () => null, onSome: parseRemote }),
     ...DEFAULT_LAB_TIMING,
   } satisfies EngineLabOptionsShape;

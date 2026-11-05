@@ -473,6 +473,8 @@ const make = Effect.gen(function* () {
         catch: fromPolicy,
       });
       manifest = configCandidate(base, changed.config);
+      // A configuration child of a code manifest runs the same patched files.
+      files = { ...filesOf(baseRow) };
     } else if (kind === "code") {
       const extra = Object.keys(body).filter((key) => key !== "baseSourceHash" && key !== "patch");
       if (extra.length > 0)

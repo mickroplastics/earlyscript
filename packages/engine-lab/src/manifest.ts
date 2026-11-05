@@ -164,6 +164,8 @@ export function staleReasons(manifest: EngineManifest, context: ProductContext):
     reasons.push("collect-sources");
   }
   if (manifest.feeds_hash !== context.feedsHash) reasons.push("rss-feeds");
-  if (manifest.code.engine_source_hash !== context.engineSourceHash) reasons.push("engine-code");
+  // A code manifest runs its own artifact; what must match the product is the engine it was
+  // built on. For every other manifest the two hashes are the same.
+  if (manifest.code.base_source_hash !== context.engineSourceHash) reasons.push("engine-code");
   return reasons;
 }

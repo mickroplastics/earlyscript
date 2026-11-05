@@ -106,6 +106,7 @@ const services = Layer.merge(EngineChangeService.layer, EngineExperimentService.
         engine: Result.succeed(engine),
         engineRoot: REPO_ROOT,
         jobsRoot: NodePath.join(out, "state", "editorial-engine-lab", "jobs"),
+        artifactsRoot: NodePath.join(out, "state", "editorial-engine-lab", "artifacts"),
         remote: null,
         ...DEFAULT_LAB_TIMING,
       }),
