@@ -2366,3 +2366,20 @@ En el expediente, los términos del motor, sus etiquetas y el modelo quedan en �
 La barra lateral heredada queda pendiente: `SidebarThreadRow.tsx` recibe datos de orquestación sin cohorte editorial y el orden se calcula fuera de los archivos propios. `hiddenFeatures.ts` filtra funciones, y el locale omite expresamente los títulos de usuario; ninguno permite ordenar por cohorte o añadir insignias. No se modifican componentes de upstream ni se reordenan sus nodos por DOM. Alternativa futura: una lista propia de ensayos con suscripción a cohortes, o un punto de montaje aprobado en la lista heredada. El panel editorial del hilo y Resultados conservan la marca «Ensayo» disponible hoy.
 
 Pruebas: lectura y reversión de cohorte, actualización de la suscripción, creación humana posterior con reintento, ausencia de insignia en la fila, acciones del expediente, detalles plegados y desplegados, y nota de mediana vacía. Evidencia y salidas literales en `/home/miguel/earlyscript-data/cohort-inbox/informe.md`. Las capturas usan una copia aislada con fixture visual identificada en ese informe, no resultados humanos nuevos. Ningún archivo de upstream modificado.
+
+## Laboratorio del motor por MCP (rama `es/engine-mcp`, 5 de noviembre de 2026)
+
+Base `e2c82bf929` (`es/motor-v2`); no es fusionable antes que esa rama. Los modelos crean candidatos inmutables del motor (pesos, umbrales de relevancia o un parche acotado a `rank.ts`, `relevance.ts` y `series.ts`), los evalúan en campañas del operador con presupuesto y piden su promoción; solo el comando de operador `apps/server/scripts/engine-lab.ts` aprueba, rechaza o revierte. El plan nocturno lee el manifiesto activo.
+
+### Archivos de upstream modificados
+
+| Archivo                                | Cambio                                                                                            | Motivo                                                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/mcp/McpHttpServer.ts` | Import de `engine-mcp/{tools,handlers}.ts`, `layerEngineLabToolkit` y su montaje en `layer`.      | Toolkit propio fuera de `layerTools` y de su presupuesto de contexto, como `layerEditorialToolkit`.                                                |
+| `apps/server/src/server.ts`            | Import de `editorial/engineLabLayer.ts`; `EditorialJobsRpc.layer` recibe la capa del laboratorio. | El plan nocturno y el MCP comparten el mismo `EnginePromotionService`. `pipe` admite 20 argumentos, por eso no es una línea `provideMerge` propia. |
+| `apps/server/package.json`             | Dependencia `@earlyscript/engine-lab` y script `engine-lab`.                                      | Paquete propio del trabajador y comando del operador.                                                                                              |
+| `pnpm-lock.yaml`                       | Enlaces del paquete nuevo.                                                                        | Espacio de trabajo.                                                                                                                                |
+
+### Archivos propios
+
+`packages/engine-lab` (política, manifiesto, parches, comparación, compuerta, trabajador con `bwrap`, corpus sintético), `packages/editorial-contracts/src/engineLab.ts`, `apps/server/src/editorial/{EngineChangeService,EngineExperimentService,EnginePromotionService,engineLabSupport,engineLabLayer}.ts`, `apps/server/src/editorial/engine-mcp/`, la migración 018 y `apps/server/scripts/engine-lab.ts`. `packages/trend-engine` no cambia: `ENGINE_SOURCE_HASH` sigue igual que en la base.
