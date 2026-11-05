@@ -1,0 +1,53 @@
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalConsole:off - the executor's command line.
+// The fixed commands an executor runs. The server sends the job spec on stdin; nothing here
+// takes a path, host or argument from a model.
+//   node src/cli.ts evaluate --jobs-root <dir> --engine-root <dir> --token <token>  (spec on stdin)
+//   node src/cli.ts cancel --jobs-root <dir> --token <token>
+//   node src/cli.ts synthetic --out <dir> --from <day> --days <n>
+import * as NodeFS from "node:fs";
+
+import type { JobSpec } from "./result.ts";
+import { writeSyntheticCorpus } from "./synthetic.ts";
+import { cancelJob, evaluateJob } from "./worker.ts";
+
+const [command, ...rest] = process.argv.slice(2);
+const opt = (name: string) => {
+  const at = rest.indexOf(`--${name}`);
+  return at < 0 ? undefined : rest[at + 1];
+};
+const need = (name: string) => {
+  const value = opt(name);
+  if (value === undefined) {
+    console.error(`missing --${name}`);
+    process.exit(2);
+  }
+  return value;
+};
+
+if (command === "evaluate") {
+  const jobsRoot = need("jobs-root");
+  const engineRoot = need("engine-root");
+  const token = need("token");
+  const spec = JSON.parse(NodeFS.readFileSync(0, "utf8")) as JobSpec;
+  if (spec.token !== token) {
+    console.error("the spec belongs to another token");
+    process.exit(2);
+  }
+  const result = await evaluateJob(spec, {
+    jobsRoot,
+    engineRoot,
+    log: (line) => console.error(line),
+  });
+  console.log(JSON.stringify(result));
+} else if (command === "cancel") {
+  console.log(JSON.stringify({ status: cancelJob(need("jobs-root"), need("token")) }));
+} else if (command === "synthetic") {
+  console.log(
+    JSON.stringify(
+      writeSyntheticCorpus({ dir: need("out"), fromDay: need("from"), days: Number(need("days")) }),
+    ),
+  );
+} else {
+  console.error("usage: cli.ts evaluate|cancel|synthetic ...");
+  process.exit(2);
+}

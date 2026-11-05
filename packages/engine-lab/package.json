@@ -1,0 +1,57 @@
+{
+  "name": "@earlyscript/engine-lab",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./policy": {
+      "types": "./src/policy.ts",
+      "import": "./src/policy.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "import": "./src/manifest.ts"
+    },
+    "./patch": {
+      "types": "./src/patch.ts",
+      "import": "./src/patch.ts"
+    },
+    "./compare": {
+      "types": "./src/compare.ts",
+      "import": "./src/compare.ts"
+    },
+    "./gate": {
+      "types": "./src/gate.ts",
+      "import": "./src/gate.ts"
+    },
+    "./result": {
+      "types": "./src/result.ts",
+      "import": "./src/result.ts"
+    },
+    "./labels": {
+      "types": "./src/labels.ts",
+      "import": "./src/labels.ts"
+    },
+    "./worker": {
+      "types": "./src/worker.ts",
+      "import": "./src/worker.ts"
+    },
+    "./synthetic": {
+      "types": "./src/synthetic.ts",
+      "import": "./src/synthetic.ts"
+    }
+  },
+  "scripts": {
+    "lab": "node src/cli.ts",
+    "arm": "node src/arm.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@earlyscript/editorial-contracts": "workspace:*",
+    "@earlyscript/trend-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

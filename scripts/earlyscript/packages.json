@@ -19,7 +19,8 @@
     "packages/ssh": "Runtime dependency of apps/desktop for remote environments.",
     "packages/tailscale": "Runtime dependency of apps/desktop for remote environments.",
     "packages/editorial-contracts": "Earlyscript's editorial primitives and the Earlywindow dossier/1 reader.",
-    "packages/trend-engine": "Earlyscript's deterministic trend engine over corpus/1."
+    "packages/trend-engine": "Earlyscript's deterministic trend engine over corpus/1.",
+    "packages/engine-lab": "Engine lab: candidate manifests, sealed partitions, the sandboxed worker and the development comparison behind the engine MCP."
   },
   "exclude": {
     "apps/mobile": "Mobile client, hidden in Earlyscript.",
@@ -46,6 +47,7 @@
   "owned": [
     "packages/editorial-*",
     "packages/trend-engine",
+    "packages/engine-lab",
     "packages/earlywindow-engine",
     "apps/server/src/editorial",
     "apps/web/src/editorial"
