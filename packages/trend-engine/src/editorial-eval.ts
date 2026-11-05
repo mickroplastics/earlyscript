@@ -940,8 +940,13 @@ async function poolRun(args: {
     stack: args.stack,
     log: args.log,
     ...(options.allowUnverifiedCorpus ? { allowUnverifiedCorpus: true } : {}),
+    // The stack replay keeps mutating its signals at later cutoffs: copy them now.
     onEmitted: (trends) => {
-      emitted = trends;
+      emitted = trends.map((t) => ({
+        id: t.id,
+        centroid: Float32Array.from(t.centroid),
+        itemIds: [...t.itemIds],
+      }));
     },
   });
   if (record.status !== "ok") {
