@@ -70,11 +70,24 @@ export function prepareArtifact(input: {
   const pkg = NodePath.join(tmp, "packages", "trend-engine");
   NodeFS.mkdirSync(pkg, { recursive: true });
   NodeFS.cpSync(NodePath.join(installed, "src"), NodePath.join(pkg, "src"), { recursive: true });
-  NodeFS.cpSync(NodePath.join(installed, "config"), NodePath.join(pkg, "config"), {
-    recursive: true,
-  });
-  NodeFS.copyFileSync(NodePath.join(installed, "package.json"), NodePath.join(pkg, "package.json"));
-  NodeFS.symlinkSync(NodePath.join(installed, "node_modules"), NodePath.join(pkg, "node_modules"));
+  // The sources are what the hash covers; the rest comes along when the installed engine has it.
+  if (NodeFS.existsSync(NodePath.join(installed, "config"))) {
+    NodeFS.cpSync(NodePath.join(installed, "config"), NodePath.join(pkg, "config"), {
+      recursive: true,
+    });
+  }
+  if (NodeFS.existsSync(NodePath.join(installed, "package.json"))) {
+    NodeFS.copyFileSync(
+      NodePath.join(installed, "package.json"),
+      NodePath.join(pkg, "package.json"),
+    );
+  }
+  if (NodeFS.existsSync(NodePath.join(installed, "node_modules"))) {
+    NodeFS.symlinkSync(
+      NodePath.join(installed, "node_modules"),
+      NodePath.join(pkg, "node_modules"),
+    );
+  }
   for (const [path, contents] of Object.entries(input.files)) {
     if (!path.startsWith(ENGINE_PREFIX) || path.includes("..")) {
       throw new LabPolicyError("artifact-mismatch", `${path} is not an engine source file.`);
