@@ -381,7 +381,9 @@ describe("prospective capture", () => {
 /** A ledger line with an explicit time, chained like appendLedger (tests only). */
 function appendAt(path: string, entry: Record<string, unknown>) {
   const lines = NodeFS.existsSync(path)
-    ? NodeFS.readFileSync(path, "utf8").split("\n").filter((l) => l.length > 0)
+    ? NodeFS.readFileSync(path, "utf8")
+        .split("\n")
+        .filter((l) => l.length > 0)
     : [];
   const last = lines.at(-1);
   NodeFS.appendFileSync(
@@ -445,7 +447,9 @@ describe("prospective pool and score", () => {
     expect(retro!.prospective).toBe(false);
     expect(prospective!.prospective).toBe(true);
     expect(prospective!.operational_cutoff_at).toBe("2099-01-01T00:05:00.000Z");
-    expect(pool.universe.logical.inputs.registries["dev"]).toBe(readRegistry(registry).registry_hash);
+    expect(pool.universe.logical.inputs.registries["dev"]).toBe(
+      readRegistry(registry).registry_hash,
+    );
     expect(pool.universe.logical.topics.every((t) => Array.isArray(t.seen_in["dev"]))).toBe(true);
     expect(dev.universe.logical.topics.length).toBeGreaterThan(0);
     expect(readLedger(ledgerPath).map((e) => e.kind)).toEqual(["freeze", "capture", "rankings"]);
@@ -599,7 +603,11 @@ function miniEvaluation(
   const rankingsPath = NodePath.join(root, "rankings.json");
   NodeFS.writeFileSync(universePath, JSON.stringify(universe));
   NodeFS.writeFileSync(rankingsPath, JSON.stringify(rankings));
-  const labels = (labeler: string, values: Record<string, LabelValue>, universeHash = universe.universe_hash) => {
+  const labels = (
+    labeler: string,
+    values: Record<string, LabelValue>,
+    universeHash = universe.universe_hash,
+  ) => {
     const path = NodePath.join(root, `labels-${labeler}-${Object.keys(values).length}.json`);
     NodeFS.writeFileSync(
       path,
@@ -612,7 +620,13 @@ function miniEvaluation(
     );
     return path;
   };
-  return { universePath, rankingsPath, labels, universe: universe as unknown as Universe, rankings: rankings as unknown as Rankings };
+  return {
+    universePath,
+    rankingsPath,
+    labels,
+    universe: universe as unknown as Universe,
+    rankings: rankings as unknown as Rankings,
+  };
 }
 
 describe("Sol's U1 findings (regressions)", () => {
@@ -626,7 +640,15 @@ describe("Sol's U1 findings (regressions)", () => {
         { id: "B", family: "F", cutoff: "2026-10-20", members: [{ config: "cfg-R", trend: "b" }] },
         { id: "X", family: "F", cutoff: "2026-10-21", members: [{ config: "cfg-R", trend: "x" }] },
       ],
-      { "2026-10-20": { R: [["a", "A"], ["b", "B"]] }, "2026-10-21": { R: [["x", "X"]] } },
+      {
+        "2026-10-20": {
+          R: [
+            ["a", "A"],
+            ["b", "B"],
+          ],
+        },
+        "2026-10-21": { R: [["x", "X"]] },
+      },
     );
     const out = await runScore({
       universePath: e.universePath,
@@ -643,7 +665,11 @@ describe("Sol's U1 findings (regressions)", () => {
 
   it("B2: refuses an empty freeze, a broken chain, another rankings pair and a foreign capture", () => {
     const root = tempDir("u1-b2");
-    const capture = { cutoff: "2026-11-06", closed: "2026-11-06T00:09:00.000Z", corpus: "sha256:snap" };
+    const capture = {
+      cutoff: "2026-11-06",
+      closed: "2026-11-06T00:09:00.000Z",
+      corpus: "sha256:snap",
+    };
     const e = miniEvaluation(
       root,
       [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
@@ -680,9 +706,15 @@ describe("Sol's U1 findings (regressions)", () => {
       for (const entry of entries) appendAt(path, entry);
       return path;
     };
-    expect(() => assertSealed(e.universe, e.rankings, ledger("ok", [freeze, captureEntry, sealEntry]))).not.toThrow();
     expect(() =>
-      assertSealed(e.universe, e.rankings, ledger("empty", [{ ...freeze, files: [] }, captureEntry, sealEntry])),
+      assertSealed(e.universe, e.rankings, ledger("ok", [freeze, captureEntry, sealEntry])),
+    ).not.toThrow();
+    expect(() =>
+      assertSealed(
+        e.universe,
+        e.rankings,
+        ledger("empty", [{ ...freeze, files: [] }, captureEntry, sealEntry]),
+      ),
     ).toThrow(/names no files/);
     expect(() =>
       assertSealed(e.universe, e.rankings, ledger("noseal", [freeze, captureEntry])),
@@ -698,7 +730,11 @@ describe("Sol's U1 findings (regressions)", () => {
       assertSealed(
         e.universe,
         e.rankings,
-        ledger("arms", [{ ...freeze, arms: [{ ...e.rankings.logical.arms[0]!, config_hash: "B" }] }, captureEntry, sealEntry]),
+        ledger("arms", [
+          { ...freeze, arms: [{ ...e.rankings.logical.arms[0]!, config_hash: "B" }] },
+          captureEntry,
+          sealEntry,
+        ]),
       ),
     ).toThrow(/differ from the freeze/);
     expect(() =>
@@ -713,10 +749,10 @@ describe("Sol's U1 findings (regressions)", () => {
     lines[0] = lines[0]!.replace("12:00:00", "12:00:01");
     NodeFS.writeFileSync(broken, lines.join("\n"));
     expect(() => assertSealed(e.universe, e.rankings, broken)).toThrow(/breaks the chain/);
-    NodeFS.writeFileSync(frozen, "{\"changed\":true}");
-    expect(() => assertSealed(e.universe, e.rankings, ledger("changed", [freeze, captureEntry, sealEntry]))).toThrow(
-      /changed or is missing/,
-    );
+    NodeFS.writeFileSync(frozen, '{"changed":true}');
+    expect(() =>
+      assertSealed(e.universe, e.rankings, ledger("changed", [freeze, captureEntry, sealEntry])),
+    ).toThrow(/changed or is missing/);
   });
 
   it("B3: B6 follows each arm's own position, not the shared card", async () => {
@@ -749,8 +785,34 @@ describe("Sol's U1 findings (regressions)", () => {
     expect(arms.C.p_at_5).toBe(0);
     expect(arms.C.counts.unavailable_at_cutoff).toBe(1);
     expect(arms.R.p_at_5).toBeCloseTo(0.2);
-    expect(lateOnly([{ id: "1", source: "github", published_at: "2026-10-29T01:00:00Z", retrieved_at: "2026-11-05T00:00:00Z" }], Date.parse("2026-10-30T00:00:00Z"), Date.parse("2026-10-30T00:00:00Z"))).toBe(true);
-    expect(lateOnly([{ id: "1", source: "hn", published_at: "2026-10-29T01:00:00Z", retrieved_at: "2026-11-05T00:00:00Z" }], Date.parse("2026-10-30T00:00:00Z"), Date.parse("2026-10-30T00:00:00Z"))).toBe(false);
+    expect(
+      lateOnly(
+        [
+          {
+            id: "1",
+            source: "github",
+            published_at: "2026-10-29T01:00:00Z",
+            retrieved_at: "2026-11-05T00:00:00Z",
+          },
+        ],
+        Date.parse("2026-10-30T00:00:00Z"),
+        Date.parse("2026-10-30T00:00:00Z"),
+      ),
+    ).toBe(true);
+    expect(
+      lateOnly(
+        [
+          {
+            id: "1",
+            source: "hn",
+            published_at: "2026-10-29T01:00:00Z",
+            retrieved_at: "2026-11-05T00:00:00Z",
+          },
+        ],
+        Date.parse("2026-10-30T00:00:00Z"),
+        Date.parse("2026-10-30T00:00:00Z"),
+      ),
+    ).toBe(false);
   });
 
   it("B4: refuses absent cutoffs and test partitions with no dev reference", async () => {
@@ -769,7 +831,9 @@ describe("Sol's U1 findings (regressions)", () => {
         replicates: 10,
         ...opts,
       });
-    await expect(run({ dev: ["2026-10-17"], retro: ["2026-10-30"] })).rejects.toThrow(/not in the universe/);
+    await expect(run({ dev: ["2026-10-17"], retro: ["2026-10-30"] })).rejects.toThrow(
+      /not in the universe/,
+    );
     await expect(run({ retro: ["2026-10-30"] })).rejects.toThrow(/dev family registry/);
   });
 
@@ -781,7 +845,14 @@ describe("Sol's U1 findings (regressions)", () => {
         { id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }], terms: ["same"] },
         { id: "B", family: "G", members: [{ config: "cfg-R", trend: "b" }], terms: ["now"] },
       ],
-      { "2026-10-20": { R: [["a", "A"], ["b", "B"]] } },
+      {
+        "2026-10-20": {
+          R: [
+            ["a", "A"],
+            ["b", "B"],
+          ],
+        },
+      },
     );
     const foreign = e.labels("m", { A: "yes", B: "yes" }, "sha256:WRONG");
     const base = {
@@ -791,21 +862,44 @@ describe("Sol's U1 findings (regressions)", () => {
       dev: ["2026-10-20"],
       replicates: 10,
     };
-    await expect(runScore({ ...base, labelPaths: [foreign] })).rejects.toThrow(/pass its cards to migrate/);
+    await expect(runScore({ ...base, labelPaths: [foreign] })).rejects.toThrow(
+      /pass its cards to migrate/,
+    );
     // The old cards: A identical, B showed other terms then.
     const cards = NodePath.join(root, "old-cards.jsonl");
     NodeFS.writeFileSync(
       cards,
       [
-        { card_id: "card_A", unit: "topic", topic_id: "A", cutoff: "2026-10-20", terms: ["same"], headlines: [] },
-        { card_id: "card_B", unit: "topic", topic_id: "B", cutoff: "2026-10-20", terms: ["before"], headlines: [] },
+        {
+          card_id: "card_A",
+          unit: "topic",
+          topic_id: "A",
+          cutoff: "2026-10-20",
+          terms: ["same"],
+          headlines: [],
+        },
+        {
+          card_id: "card_B",
+          unit: "topic",
+          topic_id: "B",
+          cutoff: "2026-10-20",
+          terms: ["before"],
+          headlines: [],
+        },
       ]
         .map((c) => `${JSON.stringify(c)}\n`)
         .join(""),
     );
     const json = JSON.parse(NodeFS.readFileSync(foreign, "utf8"));
-    NodeFS.writeFileSync(foreign, JSON.stringify({ ...json, cards_hash: sha256(NodeFS.readFileSync(cards)) }));
-    const out = await runScore({ ...base, labelPaths: [], migrateLabels: [{ labels: foreign, cards }] });
+    NodeFS.writeFileSync(
+      foreign,
+      JSON.stringify({ ...json, cards_hash: sha256(NodeFS.readFileSync(cards)) }),
+    );
+    const out = await runScore({
+      ...base,
+      labelPaths: [],
+      migrateLabels: [{ labels: foreign, cards }],
+    });
     const arm = (out.metrics.logical.results["m"] as any).dev.arms.R;
     expect(arm.p_at_5).toBeCloseTo(0.2);
     expect(out.metrics.logical.labels[0]!.migration).toMatchObject({ accepted: 1, dropped: 1 });
@@ -816,7 +910,9 @@ describe("Sol's U1 findings (regressions)", () => {
     // both (21 days apart), so their weights vary apart and each block adds at most one.
     const draws = blockDraws(["2026-09-13", "2026-10-04"], 7, 200, 3);
     expect(draws.some((w) => (w.get("2026-09-13") ?? 0) !== (w.get("2026-10-04") ?? 0))).toBe(true);
-    expect(draws.every((w) => (w.get("2026-09-13") ?? 0) + (w.get("2026-10-04") ?? 0) <= 4)).toBe(true);
+    expect(draws.every((w) => (w.get("2026-09-13") ?? 0) + (w.get("2026-10-04") ?? 0) <= 4)).toBe(
+      true,
+    );
   });
 });
 

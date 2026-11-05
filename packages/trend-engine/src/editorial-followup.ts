@@ -65,8 +65,9 @@ export function followupLabels(
         (a, b) => a.publishedMs - b.publishedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
     const label = crossingLabel(tail, cutoffMs, LABEL_RULE.event_stories, LABEL_RULE.event_authors);
-    const window = Array.from({ length: LABEL_RULE.followup_days + (info?.prospective ? 1 : 0) }, (_, k) =>
-      dayOf(cutoffMs + k * DAY_MS),
+    const window = Array.from(
+      { length: LABEL_RULE.followup_days + (info?.prospective ? 1 : 0) },
+      (_, k) => dayOf(cutoffMs + k * DAY_MS),
     );
     const complete = window.filter((d) => completeDays.has(d)).length;
     return {

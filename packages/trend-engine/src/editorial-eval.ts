@@ -951,7 +951,9 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       text: first.text,
       centroids_hash: sha256(canonicalJson(centroids)),
       engine_source_hash: ENGINE_SOURCE_HASH,
-      registries: Object.fromEntries(registries.map(({ name, registry }) => [name, registry.registry_hash])),
+      registries: Object.fromEntries(
+        registries.map(({ name, registry }) => [name, registry.registry_hash]),
+      ),
     },
     cutoffs: universeCutoffs,
     topics,
@@ -1020,7 +1022,10 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       })),
     ),
   );
-  NodeFS.writeFileSync(NodePath.join(options.outDir, "families.json"), `${JSON.stringify(registry)}\n`);
+  NodeFS.writeFileSync(
+    NodePath.join(options.outDir, "families.json"),
+    `${JSON.stringify(registry)}\n`,
+  );
   const universePath = NodePath.join(options.outDir, "universe.json");
   const rankingsPath = NodePath.join(options.outDir, "rankings.json");
   NodeFS.writeFileSync(universePath, `${JSON.stringify(universe, null, 2)}\n`);
@@ -1294,10 +1299,13 @@ export function verifyFreeze(
   }
   const frozenArms = canonicalJson(freeze["arms"] ?? null);
   if (frozenArms !== canonicalJson(rankings.logical.arms)) {
-    throw new Error("the rankings' arms (configurations, methods, keywords) differ from the freeze");
+    throw new Error(
+      "the rankings' arms (configurations, methods, keywords) differ from the freeze",
+    );
   }
   const inputs = universe.logical.inputs;
-  if (freeze["profile_hash"] !== inputs.profile_hash) throw new Error("profile differs from the freeze");
+  if (freeze["profile_hash"] !== inputs.profile_hash)
+    throw new Error("profile differs from the freeze");
   if (freeze["engine_source_hash"] !== inputs.engine_source_hash) {
     throw new Error("engine source differs from the freeze");
   }
@@ -1309,7 +1317,10 @@ export function verifyFreeze(
     const capture = captures.get(c.cutoff);
     if (!c.prospective) continue;
     if (!capture) throw new Error(`prospective cutoff ${c.cutoff} has no capture entry`);
-    if (capture.corpus_hash !== c.corpus_manifest_hash || capture.closed_at !== c.operational_cutoff_at) {
+    if (
+      capture.corpus_hash !== c.corpus_manifest_hash ||
+      capture.closed_at !== c.operational_cutoff_at
+    ) {
       throw new Error(`cutoff ${c.cutoff} did not read its captured corpus`);
     }
   }
@@ -1325,11 +1336,17 @@ export function freezeEntry(options: {
   readonly registries?: Readonly<Record<string, string>>;
   readonly note?: string;
 }) {
-  const configFiles = [...new Set(options.arms.flatMap((a) => [a.configPath, ...(a.keywordsPath ? [a.keywordsPath] : [])]))];
-  const files = [...new Set([...configFiles, options.profilePath, ...options.files])].map((path) => ({
-    path: NodePath.resolve(path),
-    sha256: fileSha256(path),
-  }));
+  const configFiles = [
+    ...new Set(
+      options.arms.flatMap((a) => [a.configPath, ...(a.keywordsPath ? [a.keywordsPath] : [])]),
+    ),
+  ];
+  const files = [...new Set([...configFiles, options.profilePath, ...options.files])].map(
+    (path) => ({
+      path: NodePath.resolve(path),
+      sha256: fileSha256(path),
+    }),
+  );
   return {
     kind: "freeze",
     arms: armIdentities(options.arms, options.sources).map(({ config: _config, ...id }) => id),
@@ -1374,7 +1391,11 @@ function buildRegistry(universe: Universe, rows: ReadonlyArray<RegistryRow>) {
     cutoffs: universe.logical.cutoffs.map((c) => c.cutoff),
     members: rows.toSorted((a, b) => (a.key < b.key ? -1 : 1)),
   };
-  return { schema_version: REGISTRY_SCHEMA_VERSION, registry_hash: sha256(canonicalJson(logical)), ...logical };
+  return {
+    schema_version: REGISTRY_SCHEMA_VERSION,
+    registry_hash: sha256(canonicalJson(logical)),
+    ...logical,
+  };
 }
 
 export function readRegistry(path: string): FamilyRegistry {
@@ -1385,9 +1406,11 @@ export function readRegistry(path: string): FamilyRegistry {
     cutoffs: Array<string>;
     members: Array<RegistryRow>;
   };
-  if (json.schema_version !== REGISTRY_SCHEMA_VERSION) throw new Error(`${path} is not ${REGISTRY_SCHEMA_VERSION}`);
+  if (json.schema_version !== REGISTRY_SCHEMA_VERSION)
+    throw new Error(`${path} is not ${REGISTRY_SCHEMA_VERSION}`);
   const { schema_version: _v, registry_hash, ...logical } = json;
-  if (sha256(canonicalJson(logical)) !== registry_hash) throw new Error(`${path}: registry_hash does not match`);
+  if (sha256(canonicalJson(logical)) !== registry_hash)
+    throw new Error(`${path}: registry_hash does not match`);
   return {
     schema_version: REGISTRY_SCHEMA_VERSION,
     registry_hash,
@@ -1417,12 +1440,16 @@ export function lateOnly(
     recent.length > 0
       ? recent
       : items
-          .toSorted((a, b) => b.published_at.localeCompare(a.published_at) || (a.id < b.id ? -1 : 1))
+          .toSorted(
+            (a, b) => b.published_at.localeCompare(a.published_at) || (a.id < b.id ? -1 : 1),
+          )
           .slice(0, CARD_RULE.headlines);
   return (
     support.length > 0 &&
     support.every(
-      (item) => LATE_POPULARITY_SOURCES.includes(item.source) && Date.parse(item.retrieved_at) > operationalMs,
+      (item) =>
+        LATE_POPULARITY_SOURCES.includes(item.source) &&
+        Date.parse(item.retrieved_at) > operationalMs,
     )
   );
 }

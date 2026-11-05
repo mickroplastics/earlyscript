@@ -172,7 +172,8 @@ export function blockDraws(
 ): Draws {
   const sorted = [...new Set(cutoffs)].toSorted();
   const random = seededRandom(seed);
-  if (sorted.length === 0) return Array.from({ length: replicates }, () => new Map<string, number>());
+  if (sorted.length === 0)
+    return Array.from({ length: replicates }, () => new Map<string, number>());
   const dayMs = 86_400_000;
   const length = Math.max(1, blockDays);
   const days = sorted.map((c) => Date.parse(`${c.slice(0, 10)}T00:00:00Z`) / dayMs);
@@ -186,7 +187,8 @@ export function blockDraws(
     for (let b = 0; b < blocks; b++) {
       const start = first - (length - 1) + Math.floor(random() * starts);
       days.forEach((d, k) => {
-        if (d >= start && d < start + length) weights.set(sorted[k]!, (weights.get(sorted[k]!) ?? 0) + 1);
+        if (d >= start && d < start + length)
+          weights.set(sorted[k]!, (weights.get(sorted[k]!) ?? 0) + 1);
       });
     }
     return weights;

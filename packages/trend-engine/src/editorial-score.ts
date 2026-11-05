@@ -44,9 +44,11 @@ export const SCORE_RULE = {
   bootstrap:
     "percentile intervals; units = topic families (all their appearances together; the empty positions of a cutoff form one unit), resampled with replacement and shared by every arm (paired); sensitivity: moving blocks of 7 calendar days (start drawn from first-6 to last day, ceil(span/7) blocks per replicate; a block over a gap adds nothing)",
   bonferroni: "differences against the references use alpha / number of references",
-  new_families: "topics matching no family of the frozen dev registry (or of the dev cutoffs of this universe); precision over their positions",
+  new_families:
+    "topics matching no family of the frozen dev registry (or of the dev cutoffs of this universe); precision over their positions",
   b6: "applies to the retro partition only, per arm: the support of that arm's own position (its 7-day items, or 5 most recent), never the shared card",
-  duplicates: "a second position of the same opportunity (topic at that cutoff, merged only with that cutoff's data) counts 0; families serve only the bootstrap and new versus recurrent",
+  duplicates:
+    "a second position of the same opportunity (topic at that cutoff, merged only with that cutoff's data) counts 0; families serve only the bootstrap and new versus recurrent",
   labels: "only labels of this universe, or migrated from cards whose content is identical here",
   invalid_test: "a test partition is not valid when more than 10 % of its cards are unsure",
   source_evaluated:
@@ -66,12 +68,19 @@ export interface LabelSet {
   readonly universe_hash: string | null;
   readonly labels: ReadonlyMap<string, LabelValue>;
   /** Labels taken from cards of another universe whose content is identical here (U1-S2). */
-  readonly migration: { readonly cards_hash: string; readonly accepted: number; readonly dropped: number } | null;
+  readonly migration: {
+    readonly cards_hash: string;
+    readonly accepted: number;
+    readonly dropped: number;
+  } | null;
 }
 
 /** What a person or the judge saw: the same for every arm, so labels can move only if equal. */
-const canonicalCard = (card: { cutoff: string; terms: ReadonlyArray<string>; headlines: ReadonlyArray<unknown> }) =>
-  canonicalJson({ cutoff: card.cutoff, terms: card.terms, headlines: card.headlines });
+const canonicalCard = (card: {
+  cutoff: string;
+  terms: ReadonlyArray<string>;
+  headlines: ReadonlyArray<unknown>;
+}) => canonicalJson({ cutoff: card.cutoff, terms: card.terms, headlines: card.headlines });
 
 const LABEL_VALUES = new Set(["yes", "no", "unsure", "pending"]);
 
@@ -108,7 +117,8 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     );
   }
   const cardsHash = sha256(NodeFS.readFileSync(migrateFrom));
-  if (cardsHash !== json.cards_hash) throw new Error(`${migrateFrom} is not the card set ${path} labels`);
+  if (cardsHash !== json.cards_hash)
+    throw new Error(`${migrateFrom} is not the card set ${path} labels`);
   const here = new Map(universe.logical.topics.map((t) => [t.topic_id, canonicalCard(t)]));
   const same = new Set(
     readCardsJsonl(migrateFrom)
@@ -223,7 +233,8 @@ export async function runScore(options: ScoreOptions) {
     if (!list) return;
     const days = [...new Set(list.map(day))].toSorted();
     const absent = days.filter((d) => !cutoffInfo.has(d));
-    if (absent.length > 0) throw new Error(`--${name} cutoffs not in the universe: ${absent.join(", ")}`);
+    if (absent.length > 0)
+      throw new Error(`--${name} cutoffs not in the universe: ${absent.join(", ")}`);
     partitions[name] = days;
   };
   add("dev", options.dev);
@@ -239,7 +250,9 @@ export async function runScore(options: ScoreOptions) {
   }
   if (options.ledgerPath) {
     const freeze = assertSealed(universe, rankings, options.ledgerPath);
-    const captures = new Map(captureEntries(readLedger(options.ledgerPath)).map((e) => [e.cutoff_day, e]));
+    const captures = new Map(
+      captureEntries(readLedger(options.ledgerPath)).map((e) => [e.cutoff_day, e]),
+    );
     partitions["prospective"] = (partitions["prospective"] ?? []).filter((cutoff) => {
       const capture = captures.get(cutoff);
       const reason = !capture
@@ -269,8 +282,14 @@ export async function runScore(options: ScoreOptions) {
   };
   const seenInTrain = (topicId: string) =>
     registries["train"] ? topics.get(topicId)!.seen_in["train"]!.length > 0 : null;
-  if ((partitions["retro"] || partitions["prospective"]) && !registries["dev"] && !partitions["dev"]) {
-    throw new Error("test partitions need a dev family registry (pool --registry dev=…) or --dev cutoffs");
+  if (
+    (partitions["retro"] || partitions["prospective"]) &&
+    !registries["dev"] &&
+    !partitions["dev"]
+  ) {
+    throw new Error(
+      "test partitions need a dev family registry (pool --registry dev=…) or --dev cutoffs",
+    );
   }
   const configOf = new Map(rankings.logical.arms.map((a) => [a.name, a.config_hash]));
   const arms = rankings.logical.arms.map((a) => a.name);
@@ -290,7 +309,8 @@ export async function runScore(options: ScoreOptions) {
           const member = topic.members.find(
             (m) => m.config_hash === configOf.get(arm) && m.trend_id === e.trend_id,
           );
-          if (!member) throw new Error(`${arm} at ${cutoff}: ${e.trend_id} is not in ${e.topic_id}`);
+          if (!member)
+            throw new Error(`${arm} at ${cutoff}: ${e.trend_id} is not in ${e.topic_id}`);
           return {
             topicId: e.topic_id,
             family: topic.family_id,

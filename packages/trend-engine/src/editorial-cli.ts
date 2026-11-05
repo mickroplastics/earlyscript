@@ -222,7 +222,8 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
         ? {
             migrateLabels: values["migrate-labels"].map((pair) => {
               const [labels, cards] = pair.split("=");
-              if (!labels || !cards) throw new Error(`--migrate-labels ${pair}: expected <labels>=<cards.jsonl>`);
+              if (!labels || !cards)
+                throw new Error(`--migrate-labels ${pair}: expected <labels>=<cards.jsonl>`);
               return { labels, cards };
             }),
           }
@@ -332,7 +333,8 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
     return 0;
   }
   if (sub === "seal" && values.ledger && values.kind) {
-    if (values.kind === "freeze") throw new Error("use `eval-editorial freeze`: a freeze names every artifact");
+    if (values.kind === "freeze")
+      throw new Error("use `eval-editorial freeze`: a freeze names every artifact");
     const entry = appendLedger(values.ledger, {
       kind: values.kind,
       files: (values.file ?? []).map((path) => ({
