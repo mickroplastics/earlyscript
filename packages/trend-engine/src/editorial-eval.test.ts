@@ -8,6 +8,9 @@ import type { Story } from "./backtest-label.ts";
 import { DAY_MS, dayStart } from "./days.ts";
 import { captureDay } from "./editorial-capture.ts";
 import {
+  appendLedger,
+  assertSealed,
+  buildTopicCards,
   groupMembers,
   keywordMatcher,
   parseArm,
@@ -18,6 +21,7 @@ import {
   type Universe,
 } from "./editorial-eval.ts";
 import { followupLabels } from "./editorial-followup.ts";
+import { runScore } from "./editorial-score.ts";
 import {
   bootstrapDifference,
   bootstrapPrecision,
@@ -364,5 +368,95 @@ describe("prospective capture", () => {
     expect(ledger[1]!.prev_sha256).toMatch(/^sha256:/);
     expect(ledger[0]!["closed_at"]).toBe("2026-10-11T00:05:00.000Z");
     expect(NodeFS.existsSync(NodePath.join(corpusDir, "hn", "2026-10-11.jsonl"))).toBe(true);
+  });
+});
+
+describe("prospective pool and score", () => {
+  it("reads the capture snapshot, seals the rankings and counts only cutoffs after the freeze", async () => {
+    const root = tempDir("editorial-prospective");
+    const source = NodePath.join(root, "source");
+    const seed = NodePath.join(root, "seed");
+    await writeSyntheticCorpus(source, { toDay: "2026-10-12" });
+    await writeSyntheticCorpus(seed, {
+      toDay: "2026-10-10",
+      items: syntheticItems().filter((i) => i.published_at < "2026-10-10"),
+    });
+    const corpusDir = NodePath.join(root, "corpus");
+    const ledgerPath = NodePath.join(root, "ledger.jsonl");
+    appendLedger(ledgerPath, { kind: "freeze", files: [] });
+    await captureDay({
+      corpusDir,
+      ledgerPath,
+      snapshotsDir: NodePath.join(root, "snapshots"),
+      sources: ["hn", "github"],
+      adapters: (ids) => fixtureSources(source, ids),
+      day: "2026-10-10",
+      seedFrom: seed,
+      now: () => new Date("2099-01-01T00:05:00Z"),
+    });
+    const configPath = NodePath.join(root, "config.json");
+    NodeFS.writeFileSync(configPath, JSON.stringify(testConfig()));
+    const outDir = NodePath.join(root, "pool");
+    const pool = await runPool({
+      corpusDir: seed,
+      profilePath: writeProfile(root),
+      outDir,
+      cutoffs: ["2026-10-09", "2026-10-11"],
+      arms: [parseArm(`W=${configPath}:weighted`), parseArm(`V=${configPath}:baseline`)],
+      ledgerPath,
+      embedder: fingerprintEmbedder(),
+    });
+    const [retro, prospective] = pool.universe.logical.cutoffs;
+    expect(retro!.prospective).toBe(false);
+    expect(prospective!.prospective).toBe(true);
+    expect(prospective!.operational_cutoff_at).toBe("2099-01-01T00:05:00.000Z");
+    expect(readLedger(ledgerPath).map((e) => e.kind)).toEqual(["freeze", "capture", "rankings"]);
+    const cards = buildTopicCards(pool.universe, { seed: 1 });
+    expect(() => assertSealed(pool.universe, cards, ledgerPath)).not.toThrow();
+    const unsealed = NodePath.join(root, "other-ledger.jsonl");
+    appendLedger(unsealed, { kind: "note" });
+    if (cards.some((c) => c.cutoff === "2026-10-11")) {
+      expect(() => assertSealed(pool.universe, cards, unsealed)).toThrow(/not sealed/);
+    }
+    const labelsPath = NodePath.join(root, "labels.json");
+    NodeFS.writeFileSync(
+      labelsPath,
+      JSON.stringify({
+        labeler: "miguel",
+        universe_hash: pool.universe.universe_hash,
+        labels: pool.universe.logical.topics.map((t, k) => ({
+          topic_id: t.topic_id,
+          label: k % 3 === 2 ? "unsure" : "yes",
+        })),
+      }),
+    );
+    const scored = await runScore({
+      universePath: pool.universePath,
+      rankingsPath: pool.rankingsPath,
+      labelPaths: [labelsPath],
+      outDir: NodePath.join(root, "score"),
+      retro: ["2026-10-09"],
+      prospective: ["2026-10-11"],
+      ledgerPath,
+      candidates: ["W"],
+      replicates: 50,
+    });
+    const results = scored.metrics.logical.results["miguel"] as Record<string, { cutoffs: number }>;
+    expect(results["prospective"]!.cutoffs).toBe(1);
+    expect(results["test"]!.cutoffs).toBe(2);
+    expect(NodeFS.readFileSync(scored.reportPath, "utf8")).toContain("Candidato W");
+
+    // A freeze after the capture closes leaves the prospective cutoff out.
+    appendLedger(ledgerPath, { kind: "freeze", files: [] });
+    const late = await runScore({
+      universePath: pool.universePath,
+      rankingsPath: pool.rankingsPath,
+      labelPaths: [labelsPath],
+      outDir: NodePath.join(root, "score-late"),
+      prospective: ["2026-10-11"],
+      ledgerPath,
+      replicates: 10,
+    });
+    expect(late.metrics.logical.excluded_prospective).toHaveLength(1);
   });
 });
