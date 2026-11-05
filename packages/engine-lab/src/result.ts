@@ -26,7 +26,10 @@ export interface JobSpec {
   /** Signs the result; only on stdin, never in argv, env or a file the sandbox sees. */
   readonly secret: string;
   readonly kind: "development" | "shadow";
+  /** Midnight UTC, one per day, sorted. */
   readonly cutoffs: ReadonlyArray<string>;
+  /** The operator's authorized input roots: every input must resolve inside one of them. */
+  readonly input_roots: ReadonlyArray<string>;
   readonly corpus_dir: string;
   readonly profile_path: string;
   readonly profile_hash: string;
@@ -70,7 +73,10 @@ export interface ArmOutput {
   readonly cutoff: string;
   readonly run_id: string;
   readonly status: string;
+  /** Recomputed by the worker from the dossier files, never the arm's own claim. */
   readonly logical_hash: string;
+  /** sha256 of every emitted trend's member ids, which the logical hash does not cover. */
+  readonly members_hash: string;
   readonly config_hash: string;
   readonly profile_hash: string;
   readonly eligible: number;

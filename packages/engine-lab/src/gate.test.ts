@@ -60,6 +60,30 @@ describe("promotion gate", () => {
     expect(ungraded.verdict).toBe("inconclusive");
   });
 
+  it("counts days, not entries: one day seven times never passes (Sol, B3)", async () => {
+    const one = await shadow("job-gate-one-day", { growth: 0.1, log_authors_7d: 0.9 }, [
+      fixture.cutoffs[6]!,
+    ]);
+    // Sol's repeat-day case at the gate itself: the worker now refuses such a job outright.
+    const result = {
+      ...one.result,
+      arms: {
+        reference: Array(7).fill(one.result.arms.reference[0]!),
+        candidate: Array(7).fill(one.result.arms.candidate[0]!),
+      },
+    };
+    const { cards, members } = shadowCards(result);
+    const gate = evaluateGate({
+      result,
+      members,
+      labels: labelSyntheticCards(cards),
+      frozenDay: "2026-12-01",
+    });
+    expect(gate.verdict).toBe("inconclusive");
+    expect(gate.distinct_days).toBe(1);
+    expect(gate.reasons.join(" ")).toContain("repeats days");
+  });
+
   it("is inconclusive with fewer than 7 cutoffs and fails a clearly worse candidate", async () => {
     const few = await shadow(
       "job-gate-few",

@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { developmentReport } from "./compare.ts";
+import { canonicalInputs } from "./inputs.ts";
 import { subsetCorpus } from "./corpusSubset.ts";
 import { readLabelSource } from "./labels.ts";
 import { resultMismatch } from "./result.ts";
@@ -93,7 +94,10 @@ describe("worker", () => {
       candidate: weightCandidate(fixture, { growth: 0.2 }),
       cutoffs: [fixture.cutoffs[0]!],
     });
-    const result = await evaluateJob({ ...spec, corpus_dir: copy.out }, options);
+    const result = await evaluateJob(
+      { ...spec, corpus_dir: copy.out, input_roots: [root] },
+      options,
+    );
     expect(result.status, JSON.stringify(result.error)).toBe("ok");
   });
 
@@ -157,6 +161,160 @@ describe("worker", () => {
       developmentReport({ result, campaignId: "c", cutoffs: spec.cutoffs, human, judge: null })
         .equivalent,
     ).toBe(true);
+  });
+});
+
+describe("worker against a hostile candidate (Sol, B1)", () => {
+  // Sol's repro-worker.ts: the patch rebinds node:fs inside the arm to rewrite its output.
+  const poison = (
+    target: string,
+    rewrite: string,
+    condition = `String(file).endsWith(${JSON.stringify(target)})`,
+  ) =>
+    [
+      'import fsPoison from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const originalWrite = fsPoison.writeFileSync;",
+      "fsPoison.writeFileSync = function (file: unknown, data: unknown, ...args: Array<unknown>) {",
+      `  if (${condition}) {`,
+      "    const value = JSON.parse(String(data));",
+      `    ${rewrite}`,
+      "    return (originalWrite as Function).call(this, file, JSON.stringify(value), ...args);",
+      "  }",
+      "  return (originalWrite as Function).call(this, file, data, ...args);",
+      "} as typeof fsPoison.writeFileSync;",
+      "syncBuiltinESMExports();",
+      "",
+    ].join("\n");
+  const runForged = async (token: string, text: string) => {
+    const patched = patchCandidate(fixture, RANK_PATCH(text));
+    const spec = jobSpec(fixture, {
+      token,
+      candidate: patched.manifest,
+      files: patched.files,
+      cutoffs: fixture.cutoffs.slice(0, 1),
+    });
+    return { spec, result: await evaluateJob(spec, options) };
+  };
+
+  it("ignores a forged arm.json: the ranking comes from the run the engine wrote", async () => {
+    const { spec, result } = await runForged(
+      "job-b1-arm-json",
+      poison("/arm.json", "value.top = []; value.eligible = 0;"),
+    );
+    expect(result.status, JSON.stringify(result.error)).toBe("ok");
+    expect(resultMismatch(spec, result)).toBeNull();
+    const reference = result.arms.reference[0]!;
+    const candidate = result.arms.candidate[0]!;
+    expect(reference.top.length).toBeGreaterThan(0);
+    expect(candidate.top.map((t) => t.trend_id)).toEqual(reference.top.map((t) => t.trend_id));
+  });
+
+  it("rejects a run.json that no longer matches its dossiers, whatever hash it claims", async () => {
+    const { result } = await runForged(
+      "job-b1-run-json",
+      poison("/run.json", "value.files = []; value.dossiers = 0;"),
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("artifact-mismatch");
+    expect(result.error?.message).toContain("logical hash is not the hash of its dossiers");
+  });
+
+  it("rejects dossiers rewritten after the engine hashed them", async () => {
+    const { result } = await runForged(
+      "job-b1-dossier",
+      poison("", "value.rankings.weighted.score = 99;", 'String(file).includes("/dossiers/")'),
+    );
+    expect(result.error?.code).toBe("artifact-mismatch");
+  });
+
+  it("rejects members that drop a dossier's evidence", async () => {
+    const { result } = await runForged(
+      "job-b1-members",
+      poison("/members.json", "for (const k of Object.keys(value.members)) value.members[k] = [];"),
+    );
+    expect(result.error?.code).toBe("artifact-mismatch");
+    expect(result.error?.message).toContain("do not contain its evidence");
+  });
+});
+
+describe("inputs resolved to their canonical paths (Sol, B2)", () => {
+  const sealedRoot = NodePath.join(root, "eval-prospectivo");
+  const sealed = labFixture(NodePath.join(sealedRoot, "fake"));
+  const spec = (token: string, patch: Partial<ReturnType<typeof jobSpec>>) => ({
+    ...jobSpec(fixture, {
+      token,
+      candidate: weightCandidate(fixture, { growth: 0.1 }),
+      cutoffs: [fixture.cutoffs[0]!],
+    }),
+    input_roots: [root],
+    ...patch,
+  });
+
+  it("refuses a corpus link to a sealed directory", async () => {
+    const alias = NodePath.join(root, "friendly-corpus");
+    NodeFS.symlinkSync(sealed.corpus_dir, alias);
+    const result = await evaluateJob(spec("job-b2-dir-link", { corpus_dir: alias }), options);
+    expect(result.error?.code).toBe("sealed-partition");
+    expect(NodeFS.existsSync(NodePath.join(options.jobsRoot, "job-b2-dir-link", "reference"))).toBe(
+      false,
+    );
+  });
+
+  it("refuses a day file inside the corpus that links to a sealed file", async () => {
+    const copy = NodePath.join(root, "linked-day-corpus");
+    NodeFS.cpSync(fixture.corpus_dir, copy, { recursive: true });
+    const day = NodeFS.readdirSync(NodePath.join(copy, "hn"))[0]!;
+    NodeFS.rmSync(NodePath.join(copy, "hn", day));
+    NodeFS.symlinkSync(NodePath.join(sealed.corpus_dir, "hn", day), NodePath.join(copy, "hn", day));
+    const result = await evaluateJob(spec("job-b2-file-link", { corpus_dir: copy }), options);
+    expect(result.error?.code).toBe("sealed-partition");
+  });
+
+  it("refuses a profile or a cache that resolves outside the authorized roots or into a sealed path", async () => {
+    const elsewhere = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "engine-lab-outside-"));
+    try {
+      const profileLink = NodePath.join(root, "profile-link.json");
+      NodeFS.copyFileSync(fixture.profile_path, NodePath.join(elsewhere, "profile.json"));
+      NodeFS.symlinkSync(NodePath.join(elsewhere, "profile.json"), profileLink);
+      const outside = await evaluateJob(
+        spec("job-b2-profile", { profile_path: profileLink }),
+        options,
+      );
+      expect(outside.error?.code).toBe("permission-denied");
+      const cacheLink = NodePath.join(root, "cache-link");
+      NodeFS.symlinkSync(sealedRoot, cacheLink);
+      const cache = await evaluateJob(
+        spec("job-b2-cache", { cache_file: NodePath.join(cacheLink, "embeddings.sqlite") }),
+        options,
+      );
+      expect(cache.error?.code).toBe("sealed-partition");
+    } finally {
+      NodeFS.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses labels through a link, on the evaluator's side too", () => {
+    const labels = NodePath.join(root, "labels-link.json");
+    NodeFS.symlinkSync(sealed.labels_path, labels);
+    expect(() => canonicalInputs([root], [{ path: labels, kind: "file" }])).toThrow(
+      /frozen evaluation/,
+    );
+  });
+});
+
+describe("cutoffs are distinct days (Sol, B3)", () => {
+  it("refuses a job that repeats a day", async () => {
+    const day = fixture.cutoffs[6]!;
+    const result = await evaluateJob(
+      jobSpec(fixture, {
+        token: "job-b3-repeat",
+        candidate: weightCandidate(fixture, { growth: 0.1 }),
+        cutoffs: Array(7).fill(day),
+      }),
+      options,
+    );
+    expect(result.error?.code).toBe("invalid-change");
   });
 });
 

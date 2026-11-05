@@ -108,4 +108,6 @@ export const syntheticPolicy = (
   workers: 1,
   labels: { cards: harness.fixture.cards_path, labels: harness.fixture.labels_path },
   judge: null,
+  input_roots: [harness.dir],
+  label_roots: [harness.dir],
 });

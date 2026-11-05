@@ -7,9 +7,12 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { checkRun, readRun } from "@earlyscript/trend-engine/check";
+
 import { memberKey } from "./compare.ts";
-import { engineSourceHash, sha256 } from "./hash.ts";
-import { assertNotSealed, LabPolicyError } from "./policy.ts";
+import { canonicalJson, engineSourceHash, sha256 } from "./hash.ts";
+import { canonicalInputs } from "./inputs.ts";
+import { assertNotSealed, configHash, cutoffDays, LabPolicyError } from "./policy.ts";
 import {
   type ArmOutput,
   type ArmSide,
@@ -256,6 +259,7 @@ function runArm(input: {
       ? ["bwrap", [...sandboxArgs({ readOnly, writable, out }), process.execPath, ...nodeArgs]]
       : [process.execPath, nodeArgs];
   const log = NodeFS.openSync(NodePath.join(out, "arm.log"), "w");
+  const started = Date.now();
   const child = NodeChildProcess.spawnSync(command, args, {
     stdio: ["ignore", log, log],
     cwd: out,
@@ -263,65 +267,150 @@ function runArm(input: {
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: out, ELECTRON_RUN_AS_NODE: "1" },
   });
   NodeFS.closeSync(log);
-  const armFile = NodePath.join(out, "arm.json");
-  if (child.status !== 0 || !NodeFS.existsSync(armFile)) {
+  if (child.status !== 0) {
     const tail = NodeFS.readFileSync(NodePath.join(out, "arm.log"), "utf8").slice(-600);
     throw new WorkerFailure(
       "engine-failed",
       `${side} at ${cutoff} exited with ${child.status}: ${tail}`,
     );
   }
-  const arm = JSON.parse(NodeFS.readFileSync(armFile, "utf8")) as Omit<
-    ArmOutput,
-    "cutoff" | "top"
-  > & {
-    top: ReadonlyArray<Omit<ArmTrend, "member_keys" | "headlines">>;
-  };
+  return collectArm({ ...input, out, durationMs: Date.now() - started });
+}
+
+/**
+ * What one arm emitted, read back by this process, which never loads candidate code: the run
+ * as the installed engine's reader decodes it, its logical hash recomputed from the dossiers,
+ * its configuration, profile and cutoff checked against the job, and its members checked
+ * against the corpus. The arm's own claims about any of these count for nothing.
+ */
+function collectArm(input: {
+  readonly spec: JobSpec;
+  readonly side: ArmSide;
+  readonly cutoff: string;
+  readonly out: string;
+  readonly durationMs: number;
+  readonly index: Map<string, IndexedItem>;
+}): ArmOutput {
+  const { spec, side, cutoff, out } = input;
   const cutoffDay = cutoff.slice(0, 10);
-  if (arm.status !== "ok") {
-    throw new WorkerFailure(
-      "engine-failed",
-      `${side} at ${cutoffDay}: the run is ${arm.status}: ${JSON.stringify((arm as { error?: unknown }).error ?? null)}`,
+  const where = `${side} at ${cutoffDay}`;
+  const mismatch = (message: string) =>
+    new WorkerFailure("artifact-mismatch", `${where}: ${message}`);
+  const runsDir = NodePath.join(out, "runs");
+  const runs = NodeFS.existsSync(runsDir) ? NodeFS.readdirSync(runsDir) : [];
+  const finished = runs.filter((name) => /^run_[A-Za-z0-9_]+$/.test(name));
+  if (
+    finished.length !== 1 ||
+    runs.some((name) => !name.startsWith(".") && !finished.includes(name))
+  ) {
+    throw mismatch(`expected one run directory, found ${runs.join(", ") || "none"}.`);
+  }
+  const runDir = NodePath.join(runsDir, finished[0]!);
+  let read: ReturnType<typeof readRun>;
+  let checked: ReturnType<typeof checkRun>;
+  try {
+    read = readRun(runDir);
+    checked = checkRun(runDir);
+  } catch (error) {
+    throw mismatch(
+      `the run does not decode: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const top: Array<ArmTrend> = arm.top.map((trend) => {
-    const items = trend.item_ids.map((id) => {
+  const { record, dossiers } = read;
+  if (record.status !== "ok") {
+    throw new WorkerFailure(
+      "engine-failed",
+      `${where}: the run is ${record.status}: ${JSON.stringify(record.error ?? null)}`,
+    );
+  }
+  if (checked.recomputed !== record.logical_hash) {
+    throw mismatch("run.json's logical hash is not the hash of its dossiers.");
+  }
+  const expected = spec[side].manifest.config_hash;
+  if (configHash(record.config) !== expected || record.config_hash !== expected) {
+    throw mismatch("the run's configuration is not its manifest's.");
+  }
+  if (record.profile?.hash !== spec.profile_hash)
+    throw mismatch("the run's profile is not the campaign's.");
+  if (record.cutoff_at !== cutoff) throw mismatch(`the run's cutoff is ${record.cutoff_at}.`);
+  const positions = dossiers.map((dossier) => dossier.rankings.weighted.position);
+  if (
+    dossiers.some((dossier) => dossier.run_id !== record.run_id || dossier.cutoff_at !== cutoff) ||
+    new Set(positions).size !== positions.length
+  ) {
+    throw mismatch("the dossiers are not this run's, one per position.");
+  }
+  const membersFile = NodePath.join(out, "members.json");
+  const raw = NodeFS.existsSync(membersFile)
+    ? (JSON.parse(NodeFS.readFileSync(membersFile, "utf8")) as {
+        run_id?: string;
+        members?: Record<string, ReadonlyArray<string>>;
+      })
+    : {};
+  if (raw.run_id !== record.run_id || raw.members === undefined)
+    throw mismatch("no members for this run.");
+  const membersOf = (dossier: (typeof dossiers)[number]) => {
+    const ids = raw.members![dossier.trend.id];
+    if (!Array.isArray(ids)) throw mismatch(`no members for ${dossier.trend.id}.`);
+    const set = new Set(ids);
+    if (
+      set.size !== ids.length ||
+      dossier.evidence.some((evidence) => !set.has(evidence.item_id))
+    ) {
+      throw mismatch(`the members of ${dossier.trend.id} do not contain its evidence.`);
+    }
+    return ids.map((id) => {
       const item = input.index.get(id);
-      if (item === undefined) {
-        throw new WorkerFailure(
-          "artifact-mismatch",
-          `${side} at ${cutoffDay} emitted ${id}, which the corpus has not before the cutoff.`,
-        );
-      }
-      if (item.published_at.slice(0, 10) >= cutoffDay) {
-        throw new WorkerFailure(
-          "artifact-mismatch",
-          `${side} at ${cutoffDay} emitted ${id}, published after the cutoff.`,
-        );
-      }
-      return item;
+      if (item === undefined) throw mismatch(`${id} is not in the corpus before the cutoff.`);
+      if (item.published_at.slice(0, 10) >= cutoffDay)
+        throw mismatch(`${id} was published after the cutoff.`);
+      return { id, item };
     });
-    return {
-      ...trend,
-      member_keys: items.map(memberKey),
-      headlines: items
-        .toSorted((a, b) =>
-          a.published_at < b.published_at ? 1 : a.published_at > b.published_at ? -1 : 0,
-        )
-        .slice(0, 5)
-        .map(({ title, source, published_at }) => ({ title, source, published_at })),
-    };
-  });
+  };
+  const all = dossiers
+    .toSorted((a, b) => a.rankings.weighted.position - b.rankings.weighted.position)
+    .map((dossier) => ({ dossier, members: membersOf(dossier) }));
+  const top: Array<ArmTrend> = all.slice(0, spec.top).map(({ dossier, members }) => ({
+    position: dossier.rankings.weighted.position,
+    trend_id: dossier.trend.id,
+    label: dossier.trend.label,
+    stage: dossier.trend.stage,
+    score: dossier.rankings.weighted.score,
+    components: dossier.rankings.weighted.components.map(
+      ({ name, value, weight, contribution }) => ({
+        name,
+        value,
+        weight,
+        contribution,
+      }),
+    ),
+    items_7d: dossier.trend.items_7d,
+    item_ids: members.map((member) => member.id),
+    member_keys: members.map((member) => memberKey(member.item)),
+    headlines: members
+      .map((member) => member.item)
+      .toSorted((a, b) =>
+        a.published_at < b.published_at ? 1 : a.published_at > b.published_at ? -1 : 0,
+      )
+      .slice(0, 5)
+      .map(({ title, source, published_at }) => ({ title, source, published_at })),
+  }));
   return {
     cutoff,
-    run_id: arm.run_id,
-    status: arm.status,
-    logical_hash: arm.logical_hash ?? "",
-    config_hash: arm.config_hash,
-    profile_hash: arm.profile_hash,
-    eligible: arm.eligible,
+    run_id: record.run_id,
+    status: record.status,
+    logical_hash: checked.recomputed,
+    // Every emitted trend's members, which the logical hash of the dossiers does not cover.
+    members_hash: sha256(
+      canonicalJson(
+        all.map(({ dossier, members }) => [dossier.trend.id, members.map((m) => m.id).toSorted()]),
+      ),
+    ),
+    config_hash: record.config_hash,
+    profile_hash: record.profile.hash,
+    eligible: dossiers[0]?.rankings.eligible ?? 0,
     top,
-    duration_ms: arm.duration_ms,
+    duration_ms: input.durationMs,
   };
 }
 
@@ -389,7 +478,26 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
         options.jobsRoot,
       ],
     });
-    if (sha256(NodeFS.readFileSync(spec.profile_path)) !== spec.profile_hash) {
+    if (cutoffDays(spec.cutoffs).join(",") !== spec.cutoffs.join(",")) {
+      throw new WorkerFailure("invalid-change", "The cutoffs are not distinct UTC days in order.");
+    }
+    // Every input by its canonical path, inside the operator's roots, links included.
+    const real = canonicalInputs(spec.input_roots, [
+      { path: spec.corpus_dir, kind: "tree" },
+      { path: spec.profile_path, kind: "file" },
+      ...(spec.cache_file === null
+        ? []
+        : [{ path: spec.cache_file, kind: "optional-file" as const }]),
+      ...(spec.models_dir === null ? [] : [{ path: spec.models_dir, kind: "tree" as const }]),
+    ]);
+    const canonical: JobSpec = {
+      ...spec,
+      corpus_dir: real.get(spec.corpus_dir)!,
+      profile_path: real.get(spec.profile_path)!,
+      cache_file: spec.cache_file === null ? null : real.get(spec.cache_file)!,
+      models_dir: spec.models_dir === null ? null : real.get(spec.models_dir)!,
+    };
+    if (sha256(NodeFS.readFileSync(canonical.profile_path)) !== spec.profile_hash) {
       throw new WorkerFailure("artifact-mismatch", "The profile file is not the campaign's.");
     }
     const codeArms = (["reference", "candidate"] as const).filter(
@@ -406,12 +514,12 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
         .map((cutoff) => cutoff.slice(0, 10))
         .toSorted()
         .at(-1) ?? "0000-00-00";
-    const index = indexCorpus(spec.corpus_dir, lastDay);
+    const index = indexCorpus(canonical.corpus_dir, lastDay);
     const arms: Record<ArmSide, Array<ArmOutput>> = { reference: [], candidate: [] };
     for (const side of ["reference", "candidate"] as const) {
       const engineSrc = prepareTree(spec, side, jobDir, options);
       // A code candidate writes embeddings only to its own copy of the cache.
-      let cacheFile = spec.cache_file;
+      let cacheFile = canonical.cache_file;
       if (cacheFile !== null && Object.keys(spec[side].files).length > 0) {
         const own = NodePath.join(jobDir, `${side}-cache`, NodePath.basename(cacheFile));
         NodeFS.mkdirSync(NodePath.dirname(own), { recursive: true });
@@ -421,7 +529,17 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
       for (const cutoff of spec.cutoffs) {
         options.log?.(JSON.stringify({ phase: "arm", side, cutoff }));
         arms[side].push(
-          runArm({ spec, side, cutoff, engineSrc, jobDir, sandbox, cacheFile, options, index }),
+          runArm({
+            spec: canonical,
+            side,
+            cutoff,
+            engineSrc,
+            jobDir,
+            sandbox,
+            cacheFile,
+            options,
+            index,
+          }),
         );
       }
     }

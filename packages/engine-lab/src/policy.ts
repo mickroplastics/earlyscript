@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - a plain library without an Effect runtime.
 // What a model may change in the engine through the engine lab, and what it never reaches.
 // Pure: the server validates every change here before it stores a candidate, and the worker
 // checks the sealed partitions again before it runs anything.
@@ -78,6 +79,31 @@ export const SEALED_PATH_SEGMENTS: ReadonlyArray<string> = [
 ];
 
 export const isSealedCutoff = (day: string) => SEALED_CUTOFFS.includes(day.slice(0, 10));
+
+const CUTOFF = /^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.000)?Z)?$/;
+
+/**
+ * Cutoffs as the engine takes them, midnight UTC, one per day: a repeated day would count the
+ * same observations twice. A day or a midnight ISO time is accepted; anything else is refused.
+ */
+export function cutoffDays(cutoffs: ReadonlyArray<string>): Array<string> {
+  const days = cutoffs.map((cutoff) => {
+    const day = CUTOFF.exec(cutoff.trim())?.[1];
+    const ms = day === undefined ? Number.NaN : Date.parse(`${day}T00:00:00.000Z`);
+    if (day === undefined || Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== day) {
+      throw new LabPolicyError("invalid-change", `Cutoff ${cutoff} is not a UTC day at midnight.`);
+    }
+    return day;
+  });
+  const repeated = days.filter((day, k) => days.indexOf(day) !== k);
+  if (repeated.length > 0) {
+    throw new LabPolicyError(
+      "invalid-change",
+      `Cutoffs repeat ${[...new Set(repeated)].join(", ")}: one per day.`,
+    );
+  }
+  return days.toSorted().map((day) => `${day}T00:00:00.000Z`);
+}
 
 export function isSealedPath(path: string): boolean {
   const segments = path.split(/[\\/]+/);

@@ -148,6 +148,100 @@ it.live("refuses campaigns over the frozen evaluation's cutoffs or files", () =>
 );
 
 it.live(
+  "refuses campaign inputs that resolve into the frozen evaluation or outside the authorized roots (Sol, B2)",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const changes = yield* EngineChangeService;
+        // Synthetic stand-ins named like the sealed directories; no real reserve is touched.
+        const sealedDir = NodePath.join(harness.dir, "eval-prospectivo", "corpus");
+        NodeFS.mkdirSync(NodePath.dirname(sealedDir), { recursive: true });
+        NodeFS.cpSync(harness.fixture.corpus_dir, sealedDir, { recursive: true });
+        const alias = NodePath.join(harness.dir, "friendly-corpus");
+        NodeFS.symlinkSync(sealedDir, alias);
+        const create = (policy: ReturnType<typeof syntheticPolicy>) =>
+          Effect.flip(
+            changes.createCampaign({
+              projectId: TEST_PROJECT,
+              kind: "development",
+              budget: 3,
+              policy,
+              actor: "miguel",
+            }),
+          );
+        expect((yield* create({ ...syntheticPolicy(harness), corpus_dir: alias })).code).toBe(
+          "sealed-partition",
+        );
+        const labels = NodePath.join(harness.dir, "labels-link.json");
+        NodeFS.copyFileSync(
+          harness.fixture.labels_path,
+          NodePath.join(harness.dir, "eval-prospectivo", "labels.json"),
+        );
+        NodeFS.symlinkSync(NodePath.join(harness.dir, "eval-prospectivo", "labels.json"), labels);
+        const policy = syntheticPolicy(harness);
+        expect(
+          (yield* create({ ...policy, labels: { cards: policy.labels.cards, labels } })).code,
+        ).toBe("sealed-partition");
+        expect((yield* create({ ...policy, input_roots: [harness.fixture.corpus_dir] })).code).toBe(
+          "permission-denied",
+        );
+        expect((yield* create({ ...policy, input_roots: [] })).code).toBe("permission-denied");
+        const ok = yield* changes.createCampaign({
+          projectId: TEST_PROJECT,
+          kind: "development",
+          budget: 3,
+          policy,
+          actor: "miguel",
+        });
+        expect(ok.cutoffs).toEqual(policy.cutoffs);
+      }),
+    ),
+);
+
+it.live("a shadow over one day repeated is refused, and so is the promotion (Sol, B3)", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      const changes = yield* EngineChangeService;
+      const promotion = yield* EnginePromotionService;
+      const better = yield* evaluated(harness, "repeat", { growth: 0.1, log_authors_7d: 0.9 });
+      const request = yield* promotion.request({
+        projectId: TEST_PROJECT,
+        threadId: null,
+        candidate: better.candidate,
+        reportId: better.job.reportId!,
+        expectedActive: better.active.hash,
+        reason: "repeat",
+      });
+      const shadow = (cutoffs: ReadonlyArray<string>) =>
+        Effect.flip(
+          changes.createCampaign({
+            projectId: TEST_PROJECT,
+            kind: "shadow",
+            budget: 1,
+            policy: syntheticPolicy(harness, cutoffs),
+            actor: "miguel",
+            requestId: request.requestId,
+            referenceHash: better.active.hash,
+          }),
+        );
+      const day = harness.fixture.cutoffs[6]!;
+      expect((yield* shadow(Array(7).fill(day))).message).toContain("repeat");
+      expect((yield* shadow([day, day.slice(0, 10), harness.fixture.cutoffs[7]!])).code).toBe(
+        "invalid-change",
+      );
+      expect((yield* shadow(harness.fixture.cutoffs.slice(3, 6))).code).toBe(
+        "insufficient-evidence",
+      );
+      const refused = yield* Effect.flip(
+        promotion.approve({ requestId: request.requestId, actor: "miguel", reason: "accept gate" }),
+      );
+      expect(refused.code).toBe("insufficient-evidence");
+      expect((yield* promotion.history).filter((row) => row.kind === "promote")).toHaveLength(0);
+    }),
+  ),
+);
+
+it.live(
   "after a crash, the next pass takes the lapsed job and accepts the worker's one result",
   () =>
     withHarness((harness) =>

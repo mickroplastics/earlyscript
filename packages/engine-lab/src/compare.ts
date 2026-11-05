@@ -245,7 +245,8 @@ export function cutoffDiffs(
     const candIds = new Map(candTop.map((trend) => [trend.trend_id, trend]));
     return {
       cutoff: ref.cutoff,
-      logically_equal: ref.logical_hash === cand.logical_hash,
+      logically_equal:
+        ref.logical_hash === cand.logical_hash && ref.members_hash === cand.members_hash,
       entered: candTop
         .filter((trend) => !refIds.has(trend.trend_id))
         .map((trend) => ({

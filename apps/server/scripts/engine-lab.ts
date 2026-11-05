@@ -64,6 +64,8 @@ const policyFromFlags = () => ({
     flag("labels") === undefined
       ? null
       : { cards: NodePath.resolve(need("labels-cards")), labels: NodePath.resolve(need("labels")) },
+  input_roots: list("inputs"),
+  label_roots: flag("label-roots") === undefined ? [] : list("label-roots"),
   judge:
     flag("judge-labels") === undefined
       ? null

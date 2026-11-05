@@ -31,6 +31,10 @@
       "types": "./src/result.ts",
       "import": "./src/result.ts"
     },
+    "./inputs": {
+      "types": "./src/inputs.ts",
+      "import": "./src/inputs.ts"
+    },
     "./labels": {
       "types": "./src/labels.ts",
       "import": "./src/labels.ts"

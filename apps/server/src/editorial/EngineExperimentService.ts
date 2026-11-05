@@ -16,7 +16,9 @@ import {
   type GateResult,
   shadowCards,
 } from "@earlyscript/engine-lab/gate";
+import { canonicalInputs } from "@earlyscript/engine-lab/inputs";
 import { readLabelSource } from "@earlyscript/engine-lab/labels";
+import { LabPolicyError } from "@earlyscript/engine-lab/policy";
 import { type JobSpec, resultMismatch, type WorkerResult } from "@earlyscript/engine-lab/result";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
@@ -282,6 +284,16 @@ const make = Effect.gen(function* () {
     Effect.try({
       try: () => {
         const policy = policyOf(campaign);
+        // Again at reading time: a label file swapped for a link since the campaign is refused.
+        const files = [policy.labels, policy.judge].flatMap((entry) =>
+          entry === null ? [] : [entry.cards, entry.labels],
+        );
+        if (files.length > 0) {
+          canonicalInputs(
+            policy.label_roots,
+            files.map((path) => ({ path, kind: "file" as const })),
+          );
+        }
         const base = developmentReport({
           result,
           campaignId: campaign.campaign_id,
@@ -308,7 +320,9 @@ const make = Effect.gen(function* () {
         return { ...base, kind: "shadow" as const, shadow: { cards, members } };
       },
       catch: (cause) =>
-        labFailure("artifact-mismatch", `The report could not be computed: ${String(cause)}`),
+        cause instanceof LabPolicyError
+          ? labFailure(cause.code, cause.message)
+          : labFailure("artifact-mismatch", `The report could not be computed: ${String(cause)}`),
     });
 
   const accept = Effect.fn("EngineExperimentService.accept")(function* (

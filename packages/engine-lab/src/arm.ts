@@ -1,7 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalConsole:off globalDate:off - runs inside the sandbox as a plain script.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalConsole:off - runs inside the sandbox as a plain script.
 // One arm at one cutoff: runs the engine of the tree it is given (the installed one or a code
-// candidate's copy) and writes arm.json next to its run. It sees no labels and no evaluator;
-// the worker checks what it writes against the corpus.
+// candidate's copy), which may be hostile. It sees no labels, no evaluator and no secret.
 //   node arm.ts --spec <arm-spec.json>
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -22,28 +21,6 @@ interface ArmRunSpec {
   readonly top: number;
 }
 
-interface Dossier {
-  readonly trend: {
-    readonly id: string;
-    readonly label: string;
-    readonly stage: string;
-    readonly items_7d: number;
-  };
-  readonly rankings: {
-    readonly eligible: number;
-    readonly weighted: {
-      readonly position: number;
-      readonly score: number;
-      readonly components: ReadonlyArray<{
-        name: string;
-        value: number | null;
-        weight: number;
-        contribution: number;
-      }>;
-    };
-  };
-}
-
 const flag = process.argv.indexOf("--spec");
 const specPath = flag < 0 ? undefined : process.argv[flag + 1];
 if (specPath === undefined) {
@@ -51,7 +28,6 @@ if (specPath === undefined) {
   process.exit(2);
 }
 const spec = JSON.parse(NodeFS.readFileSync(specPath, "utf8")) as ArmRunSpec;
-const started = Date.now();
 const moduleOf = (file: string) => NodeURL.pathToFileURL(NodePath.join(spec.engine_src, file)).href;
 const engine = (await import(moduleOf("run.ts"))) as {
   runEngine: (options: Record<string, unknown>) => Promise<{
@@ -87,39 +63,10 @@ const record = await engine.runEngine({
     for (const trend of trends) members.set(trend.id, trend.itemIds);
   },
 });
-const dossierDir = NodePath.join(runsDir, record.run_id, "dossiers");
-const dossiers = NodeFS.existsSync(dossierDir)
-  ? NodeFS.readdirSync(dossierDir)
-      .filter((name) => name.endsWith(".json"))
-      .map(
-        (name) =>
-          JSON.parse(NodeFS.readFileSync(NodePath.join(dossierDir, name), "utf8")) as Dossier,
-      )
-  : [];
-const top = dossiers
-  .toSorted((a, b) => a.rankings.weighted.position - b.rankings.weighted.position)
-  .slice(0, spec.top)
-  .map((dossier) => ({
-    position: dossier.rankings.weighted.position,
-    trend_id: dossier.trend.id,
-    label: dossier.trend.label,
-    stage: dossier.trend.stage,
-    score: dossier.rankings.weighted.score,
-    components: dossier.rankings.weighted.components,
-    items_7d: dossier.trend.items_7d,
-    item_ids: [...(members.get(dossier.trend.id) ?? [])],
-  }));
+// Raw output only: the engine wrote run.json and the dossiers; this adds each emitted trend's
+// members. The worker, in another process that loads no candidate code, reads and checks all of
+// it and computes every hash it reports; nothing written here is taken on trust.
 NodeFS.writeFileSync(
-  NodePath.join(spec.out_dir, "arm.json"),
-  `${JSON.stringify({
-    run_id: record.run_id,
-    status: record.status,
-    error: record.error ?? null,
-    logical_hash: record.logical_hash,
-    config_hash: record.config_hash,
-    profile_hash: record.profile.hash,
-    eligible: dossiers[0]?.rankings.eligible ?? 0,
-    top,
-    duration_ms: Date.now() - started,
-  })}\n`,
+  NodePath.join(spec.out_dir, "members.json"),
+  `${JSON.stringify({ run_id: record.run_id, members: Object.fromEntries(members) })}\n`,
 );

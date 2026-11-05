@@ -7,6 +7,7 @@ import type { ArmOutput, ArmTrend, WorkerResult } from "./result.ts";
 
 export const GATE_RULE = {
   schema: "earlyscript.engine-lab-gate/1",
+  /** Distinct UTC days after the freeze; a repeated day counts once and makes the shadow invalid. */
   min_cutoffs: 7,
   g5_min: 0.65,
   g5_advantage_min: 0.05,
@@ -117,6 +118,7 @@ export interface GateResult {
   readonly verdict: GateVerdict;
   readonly reasons: ReadonlyArray<string>;
   readonly cutoffs: number;
+  readonly distinct_days: number;
   readonly families: number;
   readonly labels_hash: string;
   readonly candidate: { readonly g5: number; readonly p5: number; readonly duplicates: number };
@@ -170,8 +172,15 @@ export function evaluateGate(input: {
   const { result } = input;
   const reasons: Array<string> = [];
   const cutoffs = result.arms.reference.map((arm) => arm.cutoff);
-  if (cutoffs.length < GATE_RULE.min_cutoffs) {
-    reasons.push(`${cutoffs.length} shadow cutoffs; the gate needs ${GATE_RULE.min_cutoffs}.`);
+  // Days, not entries: the same day twice is one observation, whatever the array says.
+  const days = new Set(cutoffs.map((cutoff) => cutoff.slice(0, 10)));
+  if (days.size !== cutoffs.length) {
+    reasons.push(
+      `The shadow repeats days: ${cutoffs.length} cutoffs over ${days.size} distinct days.`,
+    );
+  }
+  if (days.size < GATE_RULE.min_cutoffs) {
+    reasons.push(`${days.size} distinct shadow days; the gate needs ${GATE_RULE.min_cutoffs}.`);
   }
   const early = cutoffs.filter((cutoff) => cutoff.slice(0, 10) <= input.frozenDay);
   if (early.length > 0)
@@ -288,6 +297,7 @@ export function evaluateGate(input: {
     verdict,
     reasons: [...reasons, ...misses],
     cutoffs: cutoffs.length,
+    distinct_days: days.size,
     families: diffs.length,
     labels_hash: sha256(
       canonicalJson(input.labels.toSorted((a, b) => (a.card_id < b.card_id ? -1 : 1))),

@@ -10,7 +10,8 @@ import type {
   EngineManifestView,
 } from "@earlyscript/editorial-contracts/engineLab";
 import { canonicalJson, sha256 } from "@earlyscript/engine-lab/hash";
-import { GATE_RULE_HASH } from "@earlyscript/engine-lab/gate";
+import { GATE_RULE, GATE_RULE_HASH } from "@earlyscript/engine-lab/gate";
+import { assertUnderRoots, canonicalInputs } from "@earlyscript/engine-lab/inputs";
 import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import {
   codeCandidate,
@@ -24,6 +25,7 @@ import {
   applyConfigChange,
   assertNotSealed,
   CODE_FILES,
+  cutoffDays,
   LAB_POLICY_VERSION,
   RANK_VALUE_NAMES,
   UNSUPPORTED_CHANGE_KINDS,
@@ -33,7 +35,6 @@ import {
 import { JOB_SPEC_SCHEMA, type JobSpec } from "@earlyscript/engine-lab/result";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -76,6 +77,10 @@ export interface CampaignPolicy {
   /** Card and label files on this server, read only by the evaluator. */
   readonly labels: { readonly cards: string; readonly labels: string } | null;
   readonly judge: { readonly cards: string; readonly labels: string } | null;
+  /** Roots the executor may read inputs from; it resolves every input against them again. */
+  readonly input_roots: ReadonlyArray<string>;
+  /** Roots on this server the label and card files must resolve inside. */
+  readonly label_roots: ReadonlyArray<string>;
 }
 
 export interface CampaignRow {
@@ -181,12 +186,6 @@ export class EngineChangeService extends Context.Service<
 
 const MAX_TEXT = 2_000;
 
-/** A cutoff as the engine takes it: midnight UTC, ISO with milliseconds. */
-const normalizeCutoff = (cutoff: string) =>
-  DateTime.formatIso(
-    DateTime.makeUnsafe(cutoff.length === 10 ? `${cutoff}T00:00:00.000Z` : cutoff),
-  );
-
 const make = Effect.gen(function* () {
   const sql = yield* EditorialSql;
   const options = yield* EngineLabOptions;
@@ -233,23 +232,21 @@ const make = Effect.gen(function* () {
       return yield* labFailure("invalid-change", "The budget is a whole number.");
     if (input.policy.cutoffs.length === 0)
       return yield* labFailure("invalid-change", "A campaign needs cutoffs.");
+    const cutoffs = yield* Effect.try({
+      try: () => cutoffDays(input.policy.cutoffs),
+      catch: fromPolicy,
+    });
+    const labelFiles = [input.policy.labels, input.policy.judge].flatMap((entry) =>
+      entry === null ? [] : [entry.cards, entry.labels],
+    );
+    const executorPaths = [
+      input.policy.corpus_dir,
+      input.policy.profile_path,
+      ...(input.policy.cache_file === null ? [] : [input.policy.cache_file]),
+      ...(input.policy.models_dir === null ? [] : [input.policy.models_dir]),
+    ];
     yield* Effect.try({
-      try: () =>
-        assertNotSealed({
-          cutoffs: input.policy.cutoffs,
-          paths: [
-            input.policy.corpus_dir,
-            input.policy.profile_path,
-            input.policy.cache_file ?? "",
-            input.policy.models_dir ?? "",
-            ...(input.policy.labels === null
-              ? []
-              : [input.policy.labels.cards, input.policy.labels.labels]),
-            ...(input.policy.judge === null
-              ? []
-              : [input.policy.judge.cards, input.policy.judge.labels]),
-          ],
-        }),
+      try: () => assertNotSealed({ cutoffs, paths: [...executorPaths, ...labelFiles] }),
       catch: fromPolicy,
     });
     if (input.policy.executor === "remote" && options.remote === null) {
@@ -258,13 +255,81 @@ const make = Effect.gen(function* () {
         "No remote executor is configured (EARLYSCRIPT_ENGINE_LAB_REMOTE).",
       );
     }
+    // Canonical paths: a link may name an innocent path and point at the frozen evaluation.
+    // The executor's inputs are resolved here when it is this machine, and always by the
+    // executor itself; the label files are always this server's.
+    const executorReal = yield* Effect.try({
+      try: () => {
+        if (input.policy.executor === "remote") {
+          assertUnderRoots(input.policy.input_roots, executorPaths);
+          return new Map(executorPaths.map((path) => [path, path]));
+        }
+        return canonicalInputs(input.policy.input_roots, [
+          { path: input.policy.corpus_dir, kind: "tree" },
+          { path: input.policy.profile_path, kind: "file" },
+          ...(input.policy.cache_file === null
+            ? []
+            : [{ path: input.policy.cache_file, kind: "optional-file" as const }]),
+          ...(input.policy.models_dir === null
+            ? []
+            : [{ path: input.policy.models_dir, kind: "tree" as const }]),
+        ]);
+      },
+      catch: fromPolicy,
+    });
+    const labelReal = yield* Effect.try({
+      try: () =>
+        labelFiles.length === 0
+          ? new Map<string, string>()
+          : canonicalInputs(
+              input.policy.label_roots,
+              labelFiles.map((path) => ({ path, kind: "file" as const })),
+            ),
+      catch: fromPolicy,
+    });
+    if (input.kind === "shadow") {
+      // The gate's minimum, checked before anything runs: distinct days after the request.
+      const request = yield* sql<{ readonly created_at: string }>`
+        SELECT created_at FROM editorial_engine_promotions WHERE request_id = ${input.requestId ?? ""}
+      `.pipe(storage);
+      const frozenDay = request[0]?.created_at.slice(0, 10);
+      if (frozenDay === undefined)
+        return yield* labFailure("not-found", "A shadow needs its promotion request.");
+      const future = cutoffs.filter((cutoff) => cutoff.slice(0, 10) > frozenDay);
+      if (future.length !== cutoffs.length || future.length < GATE_RULE.min_cutoffs) {
+        return yield* labFailure(
+          "insufficient-evidence",
+          `A shadow needs at least ${GATE_RULE.min_cutoffs} distinct days after ${frozenDay}; ${future.length} of ${cutoffs.length} are.`,
+        );
+      }
+    }
     const reference = input.referenceHash ?? (yield* promotion.active).hash;
     const policy: CampaignPolicy = {
       schema: CAMPAIGN_SCHEMA,
       policy_version: LAB_POLICY_VERSION,
       gate_rule_hash: GATE_RULE_HASH,
       ...input.policy,
-      cutoffs: input.policy.cutoffs.map(normalizeCutoff),
+      cutoffs,
+      corpus_dir: executorReal.get(input.policy.corpus_dir)!,
+      profile_path: executorReal.get(input.policy.profile_path)!,
+      cache_file:
+        input.policy.cache_file === null ? null : executorReal.get(input.policy.cache_file)!,
+      models_dir:
+        input.policy.models_dir === null ? null : executorReal.get(input.policy.models_dir)!,
+      labels:
+        input.policy.labels === null
+          ? null
+          : {
+              cards: labelReal.get(input.policy.labels.cards)!,
+              labels: labelReal.get(input.policy.labels.labels)!,
+            },
+      judge:
+        input.policy.judge === null
+          ? null
+          : {
+              cards: labelReal.get(input.policy.judge.cards)!,
+              labels: labelReal.get(input.policy.judge.labels)!,
+            },
     };
     const campaignId = `cmp_${(yield* newId).replaceAll("-", "").slice(0, 16)}`;
     yield* sql`
@@ -562,6 +627,7 @@ const make = Effect.gen(function* () {
       secret: input.secret,
       kind: input.campaign.kind,
       cutoffs: policy.cutoffs,
+      input_roots: policy.input_roots,
       corpus_dir: policy.corpus_dir,
       profile_path: policy.profile_path,
       profile_hash: manifestOf(ref).profile_hash,

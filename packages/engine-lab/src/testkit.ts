@@ -94,6 +94,7 @@ export function jobSpec(
     secret: input.secret ?? "test-secret",
     kind: "development",
     cutoffs: input.cutoffs ?? fixture.cutoffs.slice(0, 3),
+    input_roots: [fixture.dir],
     corpus_dir: fixture.corpus_dir,
     profile_path: fixture.profile_path,
     profile_hash: fixture.profile_hash,

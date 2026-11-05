@@ -289,6 +289,8 @@ const program = Effect.gen(function* () {
     workers: 1,
     labels: { cards: lab.cards_path, labels: lab.labels_path },
     judge: null,
+    input_roots: [out],
+    label_roots: [out],
   });
 
   // Before the lab: the plan only (the job it keys), so the run after the revert is a new one.
