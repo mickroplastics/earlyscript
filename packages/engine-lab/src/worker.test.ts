@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { developmentReport } from "./compare.ts";
+import { subsetCorpus } from "./corpusSubset.ts";
 import { readLabelSource } from "./labels.ts";
 import { resultMismatch } from "./result.ts";
 import { jobSpec, labFixture, patchCandidate, weightCandidate } from "./testkit.ts";
@@ -76,6 +77,24 @@ describe("worker", () => {
       judge: null,
     });
     expect(report.human?.verdict).toBe("worse");
+  });
+
+  it("runs the engine over a copy of some days of a corpus, which verifies against its manifest", async () => {
+    const copy = subsetCorpus({
+      from: fixture.corpus_dir,
+      out: NodePath.join(root, "subset"),
+      sources: ["hn", "github"],
+      fromDay: "2026-12-01",
+      toDay: "2026-12-17",
+    });
+    expect(copy.files).toBeGreaterThan(0);
+    const spec = jobSpec(fixture, {
+      token: "job-worker-subset",
+      candidate: weightCandidate(fixture, { growth: 0.2 }),
+      cutoffs: [fixture.cutoffs[0]!],
+    });
+    const result = await evaluateJob({ ...spec, corpus_dir: copy.out }, options);
+    expect(result.status, JSON.stringify(result.error)).toBe("ok");
   });
 
   it("refuses the frozen evaluation's cutoffs before running anything", async () => {

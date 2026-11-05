@@ -50,6 +50,13 @@ export function subsetCorpus(input: {
     NodePath.join(input.out, "coverage.jsonl"),
     coverage.map((line) => `${line}\n`).join(""),
   );
+  // The reader verifies coverage.jsonl against the manifest too.
+  const coverageBytes = NodeFS.readFileSync(NodePath.join(input.out, "coverage.jsonl"));
+  files.push({
+    path: "coverage.jsonl",
+    sha256: sha256(coverageBytes),
+    bytes: coverageBytes.length,
+  });
   const keep = (entries: ReadonlyArray<ManifestEntry> | undefined) =>
     (entries ?? []).filter(
       (entry) => entry.source === undefined || input.sources.includes(entry.source),
