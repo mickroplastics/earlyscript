@@ -99,17 +99,35 @@ if (command === "collect") {
   const running = path.join(here, "engine-running");
   try {
     fs.closeSync(fs.openSync(running, "wx"));
-  } catch {
-    event("OVERLAP");
+  } catch (error) {
+    // Only a marker that exists is an overlap; an approved artifact may not create files here.
+    if (error.code === "EEXIST") event("OVERLAP");
+  }
+  // An approved artifact that writes where it may not: each attempt and its outcome.
+  const tamper = path.join(here, "tamper");
+  if (fs.existsSync(tamper)) {
+    for (const target of JSON.parse(fs.readFileSync(tamper, "utf8"))) {
+      let outcome = "written";
+      try {
+        fs.appendFileSync(target, "changed");
+      } catch (error) {
+        outcome = error.code;
+      }
+      fs.appendFileSync(path.join(here, "tamper.log"), target + " " + outcome + "\n");
+    }
   }
   process.on("SIGTERM", () => {
-    fs.rmSync(running, { force: true });
+    try {
+      fs.rmSync(running, { force: true });
+    } catch {}
     event("run killed");
     process.exit(143);
   });
   const slow = path.join(here, "slow-run");
   if (fs.existsSync(slow)) await new Promise((resolve) => setTimeout(resolve, Number(fs.readFileSync(slow, "utf8"))));
-  fs.rmSync(running, { force: true });
+  try {
+    fs.rmSync(running, { force: true });
+  } catch {}
   console.error(JSON.stringify({ phase: "embed", inferred: 1, total: 2 }));
   if (failing("run")) {
     console.error("run broke");
@@ -192,6 +210,25 @@ const makeFixture = () => {
 };
 
 type Fixture = ReturnType<typeof makeFixture>;
+
+/** What a claim of the installed engine writes before its launch: its manifest and profile. */
+const writeClaimRecord = (
+  jobDir: string,
+  generation: number,
+  job: { readonly configHash: string; readonly profileHash: string },
+) => {
+  NodeFS.writeFileSync(
+    NodePath.join(jobDir, `engine-manifest.g${generation}.json`),
+    JSON.stringify({
+      manifest_hash: null,
+      config_hash: job.configHash,
+      profile_hash: job.profileHash,
+      code_hash: "",
+      generation,
+    }),
+  );
+  NodeFS.writeFileSync(NodePath.join(jobDir, `profile.g${generation}.json`), "{}");
+};
 
 const progressOf = (runId: string) => ({
   runId: EditorialRunId.make(runId),
@@ -292,7 +329,20 @@ const withJobs = <A, E>(
           }),
           Layer.mock(RunDirectory.EditorialRunDirectory)({ runsDir: fx.runsDir }),
         );
+  // An approved artifact writes only its output: the stand-in's own log files are bound for it,
+  // and its cache view is an empty stand-in.
+  const standInFiles = ["trace.log", "events.log", "env.log", "tamper.log"].map((name) => {
+    const file = NodePath.join(fx.root, name);
+    if (!NodeFS.existsSync(file)) NodeFS.writeFileSync(file, "");
+    return file;
+  });
   const jobs = EditorialJobsService.layerWith({
+    artifactExtraWritable: standInFiles,
+    prepareArtifactCache: (input) =>
+      Effect.sync(() => {
+        NodeFS.writeFileSync(input.out, "");
+        return input.out;
+      }),
     engine:
       options.engine ?? Result.succeed({ cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH }),
     jobsDir: NodePath.join(fx.root, "jobs"),
@@ -656,7 +706,11 @@ describe("EditorialJobsService", () => {
             artifacts_json = ${JSON.stringify(artifacts)}
           WHERE job_id = ${job.jobId}
         `;
+        // What the dead claim left: its manifest and profile copy, and the run naming them.
         const runId = "run_crashed";
+        const jobDir = job.artifacts.jobDir;
+        NodeFS.mkdirSync(jobDir, { recursive: true });
+        writeClaimRecord(jobDir, 1, job);
         NodeFS.mkdirSync(NodePath.join(fx.runsDir, runId));
         NodeFS.writeFileSync(
           NodePath.join(fx.runsDir, runId, "run.json"),
@@ -666,7 +720,7 @@ describe("EditorialJobsService", () => {
             cutoff_at: job.cutoffAt,
             config_hash: job.configHash,
             started_at: "2000-01-01T00:01:00.000Z",
-            profile: { hash: job.profileHash },
+            profile: { hash: job.profileHash, path: NodePath.join(jobDir, "profile.g1.json") },
           }),
         );
 
@@ -903,14 +957,14 @@ describe("EditorialJobsService", () => {
           const started = yield* jobs.runNow;
           yield* jobs.runDue;
           const done = (yield* jobs.list).jobs.find((job) => job.jobId === started.jobId);
-          assert.strictEqual(done?.status, "done");
+          assert.strictEqual(done?.status, "done", JSON.stringify(done?.artifacts));
           // The launch line says bwrap; the stand-in engine saw neither the server's
           // environment nor a file outside its mounts.
           const jobDir = NodePath.join(fx.root, "jobs", started.jobId);
           const log = NodeFS.readdirSync(jobDir).find((name) => name.startsWith("run.g"))!;
           assert.match(
             NodeFS.readFileSync(NodePath.join(jobDir, log), "utf8"),
-            /^\$ \[bwrap\] node /,
+            /^\$ \[bwrap\] node --disallow-code-generation-from-strings --permission /,
           );
           const env = NodeFS.readFileSync(NodePath.join(fx.root, "env.log"), "utf8")
             .split("\n")
@@ -930,6 +984,86 @@ describe("EditorialJobsService", () => {
       );
     },
   );
+
+  it.live(
+    "an approved artifact writes only its own output: earlier runs and the shared cache stay as they were (Opus B2, Astra B1)",
+    () => {
+      const fx = makeFixture();
+      const code = { current: { cli: null as string | null, hash: null as string | null } };
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          // An earlier run of the installed engine, and the shared cache.
+          const earlier = yield* jobs.runNow;
+          yield* jobs.runDue;
+          const earlierRun = (yield* jobs.list).jobs.find((job) => job.jobId === earlier.jobId)!
+            .artifacts.runId!;
+          const witness = NodePath.join(fx.runsDir, earlierRun, "run.json");
+          const cache = NodePath.join(fx.root, "embeddings.sqlite");
+          NodeFS.writeFileSync(cache, "shared cache");
+          const before = [NodeFS.readFileSync(witness, "utf8"), NodeFS.readFileSync(cache, "utf8")];
+          // Approved code that tries to write both.
+          NodeFS.writeFileSync(NodePath.join(fx.root, "tamper"), JSON.stringify([witness, cache]));
+          code.current = { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) };
+          const approved = yield* jobs.runNow;
+          yield* jobs.runDue;
+          yield* jobs.runDue;
+          const done = (yield* jobs.list).jobs.find((job) => job.jobId === approved.jobId);
+          assert.strictEqual(done?.status, "done");
+          const attempts = NodeFS.readFileSync(NodePath.join(fx.root, "tamper.log"), "utf8")
+            .split("\n")
+            .filter(Boolean);
+          assert.lengthOf(attempts, 2);
+          assert.isTrue(attempts.every((line) => line.endsWith(" ERR_ACCESS_DENIED")));
+          assert.deepStrictEqual(
+            [NodeFS.readFileSync(witness, "utf8"), NodeFS.readFileSync(cache, "utf8")],
+            before,
+          );
+          // Its own run was collected into the runs directory by the trusted side.
+          assert.isTrue(NodeFS.existsSync(NodePath.join(fx.runsDir, done!.artifacts.runId!)));
+        }),
+        { code },
+      );
+    },
+  );
+
+  it.live("never adopts a run it did not launch, even one that matches the job (Opus B2)", () => {
+    const fx = makeFixture();
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const sql = yield* EditorialSql;
+        const job = yield* jobs.runNow;
+        const [row] = yield* sql<{
+          cutoff_at: string;
+          config_hash: string;
+          profile_hash: string;
+        }>`SELECT cutoff_at, config_hash, profile_hash FROM editorial_jobs WHERE job_id = ${job.jobId}`;
+        // A run with the job's cutoff, configuration and profile, started far ahead, without
+        // the claim's own profile path: what code with write access could have left there.
+        const planted = "run_20990101_20990101T000000_planted";
+        NodeFS.mkdirSync(NodePath.join(fx.runsDir, planted), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(fx.runsDir, planted, "run.json"),
+          JSON.stringify({
+            run_id: planted,
+            status: "ok",
+            cutoff_at: row!.cutoff_at,
+            config_hash: row!.config_hash,
+            started_at: "2099-01-01T00:00:00.000Z",
+            profile: { hash: row!.profile_hash },
+          }),
+        );
+        yield* jobs.runDue;
+        const done = (yield* jobs.list).jobs.find((entry) => entry.jobId === job.jobId);
+        assert.strictEqual(done?.status, "done");
+        assert.notStrictEqual(done?.artifacts.runId, planted);
+        assert.include(fx.trace(), "run");
+      }),
+    );
+  });
 
   it.live("fails an approved artifact's run on a machine without bwrap (Opus)", () => {
     const fx = makeFixture();
@@ -1208,7 +1342,9 @@ describe("EditorialJobsService with two owners of one job", () => {
         const config = JSON.parse(NodeFS.readFileSync(DEFAULT_CONFIG_PATH, "utf8")) as object;
         const configFile = NodePath.join(jobDir, "engine-config.g1.json");
         NodeFS.writeFileSync(configFile, JSON.stringify({ ...config, sources: ["hn", "github"] }));
-        const profileFile = NodePath.join(fx.root, "profile.json");
+        // The claim's own profile copy and manifest, as the run phase writes them first.
+        writeClaimRecord(jobDir, 1, job);
+        const profileFile = NodePath.join(jobDir, "profile.g1.json");
         NodeFS.writeFileSync(profileFile, SINGULARIDEV_PROFILE_V1);
         const orphan = NodeChildProcess.spawn(
           process.execPath,

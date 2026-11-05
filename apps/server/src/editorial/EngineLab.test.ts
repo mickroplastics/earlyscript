@@ -693,6 +693,14 @@ it.live(
           expectedActive: active.hash,
           reason: "equal outputs over five days",
         });
+        // Opus: on a machine whose nightly has no bwrap, approving code waits instead.
+        (harness.options as { nightlySandbox?: "bwrap" | "unavailable" }).nightlySandbox =
+          "unavailable";
+        const noSandbox = yield* Effect.flip(
+          promotion.approve({ requestId: asked.requestId, actor: "miguel", reason: "no bwrap" }),
+        );
+        expect(noSandbox.message).toContain("this machine has no bwrap");
+        (harness.options as { nightlySandbox?: "bwrap" | "unavailable" }).nightlySandbox = "bwrap";
         // Opus: the operator reads the patch itself and the evidence in plain words.
         const review = yield* promotion.review(asked.requestId);
         expect(review.patch).toContain("+// Same computation, another file");
@@ -987,6 +995,64 @@ it.live(
         expect(refused.message).toContain("an added line uses import");
         void experiments;
         expect((yield* promotion.history).filter((row) => row.kind === "promote")).toHaveLength(0);
+      }),
+    ),
+);
+
+it.live(
+  "a patch that passes the text filter and builds code from strings fails when it runs, with nothing written (Astra B1, Opus B1)",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const changes = yield* EngineChangeService;
+        const experiments = yield* EngineExperimentService;
+        const active = yield* (yield* EnginePromotionService).active;
+        const code = yield* changes.codeFiles;
+        const rank = code.files["packages/trend-engine/src/rank.ts"]!.split("\n");
+        const witness = NodePath.join(harness.dir, "astra-proof.txt");
+        // Astra's patch, as she submitted it through the candidate API.
+        const added = [
+          'const astraHost = (() => {})["con" + "structor"]("return pro" + "cess")();',
+          `astraHost.getBuiltinModule("fs").writeFileSync(${JSON.stringify(witness)}, "host access from accepted patch");`,
+        ];
+        const patch = [
+          "--- a/packages/trend-engine/src/rank.ts",
+          "+++ b/packages/trend-engine/src/rank.ts",
+          `@@ -1,2 +1,${2 + added.length} @@`,
+          ` ${rank[0]}`,
+          ...added.map((line) => `+${line}`),
+          ` ${rank[1]}`,
+          "",
+        ].join("\n");
+        const campaign = yield* changes.createCampaign({
+          projectId: TEST_PROJECT,
+          kind: "development",
+          budget: 1,
+          policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 1)),
+          actor: "miguel",
+        });
+        // The text filter, a first layer, lets it through.
+        const created = yield* changes.createCandidate({
+          projectId: TEST_PROJECT,
+          threadId: "astra",
+          base: active.hash,
+          intent: "capability check",
+          hypothesis: "equal outputs",
+          idempotencyKey: "astra-bypass",
+          change: { kind: "code", baseSourceHash: code.baseSourceHash, patch },
+        });
+        const queued = yield* changes.evaluate({
+          projectId: TEST_PROJECT,
+          threadId: "astra",
+          candidate: created.candidate.manifestHash,
+          campaignId: campaign.campaignId,
+          idempotencyKey: "astra-bypass",
+        });
+        yield* experiments.runDue;
+        const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
+        expect(job).toMatchObject({ status: "failed", reportId: null });
+        expect(job.error?.message).toContain("EvalError");
+        expect(NodeFS.existsSync(witness)).toBe(false);
       }),
     ),
 );

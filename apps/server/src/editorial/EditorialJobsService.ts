@@ -39,6 +39,8 @@ import { EditorialPresentationService } from "./EditorialPresentationService.ts"
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import { engineSourceHash } from "@earlyscript/engine-lab/hash";
+import { buildCacheView } from "@earlyscript/engine-lab/cacheView";
+import { adoptArtifactRun } from "@earlyscript/engine-lab/runAdoption";
 import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
 import { DEFAULT_DATA_DIR } from "@earlyscript/trend-engine/run";
 import {
@@ -104,6 +106,29 @@ export interface EditorialJobsOptions {
   readonly staleEngineTimeoutMs: number;
   /** Tests only: whether bwrap exists for an approved artifact; detected otherwise. */
   readonly artifactSandbox?: "bwrap" | "unavailable";
+  /** Tests only: a stand-in engine's own files, writable to it besides its output. */
+  readonly artifactExtraWritable?: ReadonlyArray<string>;
+  /**
+   * Builds the read-only cache an approved artifact's run reads: its cutoff's entries, from the
+   * shared cache or inferred by the installed embedder. Replaced in tests by a stand-in.
+   */
+  readonly prepareArtifactCache?: (
+    input: ArtifactCacheInput,
+  ) => Effect.Effect<string, ArtifactCacheError>;
+}
+
+/** The cache view of an approved artifact's run could not be prepared. */
+export class ArtifactCacheError extends Schema.TaggedError<ArtifactCacheError>()(
+  "ArtifactCacheError",
+  { message: Schema.String },
+) {}
+
+export interface ArtifactCacheInput {
+  readonly corpusDir: string;
+  readonly cutoff: string;
+  readonly profilePath: string;
+  readonly config: Record<string, unknown>;
+  readonly out: string;
 }
 
 export const DEFAULT_JOB_TIMING = {
@@ -1020,38 +1045,97 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     return yield* body;
   });
 
+  const installedRoot = () => {
+    const installed = Result.isSuccess(options.engine) ? options.engine.success.cli : null;
+    return installed === null
+      ? null
+      : (/^(.*)[\\/]packages[\\/]trend-engine[\\/]src[\\/]cli\.ts$/.exec(installed)?.[1] ?? null);
+  };
+
+  /** This claim's private output directory for an approved artifact's run. */
+  const artifactOut = (ctx: PhaseContext) =>
+    path.join(ctx.jobDir, `artifact-out.g${ctx.lease.generation}`);
+
   /**
    * The mounts of an approved artifact's run: its own sources, the installed engine's
-   * dependencies, the corpus, this claim's files and the models read-only; only the runs
-   * directory and the embedding cache writable. No network, no /home, no environment.
+   * dependencies, the corpus and this claim's files (its profile, configuration and cache
+   * view) read-only; only its private output writable. No other run, no shared cache, no
+   * network, no /home, no environment.
    */
   const artifactSandbox = (ctx: PhaseContext, cli: string): EngineSandbox => {
     const artifactRoot =
       /^(.*)[\\/]packages[\\/]trend-engine[\\/]src[\\/]cli\.ts$/.exec(cli)?.[1] ??
       path.dirname(cli);
-    const installed = Result.isSuccess(options.engine) ? options.engine.success.cli : null;
-    const installedRoot =
-      installed === null
-        ? null
-        : (/^(.*)[\\/]packages[\\/]trend-engine[\\/]src[\\/]cli\.ts$/.exec(installed)?.[1] ?? null);
+    const root = installedRoot();
     return {
       readOnly: [
         artifactRoot,
-        ...(installedRoot === null
+        ...(root === null
           ? []
           : [
-              path.join(installedRoot, "node_modules"),
-              path.join(installedRoot, "packages", "trend-engine"),
-              path.join(installedRoot, "packages", "editorial-contracts"),
+              path.join(root, "node_modules"),
+              path.join(root, "packages", "trend-engine"),
+              path.join(root, "packages", "editorial-contracts"),
             ]),
         corpusDir,
         ctx.jobDir,
-        options.modelsDir ?? path.join(DEFAULT_DATA_DIR, "models"),
       ],
-      writable: [runsDir, path.dirname(options.cacheFile)],
-      home: `${ctx.jobDir}.sandbox`,
+      writable: [artifactOut(ctx), ...(options.artifactExtraWritable ?? [])],
+      home: artifactOut(ctx),
     };
   };
+
+  /** The installed engine's code builds the artifact's cache view, in this trusted process. */
+  const prepareArtifactCache =
+    options.prepareArtifactCache ??
+    ((input: ArtifactCacheInput) => {
+      const root = installedRoot();
+      if (root === null) {
+        return Effect.fail(
+          new ArtifactCacheError({
+            message: "An approved artifact needs the installed engine's sources.",
+          }),
+        );
+      }
+      return Effect.tryPromise({
+        try: () =>
+          buildCacheView({
+            engineRoot: root,
+            corpusDir: input.corpusDir,
+            cutoff: input.cutoff,
+            profilePath: input.profilePath,
+            configs: [input.config as never],
+            sharedCache: options.cacheFile,
+            // Inferred by the installed embedder, as the installed nightly would store them.
+            inferredFile: options.cacheFile,
+            infer: {
+              modelDir:
+                options.modelsDir ??
+                path.join(
+                  DEFAULT_DATA_DIR,
+                  "models",
+                  String((input.config.embedder as { revision?: unknown }).revision),
+                ),
+              workers: 2,
+            },
+            out: input.out,
+          }),
+        catch: (cause) =>
+          new ArtifactCacheError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(
+        Effect.flatMap((view) =>
+          view.missing > 0
+            ? Effect.fail(
+                new ArtifactCacheError({
+                  message: `${view.missing} embeddings could not be prepared.`,
+                }),
+              )
+            : Effect.succeed(view.file),
+        ),
+      );
+    });
 
   const engineRun = (
     ctx: PhaseContext,
@@ -1242,12 +1326,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       profilePath === null || path.dirname(profilePath) !== jobDir
         ? null
         : /^profile\.g(\d+)\.json$/.exec(path.basename(profilePath))?.[1];
-    if (claim === null || claim === undefined) {
-      const launchedByAJob =
-        profilePath !== null &&
-        profilePath.startsWith(`${path.resolve(options.jobsDir)}${path.sep}`);
-      return !launchedByAJob && job.code_hash === "";
-    }
+    // Only a run this job's own claim launched: a run without that record, whatever it says,
+    // is never adopted, so a run placed in the directory by anything else is not taken.
+    if (claim === null || claim === undefined) return false;
     const manifest = yield* fs
       .readFileString(path.join(jobDir, `engine-manifest.g${claim}.json`))
       .pipe(Effect.option);
@@ -1382,6 +1463,34 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     // path, which ties the run to this job, this claim and its code.
     const profileFile = jobFile(ctx, "profile", "json");
     yield* fs.copyFile(storedProfile, profileFile).pipe(Effect.mapError(storage));
+    // An approved artifact reads a cache view of its cutoff, cache-only, and writes its run to
+    // a private directory this process collects; the installed engine writes as before.
+    const artifactCache =
+      cli === null
+        ? null
+        : yield* prepareArtifactCache({
+            corpusDir,
+            cutoff: ctx.job.cutoff_at,
+            profilePath: profileFile,
+            config: ctx.plan.config,
+            out: jobFile(ctx, "cache-view", "sqlite"),
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PhaseFailure({
+                  message: `The approved code's cache view could not be prepared: ${cause.message}`,
+                  notice: { code: "engine_failed", phase: "run" },
+                }),
+            ),
+          );
+    if (cli !== null) {
+      yield* fs
+        .remove(artifactOut(ctx), { recursive: true, force: true })
+        .pipe(Effect.mapError(storage));
+      yield* fs
+        .makeDirectory(path.join(artifactOut(ctx), "runs"), { recursive: true })
+        .pipe(Effect.mapError(storage));
+    }
     const args = [
       "run",
       "--corpus",
@@ -1391,14 +1500,14 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       "--profile",
       profileFile,
       "--out",
-      runsDir,
+      cli === null ? runsDir : path.join(artifactOut(ctx), "runs"),
       "--config",
       configFile,
       "--workers",
       String(ctx.workers),
-      "--cache",
-      options.cacheFile,
-      ...modelsArgs(options.modelsDir),
+      ...(artifactCache === null
+        ? ["--cache", options.cacheFile, ...modelsArgs(options.modelsDir)]
+        : ["--cache", artifactCache, "--cache-only"]),
     ];
     const output = yield* engineRun(
       ctx,
@@ -1425,6 +1534,33 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         `engine run ${result.value.run_id} failed: ${result.value.error ?? output.tail}`,
         engineFailed,
       );
+    }
+    if (cli !== null) {
+      // The artifact's run, copied by this process without following links, checked against
+      // the job and only then placed among the product's runs; its content is checked next by
+      // the installed engine's `check`.
+      const adopted = yield* Effect.try({
+        try: () =>
+          adoptArtifactRun({
+            out: artifactOut(ctx),
+            runsDir,
+            runId: result.value.run_id,
+            expect: {
+              cutoff_at: ctx.job.cutoff_at,
+              config_hash: ctx.job.config_hash,
+              profile_hash: ctx.job.profile_hash,
+              profile_path: profileFile,
+            },
+          }),
+        catch: (cause) =>
+          new PhaseFailure({
+            message: `The approved code's run was not adopted: ${cause instanceof Error ? cause.message : String(cause)}`,
+            notice: engineFailed,
+          }),
+      });
+      if (adopted !== result.value.run_id) {
+        return yield* fail("The approved code's run is not the one it reported.", engineFailed);
+      }
     }
     yield* ctx.acceptRun(result.value.run_id);
     yield* ctx.save({

@@ -623,7 +623,7 @@ const make = Effect.gen(function* () {
         ),
       });
       risks.push(
-        "Evaluated only inside the executor's sandbox (no network, its cutoff's corpus view only). If Miguel approves it after reading the patch, the nightly run executes this code in the same kind of sandbox; nothing is deployed or reviewed otherwise.",
+        "Evaluated only inside the executor's sandbox (bwrap and Node's permission model: no network, no child processes, no code from strings, its cutoff's corpus and cache views only). If Miguel approves it after reading the patch, the nightly run executes this code in the same kind of sandbox, writing only its own output; nothing is deployed or reviewed otherwise.",
       );
     } else if (
       typeof kind === "string" &&

@@ -24,8 +24,9 @@ import {
   type ViewRecord,
   type WorkerResult,
 } from "./result.ts";
-import { sandboxArgs } from "./sandbox.ts";
-import { buildView, corpusIdentity, type CorpusView, fileHash, treeHash } from "./view.ts";
+import { buildCacheView, type CacheView, verifyCacheView } from "./cacheView.ts";
+import { restrictedNodeArgs, sandboxArgs } from "./sandbox.ts";
+import { buildView, corpusIdentity, type CorpusView, treeHash } from "./view.ts";
 
 const ENGINE_PREFIX = "packages/trend-engine/src/";
 const TOKEN = /^[a-z0-9][a-z0-9_-]{7,63}$/;
@@ -171,10 +172,11 @@ function runArm(input: {
   readonly engineSrc: string;
   readonly jobDir: string;
   readonly sandbox: "bwrap" | "none";
-  readonly cacheFile: string | null;
   readonly options: WorkerOptions;
   /** The cutoff's corpus view: the only corpus the arm sees. */
   readonly view: CorpusView;
+  /** The cutoff's cache view, read-only; null for the synthetic embedder, which has none. */
+  readonly cacheView: CacheView | null;
   readonly index: Map<string, IndexedItem>;
 }): ArmOutput {
   const { spec, side, cutoff } = input;
@@ -193,31 +195,39 @@ function runArm(input: {
       profile_path: spec.profile_path,
       config_path: configPath,
       out_dir: out,
-      cache_file: input.cacheFile,
-      cache_only: spec.cache_only,
-      models_dir: spec.models_dir,
+      // Cache-only over the cutoff's own entries: an arm never infers, so it needs neither the
+      // model nor a child process, and writes no cache.
+      cache_file: input.cacheView?.file ?? null,
+      cache_only: true,
+      models_dir: null,
       embedder: spec.embedder,
       workers: spec.workers,
       top: spec.top,
     }),
   );
   const armScript = NodePath.join(import.meta.dirname, "arm.ts");
-  // The heap cap; the wall-time cap is the spawn's timeout below.
-  const nodeArgs = [`--max-old-space-size=${spec.limits.memory_mb}`, armScript, "--spec", armSpec];
   const root = input.options.engineRoot;
   const readOnly = [
     NodePath.join(root, "node_modules"),
     NodePath.join(root, "packages", "trend-engine"),
     NodePath.join(root, "packages", "editorial-contracts"),
-    NodePath.dirname(armScript),
+    NodePath.dirname(NodePath.dirname(armScript)),
     input.view.dir,
     spec.profile_path,
-    ...(spec.models_dir === null ? [] : [spec.models_dir]),
+    ...(input.cacheView === null ? [] : [input.cacheView.file]),
     ...(input.engineSrc.startsWith(input.jobDir)
       ? [NodePath.dirname(NodePath.dirname(NodePath.dirname(input.engineSrc)))]
       : []),
   ];
-  const writable = input.cacheFile === null ? [] : [NodePath.dirname(input.cacheFile)];
+  const writable: Array<string> = [];
+  // The heap cap and Node's restrictions; the wall-time cap is the spawn's timeout below.
+  const nodeArgs = [
+    `--max-old-space-size=${spec.limits.memory_mb}`,
+    ...restrictedNodeArgs({ read: readOnly, write: [out] }),
+    armScript,
+    "--spec",
+    armSpec,
+  ];
   const [command, args] =
     input.sandbox === "bwrap"
       ? ["bwrap", [...sandboxArgs({ readOnly, writable, out }), process.execPath, ...nodeArgs]]
@@ -257,7 +267,7 @@ const DOSSIER_FILE = /^dossiers\/[A-Za-z0-9._-]+\.json$/;
  * single-link files only, opened without following links. A link, a device, a fifo or a file
  * shared with another path anywhere in them refuses the whole output.
  */
-function snapshotOutput(out: string, dest: string, mismatch: (message: string) => Error) {
+export function snapshotOutput(out: string, dest: string, mismatch: (message: string) => Error) {
   const root = NodeFS.lstatSync(out);
   if (!root.isDirectory() || NodeFS.realpathSync(out) !== out)
     throw mismatch("its output directory moved.");
@@ -583,7 +593,7 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
       ...base,
       status: "failed",
       error: { code, message },
-      inputs: { corpus_hash: null, models_hash: null, cache_sha256: null },
+      inputs: { corpus_hash: null, models_hash: null },
       views: [],
       arms: empty,
     });
@@ -614,6 +624,16 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
         NodeFS.rmSync(recheck, { recursive: true, force: true });
       } else if (stored.inputs?.corpus_hash !== corpusHash) {
         throw new WorkerFailure("artifact-mismatch", "The corpus changed since the result.");
+      }
+      // The cache entries each cutoff read, still the same in their caches.
+      for (const view of stored.views ?? []) {
+        if (view.cache_entries_hash === null) continue;
+        verifyCacheView({
+          file: NodePath.join(jobDir, "cache", `${view.cutoff.slice(0, 10)}.sqlite`),
+          expected: view.cache_entries_hash,
+          sharedCache: canonical.cache_file,
+          inferredFile: NodePath.join(jobDir, "cache", "inferred.sqlite"),
+        });
       }
       return stored;
     } catch (error) {
@@ -672,22 +692,35 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
       }
       return { view, observed_at: new Date(now()).toISOString() };
     });
-    const cacheSha =
-      canonical.cache_file !== null && NodeFS.existsSync(canonical.cache_file)
-        ? fileHash(canonical.cache_file)
-        : null;
+    // One cache view per cutoff, made here by the installed engine's code: the entries that
+    // cutoff embeds, read-only to both arms. Missing ones are inferred into the job's private
+    // cache unless the campaign is cache-only.
+    const inferredFile = NodePath.join(jobDir, "cache", "inferred.sqlite");
+    const cacheViews: Array<CacheView | null> = [];
+    for (const { view } of views) {
+      cacheViews.push(
+        spec.embedder === "synthetic"
+          ? null
+          : await buildCacheView({
+              engineRoot: options.engineRoot,
+              corpusDir: view.dir,
+              cutoff: view.cutoff,
+              profilePath: canonical.profile_path,
+              configs: [spec.reference.manifest.config, spec.candidate.manifest.config],
+              sharedCache: canonical.cache_file,
+              inferredFile,
+              infer:
+                spec.cache_only || canonical.models_dir === null
+                  ? null
+                  : { modelDir: canonical.models_dir, workers: spec.workers },
+              out: NodePath.join(jobDir, "cache", `${view.cutoff.slice(0, 10)}.sqlite`),
+            }),
+      );
+    }
     const arms: Record<ArmSide, Array<ArmOutput>> = { reference: [], candidate: [] };
     for (const side of ["reference", "candidate"] as const) {
       const engineSrc = prepareTree(spec, side, jobDir, options);
-      // A code candidate writes embeddings only to its own copy of the cache.
-      let cacheFile = canonical.cache_file;
-      if (cacheFile !== null && Object.keys(spec[side].files).length > 0) {
-        const own = NodePath.join(jobDir, `${side}-cache`, NodePath.basename(cacheFile));
-        NodeFS.mkdirSync(NodePath.dirname(own), { recursive: true });
-        if (NodeFS.existsSync(cacheFile)) NodeFS.copyFileSync(cacheFile, own);
-        cacheFile = own;
-      }
-      for (const { view } of views) {
+      for (const [k, { view }] of views.entries()) {
         options.log?.(JSON.stringify({ phase: "arm", side, cutoff: view.cutoff }));
         arms[side].push(
           runArm({
@@ -697,26 +730,46 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
             engineSrc,
             jobDir,
             sandbox,
-            cacheFile,
             options,
             view,
+            cacheView: cacheViews[k]!,
             index: indexCorpus(view.dir, view.cutoff.slice(0, 10)),
           }),
         );
       }
     }
-    // The views as the arms left them: read-only to them, checked again before signing.
-    const records: Array<ViewRecord> = views.map(({ view, observed_at }) => {
+    // Everything both arms read, checked again before signing: the views, the cache entries
+    // in their caches, and the models the inferred entries came from.
+    if (canonical.models_dir !== null && treeHash(canonical.models_dir) !== modelsHash) {
+      throw new WorkerFailure("artifact-mismatch", "The models changed while the job ran.");
+    }
+    const records: Array<ViewRecord> = views.map(({ view, observed_at }, k) => {
       if (corpusIdentity(view.dir) !== view.corpus_hash) {
         throw new WorkerFailure("artifact-mismatch", `The view of ${view.cutoff} changed.`);
       }
-      return { cutoff: view.cutoff, corpus_hash: view.corpus_hash, files: view.files, observed_at };
+      const cache = cacheViews[k]!;
+      if (cache !== null) {
+        verifyCacheView({
+          file: cache.file,
+          expected: cache.entries_hash,
+          sharedCache: canonical.cache_file,
+          inferredFile,
+        });
+      }
+      return {
+        cutoff: view.cutoff,
+        corpus_hash: view.corpus_hash,
+        files: view.files,
+        cache_entries_hash: cache?.entries_hash ?? null,
+        cache_entries: cache?.entries ?? 0,
+        observed_at,
+      };
     });
     result = signResult(spec.secret, {
       ...base,
       status: "ok",
       error: null,
-      inputs: { corpus_hash: corpusHash, models_hash: modelsHash, cache_sha256: cacheSha },
+      inputs: { corpus_hash: corpusHash, models_hash: modelsHash },
       views: records,
       arms,
     });

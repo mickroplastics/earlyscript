@@ -20,6 +20,7 @@ import {
   staleReasons,
 } from "@earlyscript/engine-lab/manifest";
 import { unifiedDiff } from "@earlyscript/engine-lab/patch";
+import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
 import { type JobSpec, resultMismatch, type WorkerResult } from "@earlyscript/engine-lab/result";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -513,6 +514,16 @@ const make = Effect.gen(function* () {
         else
           evidence = `Shadow gate pass over Miguel's blind labels: ${(parseJson(gate.value.gate_json) as GateResult).reasons.length === 0 ? "every rule met" : "see the gate"}.`;
       }
+    }
+    // Approved code runs nightly only in bwrap: without it here, approving would only stop the
+    // nightly run, so the request waits instead.
+    if (
+      candidate.kind === "code" &&
+      (options.nightlySandbox ?? (bwrapAvailable() ? "bwrap" : "unavailable")) !== "bwrap"
+    ) {
+      checks.push(
+        "sandbox: this machine has no bwrap, and the nightly run executes approved code only in bwrap",
+      );
     }
     checks.push("operator: Miguel approves with engine-lab approve");
     return { checks, evidence };

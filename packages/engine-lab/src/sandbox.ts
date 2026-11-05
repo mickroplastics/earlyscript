@@ -53,3 +53,22 @@ export function sandboxArgs(input: {
   args.push("--chdir", input.out);
   return args;
 }
+
+/**
+ * Node's own restrictions for code that is not the installed engine, inside bwrap as a second
+ * boundary: no code built from strings, and the permission model with reads limited to
+ * `read`, writes to `write`, and no child processes, workers, addons, FFI, WASI, inspector
+ * or network (none of their --allow flags is given).
+ */
+export function restrictedNodeArgs(input: {
+  readonly read: ReadonlyArray<string>;
+  readonly write: ReadonlyArray<string>;
+}): Array<string> {
+  const unique = (paths: ReadonlyArray<string>) => [...new Set(paths)];
+  return [
+    "--disallow-code-generation-from-strings",
+    "--permission",
+    ...unique([...input.read, ...input.write]).map((path) => `--allow-fs-read=${path}`),
+    ...unique(input.write).map((path) => `--allow-fs-write=${path}`),
+  ];
+}

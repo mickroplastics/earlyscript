@@ -66,6 +66,14 @@
     "./evaluator": {
       "types": "./src/evaluator.ts",
       "import": "./src/evaluator.ts"
+    },
+    "./cacheView": {
+      "types": "./src/cacheView.ts",
+      "import": "./src/cacheView.ts"
+    },
+    "./runAdoption": {
+      "types": "./src/runAdoption.ts",
+      "import": "./src/runAdoption.ts"
     }
   },
   "scripts": {

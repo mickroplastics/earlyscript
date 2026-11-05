@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off - the worker runs the real engine over a synthetic corpus.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
+import { textsOf } from "./cacheView.ts";
 import { developmentReport } from "./compare.ts";
 import { canonicalInputs } from "./inputs.ts";
 import { subsetCorpus } from "./corpusSubset.ts";
@@ -15,7 +18,7 @@ import { sha256 } from "./hash.ts";
 import { resultMismatch } from "./result.ts";
 import { corpusIdentity, treeHash } from "./view.ts";
 import { jobSpec, labFixture, patchCandidate, weightCandidate } from "./testkit.ts";
-import { bwrapAvailable, evaluateJob } from "./worker.ts";
+import { bwrapAvailable, evaluateJob, snapshotOutput } from "./worker.ts";
 
 const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "engine-lab-worker-"));
 afterAll(() => NodeFS.rmSync(root, { recursive: true, force: true }));
@@ -150,6 +153,9 @@ describe("worker", () => {
       `try { NodeFS.readFileSync(${JSON.stringify(NodePath.join(fixture.corpus_dir, "hn", later))}); probe.original = "read"; } catch (e) { probe.original = String((e as { code?: string }).code); }`,
       `try { NodeFS.readFileSync(armSpec.corpus_dir + "/hn/${later}"); probe.later = "read"; } catch (e) { probe.later = String((e as { code?: string }).code); }`,
       'probe.latest = NodeFS.readdirSync(armSpec.corpus_dir + "/hn").toSorted().at(-1) ?? "";',
+      'try { process.getBuiltinModule("child_process").execSync("true"); probe.child = "ran"; } catch (e) { probe.child = String((e as { code?: string }).code); }',
+      'try { NodeFS.writeFileSync(armSpec.out_dir + "/../../witness.txt", "x"); probe.jobDir = "written"; } catch (e) { probe.jobDir = String((e as { code?: string }).code); }',
+      'try { (() => {})["con" + "structor"]("return 1")(); probe.codegen = "ran"; } catch (e) { probe.codegen = (e as Error).name; }',
       'try { await fetch("http://1.1.1.1/", { signal: AbortSignal.timeout(3000) }); probe.network = "reached"; } catch (e) { probe.network = "unreachable"; }',
       'NodeFS.writeFileSync("probe.json", JSON.stringify(probe));',
       "",
@@ -170,13 +176,18 @@ describe("worker", () => {
         "utf8",
       ),
     );
-    // Sol, B1: the whole corpus is not mounted, and its view stops before the cutoff.
+    // Sol, B1: the whole corpus is not mounted, and its view stops before the cutoff. Node's
+    // permissions refuse first; bwrap, under them, hides the rest (pure: false skips the
+    // text filter so that this second boundary is what is tested).
     expect(seen).toMatchObject({
-      labels: "ENOENT",
-      corpus: "EROFS",
-      original: "ENOENT",
+      labels: "ERR_ACCESS_DENIED",
+      corpus: "ERR_ACCESS_DENIED",
+      original: "ERR_ACCESS_DENIED",
       later: "ENOENT",
       network: "unreachable",
+      child: "ERR_ACCESS_DENIED",
+      jobDir: "ERR_ACCESS_DENIED",
+      codegen: "EvalError",
     });
     expect(later > day).toBe(true);
     expect(`${seen.latest}` < `${day}.jsonl`).toBe(true);
@@ -474,6 +485,7 @@ describe("an arm's output read as untrusted (Sol, B1-R2)", () => {
   ].join("\n");
 
   it("refuses links in the output instead of reading the reference through them", async () => {
+    // Node's permissions no longer let the arm point a link outside its own output.
     const patched = patchCandidate(fixture, RANK_PATCH(exitLinks), { pure: false });
     const spec = jobSpec(fixture, {
       token: "job-b1r2-links",
@@ -483,8 +495,16 @@ describe("an arm's output read as untrusted (Sol, B1-R2)", () => {
     });
     const result = await evaluateJob(spec, options);
     expect(result.status).toBe("failed");
-    expect(result.error?.code).toBe("artifact-mismatch");
-    expect(result.error?.message).toContain("is a link");
+    expect(result.error?.code).toBe("engine-failed");
+    expect(result.error?.message).toContain("ERR_ACCESS_DENIED");
+    // Node refuses any link the arm makes, even inside its own output; the collector, the
+    // boundary behind it, still refuses a link it finds, whatever it names.
+    const own = NodePath.join(root, "own-links");
+    NodeFS.mkdirSync(NodePath.join(own, "actual-runs"), { recursive: true });
+    NodeFS.symlinkSync(NodePath.join(own, "actual-runs"), NodePath.join(own, "runs"));
+    expect(() =>
+      snapshotOutput(own, NodePath.join(root, "own-links.collected"), (m) => new Error(m)),
+    ).toThrow("is a link");
   });
 
   it("refuses a run.json that names files outside its dossiers", async () => {
@@ -612,3 +632,163 @@ function RANK_PATCH(text: string): string {
     "",
   ].join("\n");
 }
+
+describe("capabilities checked when the candidate runs (Opus B1, Astra B1)", () => {
+  // Their reviews' patches: both pass the text filter, which is only a first layer.
+  const astra = [
+    'const astraHost = (() => {})["con" + "structor"]("return pro" + "cess")();',
+    `astraHost.getBuiltinModule("fs").writeFileSync(${JSON.stringify(NodePath.join(root, "astra-witness.txt"))}, "x");`,
+    "",
+  ].join("\n");
+  const opus = [
+    'const k = "constr" + "uctor";',
+    'const g = ((x: number) => x)[k]("return this")();',
+    'const cp = g["pro" + "cess"]["getBuiltin" + "Module"]("child" + "_pro" + "cess");',
+    `cp.execSync(${JSON.stringify(`touch ${NodePath.join(root, "opus-witness.txt")}`)});`,
+    "",
+  ].join("\n");
+
+  it.each([
+    ["Astra's", astra, "astra-witness.txt"],
+    ["Opus'", opus, "opus-witness.txt"],
+  ])(
+    "%s patch passes the text filter, and the run refuses the code it builds",
+    async (_who, text, witness) => {
+      const patched = patchCandidate(fixture, RANK_PATCH(text));
+      const result = await evaluateJob(
+        jobSpec(fixture, {
+          token: `job-capability-${witness.split("-")[0]}`,
+          candidate: patched.manifest,
+          files: patched.files,
+          cutoffs: fixture.cutoffs.slice(0, 1),
+        }),
+        options,
+      );
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toContain("EvalError");
+      expect(NodeFS.existsSync(NodePath.join(root, witness))).toBe(false);
+    },
+  );
+});
+
+describe("models and cache entries fixed for both arms (Astra B2)", () => {
+  const candidate = weightCandidate(fixture, { growth: 0.2 });
+  const cutoffs = fixture.cutoffs.slice(0, 2);
+
+  it("refuses models changed between the arms, at the first acceptance", async () => {
+    const models = NodePath.join(root, "between-models");
+    NodeFS.mkdirSync(models, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(models, "weights.bin"), "v1");
+    const spec = jobSpec(fixture, { token: "job-models-between", candidate, cutoffs });
+    const result = await evaluateJob(
+      {
+        ...spec,
+        models_dir: models,
+        input_roots: [root],
+        inputs: { ...spec.inputs, models_hash: treeHash(models) },
+      },
+      {
+        ...options,
+        log: (line) => {
+          if (JSON.parse(line).side === "candidate")
+            NodeFS.writeFileSync(NodePath.join(models, "weights.bin"), "v2");
+        },
+      },
+    );
+    expect(result.error?.code).toBe("artifact-mismatch");
+    expect(result.error?.message).toContain("models changed while the job ran");
+  });
+
+  // A shared cache with a vector for every text the fixture's cutoffs embed.
+  const shared = NodePath.join(root, "shared-cache.sqlite");
+  const vectorOf = (text: string, salt = "") => {
+    const vector = new Float32Array(1024);
+    const words = text.toLowerCase().match(/[a-z0-9]+/g) ?? ["empty"];
+    for (const word of words) {
+      const digest = NodeCrypto.createHash("sha256").update(`${salt}${word}`).digest();
+      for (let k = 0; k < 16; k++) vector[digest[k]! * 4 + (k % 4)]! += 1;
+    }
+    const norm = Math.hypot(...vector);
+    return new Uint8Array(vector.map((x) => x / norm).buffer);
+  };
+  const fill = async () => {
+    NodeFS.rmSync(shared, { force: true });
+    const db = new NodeSqlite.DatabaseSync(shared);
+    db.exec(
+      "CREATE TABLE embeddings (embedding_key TEXT NOT NULL, text_hash TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY (embedding_key, text_hash)) STRICT;",
+    );
+    const insert = db.prepare("INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?)");
+    for (const cutoff of cutoffs) {
+      const { key, texts } = await textsOf({
+        engineRoot: options.engineRoot,
+        corpusDir: fixture.corpus_dir,
+        cutoff,
+        profilePath: fixture.profile_path,
+        config: fixture.config,
+      });
+      for (const text of texts) insert.run(key, sha256(text), vectorOf(text));
+    }
+    db.close();
+  };
+  const set = (sql: string, ...values: Array<string | Uint8Array>) => {
+    const db = new NodeSqlite.DatabaseSync(shared);
+    db.prepare(sql).run(...values);
+    db.close();
+  };
+  const cacheSpec = (token: string) => ({
+    ...jobSpec(fixture, { token, candidate, cutoffs }),
+    embedder: "local" as const,
+    cache_file: shared,
+    cache_only: true,
+    input_roots: [root],
+  });
+
+  it("gives both arms the same read-only entries, and refuses one changed between them or before a recovery", async () => {
+    await fill();
+    const spec = cacheSpec("job-cache-entries");
+    const result = await evaluateJob(spec, options);
+    expect(result.status, JSON.stringify(result.error)).toBe("ok");
+    expect(result.views.every((view) => view.cache_entries > 0)).toBe(true);
+    expect(result.views.every((view) => view.cache_entries_hash?.startsWith("sha256:"))).toBe(true);
+    expect(resultMismatch(spec, result)).toBeNull();
+    // An entry no cutoff reads does not change the identity.
+    set("INSERT INTO embeddings VALUES ('another-key', 'sha256:unrelated', ?)", vectorOf("x"));
+    expect(await evaluateJob(spec, options)).toEqual(result);
+    // An entry the arms read, changed afterwards: the stored result is not handed back.
+    const used = new NodeSqlite.DatabaseSync(
+      NodePath.join(options.jobsRoot, spec.token, "cache", `${cutoffs[0]!.slice(0, 10)}.sqlite`),
+      { readOnly: true },
+    );
+    const row = used.prepare("SELECT embedding_key, text_hash FROM embeddings LIMIT 1").get() as {
+      embedding_key: string;
+      text_hash: string;
+    };
+    used.close();
+    set(
+      "UPDATE embeddings SET vector = ? WHERE embedding_key = ? AND text_hash = ?",
+      vectorOf("changed", "salt"),
+      row.embedding_key,
+      row.text_hash,
+    );
+    const recovered = await evaluateJob(spec, options);
+    expect(recovered.error?.code).toBe("artifact-mismatch");
+    expect(recovered.error?.message).toContain("cache entry");
+
+    // The same change made while the job runs, between the arms.
+    await fill();
+    const between = await evaluateJob(cacheSpec("job-cache-between"), {
+      ...options,
+      log: (line) => {
+        if (JSON.parse(line).side === "candidate")
+          set(
+            "UPDATE embeddings SET vector = ? WHERE embedding_key = ? AND text_hash = ?",
+            vectorOf("changed", "salt"),
+            row.embedding_key,
+            row.text_hash,
+          );
+      },
+    });
+    expect(between.error?.code).toBe("artifact-mismatch");
+    expect(between.error?.message).toContain("cache entry");
+  });
+});

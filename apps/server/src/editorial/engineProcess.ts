@@ -2,7 +2,7 @@
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
-import { sandboxArgs } from "@earlyscript/engine-lab/sandbox";
+import { restrictedNodeArgs, sandboxArgs } from "@earlyscript/engine-lab/sandbox";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -154,8 +154,9 @@ export const runEngineCommand = Effect.fn("EditorialEngine.run")(function* (
   const sandbox = invocation.sandbox;
   // bwrap binds only paths that exist: the runs directory and the cache's may not yet.
   if (sandbox !== undefined) {
-    for (const dir of [sandbox.home, ...sandbox.writable])
-      yield* fs.makeDirectory(dir, { recursive: true });
+    for (const dir of [sandbox.home, ...sandbox.writable]) {
+      if (!(yield* fs.exists(dir))) yield* fs.makeDirectory(dir, { recursive: true });
+    }
   }
   const [command, commandArgs] =
     sandbox === undefined
@@ -171,12 +172,25 @@ export const runEngineCommand = Effect.fn("EditorialEngine.run")(function* (
               env: { ELECTRON_RUN_AS_NODE: "1" },
             }),
             node,
+            // Node's own restrictions inside bwrap: no code from strings, reads and writes only
+            // where bwrap mounted, no child processes, workers, addons or network.
+            ...restrictedNodeArgs({
+              read: sandbox.readOnly,
+              write: [sandbox.home, ...sandbox.writable],
+            }),
             ...args,
           ],
         ];
+  // The launch line names the Node restrictions too, but not the bwrap mounts.
+  const nodeFlags =
+    sandbox === undefined
+      ? []
+      : (commandArgs as ReadonlyArray<string>).filter(
+          (arg) => arg === "--permission" || arg === "--disallow-code-generation-from-strings",
+        );
   yield* fs.writeFileString(
     invocation.logFile,
-    `$ ${sandbox === undefined ? "" : "[bwrap] "}node ${args.join(" ")}\n`,
+    `$ ${sandbox === undefined ? "" : "[bwrap] "}node ${[...nodeFlags, ...args].join(" ")}\n`,
     { flag: "a" },
   );
   const append = (chunk: Uint8Array) => fs.writeFile(invocation.logFile, chunk, { flag: "a" });

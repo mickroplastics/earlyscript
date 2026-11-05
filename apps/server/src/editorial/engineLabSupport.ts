@@ -52,6 +52,8 @@ export interface EngineLabOptionsShape {
   readonly pollMs: number;
   /** A whole job's wall time; past it its executor's process group is killed and it fails. */
   readonly jobTimeoutMs: number;
+  /** Tests only: whether this machine's nightly has bwrap for approved code; detected otherwise. */
+  readonly nightlySandbox?: "bwrap" | "unavailable";
 }
 
 export class EngineLabOptions extends Context.Service<EngineLabOptions, EngineLabOptionsShape>()(

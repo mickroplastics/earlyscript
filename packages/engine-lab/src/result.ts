@@ -4,7 +4,7 @@ import { canonicalJson, hmac, sameSignature, sha256 } from "./hash.ts";
 import type { EngineManifest } from "./manifest.ts";
 
 export const JOB_SPEC_SCHEMA = "earlyscript.engine-lab-job/2";
-export const RESULT_SCHEMA = "earlyscript.engine-lab-result/2";
+export const RESULT_SCHEMA = "earlyscript.engine-lab-result/3";
 
 export type ArmSide = "reference" | "candidate";
 
@@ -72,6 +72,9 @@ export interface ViewRecord {
   readonly cutoff: string;
   readonly corpus_hash: string;
   readonly files: number;
+  /** The cache entries this cutoff read (key, text hash, vector hash); null without a cache. */
+  readonly cache_entries_hash: string | null;
+  readonly cache_entries: number;
   /** When the executor made the view: a shadow cutoff is never viewed before it has passed. */
   readonly observed_at: string;
 }
@@ -133,8 +136,6 @@ export interface WorkerResult {
   readonly inputs: {
     readonly corpus_hash: string | null;
     readonly models_hash: string | null;
-    /** The embedding cache, a derived input: recorded, not fixed (see the report's notes). */
-    readonly cache_sha256: string | null;
   };
   readonly views: ReadonlyArray<ViewRecord>;
   readonly arms: {

@@ -103,7 +103,7 @@ const printReview = (review: EnginePromotionService.RequestReview) =>
       ...(review.patch === null ? [] : [review.patch]),
       review.patch === null
         ? ""
-        : "If approved, the nightly run executes this code in bwrap: no network, only the corpus, profile, models, cache and runs directory.",
+        : "If approved, the nightly run executes this code in bwrap (no network, empty environment; / read-only, with /home, /root, /tmp, /mnt, /media, /srv and /var/tmp hidden except what is mounted back) and under Node's permission model with code generation from strings disabled. It reads its artifact, the installed engine's dependencies, the corpus and its claim's files (profile, configuration, cache view of the cutoff), and writes only a private output directory, which this side checks and copies into the runs directory. No child processes, workers, addons or network; no other run and no shared cache is writable to it.",
     ].join("\n"),
   );
 

@@ -548,6 +548,10 @@ const program = Effect.gen(function* () {
         String(codeReview.patch).includes("+// Same computation") &&
         codeReview.evidence.includes("not a measured improvement"),
       codeRunInBwrap: String(afterCode.command).startsWith("$ [bwrap] node "),
+      // The approved code read its cutoff's cache view only and wrote its private output.
+      codeRunCacheOnly: String(afterCode.command).includes("--cache-only"),
+      codeRunPrivateOutput: String(afterCode.command).includes("/artifact-out.g"),
+      codeRunRestricted: String(afterCode.command).includes("--permission"),
       installedRunNotSandboxed: !String(afterCodeRevert.command).includes("[bwrap]"),
       codeRunUsesCandidateCode:
         afterCode.status === "done" &&
