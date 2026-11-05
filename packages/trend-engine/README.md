@@ -37,6 +37,22 @@ El banco `scripts/earlyscript/benchmark-trends.py`, ejecutado desde la raíz, co
 
 Medición del 4 de noviembre de 2026 sobre `822dd475b6`: tres repeticiones de npm, Hugging Face, arXiv, Wikipedia y Stack Exchange, cortes del 17 al 19 de octubre, baseline HN/GitHub, verdad HN y embeddings en caché. En Linux x64, Intel Xeon E5-1620 v3 y Node v24.22.2, la mediana pasó de 748,3 a 217,8 segundos, un 70,9 % menos, con los mismos hashes lógicos en las cinco fuentes y las tres repeticiones. La mediana del máximo RSS registrado por las corridas pasó de 664 a 818 MiB. Esta comparación mide backtests repetidos, no una corrida diaria aislada ni tiempo humano. Evidencia local: `~/earlyscript-data/trend-performance/benchmark-combined/`, `benchmark-summary.json` y `benchmark-memory.json`.
 
+## Motor v2: relevancia editorial aprendida
+
+`config/engine.v2.json` (`earlyscript.engine.v2`) no cambia v1: con `config/engine.v1.json` el `logical_hash` es el mismo que antes. v2 añade, sin modelo de lenguaje en tiempo de corrida:
+
+- `relevance`: sonda logística L2 sobre el vector Qwen de cada ítem (`config/relevance.v1.json`, nombrada por su SHA-256 en la configuración, así que `config_hash` cubre los pesos). Relevancia del ítem = `sigmoid(w·x + b)`; la del tema, la media de sus ítems de los últimos 7 días. Un tema es elegible si crece y su relevancia es ≥ `signal_min`; `profile_gate: false` quita el filtro de afinidad de perfil.
+- Serie sobre ítems relevantes (≥ `item_min`) con `stage.coverage_rule: equivalent`: cada fuente cuenta solo en días capturados por completo (o su muestra declarada) y solo si ambas ventanas de 7 días tienen alguno; los conteos pasan a tasas por día × 7. Una fuente que empieza a capturar dentro de la última ventana no genera crecimiento. Los campos `trend.*` conservan su sentido de v1; los de v2 están en `relevance`.
+- `emit.dedup_cosine`: un tema con coseno de centroide mayor que el umbral con otro mejor situado en el ranking ponderado se emite en `related` de ese expediente y no ocupa puesto. `emit.min_dossiers`: si hay menos elegibles, se completan con los temas en crecimiento más relevantes bajo `signal_min` y después con estables con ítems suficientes, marcados `eligibility: "backfill"` y ordenados al final.
+- `weighted_sum.v0.02`: crecimiento 0,25, relevancia 1,0 y ln(1 + ítems relevantes en 7 días) 0,15, sin el término de autores. Cada expediente lleva la relevancia como componente y la de cada evidencia.
+
+Herramientas fuera del motor, en `src/tools/` (se ejecutan con `node src/tools/<archivo>.ts`):
+
+- `editorial-judge.ts`: juez editorial con el CLI `claude -p` de la suscripción, sin herramientas, web, ajustes ni MCP. Rúbrica y modelo congelados en `judge/judge.v1.json` (el archivo guarda el hash de la rúbrica y la carga falla si cambió). Caché por hash de (rúbrica, modelo, texto) y cada llamada con su prompt y respuesta.
+- `relevance-sample.ts`, `relevance-train.ts`: muestra estratificada por fuente y entrenamiento con validación cruzada por bloques de días; escriben el modelo y un informe con la separación frente a la afinidad de perfil.
+- `calibration-items.ts`, `calibration-agreement.ts`: tarjetas de ítem para calibrar al juez con el operador y su acuerdo (umbral 0,80 y κ 0,5).
+- `dev-compare.ts`: comparación de variantes en desarrollo con el juez (P@5 con denominador 5). No es la evaluación de referencia.
+
 ## Interpretar el seguimiento
 
 El informe `earlyscript.backtest/3` exige capturas `complete` de todas las fuentes de verdad durante los 14 días posteriores al corte. Una captura `partial`, incluso de una muestra prevista, deja ese corte en el grupo parcial. `--truth hn` permite evaluar seguimiento en HN mientras GitHub y otras fuentes aportan candidatos. Esto mide coincidencia con actividad posterior de HN, no calidad universal de las tendencias.

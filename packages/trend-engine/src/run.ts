@@ -32,7 +32,8 @@ import { canonicalJson, sha256 } from "./hash.ts";
 import { HOST } from "./host.ts";
 import { prepare } from "./prepare.ts";
 import { scoreProfile } from "./profile.ts";
-import { positions, round6, score } from "./rank.ts";
+import { dedupe, positions, round6, score } from "./rank.ts";
+import { type LoadedRelevance, loadRelevance, relevanceOf } from "./relevance.ts";
 import {
   classify,
   corroboration,
@@ -45,6 +46,8 @@ import { fixtureSources } from "./sources/index.ts";
 
 export const ENGINE_VERSION = "0.1.0";
 export const DEFAULT_CONFIG_PATH = NodePath.join(import.meta.dirname, "../config/engine.v1.json");
+/** Where a configuration's relevance model file lives, whichever configuration file was read. */
+export const CONFIG_DIR = NodePath.dirname(DEFAULT_CONFIG_PATH);
 export const DEFAULT_DATA_DIR = NodePath.join(NodeOS.homedir(), "earlyscript-data");
 
 const decodeConfig = Schema.decodeUnknownSync(EngineConfig);
@@ -68,6 +71,8 @@ export interface RunOptions {
   readonly workers?: number;
   readonly allowUnverifiedCorpus?: boolean;
   readonly log?: (line: string) => void;
+  /** Replaces the model file `config.relevance` names, for tests; its hash must still match. */
+  readonly relevanceModel?: LoadedRelevance;
   /** Receives each emitted trend's centroid; `engine backtest` freezes them to label the follow-up. */
   readonly onEmitted?: (trends: ReadonlyArray<EmittedTrend>) => void;
 }
@@ -83,6 +88,13 @@ export function loadConfig(path: string): { config: EngineConfig; hash: string }
   const config = decodeConfig(JSON.parse(NodeFS.readFileSync(path, "utf8")));
   return { config, hash: sha256(canonicalJson(config)) };
 }
+
+/** Qwen3-Embedding's query format; documents are embedded as they are. */
+export const asQuery = (instruction: string | undefined, text: string): string =>
+  instruction === undefined ? text : `Instruct: ${instruction}\nQuery:${text}`;
+
+const mean = (values: ReadonlyArray<number>): number =>
+  values.reduce((sum, v) => sum + v, 0) / values.length;
 
 export function parseCutoff(cutoff: string): {
   cutoffAt: string;
@@ -186,15 +198,24 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       if (!coverage.has(row.source)) coverage.set(row.source, new Map());
       coverage.get(row.source)!.set(row.day, row.status);
     }
+    const relevanceRef = config.relevance ?? null;
+    let relevance: LoadedRelevance | null = null;
+    if (relevanceRef) {
+      relevance =
+        options.relevanceModel ?? loadRelevance(relevanceRef, config.embedder, CONFIG_DIR);
+      if (relevance.hash !== relevanceRef.sha256)
+        throw new Error(`relevance model ${relevance.model.model_id} does not match its sha256`);
+    }
     lap("load");
 
     let vectors: Array<Float32Array>;
     let topics: { include: Array<Float32Array>; exclude: Array<Float32Array> };
     try {
       vectors = await embedder.embed(kept.map((item) => item.text));
+      const query = (topic: string) => asQuery(config.profile.query_instruction, topic);
       topics = {
-        include: await embedder.embed(profile.include),
-        exclude: profile.exclude.length > 0 ? await embedder.embed(profile.exclude) : [],
+        include: await embedder.embed(profile.include.map(query)),
+        exclude: profile.exclude.length > 0 ? await embedder.embed(profile.exclude.map(query)) : [],
       };
     } finally {
       await embedder.dispose();
@@ -215,6 +236,16 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
 
     const byId = new Map(kept.map((item) => [item.id, item]));
     const curveDays = daysBefore(cutoffDay, config.emit.curve_days);
+    const last7 = new Set(daysBefore(cutoffDay, 7));
+    const relevanceById = relevance
+      ? new Map(kept.map((item) => [item.id, relevanceOf(relevance, vectorOf.get(item.id)!)]))
+      : null;
+    // v1 counts every item with the configured rule; with a relevance model or equivalent
+    // coverage, the trend's own counts keep the v1 meaning (per_source over all items).
+    const rawStage =
+      relevanceById !== null || config.stage.coverage_rule === "equivalent"
+        ? { ...config.stage, coverage_rule: "per_source" as const }
+        : null;
     const signals = stacked.signals.map((signal) => {
       const members = signal.itemIds.map((id) => byId.get(id)!);
       const seriesItems: Array<SeriesItem> = members.map((m) => ({
@@ -224,7 +255,21 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         author: m.author,
         entities: m.entities,
       }));
-      const stage = classify(seriesItems, cutoffDay, coverage, sources, config.stage);
+      const itemMin = relevanceRef?.item_min ?? 0;
+      const counted = relevanceById
+        ? seriesItems.filter((item) => relevanceById.get(item.id)! >= itemMin)
+        : seriesItems;
+      const stage = classify(counted, cutoffDay, coverage, sources, config.stage);
+      const raw = rawStage ? classify(seriesItems, cutoffDay, coverage, sources, rawStage) : stage;
+      let signalRelevance: { score: number; scored: number } | null = null;
+      if (relevanceById) {
+        const recent = members.filter((m) => last7.has(m.day));
+        const scored = recent.length > 0 ? recent : members;
+        signalRelevance = {
+          score: mean(scored.map((m) => relevanceById.get(m.id)!)),
+          scored: scored.length,
+        };
+      }
       const fit = scoreProfile(
         signal.centroid,
         topics,
@@ -236,6 +281,8 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         growth: stage.growth,
         log_authors_7d: Math.log(1 + stage.authors_7d),
         include_score: fit.include_score,
+        log_items_7d: Math.log(1 + stage.items_7d),
+        relevance: signalRelevance?.score ?? null,
       };
       return {
         id: signal.id,
@@ -243,14 +290,85 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         members,
         seriesItems,
         stage,
+        raw,
+        counted,
+        relevance: signalRelevance,
         fit,
         weighted: score(config.rank.weighted.method, config.rank.weighted.weights, values),
         baseline: score(config.rank.baseline.method, config.rank.baseline.weights, values),
       };
     });
-    const eligible = signals.filter((s) => s.stage.stage === "growing" && s.fit.passes);
-    const baselinePos = positions(eligible, (s) => s.baseline.score);
-    const weightedPos = positions(eligible, (s) => s.weighted.score);
+    type Signal = (typeof signals)[number];
+    const profileOk = (s: Signal) =>
+      !relevanceRef || relevanceRef.profile_gate ? s.fit.passes : true;
+    const relevant = (s: Signal) =>
+      s.relevance === null || s.relevance.score >= relevanceRef!.signal_min;
+    let eligible = signals.filter(
+      (s) => s.stage.stage === "growing" && profileOk(s) && relevant(s),
+    );
+    const relatedTo = new Map<string, Array<{ signal: Signal; cosine: number }>>();
+    const backfilled = new Set<string>();
+    const dedupCosine = config.emit.dedup_cosine;
+    if (dedupCosine !== undefined || config.emit.min_dossiers !== undefined) {
+      // The candidate ranking decides which of two near-identical trends keeps the position.
+      const order = positions(eligible, (s) => s.weighted.score);
+      const ordered = eligible.toSorted((a, b) => order.get(a.id)! - order.get(b.id)!);
+      const fold = (list: ReadonlyArray<Signal>, kept: Array<Signal>) => {
+        const result = dedupe(list, kept, (s) => s.signal.centroid, dedupCosine ?? Infinity);
+        for (const [id, link] of result.related) {
+          const entry = relatedTo.get(id) ?? [];
+          entry.push(link);
+          relatedTo.set(id, entry);
+        }
+        return result.kept;
+      };
+      eligible = fold(ordered, []);
+      const min = config.emit.min_dossiers ?? 0;
+      if (eligible.length < min) {
+        // Not a reward for abstaining: the most relevant growing trends below signal_min,
+        // then steady ones with enough recent items, fill the cut up to min_dossiers.
+        if (!relevanceRef) throw new Error("emit.min_dossiers needs a relevance model");
+        const taken = new Set([
+          ...eligible,
+          ...[...relatedTo.values()].flat().map((l) => l.signal),
+        ]);
+        const byRelevance = (a: Signal, b: Signal) =>
+          b.relevance!.score - a.relevance!.score || (a.id < b.id ? -1 : 1);
+        const pool = [
+          ...signals
+            .filter((s) => s.stage.stage === "growing" && profileOk(s) && !taken.has(s))
+            .toSorted(byRelevance),
+          ...signals
+            .filter(
+              (s) =>
+                s.stage.stage === "steady" &&
+                s.stage.items_7d >= config.stage.growing_min_items_7d &&
+                profileOk(s) &&
+                !taken.has(s),
+            )
+            .toSorted(byRelevance),
+        ];
+        const fill: Array<Signal> = [];
+        for (const s of pool) {
+          if (eligible.length + fill.length >= min) break;
+          // A candidate that duplicates a kept trend is folded into it instead.
+          if (fold([s], [...eligible, ...fill]).length === 1) fill.push(s);
+        }
+        for (const s of fill) backfilled.add(s.id);
+        eligible = [...eligible, ...fill];
+      }
+    }
+    // Backfilled trends rank after every relevant one in both orderings.
+    const rankKey = (scoreOf: (s: Signal) => number) => (s: Signal) =>
+      scoreOf(s) - (backfilled.has(s.id) ? 1e9 : 0);
+    const baselinePos = positions(
+      eligible,
+      rankKey((s) => s.baseline.score),
+    );
+    const weightedPos = positions(
+      eligible,
+      rankKey((s) => s.weighted.score),
+    );
     const max = config.emit.max_dossiers;
     const emitted = eligible
       .filter((s) => baselinePos.get(s.id)! <= max || weightedPos.get(s.id)! <= max)
@@ -283,6 +401,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
           excerpt: m.cleanBody.slice(0, config.text.excerpt_chars),
           retrieved_at: m.retrieved_at,
           similarity: round6(similarity),
+          ...(relevanceById ? { relevance: round6(relevanceById.get(m.id)!) } : {}),
         }));
       return {
         schema_version: DOSSIER_SCHEMA_VERSION,
@@ -309,10 +428,10 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
           last_seen_at: new Date(s.signal.lastMs).toISOString(),
           sources: [...new Set(s.members.map((m) => m.source))].toSorted(),
           items_total: s.members.length,
-          items_7d: s.stage.items_7d,
-          items_prev_7d: s.stage.items_prev_7d,
-          authors_7d: s.stage.authors_7d,
-          growth: round6(s.stage.growth),
+          items_7d: s.raw.items_7d,
+          items_prev_7d: s.raw.items_prev_7d,
+          authors_7d: s.raw.authors_7d,
+          growth: round6(s.raw.growth),
         },
         profile_fit: {
           include_score: round6(s.fit.include_score),
@@ -325,6 +444,40 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
           baseline: { ...s.baseline, position: baselinePos.get(s.id)! },
           weighted: { ...s.weighted, position: weightedPos.get(s.id)! },
         },
+        ...(relevance && relevanceRef && s.relevance
+          ? {
+              relevance: {
+                score: round6(s.relevance.score),
+                model_id: relevance.model.model_id,
+                model_hash: relevance.hash,
+                item_min: relevanceRef.item_min,
+                signal_min: relevanceRef.signal_min,
+                items_scored: s.relevance.scored,
+                relevant_items_7d: s.stage.items_7d,
+                relevant_items_prev_7d: s.stage.items_prev_7d,
+                growth: round6(s.stage.growth),
+                growth_sources: s.stage.growth_sources ?? [],
+                eligibility: backfilled.has(s.id) ? ("backfill" as const) : ("relevant" as const),
+              },
+            }
+          : {}),
+        ...(dedupCosine !== undefined
+          ? {
+              related: (relatedTo.get(s.id) ?? []).map(({ signal: r, cosine }) => {
+                const terms = topTerms(
+                  r.members.map((m) => `${m.title} ${m.cleanBody}`),
+                  config.emit.label_terms,
+                );
+                return {
+                  trend_id: r.id,
+                  label: terms.length > 0 ? terms.join(" ") : r.id,
+                  cosine: round6(cosine),
+                  items_7d: r.raw.items_7d,
+                  relevance: r.relevance ? round6(r.relevance.score) : null,
+                };
+              }),
+            }
+          : {}),
         curve: dailyCurve(
           s.seriesItems,
           curveDays.filter((day) => day >= firstDay),
@@ -365,6 +518,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         s.stage.authors_7d,
         round6(s.fit.include_score),
         round6(s.fit.exclude_score),
+        ...(s.relevance ? [round6(s.relevance.score)] : []),
       ])
       .toSorted((a, b) => (a[0]! < b[0]! ? -1 : 1));
     result = {
@@ -392,6 +546,15 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
           by_stage: byStage,
           passing_profile: signals.filter((s) => s.fit.passes).length,
           eligible: eligible.length,
+          ...(relevanceRef
+            ? {
+                passing_relevance: signals.filter(
+                  (s) => s.relevance !== null && s.relevance.score >= relevanceRef.signal_min,
+                ).length,
+                backfilled: backfilled.size,
+                folded: [...relatedTo.values()].flat().length,
+              }
+            : {}),
         },
         comparisons: stacked.comparisons,
         /** Every signal, not only the emitted ones: a stricter reproducibility check than logical_hash. */

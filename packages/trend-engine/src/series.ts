@@ -1,6 +1,10 @@
 // Daily series and stage per signal, ported from Earlywindow's src/engine/series.ts
 // (method 0.01, steps 6 and 7). Days are UTC; every window ends the day before the cutoff.
-import type { CurvePoint, SignalStage } from "@earlyscript/editorial-contracts/dossier";
+import type {
+  CurvePoint,
+  GrowthSource,
+  SignalStage,
+} from "@earlyscript/editorial-contracts/dossier";
 import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 import type {
   CoverageStatus,
@@ -27,6 +31,8 @@ export interface StageResult {
   readonly items_7d: number;
   readonly items_prev_7d: number;
   readonly authors_7d: number;
+  /** coverage_rule equivalent: each counted source's windows. */
+  readonly growth_sources?: Array<GrowthSource>;
 }
 
 /** coverage[source][day]; a missing day was not collected. */
@@ -119,6 +125,8 @@ export function classify(
   sources: ReadonlyArray<SourceId>,
   cfg: EngineConfig["stage"],
 ): StageResult {
+  if (cfg.coverage_rule === "equivalent")
+    return classifyEquivalent(allItems, cutoffDay, coverage, sources, cfg);
   const items = observed(allItems, coverage);
   const context = daysBefore(cutoffDay, cfg.context_days);
   const last7 = context.slice(-7);
@@ -142,6 +150,65 @@ export function classify(
   else if (growth <= cfg.fading_max) stage = "fading";
   else stage = "steady";
   return { stage, growth, items_7d, items_prev_7d, authors_7d };
+}
+
+/**
+ * A source counts only on days it collected fully and only when both 7-day windows have
+ * one; its counts become rates per day times 7. A source that started inside the last
+ * window adds no growth. Stage gates use observed items of the last 7 days, as per_source.
+ */
+function classifyEquivalent(
+  allItems: ReadonlyArray<SeriesItem>,
+  cutoffDay: string,
+  coverage: CoverageIndex,
+  sources: ReadonlyArray<SourceId>,
+  cfg: EngineConfig["stage"],
+): StageResult {
+  const items = observed(allItems, coverage);
+  const context = daysBefore(cutoffDay, cfg.context_days);
+  const last7 = context.slice(-7);
+  const prev7 = context.slice(-14, -7);
+  const recent = items.filter((item) => last7.includes(item.day));
+  const items_7d = recent.length;
+  const items_prev_7d = items.filter((item) => prev7.includes(item.day)).length;
+  const authors_7d = new Set(recent.flatMap((item) => (item.author === null ? [] : [item.author])))
+    .size;
+  let e7 = 0;
+  let ePrev = 0;
+  const growth_sources: Array<GrowthSource> = [];
+  let anyComparable = false;
+  const counted = new Set(items.map((item) => item.source));
+  for (const source of sources) {
+    const full7 = last7.filter((day) => sourceFull(coverage, source, day));
+    const fullPrev = prev7.filter((day) => sourceFull(coverage, source, day));
+    const comparable = full7.length > 0 && fullPrev.length > 0;
+    anyComparable ||= comparable;
+    const own = items.filter((item) => item.source === source);
+    const n7 = own.filter((item) => full7.includes(item.day)).length;
+    const nPrev = own.filter((item) => fullPrev.includes(item.day)).length;
+    if (comparable) {
+      e7 += (n7 * 7) / full7.length;
+      ePrev += (nPrev * 7) / fullPrev.length;
+    }
+    if (counted.has(source))
+      growth_sources.push({
+        source,
+        days_7d: full7.length,
+        days_prev_7d: fullPrev.length,
+        items_7d: n7,
+        items_prev_7d: nPrev,
+        comparable,
+      });
+  }
+  const growth = Math.log((e7 + 1) / (ePrev + 1));
+  const classifiable =
+    counted.size === 0 ? anyComparable : growth_sources.some((row) => row.comparable);
+  let stage: SignalStage;
+  if (!classifiable) stage = "unclassified";
+  else if (growth >= cfg.growth_min && items_7d >= cfg.growing_min_items_7d) stage = "growing";
+  else if (growth <= cfg.fading_max) stage = "fading";
+  else stage = "steady";
+  return { stage, growth, items_7d, items_prev_7d, authors_7d, growth_sources };
 }
 
 function gapReason(status: CoverageStatus | undefined): DataGapReason {

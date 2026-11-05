@@ -1,0 +1,9 @@
+{
+  "judge_version": "earlyscript.judge.v1",
+  "question": "Would SingulariDev make a video about this in the next 7 days?",
+  "rubric": "judge-rubric.v1.md",
+  "rubric_sha256": "sha256:bb1410f86259b2885f010bb9d78dbb709325f9b1f942ba0dc1e3348b36ccba12",
+  "model": "claude-sonnet-5-5",
+  "batch_size": 40,
+  "max_text_chars": 1200
+}

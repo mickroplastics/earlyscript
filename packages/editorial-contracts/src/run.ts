@@ -19,7 +19,12 @@ export const EngineConfig = Schema.Struct({
     batch_size: Schema.Literal(1),
     intra_op_threads: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   }),
-  profile: Schema.Struct({ include_min: Schema.Number, exclude_max: Schema.Number }),
+  profile: Schema.Struct({
+    include_min: Schema.Number,
+    exclude_max: Schema.Number,
+    /** Qwen3 query instruction: topics are embedded as `Instruct: <this>\nQuery:<topic>`. Absent, as documents. */
+    query_instruction: Schema.optionalKey(Schema.String),
+  }),
   text: Schema.Struct({
     max_body_chars: Schema.Int,
     min_ascii_letter_ratio: Schema.Number,
@@ -31,9 +36,31 @@ export const EngineConfig = Schema.Struct({
     growth_min: Schema.Number,
     growing_min_items_7d: Schema.Int,
     fading_max: Schema.Number,
-    /** all_sources: a gap in any source leaves every trend unclassified (Earlywindow v0.02). per_source: see series.ts. */
-    coverage_rule: Schema.Literals(["all_sources", "per_source"]),
+    /**
+     * all_sources: a gap in any source leaves every trend unclassified (Earlywindow v0.02).
+     * per_source and equivalent (growth from per-day rates of sources fully collected in
+     * both windows): see series.ts.
+     */
+    coverage_rule: Schema.Literals(["all_sources", "per_source", "equivalent"]),
   }),
+  /**
+   * Learned item relevance (relevance.ts). Present, a signal's stage counts only relevant
+   * items and a trend is eligible when growing with relevance >= signal_min.
+   */
+  relevance: Schema.optionalKey(
+    Schema.Struct({
+      /** File name beside the configuration files. */
+      model: Schema.String,
+      /** sha256 of the model file: the configuration hash covers the weights. */
+      sha256: Schema.String,
+      /** An item with relevance >= item_min counts in the series. */
+      item_min: Schema.Number,
+      /** A growing trend whose mean recent relevance is >= signal_min is eligible. */
+      signal_min: Schema.Number,
+      /** Keep the profile affinity gate as well (profile.include_min, profile.exclude_max). */
+      profile_gate: Schema.Boolean,
+    }),
+  ),
   rank: Schema.Struct({
     baseline: Schema.Struct({ method: Schema.String, weights: Weights }),
     weighted: Schema.Struct({ method: Schema.String, weights: Weights }),
@@ -45,6 +72,13 @@ export const EngineConfig = Schema.Struct({
     label_terms: Schema.Int,
     top_terms: Schema.Int,
     curve_days: Schema.Int,
+    /** A trend whose centroid has a cosine above this with a better-ranked one is emitted as related, without a position. */
+    dedup_cosine: Schema.optionalKey(Schema.Number),
+    /**
+     * Fewer eligible trends than this are filled with the most relevant growing ones below
+     * signal_min, then steady ones, so a cut never abstains below it. Needs `relevance`.
+     */
+    min_dossiers: Schema.optionalKey(Schema.Int),
   }),
 });
 export type EngineConfig = typeof EngineConfig.Type;

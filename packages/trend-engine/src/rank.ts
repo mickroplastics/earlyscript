@@ -2,6 +2,8 @@
 // each component's contribution is its explanation. A null value adds 0.
 import type { RankComponent } from "@earlyscript/editorial-contracts/dossier";
 
+import { dot } from "./cluster.ts";
+
 export const round6 = (x: number): number => Math.round(x * 1e6) / 1e6;
 
 export interface Scored {
@@ -37,4 +39,33 @@ export function positions<T extends { readonly id: string }>(
     (a, b) => scoreOf(b) - scoreOf(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
   return new Map(ordered.map((entry, index) => [entry.id, index + 1]));
+}
+
+/**
+ * Walks `ordered` best first and keeps an entry unless its vector has a cosine above
+ * `threshold` with one already kept (`alreadyKept` first, then earlier entries); a folded
+ * entry is linked to the kept one it is closest to.
+ */
+export function dedupe<T extends { readonly id: string }>(
+  ordered: ReadonlyArray<T>,
+  alreadyKept: ReadonlyArray<T>,
+  vectorOf: (entry: T) => Float32Array,
+  threshold: number,
+): { kept: Array<T>; related: Array<[string, { signal: T; cosine: number }]> } {
+  const pool = [...alreadyKept];
+  const kept: Array<T> = [];
+  const related: Array<[string, { signal: T; cosine: number }]> = [];
+  for (const entry of ordered) {
+    let best: { primary: T; cosine: number } | null = null;
+    for (const primary of pool) {
+      const cosine = dot(vectorOf(entry), vectorOf(primary));
+      if (cosine > threshold && (best === null || cosine > best.cosine)) best = { primary, cosine };
+    }
+    if (best) related.push([best.primary.id, { signal: entry, cosine: best.cosine }]);
+    else {
+      kept.push(entry);
+      pool.push(entry);
+    }
+  }
+  return { kept, related };
 }

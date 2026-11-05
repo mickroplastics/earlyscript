@@ -107,8 +107,53 @@ export const Evidence = Schema.Struct({
   retrieved_at: Schema.String,
   /** Cosine to the trend centroid; null when read from a dossier/1. */
   similarity: Schema.NullOr(Schema.Number),
+  /** The item's learned relevance, when the run has a relevance model. */
+  relevance: Schema.optionalKey(Schema.Number),
 });
 export type Evidence = typeof Evidence.Type;
+
+/** One source's share of a coverage-equivalent growth (stage.coverage_rule equivalent). */
+export const GrowthSource = Schema.Struct({
+  source: SourceId,
+  /** Days of each window the source collected fully. */
+  days_7d: Schema.Int,
+  days_prev_7d: Schema.Int,
+  /** Counted items on those days. */
+  items_7d: Schema.Int,
+  items_prev_7d: Schema.Int,
+  /** Both windows have a fully collected day, so the source enters the growth. */
+  comparable: Schema.Boolean,
+});
+export type GrowthSource = typeof GrowthSource.Type;
+
+/** Learned relevance of a trend and the series computed over its relevant items. */
+export const RelevanceFit = Schema.Struct({
+  /** Mean item relevance over the trend's items of the last 7 days (all items if none). */
+  score: Schema.Number,
+  model_id: Schema.String,
+  model_hash: Schema.String,
+  item_min: Schema.Number,
+  signal_min: Schema.Number,
+  items_scored: Schema.Int,
+  relevant_items_7d: Schema.Int,
+  relevant_items_prev_7d: Schema.Int,
+  /** ln((e7 + 1) / (eprev + 1)) over relevant items, e = per-day rate x 7 of comparable sources. */
+  growth: Schema.Number,
+  growth_sources: Schema.Array(GrowthSource),
+  /** relevant: passed signal_min. backfill: added so the cut reaches emit.min_dossiers. */
+  eligibility: Schema.Literals(["relevant", "backfill"]),
+});
+export type RelevanceFit = typeof RelevanceFit.Type;
+
+/** A trend folded into a better-ranked one at emission (emit.dedup_cosine). */
+export const RelatedTrend = Schema.Struct({
+  trend_id: Schema.String,
+  label: Schema.String,
+  cosine: Schema.Number,
+  items_7d: Schema.Int,
+  relevance: Schema.NullOr(Schema.Number),
+});
+export type RelatedTrend = typeof RelatedTrend.Type;
 
 /** Expediente: a trend with its selected evidence and both ranking positions. */
 export const Dossier = Schema.Struct({
@@ -123,6 +168,10 @@ export const Dossier = Schema.Struct({
   trend: Trend,
   profile_fit: ProfileFit,
   rankings: Rankings,
+  /** Present when the run has a relevance model. */
+  relevance: Schema.optionalKey(RelevanceFit),
+  /** Trends folded into this one at emission; present when emit.dedup_cosine is set. */
+  related: Schema.optionalKey(Schema.Array(RelatedTrend)),
   curve: Schema.Array(CurvePoint),
   coverage: Schema.Struct({
     window_days: Schema.Int,
