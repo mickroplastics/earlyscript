@@ -128,6 +128,10 @@ interface ArmMetrics {
   readonly p_at_5_upper: number | null;
   readonly resolved_precision: number | null;
   readonly coverage: number | null;
+  /** Positions whose topic has a label (yes, no, unsure or pending) over all positions. */
+  readonly labelled_share: number | null;
+  /** yes over the labelled positions, unsure counting 0: precision where there is coverage. */
+  readonly p_at_5_labelled: number | null;
   readonly per_cutoff: Record<string, number>;
   readonly counts: Record<string, number>;
   readonly duplicates_at_5: number;
@@ -404,6 +408,7 @@ function armMetrics(
     )!;
   }
   const counted = slots.filter((s) => s.zero === null);
+  const labelled = slots.filter((s) => s.label !== null && s.zero !== "empty");
   const resolved = counted.filter((s) => s.label === "yes" || s.label === "no");
   const subset = (keep: (s: Slot) => boolean) => {
     const xs = counted.filter((s) => s.family !== null && keep(s));
@@ -435,6 +440,8 @@ function armMetrics(
     p_at_5_upper: round4(weightedPrecision(slots, one, "upper")),
     resolved_precision: round4(weightedPrecision(resolved, one)),
     coverage: round4(slots.length === 0 ? null : filled.length / slots.length),
+    labelled_share: round4(slots.length === 0 ? null : labelled.length / slots.length),
+    p_at_5_labelled: round4(weightedPrecision(labelled, one)),
     per_cutoff: perCutoff,
     counts,
     duplicates_at_5: counts["duplicate"]!,
@@ -518,12 +525,12 @@ function renderReport(
         "",
         `Etiquetas de las tarjetas: sí ${p.card_labels.yes}, no ${p.card_labels.no}, no sé ${p.card_labels.unsure}, pendiente ${p.card_labels.pending}, sin juicio ${p.card_labels.unlabelled}.${p.valid ? "" : " **Partición no válida: más del 10 % de «no sé».**"}`,
         "",
-        "| Brazo | P@5 | IC 95 % familias | IC 95 % bloques | Cota sup. | Prec. resueltas | Cobertura | Duplicados | B6 | Familias nuevas (P, puestos) | Dep. semana previa incompleta |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Brazo | P@5 | IC 95 % familias | IC 95 % bloques | Cota sup. | Prec. resueltas | P@5 con etiqueta (puestos etiquetados) | Cobertura | Duplicados | B6 | Familias nuevas (P, puestos) | Dep. semana previa incompleta |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
       );
       for (const [arm, m] of Object.entries(p.arms as Record<string, ArmMetrics>)) {
         lines.push(
-          `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
+          `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.p_at_5_labelled)} (${pct(m.labelled_share)}) | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
         );
       }
       lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "n/d"}.`, "");
