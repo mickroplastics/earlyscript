@@ -22,7 +22,7 @@ import { DEFAULT_JUDGE_PATH, loadJudge } from "./judge.ts";
 import { auc, confusion, fitLogistic, type LogisticFit, logLoss, predict } from "./logistic.ts";
 import type { SampleRow } from "./relevance-sample.ts";
 
-export const LAMBDAS = [0.3, 1, 3, 10, 30];
+export const LAMBDAS = [0.01, 0.03, 0.1, 0.3, 1, 3, 10];
 export const FOLDS = 5;
 
 const readJsonl = <T>(path: string): Array<T> =>
