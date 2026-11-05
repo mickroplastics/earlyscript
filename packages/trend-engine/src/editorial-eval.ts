@@ -1096,8 +1096,9 @@ export function readRankings(path: string): Rankings {
 }
 
 /**
- * Blind topic cards: terms, headlines and cutoff only. Shuffled with a fixed seed; with `sample`
- * the first N of that order (after the cutoff filter) are kept.
+ * Blind topic cards: terms, headlines and cutoff only. Shuffled with a fixed seed. With `sample`,
+ * N cards are taken round-robin over the families (families and their topics shuffled with the
+ * seed), so a recurrent family does not fill the sample, and the chosen cards are shuffled again.
  */
 export function buildTopicCards(
   universe: Universe,
@@ -1117,7 +1118,25 @@ export function buildTopicCards(
       }),
     );
   const shuffled = seededShuffle(cards, options.seed);
-  return options.sample === undefined ? shuffled : shuffled.slice(0, options.sample);
+  if (options.sample === undefined) return shuffled;
+  const familyOf = new Map(universe.logical.topics.map((t) => [t.topic_id, t.family_id]));
+  const byFamily = new Map<string, Array<TopicCard>>();
+  for (const card of shuffled) {
+    const family = familyOf.get(card.topic_id)!;
+    if (!byFamily.has(family)) byFamily.set(family, []);
+    byFamily.get(family)!.push(card);
+  }
+  const queues = seededShuffle([...byFamily.keys()].toSorted(), options.seed + 1).map(
+    (family) => byFamily.get(family)!,
+  );
+  const chosen: Array<TopicCard> = [];
+  for (let round = 0; chosen.length < options.sample && queues.some((q) => q.length > round); round++) {
+    for (const queue of queues) {
+      if (chosen.length >= options.sample) break;
+      if (queue[round]) chosen.push(queue[round]!);
+    }
+  }
+  return seededShuffle(chosen, options.seed + 2);
 }
 
 /** Refuses prospective topics whose universe and rankings were not sealed in the ledger. */
