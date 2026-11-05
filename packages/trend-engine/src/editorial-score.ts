@@ -457,9 +457,9 @@ function coverageReport(universe: Universe, cutoffs: ReadonlyArray<string>) {
   );
 }
 
-const pct = (x: unknown) => (typeof x === "number" ? x.toFixed(3) : "—");
+const pct = (x: unknown) => (typeof x === "number" ? x.toFixed(3) : "n/d");
 const ivl = (i: Interval | undefined) =>
-  i && i.low !== null ? `[${pct(i.low)}, ${pct(i.high)}]` : "—";
+  i && i.low !== null ? `[${pct(i.low)}, ${pct(i.high)}]` : "n/d";
 
 function renderReport(
   logical: {
@@ -503,7 +503,7 @@ function renderReport(
           `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
         );
       }
-      lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "—"}.`, "");
+      lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "n/d"}.`, "");
       for (const c of p.comparisons as Array<any>) {
         lines.push(
           `Candidato ${c.candidate}:`,

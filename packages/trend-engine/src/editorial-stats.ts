@@ -171,9 +171,10 @@ export function blockDraws(
   const length = Math.max(1, Math.min(blockLength, n));
   const blocks = Math.ceil(n / length);
   const random = seededRandom(seed);
+  if (n === 0) return Array.from({ length: replicates }, () => new Map<string, number>());
   return Array.from({ length: replicates }, () => {
     const weights = new Map<string, number>();
-    for (let b = 0; b < blocks && n > 0; b++) {
+    for (let b = 0; b < blocks; b++) {
       const start = Math.floor(random() * n);
       for (let k = 0; k < length; k++) {
         const cutoff = sorted[(start + k) % n]!;

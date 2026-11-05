@@ -49,16 +49,9 @@ export const EVAL_SOURCES: ReadonlyArray<SourceId> = [
 ];
 
 /**
- * Two top-5 positions are the same topic when they share at least half the members of the
- * smaller one, or when their centroids have cosine >= 0.80 and they share at least two rare
- * top terms. P1 asked for cosine >= 0.80 alone; on the development pool it merged unrelated
- * clusters (30-day clusters have centroids near the corpus mean: "prediction markets" and
- * "attention cache compression" at 0.87, the same arrest at 0.84), so the cosine only counts
- * with lexical evidence. A term is rare when at most 1 % of the corpus items published in the
- * 30 days before the cutoff contain it (the later cutoff for a pair of cutoffs): it depends on
- * the corpus, never on the arms. The relation is closed transitively (connected components), so
- * the result does not depend on the order of arms or positions. Within a cutoff it forms the
- * opportunities; across cutoffs, the families. Only items published before each cutoff count.
+ * Same topic: at least half the smaller one's members shared, or centroid cosine >= 0.80 plus two
+ * shared rare top terms (in <= 1 % of the items of the 30 days before the later cutoff). Cosine
+ * alone merged unrelated 30-day clusters in development (README). Closed transitively.
  */
 export const SAME_TOPIC_RULE = {
   shared_items_min_fraction: 0.5,
@@ -146,9 +139,7 @@ export function keywordMatcher(terms: ReadonlyArray<string>): (text: string) => 
   return (text) => re.test(text);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ledger: append-only JSON lines, each chained to the SHA-256 of the line before it.
-
+/** A ledger line: append-only JSON lines, each chained to the SHA-256 of the line before it. */
 export interface LedgerEntry {
   readonly kind: string;
   readonly at: string;
@@ -207,9 +198,6 @@ export const captureEntries = (ledger: ReadonlyArray<LedgerEntry>) =>
   ledger.filter(
     (e): e is CaptureEntry => e.kind === "capture" && typeof e["snapshot_dir"] === "string",
   );
-
-// ---------------------------------------------------------------------------------------------
-// Pool.
 
 export interface PoolOptions {
   readonly corpusDir: string;
@@ -1061,9 +1049,6 @@ async function poolRun(args: {
     trends: new Map(emitted.map((t) => [t.id, { centroid: t.centroid, itemIds: t.itemIds }])),
   };
 }
-
-// ---------------------------------------------------------------------------------------------
-// Cards.
 
 export interface TopicCard {
   readonly card_id: string;

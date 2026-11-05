@@ -320,7 +320,7 @@ describe("pool", () => {
       ]);
     }
     expect(NodeFS.existsSync(NodePath.join(s.root, "a", "metrics.json"))).toBe(false);
-  }, 60_000);
+  });
 });
 
 describe("prospective capture", () => {
@@ -364,5 +364,5 @@ describe("prospective capture", () => {
     expect(ledger[1]!.prev_sha256).toMatch(/^sha256:/);
     expect(ledger[0]!["closed_at"]).toBe("2026-10-11T00:05:00.000Z");
     expect(NodeFS.existsSync(NodePath.join(corpusDir, "hn", "2026-10-11.jsonl"))).toBe(true);
-  }, 60_000);
+  });
 });
