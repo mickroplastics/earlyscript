@@ -211,3 +211,27 @@ Las ventanas no se calculan desde `closed_at`.
 6. Añade el asiento encadenado al libro.
 
 `pool --ledger` lee esa instantánea en los cortes prospectivos.
+
+### Etiqueta graduada y consejo, ronda 2a
+
+**Rúbrica sellada.** La página de etiquetado muestra el texto de `config/editorial-eval/label-rubric.v1.md`: la pregunta de los próximos 7 días, las definiciones de núcleo y adyacente con dos ejemplos cada una, y la regla «si dudas entre núcleo y adyacente, marca adyacente». Teclas: `1` núcleo, `2` adyacente, `n` no, `?` no sé. La exportación lleva `label` (`yes`/`no`/`unsure`), `grade` (`core`/`adjacent`/null) y `rubric_sha256`. `freeze-and-test.sh` incluye el archivo de la rúbrica en el asiento `freeze`.
+
+**G@5.** Por puesto, núcleo vale 1, adyacente 0,5 y lo demás 0. El resultado se divide entre 5 y siguen las mismas reglas de ceros, intervalos y Bonferroni. Se cumple G@5 = 0,5 × P@5 + 0,5 × núcleo@5. Una etiqueta sin grado, anterior a la graduación, vale para P@5; si algún sí del conjunto no tiene grado, G@5 queda vacía. `score` informa además:
+
+- la sensibilidad descriptiva con adyacente a 0,3 y a 0,7;
+- G@5 sin la familia que más aporta, con los puestos de esa familia valiendo 0;
+- en cada comparación, la diferencia de G@5 sin la familia que más aporta a esa diferencia;
+- la precisión binaria condicional en familias ausentes de los registros de desarrollo y entrenamiento, con aciertos, puestos y número de familias. Dudas, duplicados y puestos B6 valen 0. Se marca «no evaluable» si no hay puestos o falta el registro de entrenamiento.
+
+`--partition <nombre>=<días>` añade particiones con nombre, por ejemplo septiembre y del 27 de octubre al 4 de noviembre, junto a la retrospectiva, la prospectiva y su agregado. B6 se aplica a todo corte retrospectivo, en cualquier partición.
+
+**Repeticiones a ciegas.** `cards --repeat 10` repite 10 tarjetas con el mismo contenido y otro `card_id`. Cada copia queda en una posición elegida con semilla fija, al menos 20 tarjetas después de su original. `score` reconoce la copia porque su `card_id` no es el del tema. La copia nunca entra en las métricas: cuenta la primera aparición. La copia solo sirve para informar la consistencia de quien etiqueta, de tres formas: binaria, graduada y núcleo frente al resto.
+
+**Memoria de novedad de F.** F no guarda estado entre corridas. Cada corrida recalcula, desde sus propias señales, si cada tema estuvo en el top 5 de los 7 días previos (`priorTopDays` en `run.ts`). Para cada uno de esos días filtra los miembros anteriores; el apilado es en línea, así que son exactamente los miembros de ese día. La relevancia se calcula por ítem. Con cortes espaciados no hacen falta días intermedios en `pool`. Una prueba comprueba que el mismo corte da el mismo `logical_hash` y el mismo ranking en cuatro casos: solo, junto con otros cortes en cualquier orden, reutilizado desde la caché de corridas y con `runEngine` directo.
+
+**Una regla de tema para U1 y U2.**
+
+- La deduplicación de F al emitir (`rank.ts` `dedupe`) pliega un tema cuyo centroide tiene coseno > 0,80 con uno ya conservado.
+- La regla de esta evaluación funde con coseno > 0,80 más dos términos raros, o con la mitad de los ítems compartidos.
+- Dentro de una corrida las señales no comparten ítems. Por eso todo par que esta regla llama el mismo tema en un mismo ranking ya fue plegado por F, y el top 5 de F no puede tener duplicados según esta regla. Lo comprueba una prueba con fixtures.
+- Entre cortes, y entre configuraciones distintas, manda la regla de esta evaluación, que es la que define oportunidades y familias.
