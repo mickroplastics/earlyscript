@@ -10,7 +10,8 @@ import { sha256 } from "../hash.ts";
 import { tempDir } from "../testkit/syntheticCorpus.ts";
 import { agreement, readOperatorLabels, splitCalibration } from "./calibration-agreement.ts";
 import { AI_TERMS, pickCalibration } from "./calibration-items.ts";
-import { topicText } from "./dev-compare.ts";
+import { topicKey, topicText } from "./dev-compare.ts";
+import { trainingFamilies } from "./training-families.ts";
 import { type CliRunner, judgeEntries, loadJudge } from "./judge.ts";
 import { auc, choleskySolve, fitLogistic, predict } from "./logistic.ts";
 import { dayFolds } from "./relevance-train.ts";
@@ -260,5 +261,55 @@ describe("development topic card", () => {
     expect(text).toBe(
       "Topic key terms: agents, coding\nRecent headlines:\n- headline 6\n- headline 5\n- headline 4\n- headline 3\n- headline 2",
     );
+  });
+});
+
+describe("development judgments", () => {
+  it("share a judgment only between identical cards of the same cut and signal (Sol U2-S3)", () => {
+    const dossier = (titles: Array<string>) =>
+      ({
+        trend: { id: "sig_a", top_terms: ["agents"] },
+        evidence: titles.map((title, k) => ({
+          item_id: `i${k}`,
+          title,
+          published_at: `2026-10-1${k}T00:00:00.000Z`,
+        })),
+      }) as unknown as Dossier;
+    const a = dossier(["one", "two"]);
+    expect(topicKey("2026-10-20", a)).toBe(topicKey("2026-10-20", dossier(["one", "two"])));
+    expect(topicKey("2026-10-20", a)).not.toBe(topicKey("2026-10-20", dossier(["one", "three"])));
+    expect(topicKey("2026-10-20", a)).not.toBe(topicKey("2026-10-21", a));
+  });
+});
+
+describe("training families", () => {
+  it("lists the signals with a training item, with their centroid (Sol U2-S2)", () => {
+    const signal = (id: string, itemIds: Array<string>) => ({
+      id,
+      itemIds,
+      firstMs: Date.parse("2026-10-02T00:00:00Z"),
+      lastMs: 0,
+      sum: new Float32Array(2),
+      centroid: Float32Array.from([0.6, 0.8]),
+    });
+    const item = (id: string, title: string) => [id, { title, cleanBody: "" }] as const;
+    const items = new Map([
+      item("a1", "agent harness"),
+      item("a2", "agent harness tips"),
+      item("b1", "tomato"),
+    ]) as unknown as Parameters<typeof trainingFamilies>[1];
+    const families = trainingFamilies(
+      [signal("sig_b", ["b1"]), signal("sig_a", ["a1", "a2"])],
+      items,
+      new Set(["a2"]),
+    );
+    expect(families.map((f) => [f.signal_id, f.training_items, f.items_total])).toEqual([
+      ["sig_a", ["a2"], 2],
+    ]);
+    expect(families[0]!.terms).toEqual(["agent", "harness"]);
+    const back = new Float32Array(
+      Uint8Array.from(Buffer.from(families[0]!.centroid, "base64")).buffer,
+    );
+    expect([...back].map((x) => Math.round(x * 10) / 10)).toEqual([0.6, 0.8]);
   });
 });

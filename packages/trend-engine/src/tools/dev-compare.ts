@@ -15,7 +15,7 @@ import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
 
 import { readRun } from "../check.ts";
 import { sha256 } from "../hash.ts";
-import { topicCardText } from "./calibration-agreement.ts";
+import { asYesNo, topicCardText } from "./calibration-agreement.ts";
 import { DEFAULT_JUDGE_PATH, judgeEntries, loadJudge } from "./judge.ts";
 
 export const TOPIC_HEADLINES = 5;
@@ -122,10 +122,12 @@ async function main() {
       .toSorted((a, b) => (a.cut < b.cut ? -1 : 1));
     const p5 = cuts.map((t) => {
       let hits = 0;
+      let core = 0;
       t.dossiers.forEach((d, k) => {
         const label = labelOf.get(topicKey(t.cut, d))!;
         const duplicate = t.dossiers.slice(0, k).some((e) => sameEvent(e, d));
-        if (label.label === "yes" && !duplicate) hits++;
+        if (asYesNo(label.label) === "yes" && !duplicate) hits++;
+        if (label.label === "core" && !duplicate) core++;
         topics.push({
           arm: arm.name,
           cut: t.cut,
@@ -143,7 +145,13 @@ async function main() {
             : null,
         });
       });
-      return { cut: t.cut, p_at_5: hits / 5, emitted: t.emitted, in_top5: t.dossiers.length };
+      return {
+        cut: t.cut,
+        p_at_5: hits / 5,
+        core_at_5: core / 5,
+        emitted: t.emitted,
+        in_top5: t.dossiers.length,
+      };
     });
     const slots = cuts.flatMap((t) => t.dossiers);
     perArm[arm.name] = {
@@ -152,6 +160,7 @@ async function main() {
       families: countFamilies(slots),
       ranking: arm.ranking,
       mean_p_at_5: p5.reduce((s, c) => s + c.p_at_5, 0) / Math.max(1, p5.length),
+      mean_core_at_5: p5.reduce((s, c) => s + c.core_at_5, 0) / Math.max(1, p5.length),
       min_emitted: Math.min(...p5.map((c) => c.emitted)),
       cuts: p5,
     };
