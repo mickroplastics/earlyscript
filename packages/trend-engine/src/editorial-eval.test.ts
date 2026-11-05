@@ -837,6 +837,20 @@ describe("Sol's U1 findings (regressions)", () => {
     await expect(run({ retro: ["2026-10-30"] })).rejects.toThrow(/dev family registry/);
   });
 
+  it("B4: reads the training registry of tools/training-families.ts", () => {
+    const root = tempDir("u1-b4-train");
+    const path = NodePath.join(root, "training-families.jsonl");
+    const centroid = Buffer.from(new Float32Array([1, 0]).buffer).toString("base64");
+    NodeFS.writeFileSync(
+      path,
+      `${JSON.stringify({ signal_id: "sig_a", first_seen_at: "x", items_total: 3, training_items: ["i1"], terms: ["rust"], centroid })}\n${JSON.stringify({ summary: true })}\n`,
+    );
+    const registry = readRegistry(path);
+    expect(registry.members).toHaveLength(1);
+    expect(registry.members[0]!.trendId).toBe("sig_a");
+    expect(registry.registry_hash).toBe(sha256(NodeFS.readFileSync(path, "utf8")));
+  });
+
   it("S2: refuses labels of another universe unless the very same card migrates", async () => {
     const root = tempDir("u1-s2");
     const e = miniEvaluation(

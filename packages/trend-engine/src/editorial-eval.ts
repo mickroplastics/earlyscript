@@ -881,7 +881,11 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
               [
                 ...new Set(
                   registry.members
-                    .filter((r) => group.some((p) => sameTopic(p, r, (t) => rare.has(t))))
+                    .filter((r) =>
+                      group.some(
+                        (p) => r.trendId === p.trendId || sameTopic(p, r, (t) => rare.has(t)),
+                      ),
+                    )
                     .map((r) => r.family_id),
                 ),
               ].toSorted(),
@@ -1398,19 +1402,52 @@ function buildRegistry(universe: Universe, rows: ReadonlyArray<RegistryRow>) {
   };
 }
 
+/**
+ * Reads a family registry: this module's `families.json`, or the JSONL training registry of
+ * tools/training-families.ts (one line per signal with `signal_id`, `training_items`, `terms` and
+ * `centroid`; its hash is the file's). A topic matches a registry member with the same signal id
+ * (stacking is incremental, so a family keeps its id) or by SAME_TOPIC_RULE.
+ */
 export function readRegistry(path: string): FamilyRegistry {
-  const json = JSON.parse(NodeFS.readFileSync(path, "utf8")) as {
+  const text = NodeFS.readFileSync(path, "utf8");
+  const first = text.split("\n", 1)[0] ?? "";
+  if (first.includes('"signal_id"')) {
+    const rows = text
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((row) => typeof row["signal_id"] === "string");
+    return {
+      schema_version: REGISTRY_SCHEMA_VERSION,
+      registry_hash: sha256(text),
+      universe_hash: "",
+      cutoffs: [],
+      members: rows.map((row) => ({
+        key: row["signal_id"] as string,
+        trendId: row["signal_id"] as string,
+        cutoff: "",
+        topic_id: "",
+        family_id: row["signal_id"] as string,
+        centroid: fromBase64(row["centroid"] as string),
+        itemIds: new Set(row["training_items"] as Array<string>),
+        terms: row["terms"] as Array<string>,
+      })),
+    };
+  }
+  const json = JSON.parse(text) as {
     schema_version: string;
     registry_hash: string;
     universe_hash: string;
     cutoffs: Array<string>;
     members: Array<RegistryRow>;
   };
-  if (json.schema_version !== REGISTRY_SCHEMA_VERSION)
+  if (json.schema_version !== REGISTRY_SCHEMA_VERSION) {
     throw new Error(`${path} is not ${REGISTRY_SCHEMA_VERSION}`);
+  }
   const { schema_version: _v, registry_hash, ...logical } = json;
-  if (sha256(canonicalJson(logical)) !== registry_hash)
+  if (sha256(canonicalJson(logical)) !== registry_hash) {
     throw new Error(`${path}: registry_hash does not match`);
+  }
   return {
     schema_version: REGISTRY_SCHEMA_VERSION,
     registry_hash,
@@ -1418,7 +1455,7 @@ export function readRegistry(path: string): FamilyRegistry {
     cutoffs: json.cutoffs,
     members: json.members.map((m) => ({
       key: m.key,
-      trendId: m.key,
+      trendId: m.key.split("|").at(-1)!,
       cutoff: m.cutoff,
       topic_id: m.topic_id,
       family_id: m.family_id,
