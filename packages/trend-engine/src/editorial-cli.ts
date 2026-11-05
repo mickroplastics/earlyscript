@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
 // engine eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture (protocol P1.1).
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
@@ -10,7 +11,8 @@ import { SourceId } from "@earlyscript/editorial-contracts/source";
 import { httpTraceWriter } from "./collect.ts";
 import { captureDay } from "./editorial-capture.ts";
 import { writeFollowupLabels } from "./editorial-followup.ts";
-import { judgeCards } from "./editorial-judge.ts";
+import { cardEntries, judgeCards, judgeLabelsFile, topicCards } from "./editorial-judge.ts";
+import { DEFAULT_JUDGE_PATH, type JudgedEntry, loadJudge } from "./tools/judge.ts";
 import { runScore } from "./editorial-score.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
 import {
@@ -38,7 +40,7 @@ export const EDITORIAL_USAGE =
   "       engine eval-editorial cards-html --cards <cards.jsonl> --out <dir> [--name <set>] [--title <text>]\n" +
   "       engine eval-editorial hn-labels --universe <universe.json> --corpus <dir> --out <labels-hn.json> [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
   "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> --labels <file> [--labels <file> ...] --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
-  "       engine eval-editorial judge --cards <cards.jsonl> --out <labels-judge.json> --judge-cache <dir> [--universe <universe.json>] [--judge <judge.json>] [--concurrency n]\n" +
+  "       engine eval-editorial judge --cards <cards.jsonl> (--out <labels.json> --judge-cache <dir> | --entries-out <entries.jsonl> | --judged <judge-output.jsonl> --out <labels.json>) [--universe <universe.json>] [--judge <judge.json>] [--concurrency n]\n" +
   "       engine eval-editorial seal --ledger <ledger.jsonl> --kind <freeze|rankings|note> [--file <path> ...] [--note <text>]\n" +
   "       engine eval-editorial capture --corpus <dir> --ledger <ledger.jsonl> --snapshots <dir> [--day <YYYY-MM-DD>] [--first-day <day>] [--last-day <day>] [--sources <ids>] [--rss-feeds <file.json>] [--seed-from <corpus>]";
 
@@ -62,6 +64,8 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       "candidate-v2": { type: "boolean" },
       judge: { type: "string" },
       "judge-cache": { type: "string" },
+      "entries-out": { type: "string" },
+      judged: { type: "string" },
       concurrency: { type: "string" },
       sources: { type: "string" },
       top: { type: "string" },
@@ -226,6 +230,28 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values["seed-from"] ? { seedFrom: values["seed-from"] } : {}),
     });
     console.log(JSON.stringify(result));
+    return 0;
+  }
+  if (sub === "judge" && values.cards && values["entries-out"]) {
+    const entries = cardEntries(topicCards(values.cards));
+    NodeFS.writeFileSync(values["entries-out"], entries.map((e) => `${JSON.stringify(e)}\n`).join(""));
+    console.log(JSON.stringify({ entries: entries.length, path: values["entries-out"] }));
+    return 0;
+  }
+  if (sub === "judge" && values.cards && values.judged && values.out) {
+    const out = judgeLabelsFile({
+      cardsPath: values.cards,
+      judged: NodeFS.readFileSync(values.judged, "utf8")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as JudgedEntry),
+      judge: loadJudge(values.judge ?? DEFAULT_JUDGE_PATH),
+      universeHash: values.universe ? readUniverse(values.universe).universe_hash : null,
+    });
+    NodeFS.writeFileSync(values.out, `${JSON.stringify(out, null, 2)}\n`);
+    const counts: Record<string, number> = {};
+    for (const l of out.labels) counts[l.label] = (counts[l.label] ?? 0) + 1;
+    console.log(JSON.stringify({ path: values.out, labels: counts }));
     return 0;
   }
   if (sub === "judge" && values.cards && values.out && values["judge-cache"]) {

@@ -152,7 +152,8 @@ export interface JudgeStats {
   readonly retries: number;
 }
 
-const labelKey = (judge: LoadedJudge, text: string) =>
+/** Cache key of a label: rubric, model and the text already clipped to max_text_chars. */
+export const labelKey = (judge: LoadedJudge, text: string) =>
   sha256(`${judge.config.rubric_sha256}\n${judge.config.model}\n${text}`);
 
 const clip = (text: string, max: number) => (text.length > max ? text.slice(0, max) : text);

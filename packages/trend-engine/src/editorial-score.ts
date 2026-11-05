@@ -86,6 +86,26 @@ export function readLabels(path: string): LabelSet {
   return { labeler: json.labeler, path, universe_hash: json.universe_hash ?? null, labels };
 }
 
+/** Files of one labeler (a test labelled in two sessions) merge in the given order. */
+export function mergeLabelSets(sets: ReadonlyArray<LabelSet>): Array<LabelSet> {
+  const byLabeler = new Map<string, LabelSet>();
+  for (const set of sets) {
+    const prev = byLabeler.get(set.labeler);
+    byLabeler.set(
+      set.labeler,
+      prev
+        ? {
+            labeler: set.labeler,
+            path: [prev.path, set.path].join(","),
+            universe_hash: prev.universe_hash === set.universe_hash ? set.universe_hash : null,
+            labels: new Map([...prev.labels, ...set.labels]),
+          }
+        : set,
+    );
+  }
+  return [...byLabeler.values()];
+}
+
 export interface ScoreOptions {
   readonly universePath: string;
   readonly rankingsPath: string;
@@ -137,7 +157,7 @@ export async function runScore(options: ScoreOptions) {
   if (rankings.universe_hash !== universe.universe_hash) {
     throw new Error("rankings.json belongs to another universe");
   }
-  const labelSets = options.labelPaths.map(readLabels);
+  const labelSets = mergeLabelSets(options.labelPaths.map(readLabels));
   const replicates = options.replicates ?? 2000;
   const seed = options.seed ?? 20_261_105;
   const blockDays = options.blockDays ?? 7;
@@ -316,7 +336,7 @@ export async function runScore(options: ScoreOptions) {
     rankings_hash: rankings.rankings_hash,
     labels: labelSets.map((l) => ({
       labeler: l.labeler,
-      sha256: sha256(NodeFS.readFileSync(l.path)),
+      sha256: l.path.split(",").map((path) => sha256(NodeFS.readFileSync(path))).join(","),
       universe_hash: l.universe_hash,
       universe_match: l.universe_hash === universe.universe_hash,
       topics: l.labels.size,

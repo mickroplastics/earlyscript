@@ -79,6 +79,32 @@ export const CARD_RULE = {
 export const LATE_POPULARITY_SOURCES: ReadonlyArray<SourceId> = ["github", "huggingface"];
 
 export const DEFAULT_TOP = 5;
+
+/**
+ * SHA-256 of the engine's source files (src without tests, tools, testkit and this
+ * evaluation): a reused run must come from the same code, not only the same configuration.
+ */
+export const ENGINE_SOURCE_HASH = (() => {
+  const root = import.meta.dirname;
+  const files: Array<string> = [];
+  const walk = (rel: string) => {
+    for (const entry of NodeFS.readdirSync(NodePath.join(root, rel), { withFileTypes: true })) {
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name !== "tools" && entry.name !== "testkit") walk(path);
+      } else if (/\.ts$/.test(entry.name) && !/\.test\.ts$|^editorial-/.test(entry.name)) {
+        files.push(path);
+      }
+    }
+  };
+  walk("");
+  return sha256(
+    files
+      .toSorted()
+      .map((path) => `${path}\n${sha256(NodeFS.readFileSync(NodePath.join(root, path)))}`)
+      .join("\n"),
+  );
+})();
 export const DEFAULT_CARD_SEED = 20_261_105;
 export const REFERENCE_CONFIG_DIR = NodePath.join(import.meta.dirname, "../config");
 
@@ -977,6 +1003,7 @@ async function poolRun(args: {
     profileHash: args.profileHash,
     embedding: args.embedder.key,
     corpus: manifest.corpus_hash,
+    engine: ENGINE_SOURCE_HASH,
   });
   const dir = NodePath.join(options.outDir, "runs", cutoffAt.slice(0, 10), configHash.slice(7, 19));
   const sidecar = NodePath.join(dir, "emitted.json");
