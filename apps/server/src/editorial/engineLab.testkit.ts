@@ -95,7 +95,7 @@ export const useSyntheticProfile = (harness: LabHarness) =>
 /** A development campaign over the synthetic corpus and its labels. */
 export const syntheticPolicy = (
   harness: LabHarness,
-  cutoffs = harness.fixture.cutoffs.slice(0, 3),
+  cutoffs: ReadonlyArray<string> = harness.fixture.cutoffs.slice(0, 3),
 ) => ({
   cutoffs,
   executor: "local" as const,
