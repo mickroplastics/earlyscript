@@ -50,6 +50,8 @@ export interface EngineLabOptionsShape {
   readonly heartbeatMs: number;
   readonly maxTries: number;
   readonly pollMs: number;
+  /** A whole job's wall time; past it its executor's process group is killed and it fails. */
+  readonly jobTimeoutMs: number;
 }
 
 export class EngineLabOptions extends Context.Service<EngineLabOptions, EngineLabOptionsShape>()(
@@ -61,6 +63,7 @@ export const DEFAULT_LAB_TIMING = {
   heartbeatMs: 30_000,
   maxTries: 3,
   pollMs: 15_000,
+  jobTimeoutMs: 4 * 60 * 60_000,
 } as const;
 
 const REMOTE_ENV = "EARLYSCRIPT_ENGINE_LAB_REMOTE";

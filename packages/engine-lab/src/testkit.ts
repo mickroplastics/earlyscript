@@ -16,8 +16,9 @@ import {
 } from "./manifest.ts";
 import { applyFilePatch, parsePatch } from "./patch.ts";
 import { applyConfigChange } from "./policy.ts";
-import { JOB_SPEC_SCHEMA, type JobSpec } from "./result.ts";
+import { DEFAULT_LIMITS, JOB_SPEC_SCHEMA, type JobSpec } from "./result.ts";
 import { type SyntheticCorpus, writeSyntheticCorpus } from "./synthetic.ts";
+import { corpusIdentity } from "./view.ts";
 
 /** The checkout this package belongs to: its packages/trend-engine is the installed engine. */
 export const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../../..");
@@ -56,12 +57,15 @@ export const weightCandidate = (fixture: LabFixture, weights: Record<string, num
 export function patchCandidate(
   fixture: LabFixture,
   patch: string,
+  /** False builds a hostile candidate the policy refuses, to test the executor's defenses. */
+  check: { readonly pure: boolean } = { pure: true },
 ): { manifest: EngineManifest; files: Record<string, string> } {
   const files: Record<string, string> = {};
-  for (const file of parsePatch(patch)) {
+  for (const file of parsePatch(patch, check)) {
     files[file.path] = applyFilePatch(
       NodeFS.readFileSync(NodePath.join(REPO_ROOT, file.path), "utf8"),
       file,
+      check,
     );
   }
   const overrides = new Map(
@@ -86,13 +90,16 @@ export function jobSpec(
     readonly files?: Record<string, string>;
     readonly cutoffs?: ReadonlyArray<string>;
     readonly secret?: string;
+    readonly kind?: JobSpec["kind"];
+    readonly limits?: JobSpec["limits"];
   },
 ): JobSpec {
+  const kind = input.kind ?? "development";
   return {
     schema: JOB_SPEC_SCHEMA,
     token: input.token,
     secret: input.secret ?? "test-secret",
-    kind: "development",
+    kind,
     cutoffs: input.cutoffs ?? fixture.cutoffs.slice(0, 3),
     input_roots: [fixture.dir],
     corpus_dir: fixture.corpus_dir,
@@ -105,6 +112,11 @@ export function jobSpec(
     workers: 1,
     top: 10,
     sandbox: input.files === undefined ? "if-available" : "required",
+    inputs: {
+      corpus_hash: kind === "shadow" ? null : corpusIdentity(fixture.corpus_dir),
+      models_hash: null,
+    },
+    limits: input.limits ?? DEFAULT_LIMITS,
     reference: {
       manifest_hash: manifestHash(fixture.installed),
       manifest: fixture.installed,

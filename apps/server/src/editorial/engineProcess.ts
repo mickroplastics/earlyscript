@@ -2,6 +2,7 @@
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
 
+import { sandboxArgs } from "@earlyscript/engine-lab/sandbox";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -112,6 +113,18 @@ export interface EngineInvocation {
   readonly onStdoutLine?: (line: string) => Effect.Effect<void>;
   /** Runs once the child exists; a failure here kills it. */
   readonly onSpawn?: (pid: number) => Effect.Effect<void, EngineSpawnRejected>;
+  /**
+   * Runs the engine in bwrap: no network, the user trees hidden, an empty environment, and
+   * only these paths mounted back. For an engine that is not the installed one.
+   */
+  readonly sandbox?: EngineSandbox;
+}
+
+export interface EngineSandbox {
+  readonly readOnly: ReadonlyArray<string>;
+  readonly writable: ReadonlyArray<string>;
+  /** The child's HOME and working directory, writable. */
+  readonly home: string;
 }
 
 /** `onSpawn` refused the child it was given, which is killed. */
@@ -138,19 +151,58 @@ export const runEngineCommand = Effect.fn("EditorialEngine.run")(function* (
   const path = yield* Path.Path;
   const node = yield* HostProcess.ExecutablePath;
   const args = [engine.cli, ...invocation.args];
-  yield* fs.writeFileString(invocation.logFile, `$ node ${args.join(" ")}\n`, { flag: "a" });
+  const sandbox = invocation.sandbox;
+  // bwrap binds only paths that exist: the runs directory and the cache's may not yet.
+  if (sandbox !== undefined) {
+    for (const dir of [sandbox.home, ...sandbox.writable])
+      yield* fs.makeDirectory(dir, { recursive: true });
+  }
+  const [command, commandArgs] =
+    sandbox === undefined
+      ? [node, args]
+      : [
+          "bwrap",
+          [
+            ...sandboxArgs({
+              readOnly: sandbox.readOnly,
+              writable: sandbox.writable,
+              out: sandbox.home,
+              // The desktop app's executable is Electron; this makes it behave as Node.
+              env: { ELECTRON_RUN_AS_NODE: "1" },
+            }),
+            node,
+            ...args,
+          ],
+        ];
+  yield* fs.writeFileString(
+    invocation.logFile,
+    `$ ${sandbox === undefined ? "" : "[bwrap] "}node ${args.join(" ")}\n`,
+    { flag: "a" },
+  );
   const append = (chunk: Uint8Array) => fs.writeFile(invocation.logFile, chunk, { flag: "a" });
   const onLine = invocation.onStderrLine ?? (() => Effect.void);
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make(node, args, {
-          cwd: path.dirname(engine.cli),
-          // The desktop app's executable is Electron; this makes it behave as Node.
-          env: { ELECTRON_RUN_AS_NODE: "1" },
-          extendEnv: true,
-          forceKillAfter: "5 seconds",
-        }),
+        ChildProcess.make(
+          command,
+          commandArgs,
+          sandbox === undefined
+            ? {
+                cwd: path.dirname(engine.cli),
+                // The desktop app's executable is Electron; this makes it behave as Node.
+                env: { ELECTRON_RUN_AS_NODE: "1" },
+                extendEnv: true,
+                forceKillAfter: "5 seconds",
+              }
+            : {
+                cwd: sandbox.home,
+                // Nothing of the server's environment, its credentials included, reaches it.
+                env: { PATH: "/usr/bin:/bin" },
+                extendEnv: false,
+                forceKillAfter: "5 seconds",
+              },
+        ),
       );
       if (invocation.onSpawn !== undefined) yield* invocation.onSpawn(Number(child.pid));
       const [stdout] = yield* Effect.all(

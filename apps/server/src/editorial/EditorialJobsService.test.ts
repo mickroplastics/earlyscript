@@ -84,6 +84,17 @@ if (command === "collect") {
   console.log(JSON.stringify(rows));
 } else if (command === "run") {
   trace("run");
+  // What the engine process can see of its host: its environment and a file outside its mounts.
+  const sentinelPath = path.join(here, "sentinel-path");
+  let outside = "none";
+  if (fs.existsSync(sentinelPath)) {
+    outside = "hidden";
+    try {
+      fs.readFileSync(fs.readFileSync(sentinelPath, "utf8"));
+      outside = "visible";
+    } catch {}
+  }
+  fs.appendFileSync(path.join(here, "env.log"), "env " + Object.keys(process.env).join(",") + " outside=" + outside + "\n");
   const event = (line) => fs.appendFileSync(path.join(here, "events.log"), line + "\n");
   const running = path.join(here, "engine-running");
   try {
@@ -868,6 +879,76 @@ describe("EditorialJobsService", () => {
       );
     },
   );
+
+  it.live(
+    "runs approved code in bwrap without the server's environment, and not at all without bwrap (Opus)",
+    () => {
+      const fx = makeFixture();
+      const code = {
+        current: { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) },
+      };
+      const secret = "EARLYSCRIPT_TEST_SECRET_SHOULD_NOT_LEAK";
+      process.env[secret] = "leaked";
+      // A file of the server's that no mount covers: the sandbox must not reach it.
+      const elsewhere = makeTempDir();
+      NodeFS.writeFileSync(NodePath.join(elsewhere, "credentials"), "secret");
+      NodeFS.writeFileSync(
+        NodePath.join(fx.root, "sentinel-path"),
+        NodePath.join(elsewhere, "credentials"),
+      );
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const started = yield* jobs.runNow;
+          yield* jobs.runDue;
+          const done = (yield* jobs.list).jobs.find((job) => job.jobId === started.jobId);
+          assert.strictEqual(done?.status, "done");
+          // The launch line says bwrap; the stand-in engine saw neither the server's
+          // environment nor a file outside its mounts.
+          const jobDir = NodePath.join(fx.root, "jobs", started.jobId);
+          const log = NodeFS.readdirSync(jobDir).find((name) => name.startsWith("run.g"))!;
+          assert.match(
+            NodeFS.readFileSync(NodePath.join(jobDir, log), "utf8"),
+            /^\$ \[bwrap\] node /,
+          );
+          const env = NodeFS.readFileSync(NodePath.join(fx.root, "env.log"), "utf8")
+            .split("\n")
+            .filter((line) => line.startsWith("env "));
+          assert.isNotEmpty(env);
+          assert.isTrue(env.every((line) => !line.includes(secret)));
+          assert.isTrue(env.every((line) => line.includes("outside=hidden")));
+        }),
+        { code },
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete process.env[secret];
+            NodeFS.rmSync(elsewhere, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("fails an approved artifact's run on a machine without bwrap (Opus)", () => {
+    const fx = makeFixture();
+    const code = {
+      current: { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) },
+    };
+    return withJobs(
+      fx,
+      Effect.gen(function* () {
+        const jobs = yield* EditorialJobsService.EditorialJobsService;
+        const started = yield* jobs.runNow;
+        yield* jobs.runDue;
+        const job = (yield* jobs.list).jobs.find((entry) => entry.jobId === started.jobId);
+        assert.deepStrictEqual(job?.artifacts.failure, { code: "engine_failed", phase: "run" });
+        assert.notInclude(fx.trace(), "run");
+      }),
+      { code, timing: { artifactSandbox: "unavailable" } },
+    );
+  });
 
   it.live(
     "a job reactivated after a code revert runs its own engine, never another code's run",

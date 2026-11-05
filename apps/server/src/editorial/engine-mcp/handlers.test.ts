@@ -507,7 +507,8 @@ it.live("cancels a running job by its process group and accepts no result", () =
     Effect.gen(function* () {
       const code = ok(yield* call("engine_inspect", { target: "code" })).code;
       const rank = code.files["packages/trend-engine/src/rank.ts"].split("\n");
-      const slow = "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120_000);";
+      // Pure computation that never ends: what a timer or Atomics did before they were refused.
+      const slow = "for (;;) {}";
       const patch = `--- a/packages/trend-engine/src/rank.ts\n+++ b/packages/trend-engine/src/rank.ts\n@@ -1,1 +1,2 @@\n ${rank[0]}\n+${slow}\n`;
       const candidate = ok(
         yield* call("engine_candidate_create", {

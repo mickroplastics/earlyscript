@@ -16,6 +16,7 @@ import {
   type GateResult,
   shadowCards,
 } from "@earlyscript/engine-lab/gate";
+import { EVALUATOR_HASH } from "@earlyscript/engine-lab/evaluator";
 import { canonicalInputs } from "@earlyscript/engine-lab/inputs";
 import { readLabelSource } from "@earlyscript/engine-lab/labels";
 import { LabPolicyError } from "@earlyscript/engine-lab/policy";
@@ -35,7 +36,13 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { lastJsonLine } from "./engineProcess.ts";
-import { type CampaignRow, policyOf } from "./EngineChangeService.ts";
+import {
+  type CampaignRow,
+  type ExecutorIdentity,
+  labelFilesOf,
+  labelsHashOf,
+  policyOf,
+} from "./EngineChangeService.ts";
 import {
   EngineLabOptions,
   labFailure,
@@ -104,6 +111,13 @@ export interface EngineExperimentServiceShape {
   readonly shadowCards: (
     jobId: string,
   ) => Effect.Effect<ReadonlyArray<unknown>, ReturnType<typeof labFailure>>;
+  /** Operator only: the executor's content identity of a campaign's corpus and models. */
+  readonly identify: (input: {
+    readonly executor: "local" | "remote";
+    readonly input_roots: ReadonlyArray<string>;
+    readonly corpus_dir: string;
+    readonly models_dir: string | null;
+  }) => Effect.Effect<ExecutorIdentity, ReturnType<typeof labFailure>>;
   /** Operator only: Miguel's labels of those cards, and the gate they give. */
   readonly scoreShadow: (input: {
     readonly jobId: string;
@@ -159,7 +173,11 @@ const make = Effect.gen(function* () {
   });
 
   /** The fixed command of the job's executor; the spec, with its secret, only goes on stdin. */
-  const workerCommand = (row: JobRow, command: "evaluate" | "cancel") => {
+  const workerCommand = (
+    row: Pick<JobRow, "executor" | "token">,
+    command: "evaluate" | "cancel" | "identify",
+  ) => {
+    const tokenArgs = command === "identify" ? [] : ["--token", row.token];
     if (row.executor === "remote") {
       const remote = options.remote;
       if (remote === null) return null;
@@ -181,8 +199,7 @@ const make = Effect.gen(function* () {
           "--jobs-root",
           remote.jobsRoot,
           ...(command === "evaluate" ? ["--engine-root", remote.root] : []),
-          "--token",
-          row.token,
+          ...tokenArgs,
         ],
       };
     }
@@ -195,11 +212,67 @@ const make = Effect.gen(function* () {
         "--jobs-root",
         options.jobsRoot,
         ...(command === "evaluate" ? ["--engine-root", options.engineRoot] : []),
-        "--token",
-        row.token,
+        ...tokenArgs,
       ],
     };
   };
+
+  /** The worker checks its own command line before it ends its process group. */
+  const killExecutorGroup = (row: JobRow) => {
+    const command = workerCommand(row, "cancel");
+    return command === null
+      ? Effect.void
+      : spawner
+          .string(
+            ChildProcess.make(command.command, command.args, {
+              env: { ELECTRON_RUN_AS_NODE: "1" },
+              extendEnv: true,
+            }),
+          )
+          .pipe(Effect.ignore);
+  };
+
+  const identify: EngineExperimentServiceShape["identify"] = Effect.fn(
+    "EngineExperimentService.identify",
+  )(function* (input) {
+    const command = workerCommand({ executor: input.executor, token: "" }, "identify");
+    if (command === null)
+      return yield* labFailure("executor-unavailable", `No ${input.executor} executor here.`);
+    const stdout = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(command.command, command.args, {
+            stdin: Stream.make(
+              encoder.encode(
+                toJson({
+                  input_roots: input.input_roots,
+                  corpus_dir: input.corpus_dir,
+                  models_dir: input.models_dir,
+                }),
+              ),
+            ),
+            env: { ELECTRON_RUN_AS_NODE: "1" },
+            extendEnv: true,
+          }),
+        );
+        return yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+      }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        labFailure("executor-unavailable", `The executor could not identify: ${String(cause)}`),
+      ),
+    );
+    const answer = lastJsonLine(stdout) as
+      | { ok: true; corpus_hash: string; models_hash: string | null }
+      | { ok: false; code: string; message: string }
+      | null;
+    if (answer === null) return yield* labFailure("executor-unavailable", "No identity came back.");
+    if (!answer.ok) {
+      const code = answer.code as Parameters<typeof labFailure>[0];
+      return yield* labFailure(code, answer.message);
+    }
+    return { corpus_hash: answer.corpus_hash, models_hash: answer.models_hash };
+  });
 
   const runWorker = Effect.fn("EngineExperimentService.runWorker")(
     function* (row: JobRow, lease: { owner: string; generation: number }) {
@@ -292,6 +365,25 @@ const make = Effect.gen(function* () {
           canonicalInputs(
             policy.label_roots,
             files.map((path) => ({ path, kind: "file" as const })),
+          );
+        }
+        // The evaluator and the labels the campaign fixed by content, here and on recovery.
+        if (policy.inputs === undefined) {
+          throw new LabPolicyError(
+            "artifact-mismatch",
+            "The campaign predates content identities; create a new one.",
+          );
+        }
+        if (policy.inputs.evaluator_hash !== EVALUATOR_HASH) {
+          throw new LabPolicyError(
+            "artifact-mismatch",
+            `The evaluator is ${EVALUATOR_HASH}, not the campaign's ${policy.inputs.evaluator_hash}.`,
+          );
+        }
+        if (labelsHashOf(labelFilesOf(policy)) !== policy.inputs.labels_hash) {
+          throw new LabPolicyError(
+            "artifact-mismatch",
+            "The label files changed since the campaign fixed them.",
           );
         }
         const base = developmentReport({
@@ -427,7 +519,19 @@ const make = Effect.gen(function* () {
         Effect.repeat(Schedule.spaced(options.heartbeatMs)),
       ),
     );
-    const outcome = yield* runWorker(row, lease).pipe(Effect.ensuring(Fiber.interrupt(beat)));
+    const timed = yield* runWorker(row, lease).pipe(
+      Effect.timeoutOption(options.jobTimeoutMs),
+      Effect.ensuring(Fiber.interrupt(beat)),
+    );
+    if (Option.isNone(timed)) {
+      // The executor's own group goes too: its command line names this job's token.
+      yield* killExecutorGroup(row);
+      return yield* finish(row, lease, "failed", {
+        code: "timeout",
+        message: `The job ran past ${options.jobTimeoutMs} ms; its executor's process group was killed.`,
+      });
+    }
+    const outcome = timed.value;
     const now = Option.getOrThrow(yield* selectJob(row.job_id));
     if (now.cancel_requested === 1) {
       return yield* finish(row, lease, "cancelled", {
@@ -547,18 +651,7 @@ const make = Effect.gen(function* () {
           WHERE job_id = ${row.job_id} AND status = 'queued'
         `.pipe(storage);
     } else {
-      // The worker checks its own command line before it ends its process group.
-      const command = workerCommand(row, "cancel");
-      if (command !== null) {
-        yield* spawner
-          .string(
-            ChildProcess.make(command.command, command.args, {
-              env: { ELECTRON_RUN_AS_NODE: "1" },
-              extendEnv: true,
-            }),
-          )
-          .pipe(Effect.ignore);
-      }
+      yield* killExecutorGroup(row);
     }
     return yield* viewOf(Option.getOrThrow(yield* selectJob(row.job_id).pipe(storage)), 0);
   });
@@ -643,6 +736,7 @@ const make = Effect.gen(function* () {
       members: report.shadow.members,
       labels,
       frozenDay: (request[0]?.created_at ?? "9999").slice(0, 10),
+      observed: { views: result.views, startedAt: row.started_at },
     });
     yield* sql`
         INSERT INTO editorial_engine_gates (gate_id, report_id, labels_hash, verdict, gate_json, recorded_by, created_at)
@@ -658,6 +752,7 @@ const make = Effect.gen(function* () {
     cancel,
     rankings,
     shadowCards: shadowCardsOf,
+    identify,
     scoreShadow,
   });
 });

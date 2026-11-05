@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - the lab's worker files and the nightly job's files are on disk.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off - the lab's worker files and the nightly job's files are on disk.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -21,6 +21,8 @@ import { EngineChangeService } from "./EngineChangeService.ts";
 import { EngineExperimentService } from "./EngineExperimentService.ts";
 import { EnginePromotionService } from "./EnginePromotionService.ts";
 import {
+  LAB_CLOCK_START,
+  labClock,
   labHarness,
   labLayer,
   syntheticPolicy,
@@ -39,11 +41,24 @@ const withHarness = <A, E>(
 ) => {
   const dir = makeTempDir();
   const harness = labHarness(dir, overrides);
-  return Effect.gen(function* () {
-    yield* useSyntheticProfile(harness);
-    return yield* body(harness);
-  }).pipe(Effect.provide(labLayer(harness)), Effect.ensuring(removeDir(dir)));
+  // The server's clock in August: requests come before the shadow's cutoffs, which the test
+  // then lets pass. The worker, a child process, keeps the real clock.
+  activeClock = labClock(LAB_CLOCK_START);
+  return activeClock
+    .provide(
+      Effect.gen(function* () {
+        yield* useSyntheticProfile(harness);
+        return yield* body(harness);
+      }),
+    )
+    .pipe(Effect.provide(labLayer(harness)), Effect.ensuring(removeDir(dir)));
 };
+
+let activeClock = labClock(LAB_CLOCK_START);
+
+/** Lets the shadow's days pass on the server's clock: half a day after its last cutoff. */
+const afterCutoffs = (cutoffs: ReadonlyArray<string>) =>
+  activeClock.set(new Date(Date.parse(cutoffs.at(-1)!) + 12 * 3_600_000).toISOString());
 
 /** A candidate of `weights`, evaluated in a development campaign, and its report. */
 const evaluated = (harness: LabHarness, key: string, weights: Record<string, number>) =>
@@ -95,12 +110,13 @@ const shadowFor = (harness: LabHarness, requestId: string, labelled: "all" | "no
       projectId: TEST_PROJECT,
       kind: "shadow",
       budget: 1,
-      // Cutoffs after the request: the synthetic corpus lies in December 2026.
+      // Cutoffs after the request, made on the 10th of August; they pass before the shadow runs.
       policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(3, 10)),
       actor: "miguel",
       requestId,
       referenceHash: (yield* (yield* EnginePromotionService).active).hash,
     });
+    yield* afterCutoffs(harness.fixture.cutoffs.slice(3, 10));
     const { jobId } = yield* changes.startShadow(campaign.campaignId);
     yield* experiments.runDue;
     const cards = (yield* experiments.shadowCards(jobId)) as Parameters<
@@ -257,7 +273,7 @@ it.live(
         const campaign = yield* changes.createCampaign({
           projectId: TEST_PROJECT,
           kind: "development",
-          budget: 3,
+          budget: 5,
           policy: syntheticPolicy(harness),
           actor: "miguel",
         });
@@ -341,8 +357,145 @@ it.live(
           reportId: null,
           error: { code: "artifact-mismatch" },
         });
+
+        // Astra, B2: what the campaign fixed by content, edited under the same paths, voids a
+        // result the worker already finished, when the server recovers it.
+        const failedWith = (jobId: string) =>
+          experiments
+            .job({ projectId: TEST_PROJECT, jobId })
+            .pipe(Effect.map((job) => ({ status: job.status, error: job.error })));
+        const recorpus = yield* make("recorpus", 0.6);
+        yield* crashed(recorpus.jobId, false);
+        const corpus = harness.fixture.corpus_dir;
+        const day = NodeFS.readdirSync(NodePath.join(corpus, "hn")).toSorted()[0]!;
+        NodeFS.appendFileSync(NodePath.join(corpus, "hn", day), "\n");
+        yield* experiments.runDue;
+        const corpusEdited = yield* failedWith(recorpus.jobId);
+        expect(corpusEdited.status).toBe("failed");
+        expect(corpusEdited.error?.code).toBe("artifact-mismatch");
+        expect(corpusEdited.error?.message).toContain("corpus");
+        NodeFS.writeFileSync(
+          NodePath.join(corpus, "hn", day),
+          NodeFS.readFileSync(NodePath.join(corpus, "hn", day), "utf8").replace(/\n\n$/, "\n"),
+        );
+
+        const relabel = yield* make("relabel", 0.7);
+        yield* crashed(relabel.jobId, false);
+        NodeFS.appendFileSync(harness.fixture.labels_path, " ");
+        yield* experiments.runDue;
+        const labelsEdited = yield* failedWith(relabel.jobId);
+        expect(labelsEdited.status).toBe("failed");
+        expect(labelsEdited.error?.message).toContain("label files changed");
       }),
     ),
+);
+
+it.live("a report is computed only by the evaluator its campaign fixed (Astra, B2)", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      const sql = yield* EditorialSql;
+      const changes = yield* EngineChangeService;
+      const experiments = yield* EngineExperimentService;
+      const active = yield* (yield* EnginePromotionService).active;
+      const campaign = yield* changes.createCampaign({
+        projectId: TEST_PROJECT,
+        kind: "development",
+        budget: 1,
+        policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 1)),
+        actor: "miguel",
+      });
+      // The campaign names its evaluator and inputs by content.
+      const [row] = yield* sql<{
+        policy_json: string;
+      }>`SELECT policy_json FROM editorial_engine_campaigns WHERE campaign_id = ${campaign.campaignId}`;
+      const policy = JSON.parse(row!.policy_json);
+      expect(policy.inputs).toMatchObject({
+        corpus_hash: expect.stringMatching(/^sha256:/),
+        models_hash: null,
+        labels_hash: expect.stringMatching(/^sha256:/),
+        evaluator_hash: expect.stringMatching(/^sha256:/),
+      });
+      // Another evaluator than the one fixed: as if engine-lab's code changed meanwhile.
+      const other = JSON.stringify({
+        ...policy,
+        inputs: { ...policy.inputs, evaluator_hash: "sha256:another" },
+      });
+      yield* sql`UPDATE editorial_engine_campaigns SET policy_json = ${other} WHERE campaign_id = ${campaign.campaignId}`;
+      const created = yield* changes.createCandidate({
+        projectId: TEST_PROJECT,
+        threadId: null,
+        base: active.hash,
+        intent: "i",
+        hypothesis: "h",
+        idempotencyKey: "evaluator",
+        change: { kind: "config", weights: { growth: 0.3 } },
+      });
+      const queued = yield* changes.evaluate({
+        projectId: TEST_PROJECT,
+        threadId: null,
+        candidate: created.candidate.manifestHash,
+        campaignId: campaign.campaignId,
+        idempotencyKey: "evaluator",
+      });
+      yield* experiments.runDue;
+      const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
+      expect(job).toMatchObject({ status: "failed", reportId: null });
+      expect(job.error?.message).toContain("not the campaign's sha256:another");
+    }),
+  ),
+);
+
+it.live("a job past its time limit fails and its executor's process group is killed", () =>
+  withHarness(
+    (harness) =>
+      Effect.gen(function* () {
+        const changes = yield* EngineChangeService;
+        const experiments = yield* EngineExperimentService;
+        const active = yield* (yield* EnginePromotionService).active;
+        const campaign = yield* changes.createCampaign({
+          projectId: TEST_PROJECT,
+          kind: "development",
+          budget: 1,
+          policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 3)),
+          actor: "miguel",
+        });
+        const created = yield* changes.createCandidate({
+          projectId: TEST_PROJECT,
+          threadId: null,
+          base: active.hash,
+          intent: "i",
+          hypothesis: "h",
+          idempotencyKey: "slow",
+          change: { kind: "config", weights: { growth: 0.3 } },
+        });
+        const queued = yield* changes.evaluate({
+          projectId: TEST_PROJECT,
+          threadId: null,
+          candidate: created.candidate.manifestHash,
+          campaignId: campaign.campaignId,
+          idempotencyKey: "slow",
+        });
+        yield* experiments.runDue;
+        const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
+        expect(job.status).toBe("failed");
+        expect(job.error?.code).toBe("timeout");
+        // The worker it started is gone: its process group was killed with it.
+        const token = `job-${queued.jobId.replace(/^job_/, "")}`;
+        const pgid = Number(
+          NodeFS.readFileSync(NodePath.join(harness.options.jobsRoot, token, "pgid"), "utf8"),
+        );
+        const alive = (() => {
+          try {
+            process.kill(pgid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+        expect(alive).toBe(false);
+      }),
+    { jobTimeoutMs: 1_500 },
+  ),
 );
 
 it.live(
@@ -484,6 +637,9 @@ it.live(
           idempotencyKey: "code",
           change: { kind: "code", baseSourceHash: code.baseSourceHash, patch },
         });
+        // The risk the model reads is true: no deploy or review step, the nightly runs it isolated.
+        expect(created.risks.join(" ")).not.toContain("deploy and");
+        expect(created.risks.join(" ")).toContain("same kind of sandbox");
         const queued = yield* changes.evaluate({
           projectId: TEST_PROJECT,
           threadId: null,
@@ -505,8 +661,46 @@ it.live(
         });
         const liveBefore = engineSourceHash(NodePath.join(REPO_ROOT, "packages/trend-engine/src"));
         expect(request.pendingChecks.join(" ")).not.toContain("deploy");
+        // Opus: three equivalent development days are too few to skip the labelled shadow.
+        const tooFew = yield* Effect.flip(
+          promotion.approve({ requestId: request.requestId, actor: "miguel", reason: "3 days" }),
+        );
+        expect(tooFew.code).toBe("insufficient-evidence");
+        expect(tooFew.message).toContain("equivalence: 3 development days");
+        yield* promotion.reject({ requestId: request.requestId, actor: "miguel", reason: "few" });
+        const wider = yield* changes.createCampaign({
+          projectId: TEST_PROJECT,
+          kind: "development",
+          budget: 1,
+          policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 5)),
+          actor: "miguel",
+        });
+        const fiveDays = yield* changes.evaluate({
+          projectId: TEST_PROJECT,
+          threadId: null,
+          candidate: created.candidate.manifestHash,
+          campaignId: wider.campaignId,
+          idempotencyKey: "code-5",
+        });
+        yield* experiments.runDue;
+        const widerJob = yield* experiments.job({ projectId: TEST_PROJECT, jobId: fiveDays.jobId });
+        expect(widerJob.report).toMatchObject({ equivalent: true });
+        const asked = yield* promotion.request({
+          projectId: TEST_PROJECT,
+          threadId: null,
+          candidate: created.candidate.manifestHash,
+          reportId: widerJob.reportId!,
+          expectedActive: active.hash,
+          reason: "equal outputs over five days",
+        });
+        // Opus: the operator reads the patch itself and the evidence in plain words.
+        const review = yield* promotion.review(asked.requestId);
+        expect(review.patch).toContain("+// Same computation, another file");
+        expect(review.patch).toContain("--- a/packages/trend-engine/src/rank.ts");
+        expect(review.evidence).toContain("No change of outputs observed over 5 development days");
+        expect(review.evidence).toContain("not a measured improvement");
         const activation = yield* promotion.approve({
-          requestId: request.requestId,
+          requestId: asked.requestId,
           actor: "miguel",
           reason: "equal outputs, reviewed",
         });
@@ -671,6 +865,32 @@ it.live("approves a code candidate whose exact code was installed meanwhile (Sol
         expectedActive: active.hash,
         reason: "deploy",
       });
+      // One equivalent day is not enough; a 7-day shadow with unchanged outputs, observed after
+      // the request and needing no labels, is (Opus).
+      const oneDay = yield* Effect.flip(
+        promotion.approve({ requestId: request.requestId, actor: "miguel", reason: "1 day" }),
+      );
+      expect(oneDay.message).toContain("equivalence: 1 development days");
+      const shadowCutoffs = harness.fixture.cutoffs.slice(3, 10);
+      const shadow = yield* changes.createCampaign({
+        projectId: TEST_PROJECT,
+        kind: "shadow",
+        budget: 1,
+        policy: syntheticPolicy(harness, shadowCutoffs),
+        actor: "miguel",
+        requestId: request.requestId,
+        referenceHash: active.hash,
+      });
+      // Scheduled now, it waits for its days to pass.
+      const waiting = yield* Effect.flip(changes.startShadow(shadow.campaignId));
+      expect(waiting.code).toBe("insufficient-evidence");
+      yield* afterCutoffs(shadowCutoffs);
+      const { jobId: shadowJob } = yield* changes.startShadow(shadow.campaignId);
+      yield* experiments.runDue;
+      expect((yield* experiments.job({ projectId: null, jobId: shadowJob })).status).toBe(
+        "succeeded",
+      );
+      expect((yield* promotion.review(request.requestId)).evidence).toContain("shadow days");
       // The same code installed in another engine directory, as Sol simulated it.
       const deployed = NodePath.join(harness.dir, "deployed");
       const pkg = NodePath.join(deployed, "packages/trend-engine");
@@ -708,7 +928,7 @@ it.live("approves a code candidate whose exact code was installed meanwhile (Sol
 );
 
 it.live(
-  "a candidate that links its output to the reference's gets no report and no promotion (Sol, B1-R2)",
+  "a candidate that would link its output to the reference's is refused when it is made (Sol B1-R2, Opus)",
   () =>
     withHarness((harness) =>
       Effect.gen(function* () {
@@ -739,48 +959,33 @@ it.live(
           ` ${rank[1]}`,
           "",
         ].join("\n");
-        const campaign = yield* changes.createCampaign({
+        yield* changes.createCampaign({
           projectId: TEST_PROJECT,
           kind: "development",
           budget: 3,
           policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 1)),
           actor: "miguel",
         });
-        const created = yield* changes.createCandidate({
-          projectId: TEST_PROJECT,
-          threadId: "sol",
-          base: active.hash,
-          intent: "forge",
-          hypothesis: "equal",
-          idempotencyKey: "forge",
-          change: { kind: "code", baseSourceHash: active.manifest.code.engine_source_hash, patch },
-        });
-        const queued = yield* changes.evaluate({
-          projectId: TEST_PROJECT,
-          threadId: "sol",
-          candidate: created.candidate.manifestHash,
-          campaignId: campaign.campaignId,
-          idempotencyKey: "forge",
-        });
-        yield* experiments.runDue;
-        const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
-        expect(job).toMatchObject({
-          status: "failed",
-          reportId: null,
-          error: { code: "artifact-mismatch" },
-        });
-        expect(job.error?.message).toContain("is a link");
-        const asked = yield* Effect.flip(
-          promotion.request({
+        // Opus: an added line that loads a module or reaches the process is refused outright;
+        // the executor's defense against such code stays tested in engine-lab's worker tests.
+        const refused = yield* Effect.flip(
+          changes.createCandidate({
             projectId: TEST_PROJECT,
             threadId: "sol",
-            candidate: created.candidate.manifestHash,
-            reportId: `rep_${queued.jobId.slice(4)}`,
-            expectedActive: active.hash,
-            reason: "forged",
+            base: active.hash,
+            intent: "forge",
+            hypothesis: "equal",
+            idempotencyKey: "forge",
+            change: {
+              kind: "code",
+              baseSourceHash: active.manifest.code.engine_source_hash,
+              patch,
+            },
           }),
         );
-        expect(asked.code).toBe("not-found");
+        expect(refused.code).toBe("invalid-change");
+        expect(refused.message).toContain("an added line uses import");
+        void experiments;
         expect((yield* promotion.history).filter((row) => row.kind === "promote")).toHaveLength(0);
       }),
     ),

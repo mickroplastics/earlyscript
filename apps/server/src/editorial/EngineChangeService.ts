@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - a code candidate's base files are read from the installed engine.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - a code candidate's base files are read from the installed engine.
 // Candidates, campaigns and the budget of evaluations. A candidate is an immutable manifest of
 // the project that made it; an evaluation takes one seat of an operator's campaign, in one
 // transaction, whatever thread or key asks for it.
@@ -27,12 +27,21 @@ import {
   CODE_FILES,
   cutoffDays,
   LAB_POLICY_VERSION,
+  LabPolicyError,
   RANK_VALUE_NAMES,
   UNSUPPORTED_CHANGE_KINDS,
   WEIGHT_MAX,
   WEIGHT_MIN,
 } from "@earlyscript/engine-lab/policy";
-import { JOB_SPEC_SCHEMA, type JobSpec } from "@earlyscript/engine-lab/result";
+import { EVALUATOR_HASH } from "@earlyscript/engine-lab/evaluator";
+import {
+  DEFAULT_LIMITS,
+  JOB_SPEC_SCHEMA,
+  type JobLimits,
+  type JobSpec,
+} from "@earlyscript/engine-lab/result";
+import { identifyInputs } from "@earlyscript/engine-lab/worker";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -81,7 +90,39 @@ export interface CampaignPolicy {
   readonly input_roots: ReadonlyArray<string>;
   /** Roots on this server the label and card files must resolve inside. */
   readonly label_roots: ReadonlyArray<string>;
+  /** Per arm and cutoff, and per job: past either, the executor's processes are killed. */
+  readonly limits: JobLimits;
+  /** Everything the comparison reads, by content, fixed before the first evaluation. */
+  readonly inputs: CampaignInputs;
 }
+
+export interface CampaignInputs {
+  /** The corpus' verified manifest hash; null for a shadow, whose views are fixed per cutoff. */
+  readonly corpus_hash: string | null;
+  readonly models_hash: string | null;
+  /** sha256 of each card and label file the evaluator reads. */
+  readonly labels_hash: string;
+  /** The evaluator's code (engine-lab compare, gate, labels), by content. */
+  readonly evaluator_hash: string;
+}
+
+/** The executor-side identity, computed where the inputs live (engine-lab identify). */
+export interface ExecutorIdentity {
+  readonly corpus_hash: string;
+  readonly models_hash: string | null;
+}
+
+/** The card and label files a policy names, in a fixed order. */
+export const labelFilesOf = (policy: Pick<CampaignPolicy, "labels" | "judge">) =>
+  [policy.labels, policy.judge].flatMap((entry) =>
+    entry === null ? [] : [entry.cards, entry.labels],
+  );
+
+/** The content of the label files a campaign names, as one hash. */
+export const labelsHashOf = (
+  files: ReadonlyArray<string>,
+  read: (path: string) => Uint8Array = (path) => NodeFS.readFileSync(path),
+) => sha256(canonicalJson(files.map((path) => [path, sha256(read(path))])));
 
 export interface CampaignRow {
   readonly campaign_id: string;
@@ -106,7 +147,15 @@ export interface CreateCampaignInput {
   readonly projectId: string;
   readonly kind: "development" | "shadow";
   readonly budget: number;
-  readonly policy: Omit<CampaignPolicy, "schema" | "policy_version" | "gate_rule_hash">;
+  readonly policy: Omit<
+    CampaignPolicy,
+    "schema" | "policy_version" | "gate_rule_hash" | "inputs" | "limits"
+  > & { readonly limits?: JobLimits };
+  /**
+   * The executor's identity of the corpus and models. Computed here for the local executor;
+   * a remote one computes it itself (the operator command asks it before creating).
+   */
+  readonly executorIdentity?: ExecutorIdentity;
   readonly actor: string;
   /** Shadow only: the promotion request whose candidate it runs against the active engine. */
   readonly requestId?: string;
@@ -287,6 +336,47 @@ const make = Effect.gen(function* () {
             ),
       catch: fromPolicy,
     });
+    // Content, not paths: what the comparison reads is fixed now, and every job checks it.
+    const identity = yield* Effect.try({
+      try: () => {
+        if (input.policy.executor === "remote") return input.executorIdentity ?? null;
+        const local = identifyInputs({
+          input_roots: input.policy.input_roots,
+          corpus_dir: executorReal.get(input.policy.corpus_dir)!,
+          models_dir:
+            input.policy.models_dir === null ? null : executorReal.get(input.policy.models_dir)!,
+        });
+        if (
+          input.executorIdentity !== undefined &&
+          (input.executorIdentity.corpus_hash !== local.corpus_hash ||
+            input.executorIdentity.models_hash !== local.models_hash)
+        ) {
+          throw new LabPolicyError(
+            "artifact-mismatch",
+            "The given identity is not the inputs' content.",
+          );
+        }
+        return local;
+      },
+      catch: fromPolicy,
+    });
+    if (identity === null) {
+      return yield* labFailure(
+        "invalid-change",
+        "A remote campaign needs its executor's identity of the corpus and models (engine-lab campaign-create asks it).",
+      );
+    }
+    const labelsHash = yield* Effect.try({
+      try: () =>
+        labelsHashOf(
+          labelFilesOf({
+            labels: input.policy.labels,
+            judge: input.policy.judge,
+          }).map((path) => labelReal.get(path)!),
+        ),
+      catch: (cause) =>
+        labFailure("invalid-change", `The label files could not be read: ${String(cause)}`),
+    });
     if (input.kind === "shadow") {
       // The gate's minimum, checked before anything runs: distinct days after the request.
       const request = yield* sql<{ readonly created_at: string }>`
@@ -309,6 +399,14 @@ const make = Effect.gen(function* () {
       policy_version: LAB_POLICY_VERSION,
       gate_rule_hash: GATE_RULE_HASH,
       ...input.policy,
+      limits: input.policy.limits ?? DEFAULT_LIMITS,
+      inputs: {
+        // A shadow's corpus keeps growing; each cutoff's view is fixed when it is observed.
+        corpus_hash: input.kind === "shadow" ? null : identity.corpus_hash,
+        models_hash: identity.models_hash,
+        labels_hash: labelsHash,
+        evaluator_hash: EVALUATOR_HASH,
+      },
       cutoffs,
       corpus_dir: executorReal.get(input.policy.corpus_dir)!,
       profile_path: executorReal.get(input.policy.profile_path)!,
@@ -525,7 +623,7 @@ const make = Effect.gen(function* () {
         ),
       });
       risks.push(
-        "Runs only inside the executor's sandbox; it reaches the product only after review, deploy and Miguel's approval.",
+        "Evaluated only inside the executor's sandbox (no network, its cutoff's corpus view only). If Miguel approves it after reading the patch, the nightly run executes this code in the same kind of sandbox; nothing is deployed or reviewed otherwise.",
       );
     } else if (
       typeof kind === "string" &&
@@ -640,6 +738,8 @@ const make = Effect.gen(function* () {
       workers: policy.workers,
       top: 10,
       sandbox: Object.keys(filesOf(cand)).length > 0 ? "required" : "if-available",
+      inputs: { corpus_hash: policy.inputs.corpus_hash, models_hash: policy.inputs.models_hash },
+      limits: policy.limits,
       reference: armOf(ref),
       candidate: armOf(cand),
     } satisfies JobSpec;
@@ -779,10 +879,22 @@ const make = Effect.gen(function* () {
     const candidateHash = request[0]?.candidate_hash;
     if (candidateHash === undefined)
       return yield* labFailure("not-found", "The shadow's request is gone.");
+    // Scheduled ahead, run only once observed: a shadow never runs a cutoff still to come.
+    const lastCutoff = policyOf(campaign.value).cutoffs.at(-1)!;
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (nowMs < Date.parse(lastCutoff)) {
+      return yield* labFailure(
+        "insufficient-evidence",
+        `The shadow's last cutoff ${lastCutoff.slice(0, 10)} has not passed; start it after it is observed.`,
+      );
+    }
     const existing = yield* sql<{
       readonly job_id: string;
-    }>`SELECT job_id FROM editorial_engine_jobs WHERE campaign_id = ${campaignId}`.pipe(storage);
-    if (existing[0] !== undefined) return { jobId: existing[0].job_id };
+      readonly status: string;
+    }>`SELECT job_id, status FROM editorial_engine_jobs WHERE campaign_id = ${campaignId}
+       ORDER BY created_at DESC`.pipe(storage);
+    const live = existing.find((job) => job.status !== "failed" && job.status !== "cancelled");
+    if (live !== undefined) return { jobId: live.job_id };
     const jobId = `job_${(yield* newId).replaceAll("-", "").slice(0, 16)}`;
     yield* insertJob({
       jobId,

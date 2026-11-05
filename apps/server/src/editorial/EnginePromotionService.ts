@@ -1,11 +1,15 @@
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off - compares stored instants with the cutoffs they observed; reads the installed sources a patch was made over.
 // The only writer of the active engine pointer. A model may ask for a promotion; only the
 // operator's command approves, rejects or reverts, and the nightly plan reads the pointer here.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import type { EnginePromotionView } from "@earlyscript/editorial-contracts/engineLab";
 import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 import type { DevelopmentReport } from "@earlyscript/engine-lab/compare";
 import { reportHash } from "@earlyscript/engine-lab/compare";
 import { artifactCli, artifactProblem, prepareArtifact } from "@earlyscript/engine-lab/artifact";
-import type { GateResult } from "@earlyscript/engine-lab/gate";
+import { GATE_RULE, type GateResult } from "@earlyscript/engine-lab/gate";
 import {
   diffManifests,
   type EngineManifest,
@@ -15,7 +19,9 @@ import {
   type ProductContext,
   staleReasons,
 } from "@earlyscript/engine-lab/manifest";
+import { unifiedDiff } from "@earlyscript/engine-lab/patch";
 import { type JobSpec, resultMismatch, type WorkerResult } from "@earlyscript/engine-lab/result";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -136,7 +142,27 @@ export interface EnginePromotionServiceShape {
     readonly expectedActive: string;
   }) => Effect.Effect<ActivationRow, ReturnType<typeof labFailure>>;
   readonly history: Effect.Effect<ReadonlyArray<ActivationRow>, ReturnType<typeof labFailure>>;
+  /** Operator only: what an approval would activate, the patch and configuration in full. */
+  readonly review: (
+    requestId: string,
+  ) => Effect.Effect<RequestReview, ReturnType<typeof labFailure>>;
 }
+
+export interface RequestReview {
+  readonly request: EnginePromotionView;
+  readonly kind: EngineManifest["kind"];
+  /** The configuration change, key by key, against the manifest the candidate came from. */
+  readonly configDiff: ReturnType<typeof diffManifests>;
+  /** The unified diff a code candidate brings, as the model wrote it; null for config. */
+  readonly patch: string | null;
+  /** The files it changes, by repository path, with their new sha256. */
+  readonly files: Readonly<Record<string, string>>;
+  /** What the evidence shows, in words the operator reads before approving. */
+  readonly evidence: string;
+}
+
+/** Equivalence in development alone needs this many distinct days to skip the labelled shadow. */
+const EQUIVALENCE_MIN_DEV_DAYS = 5;
 
 export class EnginePromotionService extends Context.Service<
   EnginePromotionService,
@@ -385,8 +411,10 @@ const make = Effect.gen(function* () {
       readonly report_id: string;
       readonly verdict: GateResult["verdict"];
       readonly gate_json: string;
+      readonly result_json: string;
+      readonly started_at: string | null;
     }>`
-      SELECT r.report_id, g.verdict, g.gate_json FROM editorial_engine_campaigns c
+      SELECT r.report_id, g.verdict, g.gate_json, r.result_json, j.started_at FROM editorial_engine_campaigns c
       JOIN editorial_engine_jobs j ON j.campaign_id = c.campaign_id
       JOIN editorial_engine_reports r ON r.job_id = j.job_id
       JOIN editorial_engine_gates g ON g.report_id = r.report_id
@@ -394,17 +422,82 @@ const make = Effect.gen(function* () {
       ORDER BY g.created_at DESC LIMIT 1
     `.pipe(Effect.map((rows) => Option.fromNullishOr(rows[0])));
 
-  /** What approval still needs, from the stored evidence; empty when it would pass. */
-  const pendingChecks = Effect.fn("EnginePromotionService.pendingChecks")(function* (
+  /** The latest shadow report of `requestId`, gate or not, with how its job was observed. */
+  const shadowReport = (requestId: string) =>
+    sql<{
+      readonly report_id: string;
+      readonly report_json: string;
+      readonly result_json: string;
+      readonly started_at: string | null;
+    }>`
+      SELECT r.report_id, r.report_json, r.result_json, j.started_at FROM editorial_engine_campaigns c
+      JOIN editorial_engine_jobs j ON j.campaign_id = c.campaign_id
+      JOIN editorial_engine_reports r ON r.job_id = j.job_id
+      WHERE c.kind = 'shadow' AND c.request_id = ${requestId}
+      ORDER BY r.created_at DESC LIMIT 1
+    `.pipe(Effect.map((rows) => Option.fromNullishOr(rows[0])));
+
+  /**
+   * Why a stored shadow does not count as observed now: each cutoff after the freeze, viewed by
+   * the executor only once it had passed, the job started after the last one, and every cutoff
+   * behind this server's clock at approval. Null when it holds.
+   */
+  const unobserved = (
+    stored: { readonly result_json: string; readonly started_at: string | null },
+    frozenAt: string,
+    nowMs: number,
+  ): string | null => {
+    const result = parseJson(stored.result_json) as WorkerResult;
+    const views = result.views ?? [];
+    const cutoffs = result.arms.reference.map((arm) => arm.cutoff);
+    if (new Set(cutoffs.map((c) => c.slice(0, 10))).size < GATE_RULE.min_cutoffs)
+      return `the shadow has fewer than ${GATE_RULE.min_cutoffs} distinct days`;
+    if (cutoffs.some((cutoff) => cutoff.slice(0, 10) <= frozenAt.slice(0, 10)))
+      return "a shadow cutoff is not after the request";
+    if (views.length !== cutoffs.length || views.some((v, k) => v.cutoff !== cutoffs[k]))
+      return "the shadow carries no view of each cutoff";
+    if (views.some((view) => !(Date.parse(view.observed_at) >= Date.parse(view.cutoff))))
+      return "a shadow cutoff was viewed before it passed";
+    const last = Date.parse(cutoffs.at(-1)!);
+    if (stored.started_at === null || !(Date.parse(stored.started_at) >= last))
+      return "the shadow job started before its last cutoff";
+    if (nowMs < last) return "the shadow's last cutoff is still ahead of this server's clock";
+    return null;
+  };
+
+  /** What the stored evidence supports, and what approval still needs; checks empty when it would pass. */
+  const assess = Effect.fn("EnginePromotionService.assess")(function* (
     row: RequestRow,
     candidate: EngineManifest,
     report: ReportRow,
   ) {
     const checks: Array<string> = [];
+    const nowMs = yield* Clock.currentTimeMillis;
     const parsed = parseJson(report.report_json) as DevelopmentReport;
-    const performanceOnly =
-      candidate.kind === "code" && parsed.kind === "development" && parsed.equivalent;
-    if (!performanceOnly) {
+    const devDays = new Set(parsed.cutoffs.map((cutoff) => cutoff.slice(0, 10))).size;
+    let evidence = "none yet";
+    if (candidate.kind === "code" && parsed.kind === "development" && parsed.equivalent) {
+      // Outputs unchanged: a performance-only candidate, never shown as a measured improvement.
+      if (devDays >= EQUIVALENCE_MIN_DEV_DAYS) {
+        evidence = `No change of outputs observed over ${devDays} development days. This is not a measured improvement, and it says nothing about inputs those days did not have.`;
+      } else {
+        const shadow = yield* shadowReport(row.request_id);
+        const shadowParsed = Option.map(
+          shadow,
+          (value) => parseJson(value.report_json) as DevelopmentReport,
+        );
+        const why = Option.isNone(shadow)
+          ? "no equivalence shadow"
+          : unobserved(shadow.value, row.created_at, nowMs);
+        if (why === null && Option.isSome(shadowParsed) && shadowParsed.value.equivalent) {
+          evidence = `No change of outputs observed over ${GATE_RULE.min_cutoffs}+ shadow days after the request. This is not a measured improvement.`;
+        } else {
+          checks.push(
+            `equivalence: ${devDays} development days; skipping the labelled shadow needs ${EQUIVALENCE_MIN_DEV_DAYS} distinct development days or a ${GATE_RULE.min_cutoffs}-day shadow with unchanged outputs (${why ?? "its outputs changed"}; operator: engine-lab shadow-start)`,
+          );
+        }
+      }
+    } else {
       const gate = yield* shadowGate(row.request_id);
       if (Option.isNone(gate)) {
         checks.push(
@@ -414,11 +507,19 @@ const make = Effect.gen(function* () {
         checks.push(
           `shadow gate is ${gate.value.verdict}: ${(parseJson(gate.value.gate_json) as GateResult).reasons.join(" ")}`,
         );
+      } else {
+        const why = unobserved(gate.value, row.created_at, nowMs);
+        if (why !== null) checks.push(`shadow: ${why}`);
+        else
+          evidence = `Shadow gate pass over Miguel's blind labels: ${(parseJson(gate.value.gate_json) as GateResult).reasons.length === 0 ? "every rule met" : "see the gate"}.`;
       }
     }
     checks.push("operator: Miguel approves with engine-lab approve");
-    return checks;
+    return { checks, evidence };
   });
+
+  const pendingChecks = (row: RequestRow, candidate: EngineManifest, report: ReportRow) =>
+    assess(row, candidate, report).pipe(Effect.map(({ checks }) => checks));
 
   const viewOf = Effect.fn("EnginePromotionService.viewOf")(function* (row: RequestRow) {
     const candidate = manifestOf(Option.getOrThrow(yield* selectManifest(sql, row.candidate_hash)));
@@ -689,8 +790,49 @@ const make = Effect.gen(function* () {
     SELECT ${sql.literal(ACTIVATION_COLUMNS)} FROM editorial_engine_activations ORDER BY seq DESC
   `.pipe(storage);
 
+  const review: EnginePromotionServiceShape["review"] = Effect.fn("EnginePromotionService.review")(
+    function* (requestId) {
+      const row = yield* selectRequest(requestId).pipe(storage);
+      if (Option.isNone(row))
+        return yield* labFailure("not-found", `No promotion request ${requestId}.`);
+      const stored = Option.getOrThrow(
+        yield* selectManifest(sql, row.value.candidate_hash).pipe(storage),
+      );
+      const candidate = manifestOf(stored);
+      const parent =
+        candidate.parent === null
+          ? Option.none()
+          : yield* selectManifest(sql, candidate.parent).pipe(storage);
+      const report = Option.getOrThrow(yield* selectReport(row.value.report_id).pipe(storage));
+      const files = filesOf(stored);
+      // The diff against the files the patch was made over: the installed engine's sources.
+      const patch =
+        Object.keys(files).length === 0
+          ? null
+          : Object.entries(files)
+              .map(([path, after]) => {
+                const base =
+                  options.engineRoot === null
+                    ? ""
+                    : NodeFS.readFileSync(NodePath.join(options.engineRoot, path), "utf8");
+                return unifiedDiff(path, base, after);
+              })
+              .join("");
+      const { evidence } = yield* assess(row.value, candidate, report).pipe(storage);
+      return {
+        request: yield* viewOf(row.value).pipe(storage),
+        kind: candidate.kind,
+        configDiff: Option.isSome(parent) ? diffManifests(manifestOf(parent.value), candidate) : [],
+        patch,
+        files: candidate.code.files,
+        evidence,
+      } satisfies RequestReview;
+    },
+  );
+
   return EnginePromotionService.of({
     active,
+    review,
     productContext,
     planEngine,
     request,

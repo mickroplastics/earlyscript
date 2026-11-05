@@ -37,6 +37,7 @@ import * as EngineChangeService from "../src/editorial/EngineChangeService.ts";
 import * as EngineExperimentService from "../src/editorial/EngineExperimentService.ts";
 import * as EnginePromotionService from "../src/editorial/EnginePromotionService.ts";
 import { DEFAULT_LAB_TIMING, layerOptionsWith } from "../src/editorial/engineLabSupport.ts";
+import { labClock } from "../src/editorial/engineLab.testkit.ts";
 import { verifyLabLedger } from "../src/editorial/engineLabVerify.ts";
 import * as EditorialDatabase from "../src/editorial/persistence/EditorialDatabase.ts";
 import { EditorialRunDirectory } from "../src/editorial/RunDirectory.ts";
@@ -57,13 +58,16 @@ const THREAD = "thread:engine-lab-e2e";
 NodeFS.rmSync(out, { recursive: true, force: true });
 NodeFS.mkdirSync(out, { recursive: true });
 
-// Two synthetic corpora: December 2026 for the lab (its shadow comes after the request) and the
-// weeks before today for the product's nightly run.
+// Two synthetic corpora: August 2026 for the lab, whose days have all passed, and the weeks
+// before today for the product's nightly run. The promotion requests are made on a test clock
+// set to the 10th of August, so the shadow's days come after them; everything else, the
+// executor included, runs on the real clock, by which those days were observed long ago.
 const lab = writeSyntheticCorpus({
   dir: NodePath.join(out, "lab"),
-  fromDay: "2026-12-01",
+  fromDay: "2026-08-01",
   days: 26,
 });
+const requestClock = labClock("2026-08-10T00:00:00.000Z");
 const now = DateTime.nowUnsafe();
 const today = DateTime.formatIsoDate(now);
 const nightlyFrom = DateTime.formatIsoDate(DateTime.subtract(now, { days: 26 }));
@@ -138,7 +142,7 @@ const nightlyLayer = EditorialJobsService.layerWith({
   engine: Result.succeed(engine),
   jobsDir: NodePath.join(out, "state", "editorial-jobs"),
   profilesDir: NodePath.join(out, "state", "editorial-profiles"),
-  cacheFile: NodePath.join(out, "embeddings.sqlite"),
+  cacheFile: NodePath.join(out, "cache", "embeddings.sqlite"),
   modelsDir: models,
   ...EditorialJobsService.DEFAULT_JOB_TIMING,
 }).pipe(
@@ -313,12 +317,13 @@ const program = Effect.gen(function* () {
     const job = yield* jobs.runNow;
     return { jobConfigHash: job.configHash, profileHash: job.profileHash };
   });
-  // Operator: a development campaign of three evaluations.
+  // Operator: a development campaign of three evaluations over five days, enough for an
+  // equivalent code candidate to skip the labelled shadow (and only that).
   const campaign = yield* changes.createCampaign({
     projectId: PROJECT,
     kind: "development",
     budget: 3,
-    policy: policy(lab.cutoffs.slice(0, 3)),
+    policy: policy(lab.cutoffs.slice(0, 5)),
     actor: "operator",
   });
 
@@ -368,24 +373,30 @@ const program = Effect.gen(function* () {
   for (const name of ["better", "worse", "code"])
     reports[name] = yield* mcp("engine_job_get", { jobId: jobs[name].job.jobId });
   yield* mcp("engine_inspect", { target: "run", id: jobs.better.job.jobId });
-  const askBetter = yield* mcp("engine_promotion_request", {
-    candidateId: better.candidate.manifestId,
-    reportId: reports.better.reportId,
-    expectedActiveId: active.manifestId,
-    reason: "Better G@5 in development.",
-  });
-  const askWorse = yield* mcp("engine_promotion_request", {
-    candidateId: worse.candidate.manifestId,
-    reportId: reports.worse.reportId,
-    expectedActiveId: active.manifestId,
-    reason: "Try it.",
-  });
-  const askCode = yield* mcp("engine_promotion_request", {
-    candidateId: coded.candidate.manifestId,
-    reportId: reports.code.reportId,
-    expectedActiveId: active.manifestId,
-    reason: "Equal outputs.",
-  });
+  const askBetter = yield* requestClock.provide(
+    mcp("engine_promotion_request", {
+      candidateId: better.candidate.manifestId,
+      reportId: reports.better.reportId,
+      expectedActiveId: active.manifestId,
+      reason: "Better G@5 in development.",
+    }),
+  );
+  const askWorse = yield* requestClock.provide(
+    mcp("engine_promotion_request", {
+      candidateId: worse.candidate.manifestId,
+      reportId: reports.worse.reportId,
+      expectedActiveId: active.manifestId,
+      reason: "Try it.",
+    }),
+  );
+  const askCode = yield* requestClock.provide(
+    mcp("engine_promotion_request", {
+      candidateId: coded.candidate.manifestId,
+      reportId: reports.code.reportId,
+      expectedActiveId: active.manifestId,
+      reason: "Equal outputs.",
+    }),
+  );
 
   // The operator: a prospective shadow per request, blind cards, labels, gate.
   const shadow = Effect.fn("EngineLabE2e.shadow")(function* (requestId: string) {
@@ -393,7 +404,7 @@ const program = Effect.gen(function* () {
       projectId: PROJECT,
       kind: "shadow",
       budget: 1,
-      policy: policy(lab.cutoffs.slice(3, 10)),
+      policy: policy(lab.cutoffs.slice(5, 12)),
       actor: "operator",
       requestId,
       referenceHash: active.manifestHash,
@@ -423,6 +434,9 @@ const program = Effect.gen(function* () {
     );
     refusals[name] = Result.isFailure(outcome) ? outcome.failure : "approved";
   }
+  // What the operator reads before approving the code: the patch and the evidence in words.
+  const codeReview = yield* promotion.review(askCode.requestId);
+  yield* write("review-code.txt", codeReview);
   // Code first: approved into its artifact (the installed engine is never touched), run, and
   // reverted, which runs the installed engine again at the same cutoff: two fresh runs.
   const codeApproved = yield* promotion.approve({
@@ -520,7 +534,21 @@ const program = Effect.gen(function* () {
       },
       liveCode,
     },
+    review: { evidence: codeReview.evidence, patch: codeReview.patch },
     checks: {
+      // Each arm read its cutoff's view only, the same for both arms.
+      devViewsPerCutoff: ["better", "worse", "code"].every(
+        (name) => (reports[name].report?.cutoffs?.length ?? 0) === 5,
+      ),
+      // The shadow ran after its days, on the request's 10th of August clock.
+      shadowObservedAfterRequest:
+        gateBetter.reasons.every((reason: string) => !reason.includes("viewed before")) &&
+        gateBetter.families >= 5,
+      codeReviewShowsPatch:
+        String(codeReview.patch).includes("+// Same computation") &&
+        codeReview.evidence.includes("not a measured improvement"),
+      codeRunInBwrap: String(afterCode.command).startsWith("$ [bwrap] node "),
+      installedRunNotSandboxed: !String(afterCodeRevert.command).includes("[bwrap]"),
       codeRunUsesCandidateCode:
         afterCode.status === "done" &&
         afterCode.manifest?.manifest_hash === coded.candidate.manifestHash &&

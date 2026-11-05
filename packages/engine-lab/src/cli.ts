@@ -3,6 +3,7 @@
 // takes a path, host or argument from a model.
 //   node src/cli.ts evaluate --jobs-root <dir> --engine-root <dir> --token <token>  (spec on stdin)
 //   node src/cli.ts cancel --jobs-root <dir> --token <token>
+//   node src/cli.ts identify  (input roots, corpus and models dirs on stdin)
 //   node src/cli.ts synthetic --out <dir> --from <day> --days <n>
 //   node src/cli.ts subset --from-corpus <dir> --out <new dir> --sources hn,github --from <day> --to <exclusive day>
 import * as NodeFS from "node:fs";
@@ -10,7 +11,7 @@ import * as NodeFS from "node:fs";
 import type { JobSpec } from "./result.ts";
 import { subsetCorpus } from "./corpusSubset.ts";
 import { writeSyntheticCorpus } from "./synthetic.ts";
-import { cancelJob, evaluateJob } from "./worker.ts";
+import { cancelJob, evaluateJob, identifyInputs } from "./worker.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const opt = (name: string) => {
@@ -41,6 +42,20 @@ if (command === "evaluate") {
     log: (line) => console.error(line),
   });
   console.log(JSON.stringify(result));
+} else if (command === "identify") {
+  const input = JSON.parse(NodeFS.readFileSync(0, "utf8")) as Parameters<typeof identifyInputs>[0];
+  try {
+    console.log(JSON.stringify({ ok: true, ...identifyInputs(input) }));
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    console.log(
+      JSON.stringify({
+        ok: false,
+        code: typeof code === "string" ? code : "artifact-mismatch",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 } else if (command === "cancel") {
   console.log(JSON.stringify({ status: cancelJob(need("jobs-root"), need("token")) }));
 } else if (command === "synthetic") {

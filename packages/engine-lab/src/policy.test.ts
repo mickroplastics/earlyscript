@@ -133,6 +133,46 @@ describe("code patches", () => {
     expect(codeOf(() => parsePatch(patch))).toBe(code);
   });
 
+  // Opus: a candidate is computation over what the module receives, never I/O or new code.
+  it.each([
+    ["a static import", 'import * as fs from "node:fs";'],
+    ["a dynamic import", 'const fs = await import("fs");'],
+    ["require", 'const fs = require("fs");'],
+    ["a node: specifier", 'const name = "node:fs";'],
+    ["fetch", 'void fetch("http://example.com");'],
+    ["child_process", "const cp = child_process;"],
+    ["process", "const env = process.env;"],
+    ["globalThis", "const g = globalThis;"],
+    ["eval", 'const x = eval("1");'],
+    ["indirect eval", 'const x = (0, eval)("1");'],
+    ["the Function constructor", 'const f = new Function("return 1");'],
+    ["a constructor chain", 'const f = [].map.constructor("return this")();'],
+    ["Reflect", "const r = Reflect.ownKeys({});"],
+    ["a unicode escape", "const p = \\u0070rocess;"],
+    ["a hex escape", 'const p = "\\x70rocess";'],
+    ["the clock", "const t = Date.now();"],
+    ["randomness", "const r = Math.random();"],
+    ["a timer", "setTimeout(() => {}, 1);"],
+    ["WebAssembly", "const w = WebAssembly;"],
+    ["an export", "export const leak = 1;"],
+  ])("refuses an added line with %s", (_name, line) => {
+    expect(codeOf(() => parsePatch(diff(RANK, `@@ -1 +1,2 @@\n line one\n+${line}\n`)))).toBe(
+      "invalid-change",
+    );
+  });
+
+  it("refuses an added line that uses a Node binding the file already imports", () => {
+    const relevance = "packages/trend-engine/src/relevance.ts";
+    const source = 'import * as NodeFS from "node:fs";\nconst a = 1;\n';
+    const [file] = parsePatch(
+      diff(relevance, '@@ -2 +2,2 @@\n const a = 1;\n+const b = NodeFS.readFileSync("/x");\n'),
+    );
+    expect(codeOf(() => applyFilePatch(source, file!))).toBe("invalid-change");
+    // The same computation without it applies.
+    const [pure] = parsePatch(diff(relevance, "@@ -2 +2,2 @@\n const a = 1;\n+const b = a * 2;\n"));
+    expect(applyFilePatch(source, pure!)).toContain("const b = a * 2;");
+  });
+
   it("refuses a hunk whose context the base file does not have: a stale base", () => {
     const [file] = parsePatch(diff(RANK, "@@ -1,2 +1,2 @@\n line zero\n-line two\n+line 2\n"));
     expect(codeOf(() => applyFilePatch(base, file!))).toBe("stale-base");

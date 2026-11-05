@@ -2,7 +2,8 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - the operator's command line over editorial.sqlite.
 
 // The operator's side of the engine lab, which no MCP tool reaches: campaigns, approval,
-// rejection, reversion and prospective shadows.
+// rejection, reversion and prospective shadows. `show` and `approve` print the evidence, the
+// configuration change and the patch in full; `approve` changes nothing without `--yes`.
 //   node apps/server/scripts/engine-lab.ts <action> --db <editorial.sqlite> [flags]
 
 import * as NodeFS from "node:fs";
@@ -73,12 +74,53 @@ const policyFromFlags = () => ({
           cards: NodePath.resolve(need("judge-cards")),
           labels: NodePath.resolve(need("judge-labels")),
         },
+  ...(flag("arm-timeout-min") === undefined && flag("memory-mb") === undefined
+    ? {}
+    : {
+        limits: {
+          arm_timeout_ms: Number(flag("arm-timeout-min") ?? "30") * 60_000,
+          memory_mb: Number(flag("memory-mb") ?? "4096"),
+        },
+      }),
 });
+
+/** The review an operator reads before approving: words first, then the change itself. */
+const printReview = (review: EnginePromotionService.RequestReview) =>
+  Console.log(
+    [
+      `Request ${review.request.requestId}: ${review.kind} candidate ${review.request.candidateHash}`,
+      `Status: ${review.request.status}. Still needed: ${review.request.pendingChecks.join("; ") || "nothing"}`,
+      `Evidence: ${review.evidence}`,
+      "",
+      "Configuration change:",
+      ...(review.configDiff.length === 0
+        ? ["  (none)"]
+        : review.configDiff.map((entry) => `  ${JSON.stringify(entry)}`)),
+      "",
+      review.patch === null
+        ? "Code: unchanged (the installed engine's)."
+        : "Code patch (from the stored files, against the installed sources):",
+      ...(review.patch === null ? [] : [review.patch]),
+      review.patch === null
+        ? ""
+        : "If approved, the nightly run executes this code in bwrap: no network, only the corpus, profile, models, cache and runs directory.",
+    ].join("\n"),
+  );
 
 const program = Effect.gen(function* () {
   const changes = yield* EngineChangeService.EngineChangeService;
   const experiments = yield* EngineExperimentService.EngineExperimentService;
   const promotion = yield* EnginePromotionService.EnginePromotionService;
+  /** A remote executor's identity of the corpus and models, asked before a campaign exists. */
+  const identityOf = (policy: ReturnType<typeof policyFromFlags>) =>
+    policy.executor === "remote"
+      ? experiments.identify({
+          executor: "remote",
+          input_roots: policy.input_roots,
+          corpus_dir: policy.corpus_dir,
+          models_dir: policy.models_dir,
+        })
+      : Effect.succeed(null);
   switch (action) {
     case "active": {
       const active = yield* promotion.active;
@@ -90,21 +132,34 @@ const program = Effect.gen(function* () {
     }
     case "history":
       return yield* print(yield* promotion.history);
-    case "campaign-create":
+    case "campaign-create": {
+      const policy = policyFromFlags();
+      const executorIdentity = yield* identityOf(policy);
       return yield* print(
         yield* changes.createCampaign({
           projectId: need("project"),
           kind: "development",
           budget: Number(flag("budget") ?? "3"),
-          policy: policyFromFlags(),
+          policy,
+          ...(executorIdentity === null ? {} : { executorIdentity }),
           actor: need("actor"),
         }),
       );
+    }
     case "campaign-close":
       return yield* print(yield* changes.closeCampaign(need("campaign"), need("actor")));
     case "requests":
       return yield* print(yield* promotion.listRequests(flag("project") ?? null));
-    case "approve":
+    case "show":
+      return yield* printReview(yield* promotion.review(need("request")));
+    case "approve": {
+      // Miguel sees what he approves: the review first, then nothing moves without --yes.
+      yield* printReview(yield* promotion.review(need("request")));
+      if (!has("yes")) {
+        return yield* Console.log(
+          "\nNothing was approved. Read the review above, then run approve again with --yes.",
+        );
+      }
       return yield* print(
         yield* promotion.approve({
           requestId: need("request"),
@@ -112,6 +167,7 @@ const program = Effect.gen(function* () {
           reason: need("reason"),
         }),
       );
+    }
     case "reject":
       return yield* print(
         yield* promotion.reject({
@@ -134,17 +190,27 @@ const program = Effect.gen(function* () {
       if (request === undefined || request.status !== "requested") {
         throw new Error(`No open request ${need("request")}.`);
       }
+      const policy = policyFromFlags();
+      const executorIdentity = yield* identityOf(policy);
       const campaign = yield* changes.createCampaign({
         projectId: need("project"),
         kind: "shadow",
         budget: 1,
-        policy: policyFromFlags(),
+        policy,
+        ...(executorIdentity === null ? {} : { executorIdentity }),
         actor: need("actor"),
         requestId: request.requestId,
         referenceHash: request.expectedActiveHash,
       });
-      const job = yield* changes.startShadow(campaign.campaignId);
-      return yield* print({ campaign, job });
+      // Scheduled now; it runs once its last cutoff has passed (shadow-run then).
+      const job = yield* changes.startShadow(campaign.campaignId).pipe(Effect.result);
+      return yield* print({
+        campaign,
+        job: Result.isSuccess(job) ? job.success : { waiting: job.failure.message },
+      });
+    }
+    case "shadow-run": {
+      return yield* print(yield* changes.startShadow(need("campaign")));
     }
     case "shadow-cards": {
       const cards = yield* experiments.shadowCards(need("job"));
@@ -170,7 +236,7 @@ const program = Effect.gen(function* () {
       return yield* print(yield* verifyLabLedger);
     default:
       return yield* Console.log(
-        "engine-lab <active|history|campaign-create|campaign-close|requests|approve|reject|revert|shadow-start|shadow-cards|shadow-score|run-due|job|verify> --db <editorial.sqlite> …",
+        "engine-lab <active|history|campaign-create|campaign-close|requests|show|approve|reject|revert|shadow-start|shadow-run|shadow-cards|shadow-score|run-due|job|verify> --db <editorial.sqlite> …",
       );
   }
 });

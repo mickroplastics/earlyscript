@@ -39,6 +39,8 @@ import { EditorialPresentationService } from "./EditorialPresentationService.ts"
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import { engineSourceHash } from "@earlyscript/engine-lab/hash";
+import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
+import { DEFAULT_DATA_DIR } from "@earlyscript/trend-engine/run";
 import {
   EngineSpawnRejected,
   killProcess,
@@ -51,6 +53,7 @@ import {
   runEngineCommand,
   type EngineLocation,
   type EngineNotFound,
+  type EngineSandbox,
 } from "./engineProcess.ts";
 import {
   canonicalJson,
@@ -99,6 +102,8 @@ export interface EditorialJobsOptions {
   readonly pollMs: number;
   /** After waiting this long for that child, it is killed. */
   readonly staleEngineTimeoutMs: number;
+  /** Tests only: whether bwrap exists for an approved artifact; detected otherwise. */
+  readonly artifactSandbox?: "bwrap" | "unavailable";
 }
 
 export const DEFAULT_JOB_TIMING = {
@@ -1015,6 +1020,39 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     return yield* body;
   });
 
+  /**
+   * The mounts of an approved artifact's run: its own sources, the installed engine's
+   * dependencies, the corpus, this claim's files and the models read-only; only the runs
+   * directory and the embedding cache writable. No network, no /home, no environment.
+   */
+  const artifactSandbox = (ctx: PhaseContext, cli: string): EngineSandbox => {
+    const artifactRoot =
+      /^(.*)[\\/]packages[\\/]trend-engine[\\/]src[\\/]cli\.ts$/.exec(cli)?.[1] ??
+      path.dirname(cli);
+    const installed = Result.isSuccess(options.engine) ? options.engine.success.cli : null;
+    const installedRoot =
+      installed === null
+        ? null
+        : (/^(.*)[\\/]packages[\\/]trend-engine[\\/]src[\\/]cli\.ts$/.exec(installed)?.[1] ?? null);
+    return {
+      readOnly: [
+        artifactRoot,
+        ...(installedRoot === null
+          ? []
+          : [
+              path.join(installedRoot, "node_modules"),
+              path.join(installedRoot, "packages", "trend-engine"),
+              path.join(installedRoot, "packages", "editorial-contracts"),
+            ]),
+        corpusDir,
+        ctx.jobDir,
+        options.modelsDir ?? path.join(DEFAULT_DATA_DIR, "models"),
+      ],
+      writable: [runsDir, path.dirname(options.cacheFile)],
+      home: `${ctx.jobDir}.sandbox`,
+    };
+  };
+
   const engineRun = (
     ctx: PhaseContext,
     logName: string,
@@ -1038,6 +1076,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         runEngineCommand(engine, {
           args: [...args, LOCK_TOKEN_FLAG, ctx.token],
           logFile,
+          // Approved code is not the installed engine: it runs isolated, like its evaluation.
+          ...(cli === undefined ? {} : { sandbox: artifactSandbox(ctx, cli) }),
           onSpawn: (pid) =>
             ctx
               .publishPid(pid)
@@ -1304,6 +1344,15 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         code: "engine_failed",
         phase: "run",
       });
+    }
+    if (
+      cli !== null &&
+      (options.artifactSandbox ?? (bwrapAvailable() ? "bwrap" : "unavailable")) !== "bwrap"
+    ) {
+      return yield* fail(
+        "The active engine's approved code runs only in bwrap, which this machine does not have.",
+        { code: "engine_failed", phase: "run" },
+      );
     }
     const storedProfile = yield* ensureProfileFile(ctx.job.profile_hash);
     const configFile = jobFile(ctx, "engine-config", "json");

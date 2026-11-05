@@ -21,8 +21,11 @@ import {
   RESULT_SCHEMA,
   signResult,
   specHash,
+  type ViewRecord,
   type WorkerResult,
 } from "./result.ts";
+import { sandboxArgs } from "./sandbox.ts";
+import { buildView, corpusIdentity, type CorpusView, fileHash, treeHash } from "./view.ts";
 
 const ENGINE_PREFIX = "packages/trend-engine/src/";
 const TOKEN = /^[a-z0-9][a-z0-9_-]{7,63}$/;
@@ -35,6 +38,8 @@ export interface WorkerOptions {
   readonly log?: (line: string) => void;
   /** Overrides bwrap detection, for tests. */
   readonly sandbox?: "bwrap" | "none";
+  /** The executor's clock; tests set it, the product never does. */
+  readonly now?: () => number;
 }
 
 class WorkerFailure extends Error {
@@ -159,50 +164,6 @@ function prepareTree(spec: JobSpec, side: ArmSide, jobDir: string, options: Work
   return NodePath.join(pkg, "src");
 }
 
-const nodeDir = () => NodePath.dirname(process.execPath);
-
-/** bwrap arguments: no network, a read-only system, a hidden /home except what the arm needs. */
-function sandboxArgs(input: {
-  readonly readOnly: ReadonlyArray<string>;
-  readonly writable: ReadonlyArray<string>;
-  readonly out: string;
-}): Array<string> {
-  const args = [
-    "--unshare-all",
-    "--die-with-parent",
-    "--ro-bind",
-    "/",
-    "/",
-    "--dev",
-    "/dev",
-    "--proc",
-    "/proc",
-  ];
-  for (const hidden of ["/home", "/root", "/tmp", "/mnt", "/media", "/srv", "/var/tmp"]) {
-    if (NodeFS.existsSync(hidden)) args.push("--tmpfs", hidden);
-  }
-  const seen = new Set<string>();
-  for (const path of [nodeDir(), ...input.readOnly]) {
-    if (seen.has(path) || !NodeFS.existsSync(path)) continue;
-    seen.add(path);
-    args.push("--ro-bind", path, path);
-  }
-  for (const path of [...input.writable, input.out]) {
-    args.push("--bind", path, path);
-  }
-  args.push(
-    "--clearenv",
-    "--setenv",
-    "PATH",
-    `${nodeDir()}:/usr/bin:/bin`,
-    "--setenv",
-    "HOME",
-    input.out,
-  );
-  args.push("--chdir", input.out);
-  return args;
-}
-
 function runArm(input: {
   readonly spec: JobSpec;
   readonly side: ArmSide;
@@ -212,6 +173,8 @@ function runArm(input: {
   readonly sandbox: "bwrap" | "none";
   readonly cacheFile: string | null;
   readonly options: WorkerOptions;
+  /** The cutoff's corpus view: the only corpus the arm sees. */
+  readonly view: CorpusView;
   readonly index: Map<string, IndexedItem>;
 }): ArmOutput {
   const { spec, side, cutoff } = input;
@@ -225,7 +188,7 @@ function runArm(input: {
     armSpec,
     JSON.stringify({
       engine_src: input.engineSrc,
-      corpus_dir: spec.corpus_dir,
+      corpus_dir: input.view.dir,
       cutoff,
       profile_path: spec.profile_path,
       config_path: configPath,
@@ -239,14 +202,15 @@ function runArm(input: {
     }),
   );
   const armScript = NodePath.join(import.meta.dirname, "arm.ts");
-  const nodeArgs = [armScript, "--spec", armSpec];
+  // The heap cap; the wall-time cap is the spawn's timeout below.
+  const nodeArgs = [`--max-old-space-size=${spec.limits.memory_mb}`, armScript, "--spec", armSpec];
   const root = input.options.engineRoot;
   const readOnly = [
     NodePath.join(root, "node_modules"),
     NodePath.join(root, "packages", "trend-engine"),
     NodePath.join(root, "packages", "editorial-contracts"),
     NodePath.dirname(armScript),
-    spec.corpus_dir,
+    input.view.dir,
     spec.profile_path,
     ...(spec.models_dir === null ? [] : [spec.models_dir]),
     ...(input.engineSrc.startsWith(input.jobDir)
@@ -265,8 +229,17 @@ function runArm(input: {
     cwd: out,
     // Outside the sandbox the arm still gets no secret: the spec stays in this process.
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: out, ELECTRON_RUN_AS_NODE: "1" },
+    // bwrap's namespace dies with it: killing it ends every process of the arm.
+    timeout: spec.limits.arm_timeout_ms,
+    killSignal: "SIGKILL",
   });
   NodeFS.closeSync(log);
+  if ((child.error as { code?: string } | undefined)?.code === "ETIMEDOUT") {
+    throw new WorkerFailure(
+      "timeout",
+      `${side} at ${cutoff} ran past ${spec.limits.arm_timeout_ms} ms and was killed.`,
+    );
+  }
   if (child.status !== 0) {
     const tail = NodeFS.readFileSync(NodePath.join(out, "arm.log"), "utf8").slice(-600);
     throw new WorkerFailure(
@@ -501,8 +474,86 @@ export function jobDirOf(jobsRoot: string, token: string): string {
 }
 
 /**
- * Runs `spec` once per token. A second call with the same token answers the first's result;
- * while the first is alive it waits for it rather than starting another.
+ * What a campaign fixes of its executor-side inputs, computed where they live: the corpus'
+ * identity (its verified manifest hash) and the model directory's content hash.
+ */
+export function identifyInputs(input: {
+  readonly input_roots: ReadonlyArray<string>;
+  readonly corpus_dir: string;
+  readonly models_dir: string | null;
+}): { readonly corpus_hash: string; readonly models_hash: string | null } {
+  const real = canonicalInputs(input.input_roots, [
+    { path: input.corpus_dir, kind: "tree" },
+    ...(input.models_dir === null ? [] : [{ path: input.models_dir, kind: "tree" as const }]),
+  ]);
+  return {
+    corpus_hash: corpusIdentity(real.get(input.corpus_dir)!),
+    models_hash: input.models_dir === null ? null : treeHash(real.get(input.models_dir)!),
+  };
+}
+
+const dayBefore = (day: string) =>
+  new Date(Date.parse(`${day}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * The job's inputs by canonical path, checked against the sealed partitions, the operator's
+ * roots and the identity the campaign fixed by content: the profile's hash, the development
+ * corpus' manifest and every file it lists, the model directory's files.
+ */
+function checkedInputs(spec: JobSpec, options: WorkerOptions) {
+  assertNotSealed({
+    cutoffs: spec.cutoffs,
+    paths: [
+      spec.corpus_dir,
+      spec.profile_path,
+      spec.cache_file ?? "",
+      spec.models_dir ?? "",
+      options.jobsRoot,
+    ],
+  });
+  if (cutoffDays(spec.cutoffs).join(",") !== spec.cutoffs.join(",")) {
+    throw new WorkerFailure("invalid-change", "The cutoffs are not distinct UTC days in order.");
+  }
+  // Every input by its canonical path, inside the operator's roots, links included.
+  const real = canonicalInputs(spec.input_roots, [
+    { path: spec.corpus_dir, kind: "tree" },
+    { path: spec.profile_path, kind: "file" },
+    ...(spec.cache_file === null
+      ? []
+      : [{ path: spec.cache_file, kind: "optional-file" as const }]),
+    ...(spec.models_dir === null ? [] : [{ path: spec.models_dir, kind: "tree" as const }]),
+  ]);
+  const canonical: JobSpec = {
+    ...spec,
+    corpus_dir: real.get(spec.corpus_dir)!,
+    profile_path: real.get(spec.profile_path)!,
+    cache_file: spec.cache_file === null ? null : real.get(spec.cache_file)!,
+    models_dir: spec.models_dir === null ? null : real.get(spec.models_dir)!,
+  };
+  if (sha256(NodeFS.readFileSync(canonical.profile_path)) !== spec.profile_hash) {
+    throw new WorkerFailure("artifact-mismatch", "The profile file is not the campaign's.");
+  }
+  const corpusHash = corpusIdentity(canonical.corpus_dir);
+  if (spec.inputs.corpus_hash !== null && corpusHash !== spec.inputs.corpus_hash) {
+    throw new WorkerFailure(
+      "artifact-mismatch",
+      `The corpus at ${spec.corpus_dir} is ${corpusHash}, not the campaign's ${spec.inputs.corpus_hash}.`,
+    );
+  }
+  const modelsHash = canonical.models_dir === null ? null : treeHash(canonical.models_dir);
+  if (spec.inputs.models_hash !== null && modelsHash !== spec.inputs.models_hash) {
+    throw new WorkerFailure(
+      "artifact-mismatch",
+      `The models at ${spec.models_dir} are ${modelsHash}, not the campaign's ${spec.inputs.models_hash}.`,
+    );
+  }
+  return { canonical, corpusHash, modelsHash };
+}
+
+/**
+ * Runs `spec` once per token. A second call with the same token answers the first's result,
+ * once its inputs check again against the campaign's and its views against the corpus; while
+ * the first is alive it waits for it rather than starting another.
  */
 export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promise<WorkerResult> {
   const jobDir = jobDirOf(options.jobsRoot, spec.token);
@@ -510,8 +561,67 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
   const resultFile = NodePath.join(jobDir, "result.json");
   const lockFile = NodePath.join(jobDir, "lock");
   const readResult = () => JSON.parse(NodeFS.readFileSync(resultFile, "utf8")) as WorkerResult;
+  const now = () => options.now?.() ?? Date.now();
+  const sandbox = options.sandbox ?? (bwrapAvailable() ? "bwrap" : "none");
+  const executor = { host: NodeOS.hostname(), node: process.version, sandbox };
+  const empty = { reference: [], candidate: [] };
+  const base = {
+    schema: RESULT_SCHEMA,
+    token: spec.token,
+    spec_sha256: specHash(spec),
+    reference_hash: spec.reference.manifest_hash,
+    candidate_hash: spec.candidate.manifest_hash,
+    executor,
+  } as const;
+  const failure = (error: unknown): WorkerResult => {
+    const code =
+      error instanceof WorkerFailure || error instanceof LabPolicyError
+        ? error.code
+        : "engine-failed";
+    const message = error instanceof Error ? error.message : String(error);
+    return signResult(spec.secret, {
+      ...base,
+      status: "failed",
+      error: { code, message },
+      inputs: { corpus_hash: null, models_hash: null, cache_sha256: null },
+      views: [],
+      arms: empty,
+    });
+  };
+  /** A stored result, only while its inputs are still the ones it was computed from. */
+  const recovered = (stored: WorkerResult): WorkerResult => {
+    if (stored.status !== "ok") return stored;
+    try {
+      const { canonical, corpusHash, modelsHash } = checkedInputs(spec, options);
+      if (stored.inputs?.models_hash !== modelsHash)
+        throw new WorkerFailure("artifact-mismatch", "The models changed since the result.");
+      if (spec.inputs.corpus_hash === null) {
+        // A shadow's corpus grows; the days each view held must not have changed.
+        const recheck = NodePath.join(jobDir, "recheck");
+        for (const view of stored.views ?? []) {
+          const again = buildView({
+            corpusDir: canonical.corpus_dir,
+            cutoff: view.cutoff,
+            out: NodePath.join(recheck, view.cutoff.slice(0, 10)),
+          });
+          if (again.corpus_hash !== view.corpus_hash) {
+            throw new WorkerFailure(
+              "artifact-mismatch",
+              `The corpus before ${view.cutoff.slice(0, 10)} changed since the result.`,
+            );
+          }
+        }
+        NodeFS.rmSync(recheck, { recursive: true, force: true });
+      } else if (stored.inputs?.corpus_hash !== corpusHash) {
+        throw new WorkerFailure("artifact-mismatch", "The corpus changed since the result.");
+      }
+      return stored;
+    } catch (error) {
+      return failure(error);
+    }
+  };
   for (;;) {
-    if (NodeFS.existsSync(resultFile)) return readResult();
+    if (NodeFS.existsSync(resultFile)) return recovered(readResult());
     try {
       NodeFS.writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx" });
       break;
@@ -525,51 +635,19 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
     }
   }
   NodeFS.writeFileSync(NodePath.join(jobDir, "pgid"), `${process.pid}\n`);
-  const sandbox = options.sandbox ?? (bwrapAvailable() ? "bwrap" : "none");
-  const executor = { host: NodeOS.hostname(), node: process.version, sandbox };
-  const empty = { reference: [], candidate: [] };
-  const base = {
-    schema: RESULT_SCHEMA,
-    token: spec.token,
-    spec_sha256: specHash(spec),
-    reference_hash: spec.reference.manifest_hash,
-    candidate_hash: spec.candidate.manifest_hash,
-    executor,
-  } as const;
   let result: WorkerResult;
   try {
-    assertNotSealed({
-      cutoffs: spec.cutoffs,
-      paths: [
-        spec.corpus_dir,
-        spec.profile_path,
-        spec.cache_file ?? "",
-        spec.models_dir ?? "",
-        options.jobsRoot,
-      ],
-    });
-    if (cutoffDays(spec.cutoffs).join(",") !== spec.cutoffs.join(",")) {
-      throw new WorkerFailure("invalid-change", "The cutoffs are not distinct UTC days in order.");
+    // A shadow observes the product's days as they pass: a cutoff still ahead is never run.
+    if (spec.kind === "shadow") {
+      const ahead = spec.cutoffs.filter((cutoff) => Date.parse(cutoff) > now());
+      if (ahead.length > 0) {
+        throw new WorkerFailure(
+          "insufficient-evidence",
+          `Shadow cutoffs ${ahead.map((c) => c.slice(0, 10)).join(", ")} have not passed yet.`,
+        );
+      }
     }
-    // Every input by its canonical path, inside the operator's roots, links included.
-    const real = canonicalInputs(spec.input_roots, [
-      { path: spec.corpus_dir, kind: "tree" },
-      { path: spec.profile_path, kind: "file" },
-      ...(spec.cache_file === null
-        ? []
-        : [{ path: spec.cache_file, kind: "optional-file" as const }]),
-      ...(spec.models_dir === null ? [] : [{ path: spec.models_dir, kind: "tree" as const }]),
-    ]);
-    const canonical: JobSpec = {
-      ...spec,
-      corpus_dir: real.get(spec.corpus_dir)!,
-      profile_path: real.get(spec.profile_path)!,
-      cache_file: spec.cache_file === null ? null : real.get(spec.cache_file)!,
-      models_dir: spec.models_dir === null ? null : real.get(spec.models_dir)!,
-    };
-    if (sha256(NodeFS.readFileSync(canonical.profile_path)) !== spec.profile_hash) {
-      throw new WorkerFailure("artifact-mismatch", "The profile file is not the campaign's.");
-    }
+    const { canonical, corpusHash, modelsHash } = checkedInputs(spec, options);
     const codeArms = (["reference", "candidate"] as const).filter(
       (side) => Object.keys(spec[side].files).length > 0,
     );
@@ -579,12 +657,25 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
         "A code candidate needs bwrap on the executor, which has none.",
       );
     }
-    const lastDay =
-      spec.cutoffs
-        .map((cutoff) => cutoff.slice(0, 10))
-        .toSorted()
-        .at(-1) ?? "0000-00-00";
-    const index = indexCorpus(canonical.corpus_dir, lastDay);
+    // One view per cutoff, made here before any arm runs; both arms read the same one.
+    const views = spec.cutoffs.map((cutoff) => {
+      const view = buildView({
+        corpusDir: canonical.corpus_dir,
+        cutoff,
+        out: NodePath.join(jobDir, "views", cutoff.slice(0, 10)),
+      });
+      if (spec.kind === "shadow" && view.last_covered_day !== dayBefore(cutoff.slice(0, 10))) {
+        throw new WorkerFailure(
+          "insufficient-evidence",
+          `The corpus does not cover ${dayBefore(cutoff.slice(0, 10))} yet: the shadow cutoff ${cutoff.slice(0, 10)} is not closed.`,
+        );
+      }
+      return { view, observed_at: new Date(now()).toISOString() };
+    });
+    const cacheSha =
+      canonical.cache_file !== null && NodeFS.existsSync(canonical.cache_file)
+        ? fileHash(canonical.cache_file)
+        : null;
     const arms: Record<ArmSide, Array<ArmOutput>> = { reference: [], candidate: [] };
     for (const side of ["reference", "candidate"] as const) {
       const engineSrc = prepareTree(spec, side, jobDir, options);
@@ -596,40 +687,48 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
         if (NodeFS.existsSync(cacheFile)) NodeFS.copyFileSync(cacheFile, own);
         cacheFile = own;
       }
-      for (const cutoff of spec.cutoffs) {
-        options.log?.(JSON.stringify({ phase: "arm", side, cutoff }));
+      for (const { view } of views) {
+        options.log?.(JSON.stringify({ phase: "arm", side, cutoff: view.cutoff }));
         arms[side].push(
           runArm({
             spec: canonical,
             side,
-            cutoff,
+            cutoff: view.cutoff,
             engineSrc,
             jobDir,
             sandbox,
             cacheFile,
             options,
-            index,
+            view,
+            index: indexCorpus(view.dir, view.cutoff.slice(0, 10)),
           }),
         );
       }
     }
-    result = signResult(spec.secret, { ...base, status: "ok", error: null, arms });
-  } catch (error) {
-    const code =
-      error instanceof WorkerFailure || error instanceof LabPolicyError
-        ? error.code
-        : "engine-failed";
-    const message = error instanceof Error ? error.message : String(error);
+    // The views as the arms left them: read-only to them, checked again before signing.
+    const records: Array<ViewRecord> = views.map(({ view, observed_at }) => {
+      if (corpusIdentity(view.dir) !== view.corpus_hash) {
+        throw new WorkerFailure("artifact-mismatch", `The view of ${view.cutoff} changed.`);
+      }
+      return { cutoff: view.cutoff, corpus_hash: view.corpus_hash, files: view.files, observed_at };
+    });
     result = signResult(spec.secret, {
       ...base,
-      status: "failed",
-      error: { code, message },
-      arms: empty,
+      status: "ok",
+      error: null,
+      inputs: { corpus_hash: corpusHash, models_hash: modelsHash, cache_sha256: cacheSha },
+      views: records,
+      arms,
     });
+  } catch (error) {
+    result = failure(error);
   }
-  const tmp = `${resultFile}.${process.pid}.tmp`;
-  NodeFS.writeFileSync(tmp, `${JSON.stringify(result)}\n`);
-  NodeFS.renameSync(tmp, resultFile);
+  // A shadow that ran too early is not a result: the same token may run once its days pass.
+  if (result.error?.code !== "insufficient-evidence") {
+    const tmp = `${resultFile}.${process.pid}.tmp`;
+    NodeFS.writeFileSync(tmp, `${JSON.stringify(result)}\n`);
+    NodeFS.renameSync(tmp, resultFile);
+  }
   NodeFS.rmSync(lockFile, { force: true });
   return result;
 }

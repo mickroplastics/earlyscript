@@ -54,6 +54,18 @@
     "./synthetic": {
       "types": "./src/synthetic.ts",
       "import": "./src/synthetic.ts"
+    },
+    "./sandbox": {
+      "types": "./src/sandbox.ts",
+      "import": "./src/sandbox.ts"
+    },
+    "./view": {
+      "types": "./src/view.ts",
+      "import": "./src/view.ts"
+    },
+    "./evaluator": {
+      "types": "./src/evaluator.ts",
+      "import": "./src/evaluator.ts"
     }
   },
   "scripts": {

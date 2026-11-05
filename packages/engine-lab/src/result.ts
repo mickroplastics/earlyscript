@@ -3,8 +3,8 @@
 import { canonicalJson, hmac, sameSignature, sha256 } from "./hash.ts";
 import type { EngineManifest } from "./manifest.ts";
 
-export const JOB_SPEC_SCHEMA = "earlyscript.engine-lab-job/1";
-export const RESULT_SCHEMA = "earlyscript.engine-lab-result/1";
+export const JOB_SPEC_SCHEMA = "earlyscript.engine-lab-job/2";
+export const RESULT_SCHEMA = "earlyscript.engine-lab-result/2";
 
 export type ArmSide = "reference" | "candidate";
 
@@ -41,8 +41,39 @@ export interface JobSpec {
   /** Top positions each arm reports; the evaluator reads the first 5. */
   readonly top: number;
   readonly sandbox: "required" | "if-available";
+  /** What the campaign fixed by content; the executor checks its inputs against it. */
+  readonly inputs: JobInputs;
+  readonly limits: JobLimits;
   readonly reference: ArmSpec;
   readonly candidate: ArmSpec;
+}
+
+export interface JobInputs {
+  /**
+   * The development corpus' corpus_hash. Null for a shadow: its corpus grows every day, so
+   * each cutoff's view is fixed when it is observed and recorded in the result instead.
+   */
+  readonly corpus_hash: string | null;
+  /** Content hash of the model directory; null when the campaign names none. */
+  readonly models_hash: string | null;
+}
+
+export interface JobLimits {
+  /** Wall time of one arm at one cutoff; past it the arm is killed and the job fails. */
+  readonly arm_timeout_ms: number;
+  /** The arm's JavaScript heap, in megabytes. */
+  readonly memory_mb: number;
+}
+
+export const DEFAULT_LIMITS: JobLimits = { arm_timeout_ms: 30 * 60_000, memory_mb: 4096 };
+
+/** One cutoff's corpus view, the same for both arms, as the executor made it. */
+export interface ViewRecord {
+  readonly cutoff: string;
+  readonly corpus_hash: string;
+  readonly files: number;
+  /** When the executor made the view: a shadow cutoff is never viewed before it has passed. */
+  readonly observed_at: string;
 }
 
 export interface ArmTrend {
@@ -98,6 +129,14 @@ export interface WorkerResult {
     /** bwrap: no network, only the corpus, the tree and its output dir visible. */
     readonly sandbox: "bwrap" | "none";
   };
+  /** The inputs as the executor found them before any arm ran. */
+  readonly inputs: {
+    readonly corpus_hash: string | null;
+    readonly models_hash: string | null;
+    /** The embedding cache, a derived input: recorded, not fixed (see the report's notes). */
+    readonly cache_sha256: string | null;
+  };
+  readonly views: ReadonlyArray<ViewRecord>;
   readonly arms: {
     readonly reference: ReadonlyArray<ArmOutput>;
     readonly candidate: ReadonlyArray<ArmOutput>;
@@ -131,6 +170,16 @@ export function resultMismatch(spec: JobSpec, result: WorkerResult): string | nu
   if (result.reference_hash !== spec.reference.manifest_hash) return "reference manifest differs";
   if (result.candidate_hash !== spec.candidate.manifest_hash) return "candidate manifest differs";
   if (result.status !== "ok") return null;
+  if (spec.inputs.corpus_hash !== null && result.inputs.corpus_hash !== spec.inputs.corpus_hash)
+    return "the corpus is not the campaign's";
+  if (spec.inputs.models_hash !== null && result.inputs.models_hash !== spec.inputs.models_hash)
+    return "the models are not the campaign's";
+  if (result.views.length !== spec.cutoffs.length) return "a cutoff has no corpus view";
+  for (const [k, view] of result.views.entries()) {
+    if (view.cutoff !== spec.cutoffs[k]) return `view ${view.cutoff} out of order`;
+    if (spec.kind === "shadow" && !(Date.parse(view.observed_at) >= Date.parse(view.cutoff)))
+      return `the shadow viewed ${view.cutoff.slice(0, 10)} before it had passed`;
+  }
   for (const side of ["reference", "candidate"] as const) {
     const arms = result.arms[side];
     const manifest = spec[side].manifest;

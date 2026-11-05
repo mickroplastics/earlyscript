@@ -1,10 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off - the lab's fixtures lay out a synthetic corpus and its job files.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - the lab's fixtures lay out a synthetic corpus and its job files.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { labFixture, REPO_ROOT, type LabFixture } from "@earlyscript/engine-lab/testkit";
 import { SYNTHETIC_PROFILE } from "@earlyscript/engine-lab/synthetic";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -23,6 +24,44 @@ import {
 import * as EditorialDatabase from "./persistence/EditorialDatabase.ts";
 
 export const TEST_PROJECT = "project:engine-lab";
+
+/** The synthetic corpus' first day: its cutoffs run from the 15th to the 26th of August. */
+const LAB_FROM_DAY = "2026-08-01";
+/** Where the lab tests' server clock starts: before the shadow cutoffs, after the corpus starts. */
+export const LAB_CLOCK_START = "2026-08-10T00:00:00.000Z";
+
+/**
+ * Test layer only: the server's clock moved to `start` and then by `advance`, running at real
+ * speed. The product never provides it; the executor keeps the real clock.
+ */
+export function labClock(start: string) {
+  let offset: number | null = null;
+  let base: Clock.Clock | null = null;
+  const real = () => base!.currentTimeMillisUnsafe();
+  const now = () => real() + (offset ??= Date.parse(start) - real());
+  const clockOf = (inner: Clock.Clock): Clock.Clock => {
+    base = inner;
+    return {
+      currentTimeMillisUnsafe: now,
+      currentTimeMillis: Effect.sync(now),
+      currentTimeNanosUnsafe: () => BigInt(now()) * 1_000_000n,
+      currentTimeNanos: Effect.sync(() => BigInt(now()) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => inner.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanos: inner.monotonicTimeNanos,
+      sleep: (duration) => inner.sleep(duration),
+    };
+  };
+  return {
+    /** Runs `effect` under this clock. */
+    provide: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Clock.clockWith((inner) => Effect.provideService(effect, Clock.Clock, clockOf(inner))),
+    /** Moves the clock forward to `iso`; never back, as a real clock. */
+    set: (iso: string) =>
+      Effect.sync(() => {
+        offset = Math.max(offset ?? Number.NEGATIVE_INFINITY, Date.parse(iso) - real());
+      }),
+  };
+}
 export const OTHER_PROJECT = "project:other";
 
 export interface LabHarness {
@@ -38,7 +77,8 @@ export function labHarness(
   dir: string,
   overrides: Partial<EngineLabOptionsShape> = {},
 ): LabHarness {
-  const fixture = labFixture(NodePath.join(dir, "fixture"), { days: 26 });
+  // In the past for the executor's real clock: a shadow's cutoffs must have passed to run.
+  const fixture = labFixture(NodePath.join(dir, "fixture"), { fromDay: LAB_FROM_DAY, days: 26 });
   return {
     dir,
     db: NodePath.join(dir, "editorial.sqlite"),

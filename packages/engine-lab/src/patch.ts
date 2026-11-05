@@ -14,8 +14,78 @@ export interface FilePatch {
 
 const stripPrefix = (raw: string) => raw.replace(/\t.*$/, "").replace(/^[ab]\//, "");
 
+/**
+ * What an added line may not name: a patch is computation over what the module already
+ * receives. No module loading, no host, network, process, clock or randomness, no way to build
+ * code from a string, and no escape that spells one of these names another way. The rule reads
+ * text, so a comment or string that names one is refused too.
+ */
+export const IMPURE_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bimport\b/, "import"],
+  [/\brequire\b/, "require"],
+  [/\bexport\b/, "export"],
+  [/node:/, "node:"],
+  [/\bchild_process\b/, "child_process"],
+  [/\bprocess\b/, "process"],
+  [/\bglobalThis\b|\bglobal\b|\bwindow\b|\bself\b/, "the global object"],
+  [/\beval\b/, "eval"],
+  [/\bFunction\b/, "Function"],
+  [/\bconstructor\b|__proto__|\bprototype\b/, "constructor and prototype access"],
+  [/\bReflect\b|\bProxy\b/, "Reflect and Proxy"],
+  [/\bfetch\b|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/, "network"],
+  [/\bDeno\b|\bBun\b|\bWebAssembly\b|\bWorker\b|\bSharedArrayBuffer\b|\bAtomics\b/, "runtimes"],
+  [/\bsetTimeout\b|\bsetInterval\b|\bsetImmediate\b|\bqueueMicrotask\b/, "timers"],
+  [/\bDate\b|\bperformance\b|Math\s*\.\s*random/, "clock and randomness"],
+  [/\bBuffer\b|\bconsole\b/, "Buffer and console"],
+  [/\\u|\\x/, "escape sequences"],
+];
+
+/** The names a file binds to Node built-in modules: an added line may not use them either. */
+export function hostBindings(source: string): Array<string> {
+  const names: Array<string> = [];
+  const pattern =
+    /import\s+(?:type\s+)?(?:\*\s+as\s+(\w+)|\{([^}]*)\}|(\w+))\s+from\s+["']node:[^"']+["']/g;
+  for (const match of source.matchAll(pattern)) {
+    if (match[1] !== undefined) names.push(match[1]);
+    if (match[3] !== undefined) names.push(match[3]);
+    for (const entry of (match[2] ?? "").split(",")) {
+      const local = entry
+        .trim()
+        .split(/\s+as\s+/)
+        .at(-1)
+        ?.trim();
+      if (local) names.push(local);
+    }
+  }
+  return names;
+}
+
+/** Throws unless `text`, an added line of `path`, is pure computation. */
+function assertPure(path: string, text: string, bindings: ReadonlyArray<string> = []) {
+  for (const [pattern, name] of IMPURE_PATTERNS) {
+    if (pattern.test(text)) {
+      throw new LabPolicyError(
+        "invalid-change",
+        `${path}: an added line uses ${name}; a code candidate may only compute over what the module already receives.`,
+      );
+    }
+  }
+  for (const name of bindings) {
+    if (new RegExp(`\\b${name}\\b`).test(text)) {
+      throw new LabPolicyError(
+        "invalid-change",
+        `${path}: an added line uses ${name}, which this file binds to a Node built-in module.`,
+      );
+    }
+  }
+}
+
 /** The files and hunks of `patch`; anything but in-place edits of the allowed files is refused. */
-export function parsePatch(patch: string): Array<FilePatch> {
+export function parsePatch(
+  patch: string,
+  /** Tests only: hostile patches that exercise the executor's own defenses. */
+  check: { readonly pure: boolean } = { pure: true },
+): Array<FilePatch> {
   if (Buffer.byteLength(patch, "utf8") > MAX_PATCH_BYTES) {
     throw new LabPolicyError(
       "invalid-change",
@@ -84,6 +154,7 @@ export function parsePatch(patch: string): Array<FilePatch> {
         }
         const op = body[0];
         if (op === " " || op === "-" || op === "+") {
+          if (op === "+" && check.pure) assertPure(from, body.slice(1));
           hunkLines.push({ op, text: body.slice(1) });
           if (op !== " ") changed++;
         } else if (body === "") {
@@ -116,7 +187,19 @@ const sameAt = (lines: ReadonlyArray<string>, at: number, expected: ReadonlyArra
   expected.every((text, k) => lines[at + k] === text);
 
 /** `source` with `file`'s hunks applied, each at the unique place its old lines match. */
-export function applyFilePatch(source: string, file: FilePatch): string {
+export function applyFilePatch(
+  source: string,
+  file: FilePatch,
+  check: { readonly pure: boolean } = { pure: true },
+): string {
+  // The file's own host bindings (relevance.ts reads its model with node:fs): usable by the
+  // lines already there, never by an added one.
+  const bindings = check.pure ? hostBindings(source) : [];
+  for (const hunk of check.pure ? file.hunks : []) {
+    for (const entry of hunk.lines) {
+      if (entry.op === "+") assertPure(file.path, entry.text, bindings);
+    }
+  }
   const lines = source.split("\n");
   let offset = 0;
   let searchFrom = 0;
@@ -144,4 +227,63 @@ export function applyFilePatch(source: string, file: FilePatch): string {
     searchFrom = at + added.length;
   }
   return lines.join("\n");
+}
+
+/**
+ * A unified diff of `before` and `after`, three lines of context: what the operator reads
+ * before approving a code candidate, rebuilt from the stored files rather than trusted text.
+ */
+export function unifiedDiff(path: string, before: string, after: string): string {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  // Longest common subsequence, from the end: the files a patch may touch are small.
+  const lcs: Array<Uint32Array> = Array.from(
+    { length: a.length + 1 },
+    () => new Uint32Array(b.length + 1),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i]![j] =
+        a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+    }
+  }
+  const ops: Array<{ op: " " | "-" | "+"; text: string; ai: number; bi: number }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      ops.push({ op: " ", text: a[i]!, ai: i++, bi: j++ });
+    } else if (j < b.length && (i === a.length || lcs[i]![j + 1]! >= lcs[i + 1]![j]!)) {
+      ops.push({ op: "+", text: b[j]!, ai: i, bi: j++ });
+    } else {
+      ops.push({ op: "-", text: a[i]!, ai: i++, bi: j });
+    }
+  }
+  const out = [`--- a/${path}`, `+++ b/${path}`];
+  let k = 0;
+  while (k < ops.length) {
+    if (ops[k]!.op === " ") {
+      k++;
+      continue;
+    }
+    let start = Math.max(0, k - 3);
+    let end = k;
+    // Extend over changes separated by at most six unchanged lines.
+    for (;;) {
+      while (end < ops.length && ops[end]!.op !== " ") end++;
+      let next = end;
+      while (next < ops.length && ops[next]!.op === " " && next - end < 7) next++;
+      if (next < ops.length && ops[next]!.op !== " " && next - end <= 6) end = next;
+      else break;
+    }
+    const stop = Math.min(ops.length, end + 3);
+    const hunk = ops.slice(start, stop);
+    const oldCount = hunk.filter((op) => op.op !== "+").length;
+    const newCount = hunk.filter((op) => op.op !== "-").length;
+    out.push(`@@ -${hunk[0]!.ai + 1},${oldCount} +${hunk[0]!.bi + 1},${newCount} @@`);
+    for (const op of hunk) out.push(`${op.op}${op.text}`);
+    k = stop;
+    start = stop;
+  }
+  return `${out.join("\n")}\n`;
 }
