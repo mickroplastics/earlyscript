@@ -4,6 +4,9 @@
 
 export type LabelValue = "yes" | "no" | "unsure" | "pending";
 
+/** Graded yes: core (founders and developers building with AI agents and automation) or adjacent. */
+export type Grade = "core" | "adjacent";
+
 /** mulberry32: a small seeded generator; the same seed gives the same draws on every platform. */
 export function seededRandom(seed: number): () => number {
   let a = seed >>> 0;
@@ -41,8 +44,21 @@ export interface Slot {
   readonly topicId: string | null;
   readonly family: string | null;
   readonly label: LabelValue | null;
+  readonly grade: Grade | null;
   readonly zero: SlotZero | null;
 }
+
+/** Credit of a counted slot for a metric; the zero rules apply before it. */
+export type Credit = (slot: Slot) => number;
+
+/** G@5: core 1, adjacent 0.5, anything else 0 (a yes without grade cannot be graded: NaN). */
+export const gradedCredit: Credit = (slot) => {
+  if (slot.zero !== null || slot.label !== "yes") return 0;
+  return slot.grade === "core" ? 1 : slot.grade === "adjacent" ? 0.5 : Number.NaN;
+};
+
+export const coreCredit: Credit = (slot) =>
+  slot.zero === null && slot.label === "yes" && slot.grade === "core" ? 1 : 0;
 
 /** Credit of a slot: 1 for a confirmed yes; an unresolved slot counts 1 only for the upper bound. */
 export function slotCredit(slot: Slot, bound: "strict" | "upper"): number {
@@ -65,6 +81,7 @@ export function topSlots(
     readonly topicId: string;
     readonly family: string;
     readonly label: LabelValue | null;
+    readonly grade?: Grade | null;
     readonly unavailable: boolean;
   }>,
   k: number,
@@ -80,6 +97,7 @@ export function topSlots(
         topicId: null,
         family: null,
         label: null,
+        grade: null,
         zero: "empty",
       };
     }
@@ -92,6 +110,7 @@ export function topSlots(
       topicId: entry.topicId,
       family: entry.family,
       label: entry.label,
+      grade: entry.grade ?? null,
       zero: duplicate ? "duplicate" : entry.unavailable ? "unavailable_at_cutoff" : null,
     };
   });
@@ -104,17 +123,18 @@ export function topSlots(
 export function weightedPrecision(
   slots: ReadonlyArray<Slot>,
   weightOf: (slot: Slot) => number,
-  bound: "strict" | "upper" = "strict",
+  bound: "strict" | "upper" | Credit = "strict",
 ): number | null {
+  const credit: Credit = typeof bound === "function" ? bound : (slot) => slotCredit(slot, bound);
   let num = 0;
   let den = 0;
   for (const slot of slots) {
     const w = weightOf(slot);
     if (w === 0) continue;
-    num += w * slotCredit(slot, bound);
+    num += w * credit(slot);
     den += w;
   }
-  return den === 0 ? null : num / den;
+  return den === 0 || Number.isNaN(num) ? null : num / den;
 }
 
 /**
@@ -201,10 +221,11 @@ export function bootstrapPrecision(
   draws: Draws,
   unitOf: (slot: Slot) => string,
   alpha = 0.05,
+  credit: Credit | "strict" = "strict",
 ): Interval {
   const values: Array<number> = [];
   for (const weights of draws) {
-    const p = weightedPrecision(slots, (slot) => weights.get(unitOf(slot)) ?? 0);
+    const p = weightedPrecision(slots, (slot) => weights.get(unitOf(slot)) ?? 0, credit);
     if (p !== null) values.push(p);
   }
   return interval(values, alpha);
@@ -217,12 +238,13 @@ export function bootstrapDifference(
   draws: Draws,
   unitOf: (slot: Slot) => string,
   alpha = 0.05,
+  credit: Credit | "strict" = "strict",
 ): Interval {
   const values: Array<number> = [];
   for (const weights of draws) {
     const w = (slot: Slot) => weights.get(unitOf(slot)) ?? 0;
-    const pa = weightedPrecision(a, w);
-    const pb = weightedPrecision(b, w);
+    const pa = weightedPrecision(a, w, credit);
+    const pb = weightedPrecision(b, w, credit);
     if (pa !== null && pb !== null) values.push(pa - pb);
   }
   return interval(values, alpha);

@@ -919,6 +919,58 @@ describe("Sol's U1 findings (regressions)", () => {
     expect(out.metrics.logical.labels[0]!.migration).toMatchObject({ accepted: 1, dropped: 1 });
   });
 
+  it("graded labels: G@5 gives core 1 and adjacent 0.5; ungraded yes leaves G@5 empty", async () => {
+    const root = tempDir("u1-graded");
+    const e = miniEvaluation(
+      root,
+      [
+        { id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] },
+        { id: "B", family: "G", members: [{ config: "cfg-R", trend: "b" }] },
+        { id: "C", family: "H", members: [{ config: "cfg-R", trend: "c" }] },
+      ],
+      {
+        "2026-10-20": {
+          R: [
+            ["a", "A"],
+            ["b", "B"],
+            ["c", "C"],
+          ],
+        },
+      },
+    );
+    const graded = NodePath.join(root, "graded.json");
+    NodeFS.writeFileSync(
+      graded,
+      JSON.stringify({
+        labeler: "m",
+        universe_hash: e.universe.universe_hash,
+        labels: [
+          { topic_id: "A", label: "yes", grade: "core" },
+          { topic_id: "B", label: "adjacent" },
+          { topic_id: "C", label: "no", grade: null },
+        ],
+      }),
+    );
+    const base = {
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    };
+    const arm = (out: Awaited<ReturnType<typeof runScore>>) =>
+      (out.metrics.logical.results["m"] as any).dev.arms.R;
+    const g = arm(await runScore({ ...base, labelPaths: [graded] }));
+    expect(g.p_at_5).toBeCloseTo(0.4);
+    expect(g.g_at_5).toBeCloseTo(0.3);
+    expect(g.core_share).toBeCloseTo(0.2);
+    const old = arm(
+      await runScore({ ...base, labelPaths: [e.labels("m", { A: "yes", B: "yes", C: "no" })] }),
+    );
+    expect(old.p_at_5).toBeCloseTo(0.4);
+    expect(old.g_at_5).toBeNull();
+  });
+
   it("S3: sensitivity blocks follow calendar days, not consecutive cutoffs", () => {
     // Blocks of consecutive cutoffs always drew these two together; 7-day blocks cannot hold
     // both (21 days apart), so their weights vary apart and each block adds at most one.

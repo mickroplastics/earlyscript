@@ -7,6 +7,9 @@ import * as NodePath from "node:path";
 
 import { parseCutoffList } from "./backtest.ts";
 import {
+  coreCredit,
+  type Grade,
+  gradedCredit,
   bootstrapDifference,
   bootstrapPrecision,
   blockDraws,
@@ -39,6 +42,8 @@ export const METRICS_SCHEMA_VERSION = "earlyscript.editorial-metrics/1";
 export const SCORE_RULE = {
   precision:
     "P@5 = credits / 5 per arm and cutoff, averaged over cutoffs; an empty position, an unsure, pending or unlabelled card, the second and later positions of one family and (B6) a retrospective position whose headlines are all GitHub or Hugging Face items retrieved after the cutoff count 0",
+  graded:
+    "G@5 = (core 1 + adjacent 0.5) / 5 per arm and cutoff, with the same zero rules, bootstrap and Bonferroni; null when a yes has no grade (labels from before grading count for P@5 only); core_share = core positions / 5",
   upper_bound: "the same with unsure, pending and unlabelled cards counted as yes",
   resolved_precision: "yes / (yes + no) among the counted positions with a yes or no label",
   bootstrap:
@@ -67,6 +72,8 @@ export interface LabelSet {
   readonly path: string;
   readonly universe_hash: string | null;
   readonly labels: ReadonlyMap<string, LabelValue>;
+  /** Grade of each yes (core or adjacent); old labels without grade count for P@5 only. */
+  readonly grades: ReadonlyMap<string, Grade>;
   /** Labels taken from cards of another universe whose content is identical here (U1-S2). */
   readonly migration: {
     readonly cards_hash: string;
@@ -95,7 +102,7 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     labeler?: string;
     universe_hash?: string | null;
     cards_hash?: string;
-    labels?: ReadonlyArray<LabelRow & { unit?: string }>;
+    labels?: ReadonlyArray<LabelRow & { unit?: string; grade?: string | null }>;
   };
   if (!json.labeler || !Array.isArray(json.labels)) {
     throw new Error(`${path}: expected { labeler, labels: [...] }`);
@@ -104,13 +111,26 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     .filter((row) => row.unit === undefined || row.unit === "topic")
     .toSorted((a, b) => (a.labeled_at ?? "").localeCompare(b.labeled_at ?? ""));
   const labels = new Map<string, LabelValue>();
+  const grades = new Map<string, Grade>();
   for (const row of rows) {
     if (!row.topic_id) throw new Error(`${path}: a topic label without topic_id`);
-    if (!LABEL_VALUES.has(row.label)) throw new Error(`${path}: unknown label ${row.label}`);
-    labels.set(row.topic_id, row.label as LabelValue);
+    // A graded judge may write core/adjacent as the label itself.
+    const graded = row.label === "core" || row.label === "adjacent" ? row.label : null;
+    const label = graded ? "yes" : row.label;
+    if (!LABEL_VALUES.has(label)) throw new Error(`${path}: unknown label ${row.label}`);
+    const grade = graded ?? row.grade ?? null;
+    if (grade !== null && grade !== "core" && grade !== "adjacent") {
+      throw new Error(`${path}: unknown grade ${grade}`);
+    }
+    if (grade !== null && label !== "yes") throw new Error(`${path}: a grade on a ${label} label`);
+    labels.set(row.topic_id, label as LabelValue);
+    if (grade) grades.set(row.topic_id, grade);
+    else grades.delete(row.topic_id);
   }
   const base = { labeler: json.labeler, path, universe_hash: json.universe_hash ?? null };
-  if (json.universe_hash === universe.universe_hash) return { ...base, labels, migration: null };
+  if (json.universe_hash === universe.universe_hash) {
+    return { ...base, labels, grades, migration: null };
+  }
   if (!migrateFrom) {
     throw new Error(
       `${path} labels universe ${json.universe_hash ?? "none"}, not ${universe.universe_hash}; pass its cards to migrate`,
@@ -130,6 +150,7 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
   return {
     ...base,
     labels: moved,
+    grades: new Map([...grades].filter(([topic]) => same.has(topic))),
     migration: { cards_hash: cardsHash, accepted: moved.size, dropped: labels.size - moved.size },
   };
 }
@@ -147,6 +168,10 @@ export function mergeLabelSets(sets: ReadonlyArray<LabelSet>): Array<LabelSet> {
             path: [prev.path, set.path].join(","),
             universe_hash: prev.universe_hash === set.universe_hash ? set.universe_hash : null,
             labels: new Map([...prev.labels, ...set.labels]),
+            grades: new Map([
+              ...[...prev.grades].filter(([topic]) => !set.labels.has(topic)),
+              ...set.grades,
+            ]),
             migration: set.migration ?? prev.migration,
           }
         : set,
@@ -177,6 +202,12 @@ interface ArmMetrics {
   readonly cutoffs: number;
   readonly p_at_5: number | null;
   readonly p_at_5_upper: number | null;
+  /** G@5: core 1, adjacent 0.5 per position over 5; null when some yes has no grade. */
+  readonly g_at_5: number | null;
+  readonly g_ci95_family: Interval;
+  readonly g_ci95_blocks: Interval;
+  /** Positions with a core yes over all positions. */
+  readonly core_share: number | null;
   readonly resolved_precision: number | null;
   readonly coverage: number | null;
   /** Positions whose topic has a label (yes, no, unsure or pending) over all positions. */
@@ -315,6 +346,7 @@ export async function runScore(options: ScoreOptions) {
             topicId: e.topic_id,
             family: topic.family_id,
             label: labels.labels.get(e.topic_id) ?? null,
+            grade: labels.grades.get(e.topic_id) ?? null,
             unavailable: b6 && member.late_popularity_only,
           };
         }),
@@ -368,9 +400,13 @@ export async function runScore(options: ScoreOptions) {
       const pointOf = (arm: string) => perArm[arm]!.p_at_5 ?? -1;
       const bestReference =
         references.toSorted((a, b) => pointOf(b) - pointOf(a) || (a < b ? -1 : 1))[0] ?? null;
+      const gOf = (arm: string) => perArm[arm]!.g_at_5 ?? -1;
+      const bestReferenceG =
+        references.toSorted((a, b) => gOf(b) - gOf(a) || (a < b ? -1 : 1))[0] ?? null;
       const comparisons = candidates.map((candidate) => ({
         candidate,
         best_reference: bestReference,
+        best_reference_g: bestReferenceG,
         against: references.map((reference) => {
           const a = armSlots.get(candidate)!;
           const b = armSlots.get(reference)!;
@@ -388,6 +424,20 @@ export async function runScore(options: ScoreOptions) {
               ),
             ),
             ci95_blocks: roundInterval(bootstrapDifference(a, b, blocks, (s) => s.cutoff)),
+            g_difference:
+              perArm[candidate]!.g_at_5 === null || perArm[reference]!.g_at_5 === null
+                ? null
+                : round4(perArm[candidate]!.g_at_5! - perArm[reference]!.g_at_5!),
+            g_ci_bonferroni_family: roundInterval(
+              bootstrapDifference(
+                a,
+                b,
+                familyDraws,
+                familyUnit,
+                0.05 / Math.max(1, references.length),
+                gradedCredit,
+              ),
+            ),
           };
         }),
       }));
@@ -408,6 +458,7 @@ export async function runScore(options: ScoreOptions) {
         families: new Set(cards.map((t) => t.family_id)).size,
         arms: perArm,
         best_reference: bestReference,
+        best_reference_g: bestReferenceG,
         comparisons,
         coverage: coverageReport(universe, cutoffs),
       };
@@ -534,6 +585,14 @@ function armMetrics(
     cutoffs: Object.keys(perCutoff).length,
     p_at_5: round4(weightedPrecision(slots, one)),
     p_at_5_upper: round4(weightedPrecision(slots, one, "upper")),
+    g_at_5: round4(weightedPrecision(slots, one, gradedCredit)),
+    g_ci95_family: roundInterval(
+      bootstrapPrecision(slots, ctx.familyDraws, familyUnit, 0.05, gradedCredit),
+    ),
+    g_ci95_blocks: roundInterval(
+      bootstrapPrecision(slots, ctx.blocks, (s) => s.cutoff, 0.05, gradedCredit),
+    ),
+    core_share: round4(weightedPrecision(slots, one, coreCredit)),
     resolved_precision: round4(weightedPrecision(resolved, one)),
     coverage: round4(slots.length === 0 ? null : filled.length / slots.length),
     labelled_share: round4(slots.length === 0 ? null : labelled.length / slots.length),
@@ -607,6 +666,7 @@ function renderReport(
     `- Rankings: \`${rankings.rankings_hash}\`; métricas: \`${hash}\``,
     `- Brazos: ${rankings.logical.arms.map((a) => `${a.name} (${a.method})`).join(", ")}`,
     "- P@5 con denominador 5: vacíos, «no sé», sin etiqueta, segunda aparición de la misma oportunidad (tema y corte) y, solo en la retrospectiva, puestos B6 del propio brazo valen 0. «Cota sup.» cuenta las dudas como sí. «P@5 con etiqueta» divide entre los puestos que tienen etiqueta (cobertura entre paréntesis).",
+    "- G@5 (etiqueta graduada): núcleo 1, adyacente 0,5 por puesto, sobre 5, con las mismas reglas de ceros, IC y Bonferroni; vacío si algún sí no tiene grado (etiquetas anteriores a la graduación). «Núcleo»: puestos con sí de núcleo sobre 5.",
     "- IC 95 % por bootstrap pareado de familias de temas; sensibilidad con bloques móviles de 7 días de calendario. Diferencias contra referencias con límite de Bonferroni. Familias nuevas: sin coincidencia con el registro congelado de desarrollo.",
     "",
   ];
@@ -624,12 +684,12 @@ function renderReport(
         "",
         `Etiquetas de las tarjetas: sí ${p.card_labels.yes}, no ${p.card_labels.no}, no sé ${p.card_labels.unsure}, pendiente ${p.card_labels.pending}, sin juicio ${p.card_labels.unlabelled}.${p.valid ? "" : " **Partición no válida: más del 10 % de «no sé».**"}`,
         "",
-        "| Brazo | P@5 | IC 95 % familias | IC 95 % bloques | Cota sup. | Prec. resueltas | P@5 con etiqueta (puestos etiquetados) | Cobertura | Duplicados | B6 | Familias nuevas (P, puestos) | Dep. semana previa incompleta |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Brazo | P@5 | IC 95 % familias | IC 95 % bloques | G@5 | IC 95 % familias (G) | Núcleo | Cota sup. | Prec. resueltas | P@5 con etiqueta (puestos etiquetados) | Cobertura | Duplicados | B6 | Familias nuevas (P, puestos) | Dep. semana previa incompleta |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
       );
       for (const [arm, m] of Object.entries(p.arms as Record<string, ArmMetrics>)) {
         lines.push(
-          `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.p_at_5_labelled)} (${pct(m.labelled_share)}) | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
+          `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.g_at_5)} | ${ivl(m.g_ci95_family)} | ${pct(m.core_share)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.p_at_5_labelled)} (${pct(m.labelled_share)}) | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
         );
       }
       lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "n/d"}.`, "");
@@ -637,12 +697,12 @@ function renderReport(
         lines.push(
           `Candidato ${c.candidate}:`,
           "",
-          "| Contra | Diferencia | IC 95 % familias | Bonferroni | IC 95 % bloques |",
-          "| --- | --- | --- | --- | --- |",
+          "| Contra | Diferencia P@5 | IC 95 % familias | Bonferroni | IC 95 % bloques | Diferencia G@5 | Bonferroni (G) |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
         );
         for (const a of c.against) {
           lines.push(
-            `| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} |`,
+            `| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} | ${pct(a.g_difference)} | ${ivl(a.g_ci_bonferroni_family)} |`,
           );
         }
         lines.push("");

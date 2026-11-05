@@ -13,6 +13,9 @@ export const LABELS_SCHEMA_VERSION = "earlyscript.editorial-labels/1";
 export const TOPIC_QUESTION =
   "¿SingulariDev haría un video sobre este tema en los próximos 7 días?";
 export const ITEM_QUESTION = "¿Este ítem trata algo sobre lo que SingulariDev haría un video?";
+/** One line under the question: what the two kinds of yes mean. */
+export const GRADE_HINT =
+  "Núcleo: fundadores y desarrolladores que construyen productos con agentes de IA y automatización. Adyacente: otro tema de IA o tecnología que valdría un video.";
 
 /** JSON safe inside a <script> element. */
 const scriptJson = (value: unknown) =>
@@ -36,6 +39,7 @@ export function renderCardsHtml(cards: ReadonlyArray<unknown>, meta: CardsPageMe
     cards_hash: meta.cardsHash,
     universe_hash: meta.universeHash,
     questions: { topic: TOPIC_QUESTION, item: ITEM_QUESTION },
+    grade_hint: GRADE_HINT,
     cards,
   };
   return `<!doctype html>
@@ -66,7 +70,8 @@ ol.headlines li { margin-bottom: 10px; }
 .question { font-weight:600; margin: 18px 0 12px; }
 .buttons { display:flex; flex-wrap:wrap; gap:8px; }
 button { font: inherit; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); padding:8px 14px; cursor:pointer; }
-button.sel-yes { border-color:var(--yes); color:var(--yes); font-weight:600; }
+button.sel-core, button.sel-adjacent { border-color:var(--yes); color:var(--yes); font-weight:600; }
+.hint { font-size:14px; color:var(--muted); margin: -6px 0 12px; }
 button.sel-no { border-color:var(--no); color:var(--no); font-weight:600; }
 button.sel-unsure { border-color:var(--unsure); color:var(--unsure); font-weight:600; }
 kbd { font-size:12px; border:1px solid var(--line); border-radius:4px; padding:0 4px; color:var(--muted); }
@@ -91,7 +96,7 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
   <button id="next">Siguiente →</button>
 </div>
 <div class="nav">
-  <span class="muted">Teclas: <kbd>s</kbd> sí · <kbd>n</kbd> no · <kbd>?</kbd> no sé · <kbd>←</kbd> <kbd>→</kbd> moverse</span>
+  <span class="muted">Teclas: <kbd>1</kbd> sí, núcleo · <kbd>2</kbd> sí, adyacente · <kbd>n</kbd> no · <kbd>?</kbd> no sé · <kbd>←</kbd> <kbd>→</kbd> moverse</span>
   <button id="export">Exportar etiquetas</button>
 </div>
 <div class="status" id="status"></div>
@@ -112,7 +117,9 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
     if (saved && typeof saved.index === "number") index = Math.min(Math.max(0, saved.index), cards.length - 1);
     if (saved && saved.labeler) document.getElementById("labeler").value = saved.labeler;
   } catch (e) { storageOk = false; }
-  var NAMES = { yes: "Sí", no: "No", unsure: "No sé" };
+  var NAMES = { core: "Sí, núcleo", adjacent: "Sí, adyacente", yes: "Sí", no: "No", unsure: "No sé" };
+  // An answer is core, adjacent, no or unsure; the export splits it into label and grade.
+  function choiceOf(saved) { return saved ? (saved.grade || saved.label) : null; }
   function save() {
     try {
       window.localStorage.setItem(storeKey, JSON.stringify({ labels: labels, index: index, labeler: labeler() }));
@@ -158,9 +165,10 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
       box.appendChild(list);
     }
     box.appendChild(el("div", { class: "question" }, card.question || data.questions[card.unit] || data.questions.topic));
+    box.appendChild(el("div", { class: "hint" }, data.grade_hint));
     var buttons = el("div", { class: "buttons" });
-    [["yes", "Sí", "s"], ["no", "No", "n"], ["unsure", "No sé", "?"]].forEach(function (b) {
-      var current = labels[card.card_id] && labels[card.card_id].label === b[0];
+    [["core", "Sí, núcleo", "1"], ["adjacent", "Sí, adyacente", "2"], ["no", "No", "n"], ["unsure", "No sé", "?"]].forEach(function (b) {
+      var current = choiceOf(labels[card.card_id]) === b[0];
       var button = el("button", { "data-label": b[0], class: current ? "sel-" + b[0] : "" });
       button.textContent = b[1] + " ";
       button.appendChild(el("kbd", null, b[2]));
@@ -169,11 +177,12 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
     });
     box.appendChild(buttons);
     var given = labels[card.card_id];
-    document.getElementById("status").textContent = given ? "Respuesta guardada: " + NAMES[given.label] : "";
+    document.getElementById("status").textContent = given ? "Respuesta guardada: " + NAMES[choiceOf(given)] : "";
   }
-  function answer(label) {
+  function answer(choice) {
     var card = cards[index];
-    labels[card.card_id] = { label: label, labeled_at: new Date().toISOString() };
+    var graded = choice === "core" || choice === "adjacent";
+    labels[card.card_id] = { label: graded ? "yes" : choice, grade: graded ? choice : null, labeled_at: new Date().toISOString() };
     if (index < cards.length - 1) index++;
     save();
     render();
@@ -188,7 +197,8 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
   }
   function exportLabels() {
     var rows = cards.filter(function (c) { return labels[c.card_id]; }).map(function (c) {
-      var row = { card_id: c.card_id, unit: c.unit, label: labels[c.card_id].label, labeled_at: labels[c.card_id].labeled_at };
+      var saved = labels[c.card_id];
+      var row = { card_id: c.card_id, unit: c.unit, label: saved.label, grade: saved.grade || null, labeled_at: saved.labeled_at };
       if (c.unit === "item") row.item_id = c.item_id; else row.topic_id = c.topic_id;
       if (c.cutoff) row.cutoff = c.cutoff;
       return row;
@@ -221,7 +231,8 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
     if (event.target && event.target.tagName === "INPUT") return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     var key = event.key;
-    if (key === "s" || key === "S") answer("yes");
+    if (key === "1") answer("core");
+    else if (key === "2") answer("adjacent");
     else if (key === "n" || key === "N") answer("no");
     else if (key === "?" || key === "¿" || key === "/") answer("unsure");
     else if (key === "ArrowLeft") move(-1);

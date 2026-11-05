@@ -73,7 +73,9 @@ export function judgeLabelsFile(options: {
           unit: "topic" as const,
           topic_id: card.topic_id,
           cutoff: card.cutoff,
-          label: l.label,
+          // A graded judge (v2) answers core/adjacent: a yes with its grade.
+          label: l.label === "core" || l.label === "adjacent" ? "yes" : l.label,
+          grade: l.label === "core" || l.label === "adjacent" ? l.label : null,
           reason: l.reason,
           key: l.key,
           call: l.call,
