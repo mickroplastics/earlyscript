@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off preferSchemaOverJson:off globalDate:off - offline tool.
 //   node src/tools/relevance-train.ts --sample sample.jsonl --labels labels.jsonl --cache <sqlite> \
-//     --models <dir> --out config/relevance.v1.json --report report.json \
+//     --models <dir> --out config/relevance.v2.json --report report.json \
 //     [--profile profile.json --query-instruction "<text>"] [--workers 3] [--calibration provisional|accepted]
 //     [--lambdas 0.03,0.1,0.3]
 // Trains the relevance probe on judge labels ("unsure" dropped) over the Qwen vectors of
