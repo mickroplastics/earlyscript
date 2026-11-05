@@ -617,3 +617,92 @@ const nightly = (harness: LabHarness) =>
 
 const nightlyConfigHash = (harness: LabHarness) =>
   nightly(harness).pipe(Effect.map((job) => job.configHash));
+
+it.live("approves a code candidate whose exact code was installed meanwhile (Sol's B4 repro)", () =>
+  withHarness((harness) =>
+    Effect.gen(function* () {
+      const changes = yield* EngineChangeService;
+      const experiments = yield* EngineExperimentService;
+      const promotion = yield* EnginePromotionService;
+      const active = yield* promotion.active;
+      const first = NodeFS.readFileSync(
+        NodePath.join(REPO_ROOT, "packages/trend-engine/src/rank.ts"),
+        "utf8",
+      ).split("\n");
+      const patch = [
+        "--- a/packages/trend-engine/src/rank.ts",
+        "+++ b/packages/trend-engine/src/rank.ts",
+        "@@ -1,2 +1,3 @@",
+        ` ${first[0]}`,
+        "+// sol harmless deployment test",
+        ` ${first[1]}`,
+        "",
+      ].join("\n");
+      const campaign = yield* changes.createCampaign({
+        projectId: TEST_PROJECT,
+        kind: "development",
+        budget: 3,
+        policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 1)),
+        actor: "miguel",
+      });
+      const created = yield* changes.createCandidate({
+        projectId: TEST_PROJECT,
+        threadId: "sol",
+        base: active.hash,
+        intent: "deployment",
+        hypothesis: "equivalent comment",
+        idempotencyKey: "sol-code",
+        change: { kind: "code", baseSourceHash: active.manifest.code.engine_source_hash, patch },
+      });
+      const queued = yield* changes.evaluate({
+        projectId: TEST_PROJECT,
+        threadId: "sol",
+        candidate: created.candidate.manifestHash,
+        campaignId: campaign.campaignId,
+        idempotencyKey: "sol-eval",
+      });
+      yield* experiments.runDue;
+      const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
+      const request = yield* promotion.request({
+        projectId: TEST_PROJECT,
+        threadId: "sol",
+        candidate: created.candidate.manifestHash,
+        reportId: job.reportId!,
+        expectedActive: active.hash,
+        reason: "deploy",
+      });
+      // The same code installed in another engine directory, as Sol simulated it.
+      const deployed = NodePath.join(harness.dir, "deployed");
+      const pkg = NodePath.join(deployed, "packages/trend-engine");
+      NodeFS.mkdirSync(pkg, { recursive: true });
+      for (const name of ["src", "config"])
+        NodeFS.cpSync(
+          NodePath.join(REPO_ROOT, "packages/trend-engine", name),
+          NodePath.join(pkg, name),
+          { recursive: true },
+        );
+      NodeFS.copyFileSync(
+        NodePath.join(REPO_ROOT, "packages/trend-engine/package.json"),
+        NodePath.join(pkg, "package.json"),
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(pkg, "src/rank.ts"),
+        `${first[0]}\n// sol harmless deployment test\n${first.slice(1).join("\n")}`,
+      );
+      (harness.options as { engineRoot: string | null }).engineRoot = deployed;
+      expect((yield* promotion.productContext).engineSourceHash).toBe(
+        created.candidate.engineSourceHash,
+      );
+      const activation = yield* promotion.approve({
+        requestId: request.requestId,
+        actor: "miguel",
+        reason: "reviewed and deployed",
+      });
+      expect(activation).toMatchObject({
+        kind: "promote",
+        manifest_hash: created.candidate.manifestHash,
+      });
+      expect((yield* promotion.history).map((row) => row.kind)).toEqual(["promote", "install"]);
+    }),
+  ),
+);

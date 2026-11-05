@@ -538,7 +538,8 @@ const make = Effect.gen(function* () {
     if (current.hash !== request.expected_active_hash) {
       return yield* markStale(request.request_id, "The active engine changed after the request.");
     }
-    const reasons = staleReasons(candidate, yield* productContext);
+    const context = yield* productContext;
+    const reasons = staleReasons(candidate, context);
     const inputs = reasons.filter((reason) => reason !== "engine-code");
     if (inputs.length > 0) {
       return yield* markStale(
@@ -546,7 +547,10 @@ const make = Effect.gen(function* () {
         `The product's ${inputs.join(", ")} changed since the candidate was made.`,
       );
     }
-    if (reasons.includes("engine-code")) {
+    // Another installed engine stales the candidate, unless what was installed is exactly the
+    // candidate's own code: then the artifact and the installed engine are the same sources.
+    const sameCode = context.engineSourceHash === candidate.code.engine_source_hash;
+    if (reasons.includes("engine-code") && !sameCode) {
       return yield* markStale(
         request.request_id,
         "Another engine was installed since the candidate was made.",
