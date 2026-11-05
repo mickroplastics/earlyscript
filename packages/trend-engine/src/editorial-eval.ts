@@ -18,11 +18,12 @@ import { dot } from "./cluster.ts";
 import { readCorpus } from "./corpus.ts";
 import { DAY_MS, dayStart, daysBefore } from "./days.ts";
 import { renderCardsHtml } from "./editorial-cards-html.ts";
-import { seededShuffle } from "./editorial-stats.ts";
+import { seededRandom, seededShuffle } from "./editorial-stats.ts";
 import { createLocalEmbedder } from "./embed/local.ts";
 import { defaultModelDir } from "./embed/model.ts";
 import { type Embedder, embeddingSpec } from "./embed/spec.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
+import type { LoadedRelevance } from "./relevance.ts";
 import {
   DEFAULT_DATA_DIR,
   type EmittedTrend,
@@ -56,6 +57,7 @@ export const EVAL_SOURCES: ReadonlyArray<SourceId> = [
 export const SAME_TOPIC_RULE = {
   shared_items_min_fraction: 0.5,
   centroid_cosine_min: 0.8,
+  centroid_cosine_strict: true,
   rare_terms_min_shared: 2,
   rare_term_max_item_share: 0.01,
   rare_term_window_days: 30,
@@ -281,6 +283,8 @@ export interface PoolOptions {
   readonly cardSeed?: number;
   /** Family registries of earlier universes (`families.json`), by name: dev, train… */
   readonly registries?: Readonly<Record<string, string>>;
+  /** Replaces the relevance model file a configuration names, for tests (its hash must match). */
+  readonly relevanceModel?: LoadedRelevance;
   /** Replaces the local Qwen embedder, for tests. The pool disposes it. */
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
@@ -376,7 +380,9 @@ export function sameTopic(
     for (const id of small.itemIds) if (large.itemIds.has(id)) shared++;
     if (shared >= SAME_TOPIC_RULE.shared_items_min_fraction * small.itemIds.size) return true;
   }
-  if (dot(a.centroid, b.centroid) < SAME_TOPIC_RULE.centroid_cosine_min) return false;
+  // Strictly above, as the v2 emit deduplication (rank.ts dedupe): within a run signals share no
+  // items, so every pair this rule merges in one ranking was already folded by v2 at emission.
+  if (dot(a.centroid, b.centroid) <= SAME_TOPIC_RULE.centroid_cosine_min) return false;
   const bTerms = new Set(b.terms);
   const sharedRare = new Set(a.terms.filter((t) => bTerms.has(t) && rare(t)));
   return sharedRare.size >= SAME_TOPIC_RULE.rare_terms_min_shared;
@@ -1125,6 +1131,7 @@ async function poolRun(args: {
     config,
     embedder: args.embedder,
     stack: args.stack,
+    ...(options.relevanceModel ? { relevanceModel: options.relevanceModel } : {}),
     log: args.log,
     ...(options.allowUnverifiedCorpus ? { allowUnverifiedCorpus: true } : {}),
     // The stack replay keeps mutating its signals at later cutoffs: copy them now.
@@ -1217,6 +1224,42 @@ export function readRankings(path: string): Rankings {
  * N cards are taken round-robin over the families (families and their topics shuffled with the
  * seed), so a recurrent family does not fill the sample, and the chosen cards are shuffled again.
  */
+/**
+ * Ten (or `count`) cards shown twice to the same labeler, blind (P1 consistency, Opus M3): the
+ * copy has the same content and another card_id, and lands at least `gap` cards after its
+ * original, at a seeded place. `score` scores the first showing and uses the pair only for
+ * self-consistency.
+ */
+export function withRepeats(
+  cards: ReadonlyArray<TopicCard>,
+  options: { readonly count: number; readonly seed: number; readonly gap?: number },
+): Array<TopicCard> {
+  const gap = options.gap ?? 20;
+  if (options.count === 0) return [...cards];
+  if (cards.length < gap + 2) throw new Error(`repeats need more than ${gap + 1} cards`);
+  const random = seededRandom(options.seed);
+  const deck = [...cards];
+  const eligible = seededShuffle(
+    cards.slice(0, cards.length - gap - 1).map((c) => c.card_id),
+    options.seed,
+  ).slice(0, options.count);
+  for (const id of eligible) {
+    const at = deck.findIndex((c) => c.card_id === id);
+    const original = deck[at]!;
+    const lowest = at + gap + 1;
+    const place = lowest + Math.floor(random() * (deck.length - lowest + 1));
+    deck.splice(place, 0, { ...original, card_id: repeatCardId(original.card_id) });
+  }
+  return deck;
+}
+
+export const repeatCardId = (cardId: string) => `card_${sha256(`repeat\n${cardId}`).slice(7, 19)}`;
+
+export const LABEL_RUBRIC_PATH = NodePath.join(
+  REFERENCE_CONFIG_DIR,
+  "editorial-eval/label-rubric.v1.md",
+);
+
 export function buildTopicCards(
   universe: Universe,
   options: {
@@ -1495,8 +1538,10 @@ export function writeCardSet(
   cards: ReadonlyArray<Card>,
   outDir: string,
   name: string,
-  meta: { readonly universeHash?: string; readonly title: string },
-): { jsonl: string; html: string; cardsHash: string } {
+  meta: { readonly universeHash?: string; readonly title: string; readonly rubricPath?: string },
+): { jsonl: string; html: string; cardsHash: string; rubricHash: string } {
+  const rubricPath = meta.rubricPath ?? LABEL_RUBRIC_PATH;
+  const rubric = NodeFS.readFileSync(rubricPath, "utf8");
   NodeFS.mkdirSync(outDir, { recursive: true });
   const text = cards.map((card) => `${JSON.stringify(card)}\n`).join("");
   const cardsHash = sha256(text);
@@ -1510,9 +1555,11 @@ export function writeCardSet(
       title: meta.title,
       cardsHash,
       universeHash: meta.universeHash ?? null,
+      rubric,
+      rubricHash: sha256(rubric),
     }),
   );
-  return { jsonl, html, cardsHash };
+  return { jsonl, html, cardsHash, rubricHash: sha256(rubric) };
 }
 
 export function readCardsJsonl(path: string): Array<Card> {

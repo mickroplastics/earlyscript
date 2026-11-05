@@ -7,6 +7,8 @@ import * as NodePath from "node:path";
 
 import { parseCutoffList } from "./backtest.ts";
 import {
+  type Credit,
+  slotCredit,
   coreCredit,
   type Grade,
   gradedCredit,
@@ -74,6 +76,8 @@ export interface LabelSet {
   readonly labels: ReadonlyMap<string, LabelValue>;
   /** Grade of each yes (core or adjacent); old labels without grade count for P@5 only. */
   readonly grades: ReadonlyMap<string, Grade>;
+  /** Blind repeats (a card_id other than the topic's own): topic -> the repeat's answer. */
+  readonly repeats: ReadonlyMap<string, { label: LabelValue; grade: Grade | null }>;
   /** Labels taken from cards of another universe whose content is identical here (U1-S2). */
   readonly migration: {
     readonly cards_hash: string;
@@ -103,6 +107,7 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     universe_hash?: string | null;
     cards_hash?: string;
     labels?: ReadonlyArray<LabelRow & { unit?: string; grade?: string | null }>;
+    rubric_sha256?: string;
   };
   if (!json.labeler || !Array.isArray(json.labels)) {
     throw new Error(`${path}: expected { labeler, labels: [...] }`);
@@ -112,6 +117,8 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     .toSorted((a, b) => (a.labeled_at ?? "").localeCompare(b.labeled_at ?? ""));
   const labels = new Map<string, LabelValue>();
   const grades = new Map<string, Grade>();
+  const repeats = new Map<string, { label: LabelValue; grade: Grade | null }>();
+  const cardOf = new Map(universe.logical.topics.map((t) => [t.topic_id, t.card_id]));
   for (const row of rows) {
     if (!row.topic_id) throw new Error(`${path}: a topic label without topic_id`);
     // A graded judge may write core/adjacent as the label itself.
@@ -123,13 +130,18 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
       throw new Error(`${path}: unknown grade ${grade}`);
     }
     if (grade !== null && label !== "yes") throw new Error(`${path}: a grade on a ${label} label`);
+    // A blind repeat carries the topic with another card_id: it never enters the metrics.
+    if (row.card_id && cardOf.has(row.topic_id) && row.card_id !== cardOf.get(row.topic_id)) {
+      repeats.set(row.topic_id, { label: label as LabelValue, grade });
+      continue;
+    }
     labels.set(row.topic_id, label as LabelValue);
     if (grade) grades.set(row.topic_id, grade);
     else grades.delete(row.topic_id);
   }
   const base = { labeler: json.labeler, path, universe_hash: json.universe_hash ?? null };
   if (json.universe_hash === universe.universe_hash) {
-    return { ...base, labels, grades, migration: null };
+    return { ...base, labels, grades, repeats, migration: null };
   }
   if (!migrateFrom) {
     throw new Error(
@@ -151,6 +163,7 @@ export function readLabels(path: string, universe: Universe, migrateFrom?: strin
     ...base,
     labels: moved,
     grades: new Map([...grades].filter(([topic]) => same.has(topic))),
+    repeats: new Map([...repeats].filter(([topic]) => same.has(topic))),
     migration: { cards_hash: cardsHash, accepted: moved.size, dropped: labels.size - moved.size },
   };
 }
@@ -168,6 +181,7 @@ export function mergeLabelSets(sets: ReadonlyArray<LabelSet>): Array<LabelSet> {
             path: [prev.path, set.path].join(","),
             universe_hash: prev.universe_hash === set.universe_hash ? set.universe_hash : null,
             labels: new Map([...prev.labels, ...set.labels]),
+            repeats: new Map([...prev.repeats, ...set.repeats]),
             grades: new Map([
               ...[...prev.grades].filter(([topic]) => !set.labels.has(topic)),
               ...set.grades,
@@ -190,12 +204,29 @@ export interface ScoreOptions {
   readonly dev?: ReadonlyArray<string>;
   readonly retro?: ReadonlyArray<string>;
   readonly prospective?: ReadonlyArray<string>;
+  /** More named partitions (septiembre, octubre-noviembre…), reported like the others. */
+  readonly partitions?: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly candidates?: ReadonlyArray<string>;
   readonly references?: ReadonlyArray<string>;
   readonly ledgerPath?: string;
   readonly replicates?: number;
   readonly seed?: number;
   readonly blockDays?: number;
+}
+
+/**
+ * Binary precision over the positions of some families, conditional (not over 5): doubts,
+ * duplicates and B6 count 0. Not evaluable without positions or without the registry it needs.
+ */
+interface FamilySubset {
+  readonly families: number;
+  readonly positions: number;
+  readonly numerator: number;
+  readonly precision: number | null;
+  readonly status:
+    | "evaluable"
+    | "no evaluable: sin puestos"
+    | "no evaluable: falta el registro de entrenamiento";
 }
 
 interface ArmMetrics {
@@ -208,6 +239,14 @@ interface ArmMetrics {
   readonly g_ci95_blocks: Interval;
   /** Positions with a core yes over all positions. */
   readonly core_share: number | null;
+  /** Descriptive sensitivity of G@5 to the adjacent weight (0.3 and 0.7 instead of 0.5). */
+  readonly g_at_5_adjacent_0_3: number | null;
+  readonly g_at_5_adjacent_0_7: number | null;
+  /** G@5 with the positions of the family that adds the most graded credit set to 0. */
+  readonly g_at_5_without_top_family: {
+    readonly family: string | null;
+    readonly value: number | null;
+  };
   readonly resolved_precision: number | null;
   readonly coverage: number | null;
   /** Positions whose topic has a label (yes, no, unsure or pending) over all positions. */
@@ -218,21 +257,9 @@ interface ArmMetrics {
   readonly counts: Record<string, number>;
   readonly duplicates_at_5: number;
   readonly families: number;
-  readonly new_families: {
-    readonly families: number;
-    readonly positions: number;
-    readonly precision: number | null;
-  };
-  readonly unseen_in_dev_and_train: {
-    readonly families: number;
-    readonly positions: number;
-    readonly precision: number | null;
-  };
-  readonly recurrent_families: {
-    readonly families: number;
-    readonly positions: number;
-    readonly precision: number | null;
-  };
+  readonly new_families: FamilySubset;
+  readonly unseen_in_dev_and_train: FamilySubset;
+  readonly recurrent_families: FamilySubset;
   readonly ci95_family: Interval;
   readonly ci95_blocks: Interval;
   readonly source_share_at_5: Record<string, number>;
@@ -271,6 +298,7 @@ export async function runScore(options: ScoreOptions) {
   add("dev", options.dev);
   add("retro", options.retro);
   add("prospective", options.prospective);
+  for (const [name, days] of Object.entries(options.partitions ?? {})) add(name, days);
   if (Object.keys(partitions).length === 0) partitions["all"] = [...cutoffInfo.keys()].toSorted();
 
   // A sealed evaluation is checked whole (U1-B2); prospective cutoffs then count only when their
@@ -362,9 +390,8 @@ export async function runScore(options: ScoreOptions) {
         byPartition[name] = { cutoffs: 0 };
         continue;
       }
-      const b6Cutoffs = new Set(
-        name === "retro" || name === "test" ? (partitions["retro"] ?? []) : [],
-      );
+      // B6 applies to every retrospective cutoff, whatever partition reports it.
+      const b6Cutoffs = new Set(partitions["retro"] ?? []);
       const armSlots = new Map(
         arms.map((arm) => [
           arm,
@@ -394,6 +421,7 @@ export async function runScore(options: ScoreOptions) {
           blocks,
           seenInDev: name === "dev" ? () => false : seenInDev,
           seenInTrain,
+          trainRegistry: Boolean(registries["train"]),
           universe,
         });
       }
@@ -428,6 +456,7 @@ export async function runScore(options: ScoreOptions) {
               perArm[candidate]!.g_at_5 === null || perArm[reference]!.g_at_5 === null
                 ? null
                 : round4(perArm[candidate]!.g_at_5! - perArm[reference]!.g_at_5!),
+            g_difference_without_top_family: differenceWithoutTopFamily(a, b),
             g_ci_bonferroni_family: roundInterval(
               bootstrapDifference(
                 a,
@@ -455,6 +484,7 @@ export async function runScore(options: ScoreOptions) {
         card_labels: status,
         unsure_share: cards.length === 0 ? null : round4(status.unsure / cards.length),
         valid: name === "dev" || cards.length === 0 || status.unsure / cards.length <= 0.1,
+        consistency: consistency(labels, cutoffs, topics),
         families: new Set(cards.map((t) => t.family_id)).size,
         arms: perArm,
         best_reference: bestReference,
@@ -527,6 +557,7 @@ function armMetrics(
     readonly blocks: Draws;
     readonly seenInDev: (topicId: string) => boolean;
     readonly seenInTrain: (topicId: string) => boolean | null;
+    readonly trainRegistry: boolean;
     readonly universe: Universe;
   },
 ): ArmMetrics {
@@ -557,14 +588,23 @@ function armMetrics(
   const counted = slots.filter((s) => s.zero === null);
   const labelled = slots.filter((s) => s.label !== null && s.zero !== "empty");
   const resolved = counted.filter((s) => s.label === "yes" || s.label === "no");
-  const subset = (keep: (s: Slot) => boolean) => {
-    const xs = counted.filter((s) => s.family !== null && keep(s));
+  const subset = (keep: (s: Slot) => boolean, needsTrain = false): FamilySubset => {
+    const xs = slots.filter((s) => s.family !== null && keep(s));
+    const status =
+      needsTrain && !ctx.trainRegistry
+        ? "no evaluable: falta el registro de entrenamiento"
+        : xs.length === 0
+          ? "no evaluable: sin puestos"
+          : "evaluable";
     return {
       families: new Set(xs.map((s) => s.family)).size,
       positions: xs.length,
-      precision: round4(weightedPrecision(xs, one)),
+      numerator: xs.reduce((sum, s) => sum + slotCredit(s, "strict"), 0),
+      precision: status === "evaluable" ? round4(weightedPrecision(xs, one)) : null,
+      status,
     };
   };
+  const top = topFamily(slots, gradedCredit);
   const topics = new Map(ctx.universe.logical.topics.map((t) => [t.topic_id, t]));
   const cutoffs = new Map(ctx.universe.logical.cutoffs.map((c) => [c.cutoff, c]));
   const share: Record<string, number> = {};
@@ -593,6 +633,12 @@ function armMetrics(
       bootstrapPrecision(slots, ctx.blocks, (s) => s.cutoff, 0.05, gradedCredit),
     ),
     core_share: round4(weightedPrecision(slots, one, coreCredit)),
+    g_at_5_adjacent_0_3: round4(weightedPrecision(slots, one, gradedWith(0.3))),
+    g_at_5_adjacent_0_7: round4(weightedPrecision(slots, one, gradedWith(0.7))),
+    g_at_5_without_top_family: {
+      family: top,
+      value: round4(weightedPrecision(slots, one, (x) => (x.family === top ? 0 : gradedCredit(x)))),
+    },
     resolved_precision: round4(weightedPrecision(resolved, one)),
     coverage: round4(slots.length === 0 ? null : filled.length / slots.length),
     labelled_share: round4(slots.length === 0 ? null : labelled.length / slots.length),
@@ -605,6 +651,7 @@ function armMetrics(
     recurrent_families: subset((s) => ctx.seenInDev(s.topicId!)),
     unseen_in_dev_and_train: subset(
       (s) => !ctx.seenInDev(s.topicId!) && ctx.seenInTrain(s.topicId!) === false,
+      true,
     ),
     ci95_family: roundInterval(bootstrapPrecision(slots, ctx.familyDraws, familyUnit)),
     ci95_blocks: roundInterval(bootstrapPrecision(slots, ctx.blocks, (s) => s.cutoff)),
@@ -614,6 +661,89 @@ function armMetrics(
         .map(([k, v]) => [k, round4(v / Math.max(1, filled.length))!]),
     ),
     incomplete_prev_week_share: round4(filled.length === 0 ? null : incomplete / filled.length),
+  };
+}
+
+/** G@5 credit with another adjacent weight (sensitivity only). */
+const gradedWith =
+  (adjacent: number): Credit =>
+  (slot) => {
+    const credit = gradedCredit(slot);
+    return credit === 0.5 ? adjacent : credit;
+  };
+
+/** The family whose positions add the most credit (ties: smaller id); null without credit. */
+function topFamily(slots: ReadonlyArray<Slot>, credit: Credit): string | null {
+  const byFamily = new Map<string, number>();
+  for (const s of slots) {
+    if (s.family === null) continue;
+    const c = credit(s);
+    if (Number.isNaN(c)) return null;
+    byFamily.set(s.family, (byFamily.get(s.family) ?? 0) + c);
+  }
+  const best = [...byFamily]
+    .filter(([, v]) => v > 0)
+    .toSorted(([fa, a], [fb, b]) => b - a || (fa < fb ? -1 : 1))[0];
+  return best ? best[0] : null;
+}
+
+/**
+ * G@5 difference a - b with the family that adds the most to it zeroed in both arms (Opus U4):
+ * a gain that rests on one recurrent family is not a ranking that finds topics.
+ */
+function differenceWithoutTopFamily(a: ReadonlyArray<Slot>, b: ReadonlyArray<Slot>) {
+  const contribution = new Map<string, number>();
+  for (const [slots, sign] of [
+    [a, 1],
+    [b, -1],
+  ] as const) {
+    for (const s of slots) {
+      if (s.family === null) continue;
+      const c = gradedCredit(s);
+      if (Number.isNaN(c)) return { family: null, value: null };
+      contribution.set(s.family, (contribution.get(s.family) ?? 0) + sign * c);
+    }
+  }
+  const family =
+    [...contribution]
+      .filter(([, v]) => v > 0)
+      .toSorted(([fa, x], [fb, y]) => y - x || (fa < fb ? -1 : 1))[0]?.[0] ?? null;
+  const without: Credit = (s) => (s.family === family ? 0 : gradedCredit(s));
+  const ga = weightedPrecision(a, () => 1, without);
+  const gb = weightedPrecision(b, () => 1, without);
+  return { family, value: ga === null || gb === null ? null : round4(ga - gb) };
+}
+
+/**
+ * Self-consistency on the blind repeats (P1, Opus M3): the first showing scores, the repeat only
+ * measures agreement: binary (yes, no, unsure), graded (core, adjacent, no, unsure) and core
+ * against the rest.
+ */
+function consistency(
+  labels: LabelSet,
+  cutoffs: ReadonlyArray<string>,
+  topics: ReadonlyMap<string, { readonly cutoff: string }>,
+) {
+  const pairs = [...labels.repeats].filter(
+    ([topic]) => labels.labels.has(topic) && cutoffs.includes(topics.get(topic)?.cutoff ?? ""),
+  );
+  const classOf = (label: LabelValue, grade: Grade | null) =>
+    label === "yes" ? (grade ?? "yes") : label;
+  const agree = (f: (label: LabelValue, grade: Grade | null) => string) =>
+    pairs.length === 0
+      ? null
+      : round4(
+          pairs.filter(
+            ([topic, r]) =>
+              f(labels.labels.get(topic)!, labels.grades.get(topic) ?? null) ===
+              f(r.label, r.grade),
+          ).length / pairs.length,
+        );
+  return {
+    pairs: pairs.length,
+    binary: agree((label) => label),
+    graded: agree(classOf),
+    core_vs_rest: agree((label, grade) => (classOf(label, grade) === "core" ? "core" : "rest")),
   };
 }
 
@@ -692,17 +822,37 @@ function renderReport(
           `| ${arm} | ${pct(m.p_at_5)} | ${ivl(m.ci95_family)} | ${ivl(m.ci95_blocks)} | ${pct(m.g_at_5)} | ${ivl(m.g_ci95_family)} | ${pct(m.core_share)} | ${pct(m.p_at_5_upper)} | ${pct(m.resolved_precision)} | ${pct(m.p_at_5_labelled)} (${pct(m.labelled_share)}) | ${pct(m.coverage)} | ${m.duplicates_at_5} | ${m.counts["unavailable_at_cutoff"]} | ${pct(m.new_families.precision)} (${m.new_families.positions}) | ${pct(m.incomplete_prev_week_share)} |`,
         );
       }
-      lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "n/d"}.`, "");
+      lines.push(
+        "",
+        `Mejor referencia (punto): P@5 ${p.best_reference ?? "n/d"}, G@5 ${p.best_reference_g ?? "n/d"}.`,
+        "",
+        "| Brazo | G@5 (adyacente 0,3) | G@5 (adyacente 0,7) | G@5 sin la familia que más aporta | Familias nuevas (dev y entrenamiento): aciertos / puestos, familias, P |",
+        "| --- | --- | --- | --- | --- |",
+      );
+      for (const [arm, m] of Object.entries(p.arms as Record<string, ArmMetrics>)) {
+        const n = m.unseen_in_dev_and_train;
+        lines.push(
+          `| ${arm} | ${pct(m.g_at_5_adjacent_0_3)} | ${pct(m.g_at_5_adjacent_0_7)} | ${pct(m.g_at_5_without_top_family.value)} | ${n.status === "evaluable" ? `${n.numerator} / ${n.positions}, ${n.families}, ${pct(n.precision)}` : n.status} |`,
+        );
+      }
+      const c = p.consistency;
+      lines.push(
+        "",
+        c.pairs > 0
+          ? `Consistencia de ${labeler} consigo mismo (${c.pairs} repeticiones a ciegas, fuera de las métricas): binaria ${pct(c.binary)}, graduada ${pct(c.graded)}, núcleo frente al resto ${pct(c.core_vs_rest)}.`
+          : "Sin repeticiones a ciegas en esta partición.",
+        "",
+      );
       for (const c of p.comparisons as Array<any>) {
         lines.push(
           `Candidato ${c.candidate}:`,
           "",
-          "| Contra | Diferencia P@5 | IC 95 % familias | Bonferroni | IC 95 % bloques | Diferencia G@5 | Bonferroni (G) |",
-          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| Contra | Diferencia P@5 | IC 95 % familias | Bonferroni | IC 95 % bloques | Diferencia G@5 | Bonferroni (G) | G@5 sin la familia que más aporta a la diferencia |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
         );
         for (const a of c.against) {
           lines.push(
-            `| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} | ${pct(a.g_difference)} | ${ivl(a.g_ci_bonferroni_family)} |`,
+            `| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} | ${pct(a.g_difference)} | ${ivl(a.g_ci_bonferroni_family)} | ${pct(a.g_difference_without_top_family.value)} |`,
           );
         }
         lines.push("");

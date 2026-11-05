@@ -8,6 +8,10 @@ import type { Story } from "./backtest-label.ts";
 import { readCorpus } from "./corpus.ts";
 import { DAY_MS, dayStart } from "./days.ts";
 import { captureDay } from "./editorial-capture.ts";
+import { readRun } from "./check.ts";
+import { dedupe } from "./rank.ts";
+import { parseRelevanceModel, RELEVANCE_SCHEMA_VERSION } from "./relevance.ts";
+import { DEFAULT_CONFIG_PATH, loadConfig, runEngine } from "./run.ts";
 import {
   appendLedger,
   assertSealed,
@@ -16,6 +20,9 @@ import {
   lateOnly,
   type Rankings,
   readRegistry,
+  repeatCardId,
+  sameTopic,
+  withRepeats,
   groupMembers,
   keywordMatcher,
   parseArm,
@@ -1033,5 +1040,237 @@ describe("cross-day duplicate ids in the prospective capture", () => {
         untilDay: "2026-10-11",
       }),
     ).resolves.toBeDefined();
+  });
+});
+
+/** A probe that scores texts with `word` high (as relevance.test.ts does). */
+async function wordProbe(word: string) {
+  const { config } = loadConfig(DEFAULT_CONFIG_PATH);
+  const [direction] = await fingerprintEmbedder().embed([word]);
+  return parseRelevanceModel(
+    new TextEncoder().encode(
+      JSON.stringify({
+        schema_version: RELEVANCE_SCHEMA_VERSION,
+        model_id: "relevance.test",
+        method: "test",
+        embedding: {
+          model: config.embedder.model,
+          revision: config.embedder.revision,
+          dtype: config.embedder.dtype,
+          pooling: config.embedder.pooling,
+        },
+        weights: [...direction!].map((w) => w * 12),
+        bias: -3,
+        threshold: 0.5,
+        training: {},
+        cv: {},
+      }),
+    ),
+  );
+}
+
+describe("council round 2a (regressions)", () => {
+  it("repeats ten cards blind, at least 20 apart, and keeps them out of the metrics", async () => {
+    const cards = Array.from({ length: 40 }, (_, k) => ({
+      card_id: `card_${k}`,
+      unit: "topic" as const,
+      topic_id: `t${k}`,
+      cutoff: "2026-10-20",
+      terms: [`term${k}`],
+      headlines: [],
+    }));
+    const deck = withRepeats(cards, { count: 10, seed: 7 });
+    expect(deck).toHaveLength(50);
+    expect(withRepeats(cards, { count: 10, seed: 7 })).toEqual(deck);
+    const repeats = deck.filter((c) => !cards.some((o) => o.card_id === c.card_id));
+    expect(repeats).toHaveLength(10);
+    for (const r of repeats) {
+      const original = deck.findIndex((c) => c.topic_id === r.topic_id);
+      const copy = deck.findIndex((c) => c.card_id === r.card_id);
+      expect(copy - original).toBeGreaterThan(20);
+      expect({ ...r, card_id: "" }).toEqual({ ...deck[original]!, card_id: "" });
+    }
+
+    const root = tempDir("u1-repeats");
+    const e = miniEvaluation(
+      root,
+      [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
+      { "2026-10-20": { R: [["a", "A"]] } },
+    );
+    const labels = NodePath.join(root, "labels.json");
+    NodeFS.writeFileSync(
+      labels,
+      JSON.stringify({
+        labeler: "m",
+        universe_hash: e.universe.universe_hash,
+        labels: [
+          { card_id: "card_A", topic_id: "A", label: "yes", grade: "core", labeled_at: "1" },
+          // The blind repeat, answered later and differently: never a metric.
+          {
+            card_id: repeatCardId("card_A"),
+            topic_id: "A",
+            label: "yes",
+            grade: "adjacent",
+            labeled_at: "2",
+          },
+        ],
+      }),
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [labels],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    });
+    const dev = (out.metrics.logical.results["m"] as any).dev;
+    expect(dev.arms.R.g_at_5).toBeCloseTo(0.2);
+    expect(dev.consistency).toEqual({ pairs: 1, binary: 1, graded: 0, core_vs_rest: 0 });
+  });
+
+  it("reports the sensitivity of G@5, G@5 without the top family and new families honestly", async () => {
+    const root = tempDir("u1-sensitivity");
+    const e = miniEvaluation(
+      root,
+      [
+        { id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] },
+        { id: "B", family: "G", members: [{ config: "cfg-R", trend: "b" }] },
+      ],
+      {
+        "2026-10-20": {
+          R: [
+            ["a", "A"],
+            ["b", "B"],
+          ],
+        },
+      },
+    );
+    const labels = NodePath.join(root, "labels.json");
+    NodeFS.writeFileSync(
+      labels,
+      JSON.stringify({
+        labeler: "m",
+        universe_hash: e.universe.universe_hash,
+        labels: [
+          { topic_id: "A", label: "yes", grade: "core" },
+          { topic_id: "B", label: "yes", grade: "adjacent" },
+        ],
+      }),
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [labels],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    });
+    const arm = (out.metrics.logical.results["m"] as any).dev.arms.R;
+    expect(arm.g_at_5).toBeCloseTo(0.3);
+    expect(arm.g_at_5_adjacent_0_3).toBeCloseTo(0.26);
+    expect(arm.g_at_5_adjacent_0_7).toBeCloseTo(0.34);
+    expect(arm.g_at_5_without_top_family).toEqual({ family: "F", value: 0.1 });
+    // Without a training registry, "new to dev and training" cannot be evaluated.
+    expect(arm.unseen_in_dev_and_train.status).toBe(
+      "no evaluable: falta el registro de entrenamiento",
+    );
+  });
+
+  it("computes F's novelty memory inside each run: the same cut alone, joined, reused or reordered", async () => {
+    const s = await poolSetup();
+    const probe = await wordProbe("compiler");
+    const base = testConfig();
+    const fConfig = {
+      ...base,
+      stage: { ...base.stage, coverage_rule: "equivalent" as const },
+      relevance: {
+        model: "relevance.test.json",
+        sha256: probe.hash,
+        item_min: 0.5,
+        signal_min: 0.5,
+        profile_gate: false,
+        aggregate: "share" as const,
+        min_relevant_distinct: 1,
+        novelty: { lookback_days: 7, top: 5, growth_ratio: 0 },
+      },
+      rank: {
+        baseline: base.rank.baseline,
+        weighted: {
+          method: "weighted_sum.v0.02",
+          weights: { growth: 0.25, relevance: 1, log_items_7d: 0.15 },
+        },
+      },
+      emit: { ...base.emit, dedup_cosine: 0.8 },
+    };
+    const configPath = NodePath.join(s.root, "f.json");
+    NodeFS.writeFileSync(configPath, JSON.stringify(fConfig));
+    const pool = (out: string, cutoffs: Array<string>) =>
+      runPool({
+        corpusDir: s.corpusDir,
+        profilePath: s.profilePath,
+        outDir: NodePath.join(s.root, out),
+        cutoffs,
+        arms: [parseArm(`F=${configPath}:weighted`)],
+        relevanceModel: probe,
+        embedder: fingerprintEmbedder(),
+      });
+    const cut = "2026-10-10";
+    const runOf = (r: Awaited<ReturnType<typeof pool>>) =>
+      r.universe.runs.find((x) => x.cutoff === cut)!;
+    const logical = (r: Awaited<ReturnType<typeof pool>>) =>
+      readRun(runOf(r).run_dir).record.logical_hash;
+    const alone = await pool("alone", [cut]);
+    const joined = await pool("joined", ["2026-10-02", cut, "2026-10-06"]);
+    const reused = await pool("joined", [cut, "2026-10-02", "2026-10-06"]);
+    expect(runOf(reused).reused).toBe(true);
+    const direct = await runEngine({
+      corpusDir: s.corpusDir,
+      cutoff: `${cut}T00:00:00Z`,
+      profilePath: s.profilePath,
+      outDir: NodePath.join(s.root, "direct"),
+      config: fConfig,
+      relevanceModel: probe,
+      embedder: fingerprintEmbedder(),
+    });
+    expect(direct.status).toBe("ok");
+    const novelty = readRun(runOf(alone).run_dir).dossiers.flatMap((d) =>
+      d.relevance?.novelty ? [d.relevance.novelty] : [],
+    );
+    expect(novelty.length).toBeGreaterThan(0);
+    for (const r of [joined, reused]) {
+      expect(logical(r)).toBe(logical(alone));
+      expect(r.rankings.logical.cutoffs[cut]).toEqual(alone.rankings.logical.cutoffs[cut]);
+    }
+    expect(direct.logical_hash).toBe(logical(alone));
+  });
+
+  it("never leaves in an F top 5 two positions this evaluation calls the same topic", async () => {
+    // Random low-dimensional centroids, so many pairs pass cosine 0.8; every term is rare.
+    const random = (() => {
+      let x = 7;
+      return () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648;
+    })();
+    const all = () => true;
+    for (let trial = 0; trial < 50; trial++) {
+      const members = Array.from({ length: 12 }, (_, k) => {
+        const v = Float32Array.from({ length: 3 }, () => random() + 0.2);
+        const norm = Math.hypot(...v);
+        return {
+          id: `s${k}`,
+          key: `s${k}`,
+          trendId: `s${k}`,
+          centroid: v.map((x) => x / norm),
+          itemIds: new Set([`i${k}`]),
+          terms: ["alpha", "beta"],
+        };
+      });
+      const kept = dedupe(members, [], (m) => m.centroid, 0.8).kept.slice(0, 5);
+      for (let i = 0; i < kept.length; i++) {
+        for (let j = i + 1; j < kept.length; j++) {
+          expect(sameTopic(kept[i]!, kept[j]!, all)).toBe(false);
+        }
+      }
+    }
   });
 });

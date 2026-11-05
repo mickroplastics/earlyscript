@@ -22,6 +22,7 @@ import {
   freezeEntry,
   readRankings,
   candidateArm,
+  withRepeats,
   DEFAULT_CARD_SEED,
   EVAL_SOURCES,
   fileSha256,
@@ -38,10 +39,10 @@ const isSourceId = Schema.is(SourceId);
 
 export const EDITORIAL_USAGE =
   "usage: engine eval-editorial pool --corpus <dir> --profile <file> --out <dir> --cutoffs <days> (--references | --candidate-v2 | --arm <name>=<config.json>[:baseline|:weighted|:keywords=<file>] ...) [--sources <ids>] [--top 5] [--ledger <ledger.jsonl>] [--registry dev=<families.json>] [--no-cards] [--seed n] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]\n" +
-  "       engine eval-editorial cards --universe <universe.json> [--rankings <rankings.json> --ledger <ledger.jsonl>] --out <dir> [--name <set>] [--cutoffs <days>] [--sample N] [--seed S] [--ledger <ledger.jsonl>]\n" +
+  "       engine eval-editorial cards --universe <universe.json> [--rankings <rankings.json> --ledger <ledger.jsonl>] --out <dir> [--name <set>] [--cutoffs <days>] [--sample N] [--seed S] [--repeat 10]\n" +
   "       engine eval-editorial cards-html --cards <cards.jsonl> --out <dir> [--name <set>] [--title <text>]\n" +
   "       engine eval-editorial hn-labels --universe <universe.json> --corpus <dir> --out <labels-hn.json> [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
-  "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> (--labels <file> | --migrate-labels <labels>=<cards.jsonl>) ... --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
+  "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> (--labels <file> | --migrate-labels <labels>=<cards.jsonl>) ... --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--partition <name>=<days> ...] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
   "       engine eval-editorial judge --cards <cards.jsonl> (--out <labels.json> --judge-cache <dir> | --entries-out <entries.jsonl> | --judged <judge-output.jsonl> --out <labels.json>) [--universe <universe.json>] [--judge <judge.json>] [--concurrency n]\n" +
   "       engine eval-editorial freeze --ledger <ledger.jsonl> --profile <file> (--references | --candidate-v2 | --arm …) [--sources <ids>] [--registry dev=<families.json>] --file <path> [--file …] [--note <text>]\n" +
   "       engine eval-editorial seal --ledger <ledger.jsonl> --kind <note|…> [--file <path> ...] [--note <text>]\n" +
@@ -80,6 +81,8 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       "judge-cache": { type: "string" },
       "entries-out": { type: "string" },
       registry: { type: "string", multiple: true },
+      partition: { type: "string", multiple: true },
+      repeat: { type: "string" },
       "migrate-labels": { type: "string", multiple: true },
       judged: { type: "string" },
       concurrency: { type: "string" },
@@ -162,11 +165,15 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
   }
   if (sub === "cards" && values.universe && values.out) {
     const universe = readUniverse(values.universe);
-    const cards = buildTopicCards(universe, {
-      seed: values.seed ? Number(values.seed) : DEFAULT_CARD_SEED,
-      ...(values.cutoffs ? { cutoffs: parseCutoffList(values.cutoffs) } : {}),
-      ...(values.sample ? { sample: Number(values.sample) } : {}),
-    });
+    const seed = values.seed ? Number(values.seed) : DEFAULT_CARD_SEED;
+    const cards = withRepeats(
+      buildTopicCards(universe, {
+        seed,
+        ...(values.cutoffs ? { cutoffs: parseCutoffList(values.cutoffs) } : {}),
+        ...(values.sample ? { sample: Number(values.sample) } : {}),
+      }),
+      { count: values.repeat ? Number(values.repeat) : 0, seed: seed + 3 },
+    );
     const prospective = universe.logical.cutoffs.some((c) => c.prospective);
     if (values.ledger || prospective) {
       if (!values.ledger || !values.rankings) {
@@ -232,6 +239,16 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values.dev ? { dev: parseCutoffList(values.dev) } : {}),
       ...(values.retro ? { retro: parseCutoffList(values.retro) } : {}),
       ...(values.prospective ? { prospective: parseCutoffList(values.prospective) } : {}),
+      ...(values.partition
+        ? {
+            partitions: Object.fromEntries(
+              Object.entries(namedPaths(values.partition)).map(([name, days]) => [
+                name,
+                parseCutoffList(days),
+              ]),
+            ),
+          }
+        : {}),
       ...(values.candidate ? { candidates: values.candidate } : {}),
       ...(values.reference ? { references: values.reference } : {}),
       ...(values.ledger ? { ledgerPath: values.ledger } : {}),

@@ -7,15 +7,15 @@ export interface CardsPageMeta {
   readonly title: string;
   readonly cardsHash: string;
   readonly universeHash: string | null;
+  /** The sealed label rubric (config/editorial-eval/label-rubric.v1.md) and its SHA-256. */
+  readonly rubric: string;
+  readonly rubricHash: string;
 }
 
 export const LABELS_SCHEMA_VERSION = "earlyscript.editorial-labels/1";
 export const TOPIC_QUESTION =
   "¿SingulariDev haría un video sobre este tema en los próximos 7 días?";
 export const ITEM_QUESTION = "¿Este ítem trata algo sobre lo que SingulariDev haría un video?";
-/** One line under the question: what the two kinds of yes mean. */
-export const GRADE_HINT =
-  "Núcleo: fundadores y desarrolladores que construyen productos con agentes de IA y automatización. Adyacente: otro tema de IA o tecnología que valdría un video.";
 
 /** JSON safe inside a <script> element. */
 const scriptJson = (value: unknown) =>
@@ -39,7 +39,8 @@ export function renderCardsHtml(cards: ReadonlyArray<unknown>, meta: CardsPageMe
     cards_hash: meta.cardsHash,
     universe_hash: meta.universeHash,
     questions: { topic: TOPIC_QUESTION, item: ITEM_QUESTION },
-    grade_hint: GRADE_HINT,
+    rubric: meta.rubric.trim().split("\n"),
+    rubric_sha256: meta.rubricHash,
     cards,
   };
   return `<!doctype html>
@@ -72,6 +73,8 @@ ol.headlines li { margin-bottom: 10px; }
 button { font: inherit; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); padding:8px 14px; cursor:pointer; }
 button.sel-core, button.sel-adjacent { border-color:var(--yes); color:var(--yes); font-weight:600; }
 .hint { font-size:14px; color:var(--muted); margin: -6px 0 12px; }
+.rubric { font-size:14px; color:var(--muted); margin: 0 0 12px; padding-left: 18px; }
+.rubric li { margin-bottom: 4px; }
 button.sel-no { border-color:var(--no); color:var(--no); font-weight:600; }
 button.sel-unsure { border-color:var(--unsure); color:var(--unsure); font-weight:600; }
 kbd { font-size:12px; border:1px solid var(--line); border-radius:4px; padding:0 4px; color:var(--muted); }
@@ -165,7 +168,9 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
       box.appendChild(list);
     }
     box.appendChild(el("div", { class: "question" }, card.question || data.questions[card.unit] || data.questions.topic));
-    box.appendChild(el("div", { class: "hint" }, data.grade_hint));
+    var rubric = el("ul", { class: "rubric", "aria-label": "Definiciones" });
+    data.rubric.slice(1).forEach(function (line) { rubric.appendChild(el("li", null, line)); });
+    box.appendChild(rubric);
     var buttons = el("div", { class: "buttons" });
     [["core", "Sí, núcleo", "1"], ["adjacent", "Sí, adyacente", "2"], ["no", "No", "n"], ["unsure", "No sé", "?"]].forEach(function (b) {
       var current = choiceOf(labels[card.card_id]) === b[0];
@@ -209,6 +214,7 @@ input[type=text] { font:inherit; padding:6px 8px; border-radius:6px; border:1px 
       set_name: data.set_name,
       cards_hash: data.cards_hash,
       universe_hash: data.universe_hash,
+      rubric_sha256: data.rubric_sha256,
       exported_at: new Date().toISOString(),
       cards: cards.length,
       labels: rows
