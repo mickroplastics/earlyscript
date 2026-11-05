@@ -22,6 +22,8 @@ import { DEFAULT_JUDGE_PATH, loadJudge } from "./judge.ts";
 import { auc, confusion, fitLogistic, type LogisticFit, logLoss, predict } from "./logistic.ts";
 import type { SampleRow } from "./relevance-sample.ts";
 
+const decodeProfile = Schema.decodeUnknownSync(ChannelProfile);
+
 export const LAMBDAS = [0.01, 0.03, 0.1, 0.3, 1, 3, 10];
 export const FOLDS = 5;
 
@@ -157,9 +159,7 @@ async function main() {
   try {
     vectors = await embedder.embed(rows.map((row) => row.embed_text));
     if (values.profile) {
-      const profile = Schema.decodeUnknownSync(ChannelProfile)(
-        JSON.parse(NodeFS.readFileSync(values.profile, "utf8")),
-      );
+      const profile = decodeProfile(JSON.parse(NodeFS.readFileSync(values.profile, "utf8")));
       const instructions: Array<[string, string | undefined]> = [["document", undefined]];
       if (values["query-instruction"]) instructions.push(["query", values["query-instruction"]]);
       for (const [label, instruction] of instructions)
@@ -282,7 +282,14 @@ async function main() {
     separation_items: baselines,
   };
   if (values.report) NodeFS.writeFileSync(values.report, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(JSON.stringify({ model_sha256: modelHash, cv: model.cv.overall, lambda: chosen.lambda, threshold }));
+  console.log(
+    JSON.stringify({
+      model_sha256: modelHash,
+      cv: model.cv.overall,
+      lambda: chosen.lambda,
+      threshold,
+    }),
+  );
   return 0;
 }
 

@@ -28,7 +28,10 @@ export function agreement(pairs: ReadonlyArray<Pair>) {
   const agree = resolved.filter((p) => p.operator === p.judge).length;
   const po = n === 0 ? null : agree / n;
   const share = (who: "operator" | "judge") => resolved.filter((p) => p[who] === "yes").length / n;
-  const pe = n === 0 ? null : share("operator") * share("judge") + (1 - share("operator")) * (1 - share("judge"));
+  const pe =
+    n === 0
+      ? null
+      : share("operator") * share("judge") + (1 - share("operator")) * (1 - share("judge"));
   const kappa = po === null || pe === null || pe === 1 ? null : (po - pe) / (1 - pe);
   return {
     cards: pairs.length,
@@ -39,8 +42,10 @@ export function agreement(pairs: ReadonlyArray<Pair>) {
     kappa,
     confusion: {
       yes_yes: resolved.filter((p) => p.operator === "yes" && p.judge === "yes").length,
-      operator_yes_judge_no: resolved.filter((p) => p.operator === "yes" && p.judge === "no").length,
-      operator_no_judge_yes: resolved.filter((p) => p.operator === "no" && p.judge === "yes").length,
+      operator_yes_judge_no: resolved.filter((p) => p.operator === "yes" && p.judge === "no")
+        .length,
+      operator_no_judge_yes: resolved.filter((p) => p.operator === "no" && p.judge === "yes")
+        .length,
       no_no: resolved.filter((p) => p.operator === "no" && p.judge === "no").length,
     },
     accepted: po !== null && kappa !== null && po >= 0.8 && kappa >= 0.5,
@@ -73,7 +78,12 @@ async function main() {
     bySource[source] = agreement(pairs.filter((p) => p.stratum.startsWith(`${source}:`)));
   console.log(
     JSON.stringify(
-      { overall: agreement(pairs), missing: key.length - pairs.length, by_stratum: byStratum, by_source: bySource },
+      {
+        overall: agreement(pairs),
+        missing: key.length - pairs.length,
+        by_stratum: byStratum,
+        by_source: bySource,
+      },
       null,
       2,
     ),

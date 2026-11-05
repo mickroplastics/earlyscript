@@ -153,11 +153,9 @@ export function classify(
 }
 
 /**
- * Growth that compares like with like. Each source of the run counts only on the days it
- * collected fully (complete, or the declared sample of a sample source) and only when both
- * 7-day windows have such a day; its counts become rates per day times 7. A source that
- * started collecting inside the last window, or whose earlier days are partial, therefore
- * adds no growth. Stage gates use the observed items of the last 7 days, as per_source.
+ * A source counts only on days it collected fully and only when both 7-day windows have
+ * one; its counts become rates per day times 7. A source that started inside the last
+ * window adds no growth. Stage gates use observed items of the last 7 days, as per_source.
  */
 function classifyEquivalent(
   allItems: ReadonlyArray<SeriesItem>,

@@ -118,9 +118,7 @@ async function main() {
     const prepared = prepare(
       corpus.items.filter((item) => Date.parse(item.published_at) < beforeMs),
       config.text,
-    ).filter(
-      (item) => item.excluded === null && item.publishedMs >= fromMs && !seen.has(item.id),
-    );
+    ).filter((item) => item.excluded === null && item.publishedMs >= fromMs && !seen.has(item.id));
     for (const item of prepared) seen.add(item.id);
     pooled.push(...prepared);
     perCorpus.push({

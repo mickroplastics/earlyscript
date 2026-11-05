@@ -20,7 +20,9 @@ export const TOPIC_HEADLINES = 5;
 
 export function topicText(dossier: Dossier): string {
   const recent = dossier.evidence
-    .toSorted((a, b) => (a.published_at > b.published_at ? -1 : a.published_at < b.published_at ? 1 : 0))
+    .toSorted((a, b) =>
+      a.published_at > b.published_at ? -1 : a.published_at < b.published_at ? 1 : 0,
+    )
     .slice(0, TOPIC_HEADLINES);
   return `Topic key terms: ${dossier.trend.top_terms.slice(0, 6).join(", ")}\nRecent headlines:\n${recent
     .map((e) => `- ${e.title}`)
@@ -44,7 +46,9 @@ async function main() {
     },
   });
   if (!values.arm || !values.cache || !values.out) {
-    console.error("usage: dev-compare --arm name=<runs-dir>:weighted|baseline ... --cache <dir> --out <json>");
+    console.error(
+      "usage: dev-compare --arm name=<runs-dir>:weighted|baseline ... --cache <dir> --out <json>",
+    );
     return 64;
   }
   const arms = values.arm.map((spec) => {
@@ -92,7 +96,9 @@ async function main() {
   const perArm: Record<string, unknown> = {};
   const topics: Array<Record<string, unknown>> = [];
   for (const arm of arms) {
-    const cuts = tops.filter((t) => t.arm === arm.name).toSorted((a, b) => (a.cut < b.cut ? -1 : 1));
+    const cuts = tops
+      .filter((t) => t.arm === arm.name)
+      .toSorted((a, b) => (a.cut < b.cut ? -1 : 1));
     const p5 = cuts.map((t) => {
       let hits = 0;
       t.dossiers.forEach((d, k) => {

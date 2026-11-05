@@ -124,7 +124,13 @@ describe("relevance model", () => {
     const dir = tempDir("relevance-model");
     const bytes = NodeFS.readFileSync(NodePath.join(CONFIG_DIR, "relevance.v1.json"));
     NodeFS.writeFileSync(NodePath.join(dir, "m.json"), bytes);
-    const ref = { model: "m.json", sha256: sha256(bytes), item_min: 0.5, signal_min: 0.5, profile_gate: false };
+    const ref = {
+      model: "m.json",
+      sha256: sha256(bytes),
+      item_min: 0.5,
+      signal_min: 0.5,
+      profile_gate: false,
+    };
     expect(loadRelevance(ref, config.embedder, dir).weights.length).toBe(1024);
     expect(() => loadRelevance({ ...ref, sha256: "sha256:0" }, config.embedder, dir)).toThrow(
       /does not match/,
@@ -184,11 +190,20 @@ describe("equivalent coverage", () => {
     // HN steady at one item a day; RSS starts on day 10 of 14 with three items a day.
     const startsAt = DAYS[10]!;
     const rss: Array<SeriesItem> = DAYS.filter((day) => day >= startsAt).flatMap((day) =>
-      [0, 1, 2].map((k) => ({ id: `rss-${day}-${k}`, source: "rss" as const, day, author: null, entities: [] })),
+      [0, 1, 2].map((k) => ({
+        id: `rss-${day}-${k}`,
+        source: "rss" as const,
+        day,
+        author: null,
+        entities: [],
+      })),
     );
     const coverage: CoverageIndex = new Map([
       ["hn", new Map(DAYS.map((day) => [day, "complete" as const]))],
-      ["rss", new Map(DAYS.filter((day) => day >= startsAt).map((day) => [day, "complete" as const]))],
+      [
+        "rss",
+        new Map(DAYS.filter((day) => day >= startsAt).map((day) => [day, "complete" as const])),
+      ],
     ]);
     const items = [...hnDaily, ...rss];
     const equivalent = classify(items, CUTOFF_DAY, coverage, ["hn", "rss"], STAGE);
@@ -207,17 +222,32 @@ describe("equivalent coverage", () => {
     // HN collected only 2 of the 7 earlier days, one item a day throughout: no growth.
     const missing = new Set(DAYS.slice(0, 5));
     const coverage: CoverageIndex = new Map([
-      ["hn", new Map(DAYS.filter((day) => !missing.has(day)).map((day) => [day, "complete" as const]))],
+      [
+        "hn",
+        new Map(DAYS.filter((day) => !missing.has(day)).map((day) => [day, "complete" as const])),
+      ],
     ]);
     const items = hnDaily.filter((item) => !missing.has(item.day));
     const result = classify(items, CUTOFF_DAY, coverage, ["hn"], STAGE);
     expect(result.growth).toBeCloseTo(0, 12);
     expect(result.growth_sources).toEqual([
-      { source: "hn", days_7d: 7, days_prev_7d: 2, items_7d: 7, items_prev_7d: 2, comparable: true },
+      {
+        source: "hn",
+        days_7d: 7,
+        days_prev_7d: 2,
+        items_7d: 7,
+        items_prev_7d: 2,
+        comparable: true,
+      },
     ]);
     // Partial days of a census source do not count as collected.
     const partial: CoverageIndex = new Map([
-      ["hn", new Map(DAYS.map((day) => [day, missing.has(day) ? ("partial" as const) : ("complete" as const)]))],
+      [
+        "hn",
+        new Map(
+          DAYS.map((day) => [day, missing.has(day) ? ("partial" as const) : ("complete" as const)]),
+        ),
+      ],
     ]);
     expect(classify(hnDaily, CUTOFF_DAY, partial, ["hn"], STAGE).growth).toBeCloseTo(0, 12);
   });

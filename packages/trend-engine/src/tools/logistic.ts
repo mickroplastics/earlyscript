@@ -108,7 +108,7 @@ export function auc(scores: ReadonlyArray<number>, labels: ReadonlyArray<number>
   let pos = 0;
   let neg = 0;
   let rankSum = 0;
-  for (let i = 0; i < order.length; ) {
+  for (let i = 0; i < order.length;) {
     let j = i;
     while (j < order.length && order[j]!.s === order[i]!.s) j++;
     const midRank = (i + 1 + j) / 2;
@@ -144,8 +144,11 @@ export function confusion(
   let fn = 0;
   probs.forEach((p, i) => {
     const yes = p >= threshold;
-    if (labels[i] === 1) yes ? tp++ : fn++;
-    else yes ? fp++ : tn++;
+    if (labels[i] === 1) {
+      if (yes) tp++;
+      else fn++;
+    } else if (yes) fp++;
+    else tn++;
   });
   const precision = tp + fp === 0 ? null : tp / (tp + fp);
   const recall = tp + fn === 0 ? null : tp / (tp + fn);

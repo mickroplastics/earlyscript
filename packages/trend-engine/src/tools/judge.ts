@@ -1,4 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off - offline tool; responses are decoded with Schema.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off globalConsole:off - offline tool; responses are decoded with Schema.
+//   node src/tools/judge.ts --in entries.jsonl --out labels.jsonl --cache <dir> [--judge judge/judge.v1.json] [--concurrency 2]
+// Input lines are {id, text}; output lines {id, label: "yes"|"no"|"unsure", reason, key, call}.
 // Editorial judge: labels entries {id, text} with the frozen rubric through the Claude CLI
 // of the operator's subscription. It runs outside the engine: its labels train the
 // relevance probe (relevance-train.ts) and the development cards, never a run.
@@ -9,6 +11,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import * as Schema from "effect/Schema";
 
@@ -31,7 +34,9 @@ export const JudgeLabel = Schema.Literals(["yes", "no", "unsure"]);
 export type JudgeLabel = typeof JudgeLabel.Type;
 
 const BatchResponse = Schema.Struct({
-  results: Schema.Array(Schema.Struct({ id: Schema.String, label: JudgeLabel, reason: Schema.String })),
+  results: Schema.Array(
+    Schema.Struct({ id: Schema.String, label: JudgeLabel, reason: Schema.String }),
+  ),
 });
 const decodeBatch = Schema.decodeUnknownSync(BatchResponse);
 const decodeJudge = Schema.decodeUnknownSync(JudgeConfig);
@@ -273,3 +278,48 @@ export async function judgeEntries(
   });
   return { labels, stats: { entries: entries.length, cached, calls, retries } };
 }
+
+async function main(): Promise<void> {
+  const { values } = NodeUtil.parseArgs({
+    options: {
+      in: { type: "string" },
+      out: { type: "string" },
+      cache: { type: "string" },
+      judge: { type: "string" },
+      concurrency: { type: "string" },
+    },
+  });
+  if (!values.in || !values.out || !values.cache) {
+    console.error(
+      "usage: editorial-judge --in <entries.jsonl> --out <labels.jsonl> --cache <dir> [--judge <judge.json>] [--concurrency n]",
+    );
+    process.exitCode = 64;
+    return;
+  }
+  const entries = NodeFS.readFileSync(values.in, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const { id, text } = JSON.parse(line) as JudgeEntry;
+      if (typeof id !== "string" || typeof text !== "string") throw new Error(`bad entry: ${line}`);
+      return { id, text };
+    });
+  const judge = loadJudge(values.judge ?? DEFAULT_JUDGE_PATH);
+  const { labels, stats } = await judgeEntries(entries, {
+    judge,
+    cacheDir: values.cache,
+    concurrency: values.concurrency ? Number(values.concurrency) : 2,
+    log: (line) => console.error(line),
+  });
+  NodeFS.writeFileSync(values.out, labels.map((l) => `${JSON.stringify(l)}\n`).join(""));
+  console.log(
+    JSON.stringify({
+      judge_hash: judge.hash,
+      rubric_sha256: judge.config.rubric_sha256,
+      model: judge.config.model,
+      ...stats,
+    }),
+  );
+}
+
+if (import.meta.main) await main();

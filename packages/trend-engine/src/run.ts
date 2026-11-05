@@ -326,7 +326,10 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         // Not a reward for abstaining: the most relevant growing trends below signal_min,
         // then steady ones with enough recent items, fill the cut up to min_dossiers.
         if (!relevanceRef) throw new Error("emit.min_dossiers needs a relevance model");
-        const taken = new Set([...eligible, ...[...relatedTo.values()].flat().map((l) => l.signal)]);
+        const taken = new Set([
+          ...eligible,
+          ...[...relatedTo.values()].flat().map((l) => l.signal),
+        ]);
         const byRelevance = (a: Signal, b: Signal) =>
           b.relevance!.score - a.relevance!.score || (a.id < b.id ? -1 : 1);
         const pool = [
@@ -356,8 +359,14 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
     // Backfilled trends rank after every relevant one in both orderings.
     const rankKey = (scoreOf: (s: Signal) => number) => (s: Signal) =>
       scoreOf(s) - (backfilled.has(s.id) ? 1e9 : 0);
-    const baselinePos = positions(eligible, rankKey((s) => s.baseline.score));
-    const weightedPos = positions(eligible, rankKey((s) => s.weighted.score));
+    const baselinePos = positions(
+      eligible,
+      rankKey((s) => s.baseline.score),
+    );
+    const weightedPos = positions(
+      eligible,
+      rankKey((s) => s.weighted.score),
+    );
     const max = config.emit.max_dossiers;
     const emitted = eligible
       .filter((s) => baselinePos.get(s.id)! <= max || weightedPos.get(s.id)! <= max)

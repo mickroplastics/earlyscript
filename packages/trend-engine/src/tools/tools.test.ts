@@ -4,9 +4,13 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
+
 import { sha256 } from "../hash.ts";
 import { tempDir } from "../testkit/syntheticCorpus.ts";
+import { agreement } from "./calibration-agreement.ts";
 import { AI_TERMS, pickCalibration } from "./calibration-items.ts";
+import { topicText } from "./dev-compare.ts";
 import { type CliRunner, judgeEntries, loadJudge } from "./judge.ts";
 import { auc, choleskySolve, fitLogistic, predict } from "./logistic.ts";
 import { dayFolds } from "./relevance-train.ts";
@@ -81,7 +85,8 @@ describe("logistic probe", () => {
     const y = k % 2;
     const h = sha256(`row${k}`);
     const v = new Float32Array(6);
-    for (let i = 0; i < 6; i++) v[i] = (parseInt(h.slice(7 + 2 * i, 9 + 2 * i), 16) / 255 - 0.5) * 1.5;
+    for (let i = 0; i < 6; i++)
+      v[i] = (parseInt(h.slice(7 + 2 * i, 9 + 2 * i), 16) / 255 - 0.5) * 1.5;
     v[0]! += y === 1 ? 1 : -1;
     rows.push(v);
     labels.push(y);
@@ -141,7 +146,48 @@ describe("calibration cards", () => {
     expect(count("hn:yes")).toBe(5);
     expect(count("hn:hard_negative")).toBe(4);
     expect(count("hn:no")).toBe(5);
-    expect(picked.filter((p) => p.stratum === "hn:hard_negative").every((p) => AI_TERMS.test(p.row.title))).toBe(true);
+    expect(
+      picked
+        .filter((p) => p.stratum === "hn:hard_negative")
+        .every((p) => AI_TERMS.test(p.row.title)),
+    ).toBe(true);
     expect(new Set(picked.map((p) => p.row.id)).size).toBe(picked.length);
+  });
+});
+
+describe("calibration agreement", () => {
+  it("measures agreement and kappa on cards both answered, counting unsure apart", () => {
+    const pair = (operator: string, judge: string) => ({ operator, judge, stratum: "hn:yes" });
+    const result = agreement([
+      ...Array.from({ length: 8 }, () => pair("yes", "yes")),
+      ...Array.from({ length: 8 }, () => pair("no", "no")),
+      pair("yes", "no"),
+      pair("no", "yes"),
+      pair("unsure", "yes"),
+    ]);
+    expect(result.resolved).toBe(18);
+    expect(result.operator_unsure).toBe(1);
+    expect(result.agreement).toBeCloseTo(16 / 18, 12);
+    // Both sides say yes half the time: kappa = (po - 0.5) / 0.5.
+    expect(result.kappa).toBeCloseTo((16 / 18 - 0.5) / 0.5, 12);
+    expect(result.accepted).toBe(true);
+    expect(agreement([pair("yes", "no"), pair("no", "yes")]).accepted).toBe(false);
+  });
+});
+
+describe("development topic card", () => {
+  it("shows the terms and the five most recent evidence headlines", () => {
+    const evidence = Array.from({ length: 7 }, (_, k) => ({
+      item_id: `i${k}`,
+      title: `headline ${k}`,
+      published_at: `2026-10-${String(10 + k).padStart(2, "0")}T00:00:00.000Z`,
+    }));
+    const text = topicText({
+      trend: { top_terms: ["agents", "coding"] },
+      evidence,
+    } as unknown as Dossier);
+    expect(text).toBe(
+      "Topic key terms: agents, coding\nRecent headlines:\n- headline 6\n- headline 5\n- headline 4\n- headline 3\n- headline 2",
+    );
   });
 });
