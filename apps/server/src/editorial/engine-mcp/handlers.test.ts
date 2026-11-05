@@ -24,6 +24,7 @@ import {
   type LabHarness,
 } from "../engineLab.testkit.ts";
 import { makeTempDir, removeDir } from "../persistence/EditorialDatabase.testkit.ts";
+import { EditorialRunDirectory } from "../RunDirectory.ts";
 import { EngineLabToolkit } from "./tools.ts";
 
 const LIVE = "thread-lab";
@@ -92,6 +93,9 @@ const serverLayer = (harness: LabHarness) =>
   McpHttpServer.layerEngineLabToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(layerThreads),
+    Layer.provideMerge(
+      Layer.mock(EditorialRunDirectory)({ runsDir: NodePath.join(harness.dir, "runs") }),
+    ),
     Layer.provideMerge(labLayer(harness)),
   );
 
@@ -419,6 +423,59 @@ it.live("evaluates in the background and reports both engines over the same cuto
       expect(run.candidate[0].top[0]).not.toHaveProperty("item_ids");
       expect(run.candidate[0].top.length).toBeLessThanOrEqual(5);
       expect(run.candidate[0].top[0].human_label).toBeTypeOf("string");
+    }),
+  ),
+);
+
+it.live("pages through the product's runs, never a cutoff of the frozen evaluation (S1)", () =>
+  withLab(({ harness, activeId, campaignId }) =>
+    Effect.gen(function* () {
+      const candidate = ok(yield* weights(activeId, "product", { growth: 0.2 })).candidate
+        .manifestId;
+      const queued = ok(
+        yield* call("engine_evaluate", {
+          candidateId: candidate,
+          campaignId,
+          idempotencyKey: "product",
+        }),
+      );
+      yield* (yield* EngineExperimentService).runDue;
+      // Two product runs: one real engine run, and a copy relabelled as the sealed 6 November.
+      const token = `job-${queued.job.jobId.replace(/^job_/, "")}`;
+      const day = harness.fixture.cutoffs[0]!.slice(0, 10);
+      const runs = NodePath.join(harness.options.jobsRoot, token, "reference", day, "runs");
+      const name = NodeFS.readdirSync(runs).find((entry) => entry.startsWith("run_"))!;
+      const product = NodePath.join(harness.dir, "runs");
+      NodeFS.cpSync(NodePath.join(runs, name), NodePath.join(product, name), { recursive: true });
+      const sealed = NodePath.join(product, "run_sealed_copy");
+      NodeFS.cpSync(NodePath.join(runs, name), sealed, { recursive: true });
+      const runJson = NodePath.join(sealed, "run.json");
+      const record = JSON.parse(NodeFS.readFileSync(runJson, "utf8"));
+      NodeFS.writeFileSync(
+        runJson,
+        JSON.stringify({ ...record, cutoff_at: "2026-11-06T00:00:00.000Z" }),
+      );
+      const listed = ok(yield* call("engine_inspect", { target: "product-runs" })).product;
+      expect(listed).toMatchObject({ total: 1, next: null });
+      expect(listed.runs[0].runId).toBe(name);
+      const page = ok(
+        yield* call("engine_inspect", { target: "product-run", id: name, limit: 2 }),
+      ).product;
+      expect(page.trends).toHaveLength(2);
+      expect(page.next).toBe(2);
+      expect(page.trends[0]).toMatchObject({ position: 1 });
+      expect(page.trends[0].components.length).toBeGreaterThan(0);
+      expect(page.stats).not.toBeNull();
+      const second = ok(
+        yield* call("engine_inspect", { target: "product-run", id: name, cursor: 2, limit: 2 }),
+      ).product;
+      expect(second.trends[0].position).toBe(3);
+      expect(
+        refusal(yield* call("engine_inspect", { target: "product-run", id: "run_sealed_copy" })),
+      ).toContain("sealed-partition");
+      expect(
+        refusal(yield* call("engine_inspect", { target: "product-run", id: "../runs" })),
+      ).toContain("not a run id");
     }),
   ),
 );

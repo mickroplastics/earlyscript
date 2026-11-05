@@ -131,6 +131,10 @@ const progressOf = (runId: string) =>
     finishedAt: null,
   }) as never;
 
+const runDirectory = Layer.mock(EditorialRunDirectory)({
+  runsDir: NodePath.join(out, "state", "runs"),
+});
+
 const nightlyLayer = EditorialJobsService.layerWith({
   engine: Result.succeed(engine),
   jobsDir: NodePath.join(out, "state", "editorial-jobs"),
@@ -152,7 +156,7 @@ const nightlyLayer = EditorialJobsService.layerWith({
         draftingProviderEnabled: Effect.succeed(true),
         getBudget: Effect.succeed({ monthlyLimit: 0, usedThisMonth: 0, month: today.slice(0, 7) }),
       }),
-      Layer.mock(EditorialRunDirectory)({ runsDir: NodePath.join(out, "state", "runs") }),
+      runDirectory,
     ),
   ),
 );
@@ -161,6 +165,7 @@ const layer = Layer.mergeAll(
   McpHttpServer.layerEngineLabToolkit.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(threads),
+    Layer.provideMerge(runDirectory),
   ),
   nightlyLayer,
 ).pipe(Layer.provideMerge(services), Layer.provideMerge(NodeServices.layer));
@@ -453,13 +458,13 @@ const program = Effect.gen(function* () {
     actor: "operator",
     reason: "Logically equal outputs; reviewed patch.",
   });
-  const afterCode = yield* realNightly("3-code-approved", 1);
+  const afterCode = yield* realNightly("3-code-approved", 3);
   const codeReverted = yield* promotion.revert({
     actor: "operator",
     reason: "Back to the installed engine's code.",
     expectedActive: codeApproved.manifest_hash,
   });
-  const afterCodeRevert = yield* realNightly("4-code-reverted", 2);
+  const afterCodeRevert = yield* realNightly("4-code-reverted", 4);
   const liveCode = engineSourceHash(NodePath.join(REPO_ROOT, "packages/trend-engine/src"));
   const ledger = yield* verifyLabLedger;
   const summary = {

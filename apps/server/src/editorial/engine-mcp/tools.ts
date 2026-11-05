@@ -14,11 +14,13 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import { EngineChangeService } from "../EngineChangeService.ts";
 import { EngineExperimentService } from "../EngineExperimentService.ts";
 import { EnginePromotionService } from "../EnginePromotionService.ts";
+import { EditorialRunDirectory } from "../RunDirectory.ts";
 
 const Failure = Schema.Union([OrchestratorMcpFailure, EngineLabFailure]);
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  EditorialRunDirectory,
   ThreadManagement.ThreadManagementService,
   EngineChangeService,
   EngineExperimentService,
@@ -47,20 +49,29 @@ export const EngineInspectResult = Schema.Struct({
   ),
   /** A finished lab job's rankings per cutoff, with each trend's score components. */
   run: Schema.Unknown,
+  /** A page of product runs, or of one product run's trends. */
+  product: Schema.Unknown,
   promotions: Schema.Array(EnginePromotionView),
 });
 export type EngineInspectResult = typeof EngineInspectResult.Type;
 
 const EngineInspectTool = Tool.make("engine_inspect", {
   description:
-    "Read the trend engine lab, without changing anything. target `active`: the active engine's manifest (configuration, profile, sources, feeds, model and code hashes), what a candidate may change and within which bounds, the operator's campaigns with their remaining evaluations, and promotion requests. `candidate`: one candidate and its difference from its parent (id required). `code`: the pure computation files a code candidate may patch, with the base source hash to patch against. `run`: a finished lab job's rankings per cutoff, with each trend's score components (id = jobId). Contributions are what rank.ts computed; they are not causes.",
+    "Read the trend engine lab, without changing anything. target `active`: the active engine's manifest (configuration, profile, sources, feeds, model and code hashes), what a candidate may change and within which bounds, the operator's campaigns with their remaining evaluations, and promotion requests. `candidate`: one candidate and its difference from its parent (id required). `code`: the pure computation files a code candidate may patch, with the base source hash to patch against. `run`: a finished lab job's rankings per cutoff, with each trend's score components (id = jobId). `product-runs`: a page of the product's nightly runs, newest first. `product-run`: a page of one product run's trends by rank, with components, gates, growth, profile fit and evidence titles (id = runId). Pages take `cursor` (the `next` of the previous page) and `limit` (at most 10). Contributions are what rank.ts computed; they are not causes.",
   parameters: Schema.Struct({
-    target: Schema.Literals(["active", "candidate", "code", "run"]),
+    target: Schema.Literals(["active", "candidate", "code", "run", "product-runs", "product-run"]),
     id: Schema.optional(
       Id.annotate({
-        description: "candidate id (mf_…) or job id (job_…), for `candidate` and `run`.",
+        description:
+          "candidate id (mf_…), job id (job_…) or product run id (run_…), for `candidate`, `run` and `product-run`.",
       }),
     ),
+    cursor: Schema.optional(
+      Schema.Int.annotate({
+        description: "Where the page starts: the `next` of the previous page.",
+      }),
+    ),
+    limit: Schema.optional(Schema.Int.annotate({ description: "Entries per page, at most 10." })),
   }),
   success: EngineInspectResult,
   failure: Failure,

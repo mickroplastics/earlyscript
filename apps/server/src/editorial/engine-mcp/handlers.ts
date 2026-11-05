@@ -7,6 +7,7 @@ import { EngineChangeService } from "../EngineChangeService.ts";
 import { EngineExperimentService } from "../EngineExperimentService.ts";
 import { EnginePromotionService } from "../EnginePromotionService.ts";
 import { labFailure } from "../engineLabSupport.ts";
+import { productRun, productRuns } from "../engineProductRuns.ts";
 import { EngineLabToolkit, type EngineInspectResult } from "./tools.ts";
 
 /**
@@ -51,6 +52,7 @@ export const layer = McpToolAccess.toLayer(EngineLabToolkit, {
         editable: changes.editable(current.manifest),
         code: null,
         run: null,
+        product: null,
         promotions: yield* promotion.listRequests(projectId),
       };
       switch (input.target) {
@@ -69,6 +71,20 @@ export const layer = McpToolAccess.toLayer(EngineLabToolkit, {
             run: yield* experiments.rankings({
               projectId,
               jobId: yield* requireId(input.id, "run"),
+            }),
+          };
+        case "product-runs":
+          return {
+            ...result,
+            product: yield* productRuns({ cursor: input.cursor, limit: input.limit }),
+          };
+        case "product-run":
+          return {
+            ...result,
+            product: yield* productRun({
+              runId: yield* requireId(input.id, "product-run"),
+              cursor: input.cursor,
+              limit: input.limit,
             }),
           };
       }

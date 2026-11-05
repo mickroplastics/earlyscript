@@ -33,6 +33,7 @@ import {
 } from "../src/editorial/engineLabSupport.ts";
 import { resolveEngineLocation } from "../src/editorial/engineProcess.ts";
 import * as EditorialDatabase from "../src/editorial/persistence/EditorialDatabase.ts";
+import * as RunDirectory from "../src/editorial/RunDirectory.ts";
 import * as McpHttpServer from "../src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../src/mcp/McpInvocationContext.ts";
 import * as ThreadManagement from "../src/orchestration-v2/ThreadManagementService.ts";
@@ -117,6 +118,8 @@ const layer = McpHttpServer.layerEngineLabToolkit.pipe(
   ),
   Layer.provideMerge(Layer.succeed(McpInvocationContext.McpInvocationContext, scope)),
   Layer.provideMerge(threads),
+  // The product runs `engine_inspect` pages through: this database's own runs directory.
+  Layer.provideMerge(RunDirectory.layerWithRunsDir(NodePath.join(NodePath.dirname(db), "runs"))),
   Layer.provideMerge(services),
   Layer.provideMerge(Logger.layer([Logger.withConsoleError(Logger.formatSimple)])),
   Layer.provideMerge(NodeServices.layer),
