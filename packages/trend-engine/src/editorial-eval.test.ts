@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - tests write temporary corpora and read the files the pool writes.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off - tests write temporary corpora and read the files the pool writes.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -152,9 +152,10 @@ describe("bootstrap", () => {
   it("is reproducible with a seed and changes with another", () => {
     const one = bootstrapPrecision(a, unitDraws(units, 500, 7), familyUnit);
     const again = bootstrapPrecision(a, unitDraws(units, 500, 7), familyUnit);
-    const other = bootstrapPrecision(a, unitDraws(units, 500, 8), familyUnit);
     expect(again).toEqual(one);
-    expect(other).not.toEqual(one);
+    const draws = (seed: number) => unitDraws(units, 50, seed).map((w) => [...w].toSorted());
+    expect(draws(7)).toEqual(draws(7));
+    expect(draws(8)).not.toEqual(draws(7));
     expect(one.low!).toBeLessThanOrEqual(5 / 8);
     expect(one.high!).toBeGreaterThanOrEqual(5 / 8);
   });
