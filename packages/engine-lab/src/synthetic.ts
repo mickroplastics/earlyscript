@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - fixture writer for the lab's end-to-end command and tests.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - fixture writer for the lab's end-to-end command and tests.
 // A small corpus/1 with six topics whose growth, authors and fit pull the weighted score apart,
 // a profile and a configuration the fingerprint embedder can reach, and synthetic labels in the
 // format of Miguel's cards. Synthetic: it proves the mechanism, never editorial quality.

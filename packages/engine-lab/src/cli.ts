@@ -4,9 +4,11 @@
 //   node src/cli.ts evaluate --jobs-root <dir> --engine-root <dir> --token <token>  (spec on stdin)
 //   node src/cli.ts cancel --jobs-root <dir> --token <token>
 //   node src/cli.ts synthetic --out <dir> --from <day> --days <n>
+//   node src/cli.ts subset --from-corpus <dir> --out <new dir> --sources hn,github --from <day> --to <exclusive day>
 import * as NodeFS from "node:fs";
 
 import type { JobSpec } from "./result.ts";
+import { subsetCorpus } from "./corpusSubset.ts";
 import { writeSyntheticCorpus } from "./synthetic.ts";
 import { cancelJob, evaluateJob } from "./worker.ts";
 
@@ -45,6 +47,18 @@ if (command === "evaluate") {
   console.log(
     JSON.stringify(
       writeSyntheticCorpus({ dir: need("out"), fromDay: need("from"), days: Number(need("days")) }),
+    ),
+  );
+} else if (command === "subset") {
+  console.log(
+    JSON.stringify(
+      subsetCorpus({
+        from: need("from-corpus"),
+        out: need("out"),
+        sources: need("sources").split(","),
+        fromDay: need("from"),
+        toDay: need("to"),
+      }),
     ),
   );
 } else {

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off - the trusted executor, a plain Node program.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off globalTimers:off - the trusted executor, a plain Node program.
 // The trusted side of an evaluation: it checks the job against the sealed partitions, builds a
 // code candidate's tree, runs every arm (in bwrap without network when available), checks what
 // each arm wrote against the corpus and returns the signed outputs. It never sees labels.

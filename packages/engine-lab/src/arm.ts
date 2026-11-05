@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalConsole:off - runs inside the sandbox as a plain script.
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalConsole:off globalDate:off - runs inside the sandbox as a plain script.
 // One arm at one cutoff: runs the engine of the tree it is given (the installed one or a code
 // candidate's copy) and writes arm.json next to its run. It sees no labels and no evaluator;
 // the worker checks what it writes against the corpus.
