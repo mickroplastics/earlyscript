@@ -144,7 +144,7 @@ El coseno solo fundía grupos sin relación, porque los grupos de 30 días tiene
 
 **Cómo se aplica la regla:**
 
-- Una **oportunidad** es un ancla más los puestos que coinciden directamente con ella. El orden es por clave de ancla, y en caso de varias coincidencias gana la de mayor coseno. No hay clausura transitiva: otro brazo no puede unir dos temas actuando de puente.
+- Una **oportunidad** es un ancla más los puestos que coinciden directamente con **todos** sus miembros (enlace completo). El orden es por clave de ancla, y en caso de varias coincidencias gana la de mayor coseno con el ancla. No hay clausura transitiva: cada par dentro de una oportunidad cumple `sameTopic`, así que otro brazo no puede unir dos temas, ni hacer que compartan etiqueta, actuando de puente.
 - Un **duplicado** es un puesto que coincide directamente con un puesto anterior del mismo brazo y corte (`duplicate_of` en `rankings.json`).
 - Las **familias** unen oportunidades de cortes distintos por componentes conexas. Solo sirven como unidades del bootstrap y para separar temas nuevos de recurrentes.
 - Un **registro** coincide con un tema por el mismo id de señal o por la identidad.

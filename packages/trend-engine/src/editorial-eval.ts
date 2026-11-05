@@ -420,10 +420,9 @@ class Components {
 }
 
 /**
- * Opportunities of one cutoff (U1-B1 of the second verification): positions sorted by
- * `keyOf`; each joins the anchor it is directly the same topic as (highest cosine, then smaller
- * key), else it becomes a new anchor. No transitive closure: a position never joins through a
- * third one, so another arm cannot bridge two topics into one opportunity.
+ * Opportunities of one cutoff: positions sorted by `keyOf` join the group whose every member
+ * they match directly (highest cosine with the anchor wins), else start one. Every pair inside
+ * an opportunity satisfies `sameTopic`, so no arm can bridge two topics into one label.
  */
 export function anchorGroups<T extends TopicMember>(
   members: ReadonlyArray<T>,
@@ -437,7 +436,8 @@ export function anchorGroups<T extends TopicMember>(
   for (const m of sorted) {
     let best: { group: Array<T>; cosine: number } | null = null;
     for (const group of groups) {
-      if (!sameTopic(m, group[0]!, rare)) continue;
+      // Complete link: matching only the anchor would let it bridge two members.
+      if (!group.every((other) => sameTopic(m, other, rare))) continue;
       const cosine = dot(m.centroid, group[0]!.centroid);
       if (best === null || cosine > best.cosine) best = { group, cosine };
     }

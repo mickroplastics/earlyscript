@@ -138,9 +138,11 @@ describe("topic identity (one rule for F's emission and the evaluation)", () => 
       ["C", "B", "A"],
     ]) {
       const groups = anchorGroups([A, B, C], all, (m) => String(order.indexOf(m.key)));
-      const together = groups.some((g) => g.includes(A) && g.includes(C));
-      // Only when B anchors do A and C share its card; they are still not duplicates (below).
-      expect(together).toBe(order[0] === "B");
+      // Every pair inside a group is directly the same topic, so A and C never share a card,
+      // not even when B anchors.
+      expect(groups.some((g) => g.includes(A) && g.includes(C))).toBe(false);
+      for (const g of groups)
+        for (const x of g) for (const y of g) if (x !== y) expect(sameTopic(x, y, all)).toBe(true);
     }
   });
 });
@@ -1380,6 +1382,47 @@ describe("Sol's motor-v2 findings (regressions)", () => {
     });
     const arm = (out.metrics.logical.results["m"] as any).dev.arms.C;
     expect(arm.p_at_5).toBeCloseTo(0.4);
+    expect(arm.duplicates_at_5).toBe(0);
+  });
+});
+
+describe("Sol's motor-v2 third verification B1 (regression)", () => {
+  it("with B first, A and C keep separate cards and can get different answers", async () => {
+    const root = tempDir("u1-v2-b1-3");
+    // What anchorGroups now forms for Sol's A/B/C with B first: [B, A] and [C].
+    const e = miniEvaluation(
+      root,
+      [
+        {
+          id: "OB",
+          family: "F1",
+          members: [
+            { config: "cfg-R", trend: "b" },
+            { config: "cfg-C", trend: "a" },
+          ],
+        },
+        { id: "OC", family: "F2", members: [{ config: "cfg-C", trend: "c" }] },
+      ],
+      {
+        "2026-10-20": {
+          C: [
+            ["a", "OB", null],
+            ["c", "OC", null],
+          ],
+          R: [["b", "OB", null]],
+        },
+      },
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [e.labels("m", { OB: "yes", OC: "no" })],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    });
+    const arm = (out.metrics.logical.results["m"] as any).dev.arms.C;
+    expect(arm.p_at_5).toBeCloseTo(0.2);
     expect(arm.duplicates_at_5).toBe(0);
   });
 });
