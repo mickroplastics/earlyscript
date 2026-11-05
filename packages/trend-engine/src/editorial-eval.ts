@@ -49,15 +49,24 @@ export const EVAL_SOURCES: ReadonlyArray<SourceId> = [
 ];
 
 /**
- * Two top-5 positions are the same topic when their centroids have cosine >= 0.80 or they share
- * at least half the members of the smaller one. The relation is closed transitively (connected
- * components), so the result does not depend on the order of arms or positions. Within a cutoff
- * it forms the opportunities; across cutoffs, the families. Every member list holds only items
- * published before its own cutoff.
+ * Two top-5 positions are the same topic when they share at least half the members of the
+ * smaller one, or when their centroids have cosine >= 0.80 and they share at least two rare
+ * top terms. P1 asked for cosine >= 0.80 alone; on the development pool it merged unrelated
+ * clusters (30-day clusters have centroids near the corpus mean: "prediction markets" and
+ * "attention cache compression" at 0.87, the same arrest at 0.84), so the cosine only counts
+ * with lexical evidence. A term is rare when at most 1 % of the corpus items published in the
+ * 30 days before the cutoff contain it (the later cutoff for a pair of cutoffs): it depends on
+ * the corpus, never on the arms. The relation is closed transitively (connected components), so
+ * the result does not depend on the order of arms or positions. Within a cutoff it forms the
+ * opportunities; across cutoffs, the families. Only items published before each cutoff count.
  */
 export const SAME_TOPIC_RULE = {
-  centroid_cosine_min: 0.8,
   shared_items_min_fraction: 0.5,
+  centroid_cosine_min: 0.8,
+  rare_terms_min_shared: 2,
+  rare_term_max_item_share: 0.01,
+  rare_term_window_days: 30,
+  terms: "top_terms of each position's dossier (10)",
   closure: "connected components (transitive)",
   within_cutoff: "opportunity: the labelled unit (topic, cutoff)",
   across_cutoffs: "family: dependence and new versus recurrent topics; labels never travel",
@@ -297,27 +306,73 @@ export interface TopicMember {
   readonly trendId: string;
   readonly centroid: Float32Array;
   readonly itemIds: ReadonlySet<string>;
+  readonly terms: ReadonlyArray<string>;
 }
 
-/** SAME_TOPIC_RULE for two members. */
-export function sameTopic(a: TopicMember, b: TopicMember): boolean {
-  if (dot(a.centroid, b.centroid) >= SAME_TOPIC_RULE.centroid_cosine_min) return true;
+/** SAME_TOPIC_RULE for two members, given the rare terms of the (later) cutoff. */
+export function sameTopic(
+  a: TopicMember,
+  b: TopicMember,
+  rare: (term: string) => boolean,
+): boolean {
   const [small, large] = a.itemIds.size <= b.itemIds.size ? [a, b] : [b, a];
-  if (small.itemIds.size === 0) return false;
-  let shared = 0;
-  for (const id of small.itemIds) if (large.itemIds.has(id)) shared++;
-  return shared >= SAME_TOPIC_RULE.shared_items_min_fraction * small.itemIds.size;
+  if (small.itemIds.size > 0) {
+    let shared = 0;
+    for (const id of small.itemIds) if (large.itemIds.has(id)) shared++;
+    if (shared >= SAME_TOPIC_RULE.shared_items_min_fraction * small.itemIds.size) return true;
+  }
+  if (dot(a.centroid, b.centroid) < SAME_TOPIC_RULE.centroid_cosine_min) return false;
+  const bTerms = new Set(b.terms);
+  const sharedRare = new Set(a.terms.filter((t) => bTerms.has(t) && rare(t)));
+  return sharedRare.size >= SAME_TOPIC_RULE.rare_terms_min_shared;
+}
+
+const termTokens = (text: string): Array<string> => text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [];
+
+/**
+ * Item document frequency of the candidate terms in the window before each cutoff; a term is
+ * rare at a cutoff when its share is at most SAME_TOPIC_RULE.rare_term_max_item_share.
+ */
+export function rareTermsByCutoff(
+  items: ReadonlyArray<Pick<Item, "published_at" | "title" | "body">>,
+  terms: ReadonlySet<string>,
+  cutoffDays: ReadonlyArray<string>,
+): Map<string, Set<string>> {
+  const tokens = items.map((item) => ({
+    ms: Date.parse(item.published_at),
+    terms: new Set(termTokens(`${item.title} ${item.body}`).filter((t) => terms.has(t))),
+  }));
+  return new Map(
+    cutoffDays.map((day) => {
+      const end = dayStart(day);
+      const start = end - SAME_TOPIC_RULE.rare_term_window_days * DAY_MS;
+      const df = new Map<string, number>();
+      let n = 0;
+      for (const t of tokens) {
+        if (t.ms < start || t.ms >= end) continue;
+        n++;
+        for (const term of t.terms) df.set(term, (df.get(term) ?? 0) + 1);
+      }
+      const rare = new Set(
+        [...terms].filter((term) => (df.get(term) ?? 0) <= SAME_TOPIC_RULE.rare_term_max_item_share * n),
+      );
+      return [day, rare] as const;
+    }),
+  );
 }
 
 /** Connected components of SAME_TOPIC_RULE; members are listed by key, groups by first key. */
-export function groupMembers<T extends TopicMember>(members: ReadonlyArray<T>): Array<Array<T>> {
+export function groupMembers<T extends TopicMember>(
+  members: ReadonlyArray<T>,
+  rare: (term: string) => boolean,
+): Array<Array<T>> {
   const byKey = new Map(members.map((m) => [m.key, m]));
   const sorted = [...byKey.values()].toSorted((a, b) => (a.key < b.key ? -1 : 1));
   const components = new Components();
   for (const m of sorted) components.add(m.key);
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length; j++) {
-      if (sameTopic(sorted[i]!, sorted[j]!)) components.union(sorted[i]!.key, sorted[j]!.key);
+      if (sameTopic(sorted[i]!, sorted[j]!, rare)) components.union(sorted[i]!.key, sorted[j]!.key);
     }
   }
   return components.groups().map((keys) => keys.map((key) => byKey.get(key)!));
@@ -656,6 +711,7 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
           trendId: d.trend.id,
           centroid: trend.centroid,
           itemIds: new Set(trend.itemIds),
+          terms: d.trend.top_terms,
           dossier: d,
         });
       }
@@ -671,10 +727,23 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
   }
   const opportunities: Array<Opportunity> = [];
   const topicOfKey = new Map<string, string>();
+  const candidateTerms = new Set(
+    [...positionsByCutoff.values()].flatMap((ps) => [...ps.values()].flatMap((p) => p.terms)),
+  );
+  const rareOf = new Map<string, Set<string>>();
+  for (const [dir, corpus] of corpora) {
+    const days = universeCutoffs.map((c) => c.cutoff).filter((day) => corpusOf(day) === dir);
+    for (const [day, rare] of rareTermsByCutoff([...corpus.items.values()], candidateTerms, days)) {
+      rareOf.set(day, rare);
+    }
+  }
   for (const { cutoff: cutoffDay, operational_cutoff_at } of universeCutoffs) {
     const cutoffMs = dayStart(cutoffDay);
     const corpus = corpora.get(corpusOf(cutoffDay))!;
-    for (const group of groupMembers([...positionsByCutoff.get(cutoffDay)!.values()])) {
+    const rare = rareOf.get(cutoffDay)!;
+    for (const group of groupMembers([...positionsByCutoff.get(cutoffDay)!.values()], (t) =>
+      rare.has(t),
+    )) {
       const anchorKey = (p: Position) => `${p.trendId}|${vectorSha(p.centroid)}`;
       const anchor = group.toSorted((a, b) => (anchorKey(a) < anchorKey(b) ? -1 : 1))[0]!;
       const topicId = `top_${sha256(`${cutoffDay}\n${anchorKey(anchor)}`).slice(7, 23)}`;
@@ -742,7 +811,9 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       const a = opportunities[i]!;
       const b = opportunities[j]!;
       if (a.topic.cutoff === b.topic.cutoff) continue;
-      if (a.members.some((ma) => b.members.some((mb) => sameTopic(ma, mb)))) {
+      const rare = rareOf.get(a.topic.cutoff > b.topic.cutoff ? a.topic.cutoff : b.topic.cutoff)!;
+      const isRare = (t: string) => rare.has(t);
+      if (a.members.some((ma) => b.members.some((mb) => sameTopic(ma, mb, isRare)))) {
         familyComponents.union(a.topic.topic_id, b.topic.topic_id);
       }
     }
