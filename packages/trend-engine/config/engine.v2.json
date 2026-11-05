@@ -56,10 +56,17 @@
     "min_dossiers": 5
   },
   "relevance": {
-    "model": "relevance.v1.json",
-    "sha256": "sha256:8222b3531b113dfe1f21b64bd93415329815a6db4793b933991f8c92cc213dd5",
+    "model": "relevance.v2.json",
+    "sha256": "sha256:8a09bbba4acce7ba5dddf4eddcd78e4b698b00a69848badae4239d06836ea621",
     "item_min": 0.26,
-    "signal_min": 0.5,
-    "profile_gate": false
+    "signal_min": 0.4,
+    "profile_gate": false,
+    "aggregate": "trimmed_mean",
+    "min_relevant_distinct": 3,
+    "novelty": {
+      "lookback_days": 7,
+      "top": 5,
+      "growth_ratio": 1.5
+    }
   }
 }

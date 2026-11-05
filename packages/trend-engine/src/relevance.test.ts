@@ -124,7 +124,7 @@ describe("relevance model", () => {
     );
 
     const dir = tempDir("relevance-model");
-    const bytes = NodeFS.readFileSync(NodePath.join(CONFIG_DIR, "relevance.v1.json"));
+    const bytes = NodeFS.readFileSync(NodePath.join(CONFIG_DIR, "relevance.v2.json"));
     NodeFS.writeFileSync(NodePath.join(dir, "m.json"), bytes);
     const ref = {
       model: "m.json",
@@ -142,7 +142,7 @@ describe("relevance model", () => {
     );
   });
 
-  it("ships engine.v2.json pointing at relevance.v1.json by its hash", () => {
+  it("ships engine.v2.json pointing at relevance.v2.json by its hash", () => {
     const { config } = loadConfig(V2_PATH);
     expect(config.relevance).toBeDefined();
     const loaded = loadRelevance(config.relevance!, config.embedder, CONFIG_DIR);
@@ -150,6 +150,8 @@ describe("relevance model", () => {
     expect(config.rank.weighted.method).toBe("weighted_sum.v0.02");
     expect(Object.keys(config.rank.weighted.weights)).not.toContain("log_authors_7d");
     expect(config.emit.min_dossiers).toBeGreaterThanOrEqual(5);
+    expect(config.relevance!.novelty).toBeDefined();
+    expect(config.relevance!.min_relevant_distinct).toBeGreaterThanOrEqual(1);
     expect(canonicalJson(config)).not.toBe(canonicalJson(loadConfig(DEFAULT_CONFIG_PATH).config));
   });
 });
