@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "engine-lab": "node scripts/engine-lab.ts",
     "engine-lab:e2e": "node scripts/engine-lab-e2e.ts",
+    "engine-lab:mcp-stdio": "node scripts/engine-lab-mcp-stdio.ts",
     "test": "vp test run",
     "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
     "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",
