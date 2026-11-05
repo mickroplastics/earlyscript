@@ -510,7 +510,11 @@ describe("cross-day duplicate ids in the prospective capture", () => {
     expect(entry["duplicate_ids_after"]).toEqual([]);
     // The corpus still reads: no id appears twice.
     await expect(
-      readCorpus({ dir: corpusDir, adapters: fixtureSources(corpusDir, ["hn", "github"]), untilDay: "2026-10-11" }),
+      readCorpus({
+        dir: corpusDir,
+        adapters: fixtureSources(corpusDir, ["hn", "github"]),
+        untilDay: "2026-10-11",
+      }),
     ).resolves.toBeDefined();
   });
 });
