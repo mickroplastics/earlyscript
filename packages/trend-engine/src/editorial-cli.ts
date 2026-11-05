@@ -144,14 +144,17 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       universeHash: universe.universe_hash,
       title: values.title ?? "Tarjetas de temas",
     });
-    console.log(JSON.stringify({ ...written, cards: cards.length, universe_hash: universe.universe_hash }));
+    console.log(
+      JSON.stringify({ ...written, cards: cards.length, universe_hash: universe.universe_hash }),
+    );
     return 0;
   }
   if (sub === "cards-html" && values.cards && values.out) {
     const cards = readCardsJsonl(values.cards);
     const name = values.name ?? NodePath.basename(values.cards).replace(/\.jsonl$/, "");
     const written = writeCardSet(cards, values.out, name, {
-      title: values.title ?? (cards.every((c) => c.unit === "item") ? "Tarjetas de ítems" : "Tarjetas"),
+      title:
+        values.title ?? (cards.every((c) => c.unit === "item") ? "Tarjetas de ítems" : "Tarjetas"),
     });
     console.log(JSON.stringify({ ...written, cards: cards.length }));
     return 0;

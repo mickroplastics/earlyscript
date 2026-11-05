@@ -1,9 +1,6 @@
 {
   "config_version": "earlyscript.engine.v1-noprofile",
-  "sources": [
-    "hn",
-    "github"
-  ],
+  "sources": ["hn", "github"],
   "embedder": {
     "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
     "revision": "c25a394dd583836952667c12f008335071b3f43d",

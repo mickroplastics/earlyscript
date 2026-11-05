@@ -112,8 +112,16 @@ interface ArmMetrics {
   readonly counts: Record<string, number>;
   readonly duplicates_at_5: number;
   readonly families: number;
-  readonly new_families: { readonly families: number; readonly positions: number; readonly precision: number | null };
-  readonly recurrent_families: { readonly families: number; readonly positions: number; readonly precision: number | null };
+  readonly new_families: {
+    readonly families: number;
+    readonly positions: number;
+    readonly precision: number | null;
+  };
+  readonly recurrent_families: {
+    readonly families: number;
+    readonly positions: number;
+    readonly precision: number | null;
+  };
   readonly ci95_family: Interval;
   readonly ci95_blocks: Interval;
   readonly source_share_at_5: Record<string, number>;
@@ -138,7 +146,8 @@ export async function runScore(options: ScoreOptions) {
   const day = (c: string) => c.slice(0, 10);
   const partitions: Record<string, Array<string>> = {};
   const add = (name: string, list?: ReadonlyArray<string>) => {
-    if (list) partitions[name] = [...new Set(list.map(day))].filter((d) => cutoffInfo.has(d)).toSorted();
+    if (list)
+      partitions[name] = [...new Set(list.map(day))].filter((d) => cutoffInfo.has(d)).toSorted();
   };
   add("dev", options.dev);
   add("retro", options.retro);
@@ -174,7 +183,7 @@ export async function runScore(options: ScoreOptions) {
   );
   const arms = rankings.logical.arms.map((a) => a.name);
   const candidates = options.candidates ?? [];
-  const references = options.references ?? arms.filter((a) => !candidates.includes(a));
+  const references = (options.references ?? arms).filter((a) => !candidates.includes(a));
 
   const slotsOf = (labels: LabelSet, arm: string, cutoffs: ReadonlyArray<string>, b6: boolean) =>
     cutoffs.flatMap((cutoff) => {
@@ -204,13 +213,25 @@ export async function runScore(options: ScoreOptions) {
         byPartition[name] = { cutoffs: 0 };
         continue;
       }
-      const b6Cutoffs = new Set(name === "retro" || name === "test" ? (partitions["retro"] ?? []) : []);
+      const b6Cutoffs = new Set(
+        name === "retro" || name === "test" ? (partitions["retro"] ?? []) : [],
+      );
       const armSlots = new Map(
         arms.map((arm) => [
           arm,
           [
-            ...slotsOf(labels, arm, cutoffs.filter((c) => b6Cutoffs.has(c)), true),
-            ...slotsOf(labels, arm, cutoffs.filter((c) => !b6Cutoffs.has(c)), false),
+            ...slotsOf(
+              labels,
+              arm,
+              cutoffs.filter((c) => b6Cutoffs.has(c)),
+              true,
+            ),
+            ...slotsOf(
+              labels,
+              arm,
+              cutoffs.filter((c) => !b6Cutoffs.has(c)),
+              false,
+            ),
           ],
         ]),
       );
@@ -227,7 +248,8 @@ export async function runScore(options: ScoreOptions) {
         });
       }
       const pointOf = (arm: string) => perArm[arm]!.p_at_5 ?? -1;
-      const bestReference = references.toSorted((a, b) => pointOf(b) - pointOf(a) || (a < b ? -1 : 1))[0] ?? null;
+      const bestReference =
+        references.toSorted((a, b) => pointOf(b) - pointOf(a) || (a < b ? -1 : 1))[0] ?? null;
       const comparisons = candidates.map((candidate) => ({
         candidate,
         best_reference: bestReference,
@@ -239,7 +261,13 @@ export async function runScore(options: ScoreOptions) {
             difference: round4((perArm[candidate]!.p_at_5 ?? 0) - (perArm[reference]!.p_at_5 ?? 0)),
             ci95_family: roundInterval(bootstrapDifference(a, b, familyDraws, familyUnit)),
             ci_bonferroni_family: roundInterval(
-              bootstrapDifference(a, b, familyDraws, familyUnit, 0.05 / Math.max(1, references.length)),
+              bootstrapDifference(
+                a,
+                b,
+                familyDraws,
+                familyUnit,
+                0.05 / Math.max(1, references.length),
+              ),
             ),
             ci95_blocks: roundInterval(bootstrapDifference(a, b, blocks, (s) => s.cutoff)),
           };
@@ -312,7 +340,10 @@ export async function runScore(options: ScoreOptions) {
   const metricsPath = NodePath.join(options.outDir, "metrics.json");
   const reportPath = NodePath.join(options.outDir, "report.md");
   NodeFS.writeFileSync(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`);
-  NodeFS.writeFileSync(reportPath, renderReport(metrics.logical, metrics.metrics_hash, universe, rankings));
+  NodeFS.writeFileSync(
+    reportPath,
+    renderReport(metrics.logical, metrics.metrics_hash, universe, rankings),
+  );
   return { metricsPath, reportPath, metrics };
 }
 
@@ -342,7 +373,12 @@ function armMetrics(
   }
   const perCutoff: Record<string, number> = {};
   for (const cutoff of [...new Set(slots.map((s) => s.cutoff))].toSorted()) {
-    perCutoff[cutoff] = round4(weightedPrecision(slots.filter((s) => s.cutoff === cutoff), one))!;
+    perCutoff[cutoff] = round4(
+      weightedPrecision(
+        slots.filter((s) => s.cutoff === cutoff),
+        one,
+      ),
+    )!;
   }
   const counted = slots.filter((s) => s.zero === null);
   const resolved = counted.filter((s) => s.label === "yes" || s.label === "no");
@@ -362,7 +398,8 @@ function armMetrics(
   for (const s of filled) {
     const t = topics.get(s.topicId!)!;
     const coverage = cutoffs.get(s.cutoff)!.coverage;
-    for (const source of Object.keys(t.items_7d_by_source)) share[source] = (share[source] ?? 0) + 1;
+    for (const source of Object.keys(t.items_7d_by_source))
+      share[source] = (share[source] ?? 0) + 1;
     const dependsOnIncomplete = Object.keys(t.items_7d_by_source).some((source) => {
       const prev = coverage[source]?.prev_7d;
       return prev !== undefined && prev.complete + prev.partial < 7;
@@ -400,7 +437,9 @@ function coverageReport(universe: Universe, cutoffs: ReadonlyArray<string>) {
       const windows = rows.map((r) => r.coverage[source]);
       const captured = (w: { complete: number; partial: number } | undefined) =>
         w === undefined ? 0 : w.complete + w.partial;
-      const evaluated = windows.every((w) => w && captured(w.last_7d) >= 5 && captured(w.prev_7d) >= 5);
+      const evaluated = windows.every(
+        (w) => w && captured(w.last_7d) >= 5 && captured(w.prev_7d) >= 5,
+      );
       const sum = (pick: (w: NonNullable<(typeof windows)[number]>) => number) =>
         windows.reduce((acc, w) => acc + (w ? pick(w) : 0), 0);
       return [
@@ -419,7 +458,8 @@ function coverageReport(universe: Universe, cutoffs: ReadonlyArray<string>) {
 }
 
 const pct = (x: unknown) => (typeof x === "number" ? x.toFixed(3) : "—");
-const ivl = (i: Interval | undefined) => (i && i.low !== null ? `[${pct(i.low)}, ${pct(i.high)}]` : "—");
+const ivl = (i: Interval | undefined) =>
+  i && i.low !== null ? `[${pct(i.low)}, ${pct(i.high)}]` : "—";
 
 function renderReport(
   logical: {
@@ -434,7 +474,7 @@ function renderReport(
   const lines: Array<string> = [
     "# Evaluación editorial (protocolo P1.1)",
     "",
-    `- Universo: \`${universe.universe_hash}\` (${universe.logical.topics.length} temas por corte, ${universe.logical.families.length} familias)`,
+    `- Universo: \`${universe.universe_hash}\` (${universe.logical.topics.length} oportunidades (tema y corte), ${universe.logical.families.length} familias)`,
     `- Rankings: \`${rankings.rankings_hash}\`; métricas: \`${hash}\``,
     `- Brazos: ${rankings.logical.arms.map((a) => `${a.name} (${a.method})`).join(", ")}`,
     "- P@5 con denominador 5: vacíos, «no sé», sin etiqueta, segunda aparición de una familia y (solo retrospectiva) puestos B6 valen 0. «Cota sup.» cuenta las dudas como sí.",
@@ -465,23 +505,44 @@ function renderReport(
       }
       lines.push("", `Mejor referencia (punto): ${p.best_reference ?? "—"}.`, "");
       for (const c of p.comparisons as Array<any>) {
-        lines.push(`Candidato ${c.candidate}:`, "", "| Contra | Diferencia | IC 95 % familias | Bonferroni | IC 95 % bloques |", "| --- | --- | --- | --- | --- |");
+        lines.push(
+          `Candidato ${c.candidate}:`,
+          "",
+          "| Contra | Diferencia | IC 95 % familias | Bonferroni | IC 95 % bloques |",
+          "| --- | --- | --- | --- | --- |",
+        );
         for (const a of c.against) {
-          lines.push(`| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} |`);
+          lines.push(
+            `| ${a.reference} | ${pct(a.difference)} | ${ivl(a.ci95_family)} | ${ivl(a.ci_bonferroni_family)} | ${ivl(a.ci95_blocks)} |`,
+          );
         }
         lines.push("");
       }
-      lines.push("Cobertura por fuente (ventana de 7 días antes de cada corte):", "", "| Fuente | Evaluada | Días capturados | Días sin captura | Días no disponibles | Ítems |", "| --- | --- | --- | --- | --- | --- |");
+      lines.push(
+        "Cobertura por fuente (ventana de 7 días antes de cada corte):",
+        "",
+        "| Fuente | Evaluada | Días capturados | Días sin captura | Días no disponibles | Ítems |",
+        "| --- | --- | --- | --- | --- | --- |",
+      );
       for (const [source, c] of Object.entries(p.coverage as Record<string, any>)) {
-        lines.push(`| ${source} | ${c.evaluated ? "sí" : "no evaluada"} | ${c.captured_days_last_7d}/${c.possible_days} | ${c.missing_days_last_7d} | ${c.unavailable_days_last_7d} | ${c.items_last_7d} |`);
+        lines.push(
+          `| ${source} | ${c.evaluated ? "sí" : "no evaluada"} | ${c.captured_days_last_7d}/${c.possible_days} | ${c.missing_days_last_7d} | ${c.unavailable_days_last_7d} | ${c.items_last_7d} |`,
+        );
       }
       lines.push("");
     }
   }
   if (logical.agreement.length > 0) {
-    lines.push("## Acuerdo entre etiquetadores", "", "| A | B | n | Acuerdo | κ | Excluidas (dudas) |", "| --- | --- | --- | --- | --- | --- |");
+    lines.push(
+      "## Acuerdo entre etiquetadores",
+      "",
+      "| A | B | n | Acuerdo | κ | Excluidas (dudas) |",
+      "| --- | --- | --- | --- | --- | --- |",
+    );
     for (const a of logical.agreement) {
-      lines.push(`| ${a.a} | ${a.b} | ${a.n} | ${pct(a.agreement)} | ${pct(a.kappa)} | ${a.excluded} |`);
+      lines.push(
+        `| ${a.a} | ${a.b} | ${a.n} | ${pct(a.agreement)} | ${pct(a.kappa)} | ${a.excluded} |`,
+      );
     }
     lines.push("");
   }

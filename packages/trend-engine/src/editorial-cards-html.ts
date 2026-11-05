@@ -10,7 +10,8 @@ export interface CardsPageMeta {
 }
 
 export const LABELS_SCHEMA_VERSION = "earlyscript.editorial-labels/1";
-export const TOPIC_QUESTION = "¿SingulariDev haría un video sobre este tema en los próximos 7 días?";
+export const TOPIC_QUESTION =
+  "¿SingulariDev haría un video sobre este tema en los próximos 7 días?";
 export const ITEM_QUESTION = "¿Este ítem trata algo sobre lo que SingulariDev haría un video?";
 
 /** JSON safe inside a <script> element. */

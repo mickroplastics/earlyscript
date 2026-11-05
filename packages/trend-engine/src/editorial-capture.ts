@@ -57,7 +57,9 @@ export async function captureDay(options: CaptureOptions) {
   const day = options.day ?? dayOf(dayStart(dayOf(now().getTime())) - DAY_MS);
   dayStart(day);
   if ((options.firstDay && day < options.firstDay) || (options.lastDay && day > options.lastDay)) {
-    log(`capture: ${day} is outside ${options.firstDay ?? "…"}..${options.lastDay ?? "…"}, skipped`);
+    log(
+      `capture: ${day} is outside ${options.firstDay ?? "…"}..${options.lastDay ?? "…"}, skipped`,
+    );
     return { skipped: true as const, day };
   }
   if (now().getTime() < dayStart(day) + DAY_MS) throw new Error(`day ${day} has not closed yet`);
@@ -68,7 +70,8 @@ export async function captureDay(options: CaptureOptions) {
   }
   let seed: { from: string; corpus_hash: string } | null = null;
   if (!NodeFS.existsSync(options.corpusDir)) {
-    if (!options.seedFrom) throw new Error(`${options.corpusDir} does not exist and there is no --seed-from`);
+    if (!options.seedFrom)
+      throw new Error(`${options.corpusDir} does not exist and there is no --seed-from`);
     if (NodeFS.existsSync(NodePath.join(options.seedFrom, ".collect.lock"))) {
       throw new Error(`${options.seedFrom} is being written (collect lock present)`);
     }
@@ -78,7 +81,11 @@ export async function captureDay(options: CaptureOptions) {
     });
     seed = {
       from: NodePath.resolve(options.seedFrom),
-      corpus_hash: (JSON.parse(NodeFS.readFileSync(NodePath.join(options.corpusDir, "corpus-manifest.json"), "utf8")) as { corpus_hash: string }).corpus_hash,
+      corpus_hash: (
+        JSON.parse(
+          NodeFS.readFileSync(NodePath.join(options.corpusDir, "corpus-manifest.json"), "utf8"),
+        ) as { corpus_hash: string }
+      ).corpus_hash,
     };
     log(`capture: seeded ${options.corpusDir} from ${options.seedFrom}`);
   }
@@ -92,7 +99,10 @@ export async function captureDay(options: CaptureOptions) {
   });
   // A late source's previous day, only when it was unavailable: append-only, never a refresh.
   const previous = dayOf(dayStart(day) - DAY_MS);
-  const coverageText = NodeFS.readFileSync(NodePath.join(options.corpusDir, "coverage.jsonl"), "utf8");
+  const coverageText = NodeFS.readFileSync(
+    NodePath.join(options.corpusDir, "coverage.jsonl"),
+    "utf8",
+  );
   const unavailable = new Set(
     coverageText
       .split("\n")
@@ -104,7 +114,12 @@ export async function captureDay(options: CaptureOptions) {
   const late = options.sources.filter((s) => LATE_RETRY_SOURCES.includes(s) && unavailable.has(s));
   const retried =
     late.length > 0
-      ? await collectCorpus({ dir: options.corpusDir, from: previous, to: day, adapters: options.adapters(late) })
+      ? await collectCorpus({
+          dir: options.corpusDir,
+          from: previous,
+          to: day,
+          adapters: options.adapters(late),
+        })
       : [];
   const closedAt = now().toISOString();
   const snapshotDir = NodePath.resolve(options.snapshotsDir, cutoffDay);

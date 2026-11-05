@@ -52,10 +52,17 @@ export function followupLabels(
     const cutoffMs = dayStart(topic.cutoff);
     const endMs = cutoffMs + LABEL_RULE.followup_days * DAY_MS;
     const tail = stories
-      .filter((s) => s.publishedMs >= cutoffMs && s.publishedMs < endMs && dot(s.vector, centroid) > threshold)
-      .toSorted((a, b) => a.publishedMs - b.publishedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      .filter(
+        (s) =>
+          s.publishedMs >= cutoffMs && s.publishedMs < endMs && dot(s.vector, centroid) > threshold,
+      )
+      .toSorted(
+        (a, b) => a.publishedMs - b.publishedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
     const label = crossingLabel(tail, cutoffMs, LABEL_RULE.event_stories, LABEL_RULE.event_authors);
-    const window = Array.from({ length: LABEL_RULE.followup_days }, (_, k) => dayOf(cutoffMs + k * DAY_MS));
+    const window = Array.from({ length: LABEL_RULE.followup_days }, (_, k) =>
+      dayOf(cutoffMs + k * DAY_MS),
+    );
     const complete = window.filter((d) => completeDays.has(d)).length;
     return {
       topic_id: topic.topic_id,
@@ -84,12 +91,20 @@ export async function writeFollowupLabels(options: {
 }) {
   const universe = readUniverse(options.universePath);
   const centroidFile = JSON.parse(
-    NodeFS.readFileSync(NodePath.join(NodePath.dirname(options.universePath), "centroids.json"), "utf8"),
+    NodeFS.readFileSync(
+      NodePath.join(NodePath.dirname(options.universePath), "centroids.json"),
+      "utf8",
+    ),
   ) as { embedding_key: string; topics: Record<string, string> };
-  const centroids = new Map(Object.entries(centroidFile.topics).map(([id, b64]) => [id, fromBase64(b64)]));
+  const centroids = new Map(
+    Object.entries(centroidFile.topics).map(([id, b64]) => [id, fromBase64(b64)]),
+  );
   const config = Object.values(universe.logical.inputs.configs)[0]!;
   const sources: Array<SourceId> = ["hn"];
-  const lastCutoff = universe.logical.cutoffs.map((c) => c.cutoff).toSorted().at(-1)!;
+  const lastCutoff = universe.logical.cutoffs
+    .map((c) => c.cutoff)
+    .toSorted()
+    .at(-1)!;
   const endMs = dayStart(lastCutoff) + LABEL_RULE.followup_days * DAY_MS;
   const corpus = await readCorpus({
     dir: options.corpusDir,
@@ -105,7 +120,8 @@ export async function writeFollowupLabels(options: {
   const embedder =
     options.embedder ??
     createLocalEmbedder(embeddingSpec(config.embedder), {
-      cacheFile: options.cacheFile ?? NodePath.join(DEFAULT_DATA_DIR, "embeddings/embeddings.sqlite"),
+      cacheFile:
+        options.cacheFile ?? NodePath.join(DEFAULT_DATA_DIR, "embeddings/embeddings.sqlite"),
       modelDir: options.modelDir ?? defaultModelDir(DEFAULT_DATA_DIR, config.embedder.revision),
       workers: options.workers ?? 2,
       allowDownload: true,
@@ -114,7 +130,8 @@ export async function writeFollowupLabels(options: {
     });
   let vectors: Array<Float32Array>;
   try {
-    if (embedder.key !== centroidFile.embedding_key) throw new Error("embedder differs from the universe's");
+    if (embedder.key !== centroidFile.embedding_key)
+      throw new Error("embedder differs from the universe's");
     vectors = await embedder.embed(prepared.map((item) => item.text));
   } finally {
     await embedder.dispose();
@@ -136,7 +153,8 @@ export async function writeFollowupLabels(options: {
     rule: {
       ...LABEL_RULE,
       threshold: universe.logical.inputs.followup_threshold,
-      assignment: "non-exclusive: every story above the threshold against the topic's own anchor centroid",
+      assignment:
+        "non-exclusive: every story above the threshold against the topic's own anchor centroid",
       negative: `only with all ${LABEL_RULE.followup_days} follow-up days captured complete; otherwise pending`,
     },
     corpus_manifest_hash: corpus.manifestHash,

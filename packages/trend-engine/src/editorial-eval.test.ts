@@ -79,7 +79,9 @@ describe("same-topic grouping", () => {
   it("does not depend on the order of the positions", () => {
     const forward = groupMembers(members, rare).map((g) => g.map((m) => m.key));
     for (const seed of [1, 2, 3]) {
-      const shuffled = members.toSorted((x, y) => ((x.key.charCodeAt(0) * seed) % 7) - ((y.key.charCodeAt(0) * seed) % 7));
+      const shuffled = members.toSorted(
+        (x, y) => ((x.key.charCodeAt(0) * seed) % 7) - ((y.key.charCodeAt(0) * seed) % 7),
+      );
       expect(groupMembers(shuffled, rare).map((g) => g.map((m) => m.key))).toEqual(forward);
     }
   });
@@ -99,9 +101,17 @@ describe("keyword rule R4", () => {
 
 describe("arm specs", () => {
   it("parses methods and keyword files", () => {
-    expect(parseArm("R1=/c/v1.json:weighted")).toEqual({ name: "R1", configPath: "/c/v1.json", method: "weighted" });
+    expect(parseArm("R1=/c/v1.json:weighted")).toEqual({
+      name: "R1",
+      configPath: "/c/v1.json",
+      method: "weighted",
+    });
     expect(parseArm("R2=/c/v1.json:baseline").method).toBe("baseline");
-    expect(parseArm("C=/c/v2.json")).toEqual({ name: "C", configPath: "/c/v2.json", method: "weighted" });
+    expect(parseArm("C=/c/v2.json")).toEqual({
+      name: "C",
+      configPath: "/c/v2.json",
+      method: "weighted",
+    });
     expect(parseArm("R4=/c/np.json:keywords=/c/k.json")).toEqual({
       name: "R4",
       configPath: "/c/np.json",
@@ -112,7 +122,12 @@ describe("arm specs", () => {
 });
 
 describe("slot credits (P1.1 rules 3 and 4)", () => {
-  const entry = (topicId: string, family: string, label: LabelValue | null, unavailable = false) => ({
+  const entry = (
+    topicId: string,
+    family: string,
+    label: LabelValue | null,
+    unavailable = false,
+  ) => ({
     topicId,
     family,
     label,
@@ -131,19 +146,35 @@ describe("slot credits (P1.1 rules 3 and 4)", () => {
   );
 
   it("counts empty, unsure, duplicate and unavailable positions as 0 over a denominator of 5", () => {
-    expect(slots.map((s) => s.zero)).toEqual([null, "duplicate", null, "unavailable_at_cutoff", "empty"]);
+    expect(slots.map((s) => s.zero)).toEqual([
+      null,
+      "duplicate",
+      null,
+      "unavailable_at_cutoff",
+      "empty",
+    ]);
     expect(weightedPrecision(slots, () => 1)).toBeCloseTo(1 / 5);
     // The upper bound counts the unsure card as yes, never the duplicate or the empty position.
     expect(weightedPrecision(slots, () => 1, "upper")).toBeCloseTo(2 / 5);
     // Precision among resolved answers leaves the unsure card out.
-    expect(weightedPrecision(slots.filter((s) => s.zero === null && (s.label === "yes" || s.label === "no")), () => 1)).toBe(1);
+    expect(
+      weightedPrecision(
+        slots.filter((s) => s.zero === null && (s.label === "yes" || s.label === "no")),
+        () => 1,
+      ),
+    ).toBe(1);
   });
 });
 
 describe("bootstrap", () => {
   const slotsOf = (arm: string, labels: ReadonlyArray<LabelValue>) =>
     labels.flatMap((label, k) =>
-      topSlots(arm, `2026-10-${String(10 + k).padStart(2, "0")}`, [{ topicId: `${arm}${k}`, family: `f${k % 4}`, label, unavailable: false }], 1),
+      topSlots(
+        arm,
+        `2026-10-${String(10 + k).padStart(2, "0")}`,
+        [{ topicId: `${arm}${k}`, family: `f${k % 4}`, label, unavailable: false }],
+        1,
+      ),
     );
   const a = slotsOf("A", ["yes", "yes", "no", "yes", "no", "yes", "yes", "no"]);
   const b = slotsOf("B", ["no", "yes", "no", "no", "no", "yes", "no", "no"]);
@@ -169,8 +200,20 @@ describe("bootstrap", () => {
 
 describe("agreement", () => {
   it("gives percent agreement and Cohen's kappa over yes/no, leaving doubts out", () => {
-    const a = new Map<string, LabelValue>([["1", "yes"], ["2", "yes"], ["3", "no"], ["4", "no"], ["5", "unsure"]]);
-    const b = new Map<string, LabelValue>([["1", "yes"], ["2", "no"], ["3", "no"], ["4", "no"], ["5", "yes"]]);
+    const a = new Map<string, LabelValue>([
+      ["1", "yes"],
+      ["2", "yes"],
+      ["3", "no"],
+      ["4", "no"],
+      ["5", "unsure"],
+    ]);
+    const b = new Map<string, LabelValue>([
+      ["1", "yes"],
+      ["2", "no"],
+      ["3", "no"],
+      ["4", "no"],
+      ["5", "yes"],
+    ]);
     const k = cohenKappa(a, b);
     expect(k.n).toBe(4);
     expect(k.excluded).toBe(1);
@@ -195,7 +238,9 @@ describe("HN follow-up on a frozen universe", () => {
     author: `u${k}`,
     vector: unit([1, 0.1 * k, 0]),
   }));
-  const complete = new Set(Array.from({ length: 14 }, (_, k) => new Date(start + k * DAY_MS).toISOString().slice(0, 10)));
+  const complete = new Set(
+    Array.from({ length: 14 }, (_, k) => new Date(start + k * DAY_MS).toISOString().slice(0, 10)),
+  );
   const centroids = new Map([
     ["A", unit([1, 0, 0])],
     ["B", unit([0, 0, 1])],
@@ -255,13 +300,24 @@ describe("pool", () => {
     for (const topic of topics) {
       expect(topic.headlines.length).toBeLessThanOrEqual(5);
       // Card evidence is published before the topic's cutoff.
-      for (const h of topic.headlines) expect(h.published_at < `${topic.cutoff}T00:00:00`).toBe(true);
+      for (const h of topic.headlines)
+        expect(h.published_at < `${topic.cutoff}T00:00:00`).toBe(true);
     }
-    const cards = NodeFS.readFileSync(first.cardsPath!, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const cards = NodeFS.readFileSync(first.cardsPath!, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
     expect(cards).toHaveLength(topics.length);
     // Blind cards: no score, position, arm or family.
     for (const card of cards) {
-      expect(Object.keys(card).toSorted()).toEqual(["card_id", "cutoff", "headlines", "terms", "topic_id", "unit"]);
+      expect(Object.keys(card).toSorted()).toEqual([
+        "card_id",
+        "cutoff",
+        "headlines",
+        "terms",
+        "topic_id",
+        "unit",
+      ]);
     }
     expect(NodeFS.existsSync(NodePath.join(s.root, "a", "metrics.json"))).toBe(false);
   }, 60_000);

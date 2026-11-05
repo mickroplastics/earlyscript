@@ -327,7 +327,8 @@ export function sameTopic(
   return sharedRare.size >= SAME_TOPIC_RULE.rare_terms_min_shared;
 }
 
-const termTokens = (text: string): Array<string> => text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [];
+const termTokens = (text: string): Array<string> =>
+  text.toLowerCase().match(/[a-z][a-z0-9]{2,}/g) ?? [];
 
 /**
  * Item document frequency of the candidate terms in the window before each cutoff; a term is
@@ -354,7 +355,9 @@ export function rareTermsByCutoff(
         for (const term of t.terms) df.set(term, (df.get(term) ?? 0) + 1);
       }
       const rare = new Set(
-        [...terms].filter((term) => (df.get(term) ?? 0) <= SAME_TOPIC_RULE.rare_term_max_item_share * n),
+        [...terms].filter(
+          (term) => (df.get(term) ?? 0) <= SAME_TOPIC_RULE.rare_term_max_item_share * n,
+        ),
       );
       return [day, rare] as const;
     }),
@@ -515,7 +518,10 @@ function coverageWindows(
     return w;
   };
   return Object.fromEntries(
-    sources.map((s) => [s, { prev_7d: window(s, days.slice(0, 7)), last_7d: window(s, days.slice(7)) }]),
+    sources.map((s) => [
+      s,
+      { prev_7d: window(s, days.slice(0, 7)), last_7d: window(s, days.slice(7)) },
+    ]),
   );
 }
 
@@ -563,7 +569,8 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
   if (cutoffs.length === 0) throw new Error("pool needs at least one cutoff");
   const ledger = options.ledgerPath ? readLedger(options.ledgerPath) : [];
   const captureOf = new Map(captureEntries(ledger).map((e) => [e.cutoff_day, e]));
-  const corpusOf = (cutoffDay: string) => captureOf.get(cutoffDay)?.snapshot_dir ?? options.corpusDir;
+  const corpusOf = (cutoffDay: string) =>
+    captureOf.get(cutoffDay)?.snapshot_dir ?? options.corpusDir;
 
   const inner =
     options.embedder ??
@@ -643,7 +650,10 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
   const universeCutoffs: Array<UniverseCutoff> = [];
   const rankingsByCutoff: Record<
     string,
-    Record<string, { ranked: number; top: Array<{ position: number; trend_id: string; key: string }> }>
+    Record<
+      string,
+      { ranked: number; top: Array<{ position: number; trend_id: string; key: string }> }
+    >
   > = {};
   const positionsByCutoff = new Map<string, Map<string, Position>>();
   for (const cutoffAt of cutoffs) {
@@ -750,9 +760,13 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       const ids = [...new Set(group.flatMap((p) => [...p.itemIds]))];
       const items = ids
         .map((id) => corpus.items.get(id))
-        .filter((item): item is Item => item !== undefined && Date.parse(item.published_at) < cutoffMs);
+        .filter(
+          (item): item is Item => item !== undefined && Date.parse(item.published_at) < cutoffMs,
+        );
       if (items.length !== ids.length) {
-        throw new Error(`topic ${topicId}: ${ids.length - items.length} members missing from the corpus or not before the cutoff`);
+        throw new Error(
+          `topic ${topicId}: ${ids.length - items.length} members missing from the corpus or not before the cutoff`,
+        );
       }
       const recent = items.toSorted(
         (a, b) =>
@@ -969,12 +983,7 @@ async function poolRun(args: {
     embedding: args.embedder.key,
     corpus: manifest.corpus_hash,
   });
-  const dir = NodePath.join(
-    options.outDir,
-    "runs",
-    cutoffAt.slice(0, 10),
-    configHash.slice(7, 19),
-  );
+  const dir = NodePath.join(options.outDir, "runs", cutoffAt.slice(0, 10), configHash.slice(7, 19));
   const sidecar = NodePath.join(dir, "emitted.json");
   if (NodeFS.existsSync(sidecar) && !options.allowUnverifiedCorpus) {
     const saved = JSON.parse(NodeFS.readFileSync(sidecar, "utf8")) as {
@@ -994,7 +1003,10 @@ async function poolRun(args: {
         reused: true,
         dossiers,
         trends: new Map(
-          saved.trends.map((t) => [t.id, { centroid: fromBase64(t.centroid), itemIds: t.item_ids }]),
+          saved.trends.map((t) => [
+            t.id,
+            { centroid: fromBase64(t.centroid), itemIds: t.item_ids },
+          ]),
         ),
       };
     }
@@ -1029,7 +1041,11 @@ async function poolRun(args: {
     `${JSON.stringify({
       key,
       run_id: record.run_id,
-      trends: emitted.map((t) => ({ id: t.id, centroid: toBase64(t.centroid), item_ids: t.itemIds })),
+      trends: emitted.map((t) => ({
+        id: t.id,
+        centroid: toBase64(t.centroid),
+        item_ids: t.itemIds,
+      })),
     })}\n`,
   );
   args.log(
@@ -1102,21 +1118,23 @@ export function readRankings(path: string): Rankings {
  */
 export function buildTopicCards(
   universe: Universe,
-  options: { readonly seed: number; readonly cutoffs?: ReadonlyArray<string>; readonly sample?: number },
+  options: {
+    readonly seed: number;
+    readonly cutoffs?: ReadonlyArray<string>;
+    readonly sample?: number;
+  },
 ): Array<TopicCard> {
   const allowed = options.cutoffs ? new Set(options.cutoffs.map((c) => c.slice(0, 10))) : null;
   const cards = universe.logical.topics
     .filter((t) => allowed === null || allowed.has(t.cutoff))
-    .map(
-      (t): TopicCard => ({
-        card_id: t.card_id,
-        unit: "topic",
-        topic_id: t.topic_id,
-        cutoff: t.cutoff,
-        terms: t.terms,
-        headlines: t.headlines,
-      }),
-    );
+    .map((t): TopicCard => ({
+      card_id: t.card_id,
+      unit: "topic",
+      topic_id: t.topic_id,
+      cutoff: t.cutoff,
+      terms: t.terms,
+      headlines: t.headlines,
+    }));
   const shuffled = seededShuffle(cards, options.seed);
   if (options.sample === undefined) return shuffled;
   const familyOf = new Map(universe.logical.topics.map((t) => [t.topic_id, t.family_id]));
@@ -1126,11 +1144,15 @@ export function buildTopicCards(
     if (!byFamily.has(family)) byFamily.set(family, []);
     byFamily.get(family)!.push(card);
   }
-  const queues = seededShuffle([...byFamily.keys()].toSorted(), options.seed + 1).map(
-    (family) => byFamily.get(family)!,
+  const queues = seededShuffle([...byFamily.keys()].toSorted(), options.seed + 1).map((family) =>
+    byFamily.get(family)!,
   );
   const chosen: Array<TopicCard> = [];
-  for (let round = 0; chosen.length < options.sample && queues.some((q) => q.length > round); round++) {
+  for (
+    let round = 0;
+    chosen.length < options.sample && queues.some((q) => q.length > round);
+    round++
+  ) {
     for (const queue of queues) {
       if (chosen.length >= options.sample) break;
       if (queue[round]) chosen.push(queue[round]!);
@@ -1140,7 +1162,11 @@ export function buildTopicCards(
 }
 
 /** Refuses prospective topics whose universe and rankings were not sealed in the ledger. */
-export function assertSealed(universe: Universe, cards: ReadonlyArray<TopicCard>, ledgerPath?: string) {
+export function assertSealed(
+  universe: Universe,
+  cards: ReadonlyArray<TopicCard>,
+  ledgerPath?: string,
+) {
   const prospective = new Set(
     universe.logical.cutoffs.filter((c) => c.prospective).map((c) => c.cutoff),
   );
