@@ -157,6 +157,30 @@ export const candidateArm = (dir = REFERENCE_CONFIG_DIR): ArmSpec => ({
   method: "weighted",
 });
 
+/** The identity of each arm as `pool` runs it: effective configuration hash and keyword file hash. */
+export function armIdentities(
+  arms: ReadonlyArray<ArmSpec>,
+  sources?: ReadonlyArray<SourceId>,
+): Array<{
+  name: string;
+  method: ArmMethod;
+  config_hash: string;
+  keywords_hash: string | null;
+  config: EngineConfig;
+}> {
+  return arms.map((arm) => {
+    const { config: loaded } = loadConfig(arm.configPath);
+    const config = sources ? { ...loaded, sources: [...sources] } : loaded;
+    return {
+      name: arm.name,
+      method: arm.method,
+      config_hash: sha256(canonicalJson(config)),
+      keywords_hash: arm.keywordsPath ? fileSha256(arm.keywordsPath) : null,
+      config,
+    };
+  });
+}
+
 export interface KeywordList {
   readonly version: string;
   readonly terms: ReadonlyArray<string>;
@@ -180,12 +204,20 @@ export interface LedgerEntry {
   readonly [key: string]: unknown;
 }
 
+/** Reads the ledger and checks its chain: every line names the SHA-256 of the line before it. */
 export function readLedger(path: string): Array<LedgerEntry> {
   if (!NodeFS.existsSync(path)) return [];
-  return NodeFS.readFileSync(path, "utf8")
+  const lines = NodeFS.readFileSync(path, "utf8")
     .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as LedgerEntry);
+    .filter((line) => line.length > 0);
+  return lines.map((line, k) => {
+    const entry = JSON.parse(line) as LedgerEntry;
+    const expected = k === 0 ? null : sha256(lines[k - 1]!);
+    if (entry.prev_sha256 !== expected) {
+      throw new Error(`${path}: line ${k + 1} breaks the chain (prev_sha256 does not match)`);
+    }
+    return entry;
+  });
 }
 
 export function appendLedger(
@@ -247,6 +279,8 @@ export interface PoolOptions {
   /** Write cards.jsonl and cards.html of the whole universe (default true). */
   readonly cards?: boolean;
   readonly cardSeed?: number;
+  /** Family registries of earlier universes (`families.json`), by name: dev, train… */
+  readonly registries?: Readonly<Record<string, string>>;
   /** Replaces the local Qwen embedder, for tests. The pool disposes it. */
   readonly embedder?: Embedder;
   readonly cacheFile?: string;
@@ -420,14 +454,20 @@ export interface UniverseTopic {
     readonly trend_id: string;
     readonly centroid_sha256: string;
     readonly items: number;
+    /**
+     * B6 for the arm whose position this member is: every item of its support (its items of the
+     * 7 days before the cutoff, or its 5 most recent when there are none) is a GitHub or Hugging
+     * Face item retrieved after the operational cutoff.
+     */
+    readonly late_popularity_only: boolean;
   }>;
   readonly items_before_cutoff: number;
   /** Member items of the 7 days before the cutoff, per source. */
   readonly items_7d_by_source: Readonly<Record<string, number>>;
   readonly terms: ReadonlyArray<string>;
   readonly headlines: ReadonlyArray<Headline>;
-  /** B6: every headline is a GitHub or Hugging Face item retrieved after the (operational) cutoff. */
-  readonly late_popularity_only: boolean;
+  /** Families of each imported registry (dev, train…) this topic matches by SAME_TOPIC_RULE. */
+  readonly seen_in: Readonly<Record<string, ReadonlyArray<string>>>;
 }
 
 export interface UniverseCutoff {
@@ -478,6 +518,8 @@ export interface Universe {
       readonly followup_threshold: number;
       readonly text: EngineConfig["text"];
       readonly centroids_hash: string;
+      readonly engine_source_hash: string;
+      readonly registries: Readonly<Record<string, string>>;
     };
     readonly cutoffs: ReadonlyArray<UniverseCutoff>;
     readonly topics: ReadonlyArray<UniverseTopic>;
@@ -565,10 +607,9 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
 
   // Arms -> effective configurations; arms that share a configuration share its runs.
   const configs = new Map<string, EngineConfig>();
-  const arms = options.arms.map((arm) => {
-    const { config: loaded } = loadConfig(arm.configPath);
-    const config = options.sources ? { ...loaded, sources: [...options.sources] } : loaded;
-    const configHash = sha256(canonicalJson(config));
+  const identities = armIdentities(options.arms, options.sources);
+  const arms = options.arms.map((arm, k) => {
+    const { config, config_hash: configHash, keywords_hash: keywordsHash } = identities[k]!;
     configs.set(configHash, config);
     const keywords = arm.keywordsPath
       ? (JSON.parse(NodeFS.readFileSync(arm.keywordsPath, "utf8")) as KeywordList)
@@ -576,10 +617,13 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
     return {
       ...arm,
       configHash,
-      keywordsHash: arm.keywordsPath ? fileSha256(arm.keywordsPath) : null,
+      keywordsHash,
       matches: keywords ? keywordMatcher(keywords.terms) : null,
     };
   });
+  const registries = Object.entries(options.registries ?? {})
+    .toSorted(([a], [b]) => (a < b ? -1 : 1))
+    .map(([name, path]) => ({ name, registry: readRegistry(path) }));
   const embedderConfigs = new Set([...configs.values()].map((c) => canonicalJson(c.embedder)));
   if (embedderConfigs.size !== 1) throw new Error("every arm must use the same embedder");
   const thresholds = new Set([...configs.values()].map((c) => c.cluster.threshold));
@@ -815,6 +859,11 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
             trend_id: p.trendId,
             centroid_sha256: vectorSha(p.centroid),
             items: p.itemIds.size,
+            late_popularity_only: lateOnly(
+              [...p.itemIds].map((id) => corpus.items.get(id)!),
+              cutoffMs,
+              operationalMs,
+            ),
           })),
           items_before_cutoff: items.length,
           items_7d_by_source: Object.fromEntries(
@@ -826,13 +875,18 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
             source: item.source,
             published_at: item.published_at,
           })),
-          late_popularity_only:
-            evidence.length > 0 &&
-            evidence.every(
-              (item) =>
-                LATE_POPULARITY_SOURCES.includes(item.source) &&
-                Date.parse(item.retrieved_at) > operationalMs,
-            ),
+          seen_in: Object.fromEntries(
+            registries.map(({ name, registry }) => [
+              name,
+              [
+                ...new Set(
+                  registry.members
+                    .filter((r) => group.some((p) => sameTopic(p, r, (t) => rare.has(t))))
+                    .map((r) => r.family_id),
+                ),
+              ].toSorted(),
+            ]),
+          ),
         },
       });
     }
@@ -896,6 +950,8 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       followup_threshold: Math.min(...thresholds),
       text: first.text,
       centroids_hash: sha256(canonicalJson(centroids)),
+      engine_source_hash: ENGINE_SOURCE_HASH,
+      registries: Object.fromEntries(registries.map(({ name, registry }) => [name, registry.registry_hash])),
     },
     cutoffs: universeCutoffs,
     topics,
@@ -949,6 +1005,22 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
     universe_hash: universe.universe_hash,
     logical: rankingsLogical,
   };
+  if (options.ledgerPath) verifyFreeze(readLedger(options.ledgerPath), universe, rankings);
+  const registry = buildRegistry(
+    universe,
+    opportunities.flatMap((o) =>
+      o.members.map((p) => ({
+        key: `${o.topic.cutoff}|${p.key}`,
+        cutoff: o.topic.cutoff,
+        topic_id: o.topic.topic_id,
+        family_id: familyOf.get(o.topic.topic_id)!,
+        centroid: toBase64(p.centroid),
+        item_ids: [...p.itemIds].toSorted(),
+        terms: [...p.terms],
+      })),
+    ),
+  );
+  NodeFS.writeFileSync(NodePath.join(options.outDir, "families.json"), `${JSON.stringify(registry)}\n`);
   const universePath = NodePath.join(options.outDir, "universe.json");
   const rankingsPath = NodePath.join(options.outDir, "rankings.json");
   NodeFS.writeFileSync(universePath, `${JSON.stringify(universe, null, 2)}\n`);
@@ -969,6 +1041,7 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       profile_hash: profileHash,
       cutoffs: cutoffs.map((c) => c.slice(0, 10)),
     });
+    assertSealed(universe, rankings, options.ledgerPath);
   }
   let cardsPath: string | null = null;
   if (options.cards ?? true) {
@@ -1180,21 +1253,178 @@ export function buildTopicCards(
   return seededShuffle(chosen, options.seed + 2);
 }
 
-/** Refuses prospective topics whose universe and rankings were not sealed in the ledger. */
-export function assertSealed(
+/**
+ * Before any card or metric of a sealed evaluation (U1-B2): the ledger chain holds, the latest
+ * freeze names every artifact the universe and rankings were made with, each prospective cutoff
+ * read exactly its capture, and this exact universe/rankings pair was sealed after the freeze.
+ */
+export function assertSealed(universe: Universe, rankings: Rankings, ledgerPath: string) {
+  const ledger = readLedger(ledgerPath);
+  const freeze = verifyFreeze(ledger, universe, rankings);
+  const freezeIndex = ledger.indexOf(freeze);
+  const sealed = ledger.some(
+    (e, k) =>
+      k > freezeIndex &&
+      e.kind === "rankings" &&
+      e["universe_hash"] === universe.universe_hash &&
+      e["rankings_hash"] === rankings.rankings_hash,
+  );
+  if (!sealed) {
+    throw new Error(
+      `universe ${universe.universe_hash} with rankings ${rankings.rankings_hash} is not sealed after the freeze`,
+    );
+  }
+  return freeze;
+}
+
+/** The latest freeze, checked against the universe and rankings; throws on any difference. */
+export function verifyFreeze(
+  ledger: ReadonlyArray<LedgerEntry>,
   universe: Universe,
-  cards: ReadonlyArray<TopicCard>,
-  ledgerPath?: string,
-) {
-  const prospective = new Set(
-    universe.logical.cutoffs.filter((c) => c.prospective).map((c) => c.cutoff),
+  rankings: Rankings,
+): LedgerEntry {
+  const freeze = ledger.filter((e) => e.kind === "freeze").at(-1);
+  if (!freeze) throw new Error("the ledger has no freeze entry");
+  const files = (freeze["files"] ?? []) as ReadonlyArray<{ path: string; sha256: string }>;
+  if (files.length === 0) throw new Error("the freeze names no files");
+  for (const file of files) {
+    if (!NodeFS.existsSync(file.path) || fileSha256(file.path) !== file.sha256) {
+      throw new Error(`frozen file ${file.path} changed or is missing`);
+    }
+  }
+  const frozenArms = canonicalJson(freeze["arms"] ?? null);
+  if (frozenArms !== canonicalJson(rankings.logical.arms)) {
+    throw new Error("the rankings' arms (configurations, methods, keywords) differ from the freeze");
+  }
+  const inputs = universe.logical.inputs;
+  if (freeze["profile_hash"] !== inputs.profile_hash) throw new Error("profile differs from the freeze");
+  if (freeze["engine_source_hash"] !== inputs.engine_source_hash) {
+    throw new Error("engine source differs from the freeze");
+  }
+  if (canonicalJson(freeze["registries"] ?? {}) !== canonicalJson(inputs.registries)) {
+    throw new Error("family registries differ from the freeze");
+  }
+  const captures = new Map(captureEntries(ledger).map((e) => [e.cutoff_day, e]));
+  for (const c of universe.logical.cutoffs) {
+    const capture = captures.get(c.cutoff);
+    if (!c.prospective) continue;
+    if (!capture) throw new Error(`prospective cutoff ${c.cutoff} has no capture entry`);
+    if (capture.corpus_hash !== c.corpus_manifest_hash || capture.closed_at !== c.operational_cutoff_at) {
+      throw new Error(`cutoff ${c.cutoff} did not read its captured corpus`);
+    }
+  }
+  return freeze;
+}
+
+/** The freeze entry: hashes of every artifact a sealed pool must use (U1-B2). */
+export function freezeEntry(options: {
+  readonly arms: ReadonlyArray<ArmSpec>;
+  readonly sources?: ReadonlyArray<SourceId>;
+  readonly profilePath: string;
+  readonly files: ReadonlyArray<string>;
+  readonly registries?: Readonly<Record<string, string>>;
+  readonly note?: string;
+}) {
+  const configFiles = [...new Set(options.arms.flatMap((a) => [a.configPath, ...(a.keywordsPath ? [a.keywordsPath] : [])]))];
+  const files = [...new Set([...configFiles, options.profilePath, ...options.files])].map((path) => ({
+    path: NodePath.resolve(path),
+    sha256: fileSha256(path),
+  }));
+  return {
+    kind: "freeze",
+    arms: armIdentities(options.arms, options.sources).map(({ config: _config, ...id }) => id),
+    profile_hash: fileSha256(options.profilePath),
+    engine_source_hash: ENGINE_SOURCE_HASH,
+    registries: Object.fromEntries(
+      Object.entries(options.registries ?? {})
+        .toSorted(([a], [b]) => (a < b ? -1 : 1))
+        .map(([name, path]) => [name, readRegistry(path).registry_hash]),
+    ),
+    files,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+export const REGISTRY_SCHEMA_VERSION = "earlyscript.editorial-families/1";
+
+/** A frozen family registry: every top-5 member of a universe, enough to match later topics. */
+export interface FamilyRegistry {
+  readonly schema_version: typeof REGISTRY_SCHEMA_VERSION;
+  readonly registry_hash: string;
+  readonly universe_hash: string;
+  readonly cutoffs: ReadonlyArray<string>;
+  readonly members: ReadonlyArray<
+    TopicMember & { readonly cutoff: string; readonly topic_id: string; readonly family_id: string }
+  >;
+}
+
+interface RegistryRow {
+  readonly key: string;
+  readonly cutoff: string;
+  readonly topic_id: string;
+  readonly family_id: string;
+  readonly centroid: string;
+  readonly item_ids: ReadonlyArray<string>;
+  readonly terms: ReadonlyArray<string>;
+}
+
+function buildRegistry(universe: Universe, rows: ReadonlyArray<RegistryRow>) {
+  const logical = {
+    universe_hash: universe.universe_hash,
+    cutoffs: universe.logical.cutoffs.map((c) => c.cutoff),
+    members: rows.toSorted((a, b) => (a.key < b.key ? -1 : 1)),
+  };
+  return { schema_version: REGISTRY_SCHEMA_VERSION, registry_hash: sha256(canonicalJson(logical)), ...logical };
+}
+
+export function readRegistry(path: string): FamilyRegistry {
+  const json = JSON.parse(NodeFS.readFileSync(path, "utf8")) as {
+    schema_version: string;
+    registry_hash: string;
+    universe_hash: string;
+    cutoffs: Array<string>;
+    members: Array<RegistryRow>;
+  };
+  if (json.schema_version !== REGISTRY_SCHEMA_VERSION) throw new Error(`${path} is not ${REGISTRY_SCHEMA_VERSION}`);
+  const { schema_version: _v, registry_hash, ...logical } = json;
+  if (sha256(canonicalJson(logical)) !== registry_hash) throw new Error(`${path}: registry_hash does not match`);
+  return {
+    schema_version: REGISTRY_SCHEMA_VERSION,
+    registry_hash,
+    universe_hash: json.universe_hash,
+    cutoffs: json.cutoffs,
+    members: json.members.map((m) => ({
+      key: m.key,
+      trendId: m.key,
+      cutoff: m.cutoff,
+      topic_id: m.topic_id,
+      family_id: m.family_id,
+      centroid: fromBase64(m.centroid),
+      itemIds: new Set(m.item_ids),
+      terms: m.terms,
+    })),
+  };
+}
+
+/** B6 support of one position: its 7-day items (or 5 most recent), all late GitHub or Hugging Face. */
+export function lateOnly(
+  items: ReadonlyArray<Pick<Item, "id" | "source" | "published_at" | "retrieved_at">>,
+  cutoffMs: number,
+  operationalMs: number,
+): boolean {
+  const recent = items.filter((item) => Date.parse(item.published_at) >= sevenDaysBefore(cutoffMs));
+  const support =
+    recent.length > 0
+      ? recent
+      : items
+          .toSorted((a, b) => b.published_at.localeCompare(a.published_at) || (a.id < b.id ? -1 : 1))
+          .slice(0, CARD_RULE.headlines);
+  return (
+    support.length > 0 &&
+    support.every(
+      (item) => LATE_POPULARITY_SOURCES.includes(item.source) && Date.parse(item.retrieved_at) > operationalMs,
+    )
   );
-  if (!cards.some((card) => prospective.has(card.cutoff))) return;
-  if (!ledgerPath) throw new Error("prospective cards need --ledger with a rankings seal");
-  const sealed = readLedger(ledgerPath).some(
-    (e) => e.kind === "rankings" && e["universe_hash"] === universe.universe_hash,
-  );
-  if (!sealed) throw new Error(`universe ${universe.universe_hash} is not sealed in ${ledgerPath}`);
 }
 
 export function writeCardSet(

@@ -19,6 +19,8 @@ import {
   appendLedger,
   assertSealed,
   buildTopicCards,
+  freezeEntry,
+  readRankings,
   candidateArm,
   DEFAULT_CARD_SEED,
   EVAL_SOURCES,
@@ -35,14 +37,26 @@ import {
 const isSourceId = Schema.is(SourceId);
 
 export const EDITORIAL_USAGE =
-  "usage: engine eval-editorial pool --corpus <dir> --profile <file> --out <dir> --cutoffs <days> (--references | --candidate-v2 | --arm <name>=<config.json>[:baseline|:weighted|:keywords=<file>] ...) [--sources <ids>] [--top 5] [--ledger <ledger.jsonl>] [--no-cards] [--seed n] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]\n" +
-  "       engine eval-editorial cards --universe <universe.json> --out <dir> [--name <set>] [--cutoffs <days>] [--sample N] [--seed S] [--ledger <ledger.jsonl>]\n" +
+  "usage: engine eval-editorial pool --corpus <dir> --profile <file> --out <dir> --cutoffs <days> (--references | --candidate-v2 | --arm <name>=<config.json>[:baseline|:weighted|:keywords=<file>] ...) [--sources <ids>] [--top 5] [--ledger <ledger.jsonl>] [--registry dev=<families.json>] [--no-cards] [--seed n] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]\n" +
+  "       engine eval-editorial cards --universe <universe.json> [--rankings <rankings.json> --ledger <ledger.jsonl>] --out <dir> [--name <set>] [--cutoffs <days>] [--sample N] [--seed S] [--ledger <ledger.jsonl>]\n" +
   "       engine eval-editorial cards-html --cards <cards.jsonl> --out <dir> [--name <set>] [--title <text>]\n" +
   "       engine eval-editorial hn-labels --universe <universe.json> --corpus <dir> --out <labels-hn.json> [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
-  "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> --labels <file> [--labels <file> ...] --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
+  "       engine eval-editorial score --universe <universe.json> --rankings <rankings.json> (--labels <file> | --migrate-labels <labels>=<cards.jsonl>) ... --out <dir> [--dev <days>] [--retro <days>] [--prospective <days>] [--candidate <arm> ...] [--reference <arm> ...] [--ledger <ledger.jsonl>] [--bootstrap 2000] [--seed n] [--block-days 7]\n" +
   "       engine eval-editorial judge --cards <cards.jsonl> (--out <labels.json> --judge-cache <dir> | --entries-out <entries.jsonl> | --judged <judge-output.jsonl> --out <labels.json>) [--universe <universe.json>] [--judge <judge.json>] [--concurrency n]\n" +
-  "       engine eval-editorial seal --ledger <ledger.jsonl> --kind <freeze|rankings|note> [--file <path> ...] [--note <text>]\n" +
+  "       engine eval-editorial freeze --ledger <ledger.jsonl> --profile <file> (--references | --candidate-v2 | --arm …) [--sources <ids>] [--registry dev=<families.json>] --file <path> [--file …] [--note <text>]\n" +
+  "       engine eval-editorial seal --ledger <ledger.jsonl> --kind <note|…> [--file <path> ...] [--note <text>]\n" +
   "       engine eval-editorial capture --corpus <dir> --ledger <ledger.jsonl> --snapshots <dir> [--day <YYYY-MM-DD>] [--first-day <day>] [--last-day <day>] [--sources <ids>] [--rss-feeds <file.json>] [--seed-from <corpus>]";
+
+/** `name=path` pairs, as for --registry dev=<families.json>. */
+function namedPaths(pairs: ReadonlyArray<string>): Record<string, string> {
+  return Object.fromEntries(
+    pairs.map((pair) => {
+      const eq = pair.indexOf("=");
+      if (eq <= 0) throw new Error(`${pair}: expected <name>=<path>`);
+      return [pair.slice(0, eq), pair.slice(eq + 1)];
+    }),
+  );
+}
 
 function sourceList(text: string): Array<SourceId> {
   const ids = [...new Set(text.split(",").map((id) => id.trim()))];
@@ -65,6 +79,8 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       judge: { type: "string" },
       "judge-cache": { type: "string" },
       "entries-out": { type: "string" },
+      registry: { type: "string", multiple: true },
+      "migrate-labels": { type: "string", multiple: true },
       judged: { type: "string" },
       concurrency: { type: "string" },
       sources: { type: "string" },
@@ -129,6 +145,7 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values.ledger ? { ledgerPath: values.ledger } : {}),
       ...(values["no-cards"] ? { cards: false } : {}),
       ...(values.seed ? { cardSeed: Number(values.seed) } : {}),
+      ...(values.registry ? { registries: namedPaths(values.registry) } : {}),
     });
     console.log(
       JSON.stringify({
@@ -150,7 +167,13 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       ...(values.cutoffs ? { cutoffs: parseCutoffList(values.cutoffs) } : {}),
       ...(values.sample ? { sample: Number(values.sample) } : {}),
     });
-    assertSealed(universe, cards, values.ledger);
+    const prospective = universe.logical.cutoffs.some((c) => c.prospective);
+    if (values.ledger || prospective) {
+      if (!values.ledger || !values.rankings) {
+        throw new Error("sealed or prospective cards need --ledger and --rankings");
+      }
+      assertSealed(universe, readRankings(values.rankings), values.ledger);
+    }
     const name = values.name ?? "cards";
     const written = writeCardSet(cards, values.out, name, {
       universeHash: universe.universe_hash,
@@ -184,11 +207,26 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
     console.log(JSON.stringify({ path: result.path, sha256: result.sha256, labels: counts }));
     return 0;
   }
-  if (sub === "score" && values.universe && values.rankings && values.labels && values.out) {
+  if (
+    sub === "score" &&
+    values.universe &&
+    values.rankings &&
+    (values.labels || values["migrate-labels"]) &&
+    values.out
+  ) {
     const result = await runScore({
       universePath: values.universe,
       rankingsPath: values.rankings,
-      labelPaths: values.labels,
+      labelPaths: values.labels ?? [],
+      ...(values["migrate-labels"]
+        ? {
+            migrateLabels: values["migrate-labels"].map((pair) => {
+              const [labels, cards] = pair.split("=");
+              if (!labels || !cards) throw new Error(`--migrate-labels ${pair}: expected <labels>=<cards.jsonl>`);
+              return { labels, cards };
+            }),
+          }
+        : {}),
       outDir: values.out,
       ...(values.dev ? { dev: parseCutoffList(values.dev) } : {}),
       ...(values.retro ? { retro: parseCutoffList(values.retro) } : {}),
@@ -272,7 +310,29 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
     console.log(JSON.stringify({ path: result.path, stats: result.stats, labels: counts }));
     return 0;
   }
+  if (sub === "freeze" && values.ledger && values.profile) {
+    const arms = [
+      ...(values.references ? referenceArms() : []),
+      ...(values["candidate-v2"] ? [candidateArm()] : []),
+      ...(values.arm ?? []).map(parseArm),
+    ];
+    if (arms.length === 0) throw new Error("freeze needs the arms the pool will run");
+    const entry = appendLedger(
+      values.ledger,
+      freezeEntry({
+        arms,
+        sources: values.sources ? sourceList(values.sources) : EVAL_SOURCES,
+        profilePath: values.profile,
+        files: values.file ?? [],
+        ...(values.registry ? { registries: namedPaths(values.registry) } : {}),
+        ...(values.note ? { note: values.note } : {}),
+      }),
+    );
+    console.log(JSON.stringify(entry));
+    return 0;
+  }
   if (sub === "seal" && values.ledger && values.kind) {
+    if (values.kind === "freeze") throw new Error("use `eval-editorial freeze`: a freeze names every artifact");
     const entry = appendLedger(values.ledger, {
       kind: values.kind,
       files: (values.file ?? []).map((path) => ({

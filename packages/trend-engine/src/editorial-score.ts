@@ -22,11 +22,14 @@ import {
   weightedPrecision,
 } from "./editorial-stats.ts";
 import {
+  assertSealed,
   captureEntries,
   type Rankings,
+  readCardsJsonl,
   readLedger,
   readRankings,
   readUniverse,
+  type TopicCard,
   type Universe,
 } from "./editorial-eval.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
@@ -39,10 +42,12 @@ export const SCORE_RULE = {
   upper_bound: "the same with unsure, pending and unlabelled cards counted as yes",
   resolved_precision: "yes / (yes + no) among the counted positions with a yes or no label",
   bootstrap:
-    "percentile intervals; units = topic families (all their appearances together; the empty positions of a cutoff form one unit), resampled with replacement and shared by every arm (paired); sensitivity: circular moving blocks of consecutive cutoffs",
+    "percentile intervals; units = topic families (all their appearances together; the empty positions of a cutoff form one unit), resampled with replacement and shared by every arm (paired); sensitivity: moving blocks of 7 calendar days (start drawn from first-6 to last day, ceil(span/7) blocks per replicate; a block over a gap adds nothing)",
   bonferroni: "differences against the references use alpha / number of references",
-  new_families: "families with no topic in the dev partition; precision over their positions",
-  b6: "applies to the retro partition only",
+  new_families: "topics matching no family of the frozen dev registry (or of the dev cutoffs of this universe); precision over their positions",
+  b6: "applies to the retro partition only, per arm: the support of that arm's own position (its 7-day items, or 5 most recent), never the shared card",
+  duplicates: "a second position of the same opportunity (topic at that cutoff, merged only with that cutoff's data) counts 0; families serve only the bootstrap and new versus recurrent",
+  labels: "only labels of this universe, or migrated from cards whose content is identical here",
   invalid_test: "a test partition is not valid when more than 10 % of its cards are unsure",
   source_evaluated:
     "a source is evaluated in a partition when, at every cutoff, both 7-day windows have at least 5 captured (complete or partial) days",
@@ -60,15 +65,27 @@ export interface LabelSet {
   readonly path: string;
   readonly universe_hash: string | null;
   readonly labels: ReadonlyMap<string, LabelValue>;
+  /** Labels taken from cards of another universe whose content is identical here (U1-S2). */
+  readonly migration: { readonly cards_hash: string; readonly accepted: number; readonly dropped: number } | null;
 }
+
+/** What a person or the judge saw: the same for every arm, so labels can move only if equal. */
+const canonicalCard = (card: { cutoff: string; terms: ReadonlyArray<string>; headlines: ReadonlyArray<unknown> }) =>
+  canonicalJson({ cutoff: card.cutoff, terms: card.terms, headlines: card.headlines });
 
 const LABEL_VALUES = new Set(["yes", "no", "unsure", "pending"]);
 
-/** labels.json from the page (or hn-labels): topic labels keyed by topic_id; the latest wins. */
-export function readLabels(path: string): LabelSet {
+/**
+ * labels.json from the page, the judge or hn-labels: topic labels keyed by topic_id, the latest
+ * wins. Labels of another universe are refused, unless `migrateFrom` gives the cards they were
+ * made on (their sha256 must be the file's cards_hash): then a label moves only when its card
+ * there is identical, cutoff, terms and headlines, to this universe's card for the same topic.
+ */
+export function readLabels(path: string, universe: Universe, migrateFrom?: string): LabelSet {
   const json = JSON.parse(NodeFS.readFileSync(path, "utf8")) as {
     labeler?: string;
     universe_hash?: string | null;
+    cards_hash?: string;
     labels?: ReadonlyArray<LabelRow & { unit?: string }>;
   };
   if (!json.labeler || !Array.isArray(json.labels)) {
@@ -83,7 +100,28 @@ export function readLabels(path: string): LabelSet {
     if (!LABEL_VALUES.has(row.label)) throw new Error(`${path}: unknown label ${row.label}`);
     labels.set(row.topic_id, row.label as LabelValue);
   }
-  return { labeler: json.labeler, path, universe_hash: json.universe_hash ?? null, labels };
+  const base = { labeler: json.labeler, path, universe_hash: json.universe_hash ?? null };
+  if (json.universe_hash === universe.universe_hash) return { ...base, labels, migration: null };
+  if (!migrateFrom) {
+    throw new Error(
+      `${path} labels universe ${json.universe_hash ?? "none"}, not ${universe.universe_hash}; pass its cards to migrate`,
+    );
+  }
+  const cardsHash = sha256(NodeFS.readFileSync(migrateFrom));
+  if (cardsHash !== json.cards_hash) throw new Error(`${migrateFrom} is not the card set ${path} labels`);
+  const here = new Map(universe.logical.topics.map((t) => [t.topic_id, canonicalCard(t)]));
+  const same = new Set(
+    readCardsJsonl(migrateFrom)
+      .filter((card): card is TopicCard => card.unit === "topic")
+      .filter((card) => here.get(card.topic_id) === canonicalCard(card))
+      .map((card) => card.topic_id),
+  );
+  const moved = new Map([...labels].filter(([topic]) => same.has(topic)));
+  return {
+    ...base,
+    labels: moved,
+    migration: { cards_hash: cardsHash, accepted: moved.size, dropped: labels.size - moved.size },
+  };
 }
 
 /** Files of one labeler (a test labelled in two sessions) merge in the given order. */
@@ -99,6 +137,7 @@ export function mergeLabelSets(sets: ReadonlyArray<LabelSet>): Array<LabelSet> {
             path: [prev.path, set.path].join(","),
             universe_hash: prev.universe_hash === set.universe_hash ? set.universe_hash : null,
             labels: new Map([...prev.labels, ...set.labels]),
+            migration: set.migration ?? prev.migration,
           }
         : set,
     );
@@ -110,6 +149,8 @@ export interface ScoreOptions {
   readonly universePath: string;
   readonly rankingsPath: string;
   readonly labelPaths: ReadonlyArray<string>;
+  /** Labels of another universe, each with the cards it was made on (U1-S2). */
+  readonly migrateLabels?: ReadonlyArray<{ readonly labels: string; readonly cards: string }>;
   readonly outDir: string;
   readonly dev?: ReadonlyArray<string>;
   readonly retro?: ReadonlyArray<string>;
@@ -141,6 +182,11 @@ interface ArmMetrics {
     readonly positions: number;
     readonly precision: number | null;
   };
+  readonly unseen_in_dev_and_train: {
+    readonly families: number;
+    readonly positions: number;
+    readonly precision: number | null;
+  };
   readonly recurrent_families: {
     readonly families: number;
     readonly positions: number;
@@ -161,7 +207,11 @@ export async function runScore(options: ScoreOptions) {
   if (rankings.universe_hash !== universe.universe_hash) {
     throw new Error("rankings.json belongs to another universe");
   }
-  const labelSets = mergeLabelSets(options.labelPaths.map(readLabels));
+  if (rankings.logical.top !== 5) throw new Error("P1.1 scores a top 5; this pool has another top");
+  const labelSets = mergeLabelSets([
+    ...options.labelPaths.map((path) => readLabels(path, universe)),
+    ...(options.migrateLabels ?? []).map((m) => readLabels(m.labels, universe, m.cards)),
+  ]);
   const replicates = options.replicates ?? 2000;
   const seed = options.seed ?? 20_261_105;
   const blockDays = options.blockDays ?? 7;
@@ -170,41 +220,59 @@ export async function runScore(options: ScoreOptions) {
   const day = (c: string) => c.slice(0, 10);
   const partitions: Record<string, Array<string>> = {};
   const add = (name: string, list?: ReadonlyArray<string>) => {
-    if (list)
-      partitions[name] = [...new Set(list.map(day))].filter((d) => cutoffInfo.has(d)).toSorted();
+    if (!list) return;
+    const days = [...new Set(list.map(day))].toSorted();
+    const absent = days.filter((d) => !cutoffInfo.has(d));
+    if (absent.length > 0) throw new Error(`--${name} cutoffs not in the universe: ${absent.join(", ")}`);
+    partitions[name] = days;
   };
   add("dev", options.dev);
   add("retro", options.retro);
   add("prospective", options.prospective);
   if (Object.keys(partitions).length === 0) partitions["all"] = [...cutoffInfo.keys()].toSorted();
 
-  // Prospective cutoffs count only after the effective freeze (latest freeze entry).
+  // A sealed evaluation is checked whole (U1-B2); prospective cutoffs then count only when their
+  // capture closed after the freeze.
   const excluded: Array<{ cutoff: string; reason: string }> = [];
-  if (partitions["prospective"]) {
-    const ledger = options.ledgerPath ? readLedger(options.ledgerPath) : [];
-    const freeze = ledger.filter((e) => e.kind === "freeze").at(-1);
-    const captures = new Map(captureEntries(ledger).map((e) => [e.cutoff_day, e]));
-    partitions["prospective"] = partitions["prospective"].filter((cutoff) => {
+  if (partitions["prospective"] && !options.ledgerPath) {
+    throw new Error("prospective cutoffs need --ledger");
+  }
+  if (options.ledgerPath) {
+    const freeze = assertSealed(universe, rankings, options.ledgerPath);
+    const captures = new Map(captureEntries(readLedger(options.ledgerPath)).map((e) => [e.cutoff_day, e]));
+    partitions["prospective"] = (partitions["prospective"] ?? []).filter((cutoff) => {
       const capture = captures.get(cutoff);
       const reason = !capture
         ? "no capture entry in the ledger"
-        : !freeze
-          ? "no freeze entry in the ledger"
-          : !(Date.parse(freeze.at) < Date.parse(capture.closed_at))
-            ? `capture closed at ${capture.closed_at}, before the freeze at ${freeze.at}`
-            : null;
+        : !(Date.parse(freeze.at) < Date.parse(capture.closed_at))
+          ? `capture closed at ${capture.closed_at}, before the freeze at ${freeze.at}`
+          : null;
       if (reason) excluded.push({ cutoff, reason });
       return reason === null;
     });
+    if (!options.prospective) delete partitions["prospective"];
   }
   if (partitions["retro"] && partitions["prospective"]) {
     partitions["test"] = [...partitions["retro"], ...partitions["prospective"]].toSorted();
   }
+  // New versus recurrent (U1-B4): against the frozen dev registry the pool imported, or the dev
+  // cutoffs of this same universe; a test partition without either is refused.
+  const registries = universe.logical.inputs.registries;
   const devFamilies = new Set(
     (partitions["dev"] ?? []).flatMap((c) =>
       universe.logical.topics.filter((t) => t.cutoff === c).map((t) => t.family_id),
     ),
   );
+  const seenInDev = (topicId: string) => {
+    const topic = topics.get(topicId)!;
+    return registries["dev"] ? topic.seen_in["dev"]!.length > 0 : devFamilies.has(topic.family_id);
+  };
+  const seenInTrain = (topicId: string) =>
+    registries["train"] ? topics.get(topicId)!.seen_in["train"]!.length > 0 : null;
+  if ((partitions["retro"] || partitions["prospective"]) && !registries["dev"] && !partitions["dev"]) {
+    throw new Error("test partitions need a dev family registry (pool --registry dev=…) or --dev cutoffs");
+  }
+  const configOf = new Map(rankings.logical.arms.map((a) => [a.name, a.config_hash]));
   const arms = rankings.logical.arms.map((a) => a.name);
   const candidates = options.candidates ?? [];
   const references = (options.references ?? arms).filter((a) => !candidates.includes(a));
@@ -218,11 +286,16 @@ export async function runScore(options: ScoreOptions) {
         cutoff,
         entry.top.map((e) => {
           const topic = topics.get(e.topic_id)!;
+          // B6 per arm (U1-B3): the support of this arm's own position, not the shared card.
+          const member = topic.members.find(
+            (m) => m.config_hash === configOf.get(arm) && m.trend_id === e.trend_id,
+          );
+          if (!member) throw new Error(`${arm} at ${cutoff}: ${e.trend_id} is not in ${e.topic_id}`);
           return {
             topicId: e.topic_id,
             family: topic.family_id,
             label: labels.labels.get(e.topic_id) ?? null,
-            unavailable: b6 && topic.late_popularity_only,
+            unavailable: b6 && member.late_popularity_only,
           };
         }),
         rankings.logical.top,
@@ -267,7 +340,8 @@ export async function runScore(options: ScoreOptions) {
         perArm[arm] = armMetrics(armSlots.get(arm)!, {
           familyDraws,
           blocks,
-          devFamilies: name === "dev" ? new Set() : devFamilies,
+          seenInDev: name === "dev" ? () => false : seenInDev,
+          seenInTrain,
           universe,
         });
       }
@@ -346,6 +420,7 @@ export async function runScore(options: ScoreOptions) {
         .join(","),
       universe_hash: l.universe_hash,
       universe_match: l.universe_hash === universe.universe_hash,
+      migration: l.migration,
       topics: l.labels.size,
       unknown_topics: [...l.labels.keys()].filter((id) => !topics.has(id)).length,
     })),
@@ -379,7 +454,8 @@ function armMetrics(
   ctx: {
     readonly familyDraws: Draws;
     readonly blocks: Draws;
-    readonly devFamilies: ReadonlySet<string>;
+    readonly seenInDev: (topicId: string) => boolean;
+    readonly seenInTrain: (topicId: string) => boolean | null;
     readonly universe: Universe;
   },
 ): ArmMetrics {
@@ -446,8 +522,11 @@ function armMetrics(
     counts,
     duplicates_at_5: counts["duplicate"]!,
     families: new Set(filled.map((s) => s.family)).size,
-    new_families: subset((s) => !ctx.devFamilies.has(s.family!)),
-    recurrent_families: subset((s) => ctx.devFamilies.has(s.family!)),
+    new_families: subset((s) => !ctx.seenInDev(s.topicId!)),
+    recurrent_families: subset((s) => ctx.seenInDev(s.topicId!)),
+    unseen_in_dev_and_train: subset(
+      (s) => !ctx.seenInDev(s.topicId!) && ctx.seenInTrain(s.topicId!) === false,
+    ),
     ci95_family: roundInterval(bootstrapPrecision(slots, ctx.familyDraws, familyUnit)),
     ci95_blocks: roundInterval(bootstrapPrecision(slots, ctx.blocks, (s) => s.cutoff)),
     source_share_at_5: Object.fromEntries(

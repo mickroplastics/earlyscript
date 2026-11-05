@@ -11,7 +11,11 @@ import { captureDay } from "./editorial-capture.ts";
 import {
   appendLedger,
   assertSealed,
-  buildTopicCards,
+  ENGINE_SOURCE_HASH,
+  freezeEntry,
+  lateOnly,
+  type Rankings,
+  readRegistry,
   groupMembers,
   keywordMatcher,
   parseArm,
@@ -24,6 +28,7 @@ import {
 import { followupLabels } from "./editorial-followup.ts";
 import { runScore } from "./editorial-score.ts";
 import {
+  blockDraws,
   bootstrapDifference,
   bootstrapPrecision,
   cohenKappa,
@@ -34,6 +39,7 @@ import {
   weightedPrecision,
 } from "./editorial-stats.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
+import { canonicalJson, sha256 } from "./hash.ts";
 import { fixtureSources } from "./sources/index.ts";
 import {
   syntheticItems,
@@ -143,7 +149,7 @@ describe("slot credits (P1.1 rules 3 and 4)", () => {
     "2026-10-20",
     [
       entry("t1", "f1", "yes"),
-      entry("t2", "f1", "yes"),
+      entry("t1", "f1", "yes"),
       entry("t3", "f3", "unsure"),
       entry("t4", "f4", "yes", true),
     ],
@@ -372,8 +378,20 @@ describe("prospective capture", () => {
   });
 });
 
+/** A ledger line with an explicit time, chained like appendLedger (tests only). */
+function appendAt(path: string, entry: Record<string, unknown>) {
+  const lines = NodeFS.existsSync(path)
+    ? NodeFS.readFileSync(path, "utf8").split("\n").filter((l) => l.length > 0)
+    : [];
+  const last = lines.at(-1);
+  NodeFS.appendFileSync(
+    path,
+    `${JSON.stringify({ ...entry, prev_sha256: last === undefined ? null : sha256(last) })}\n`,
+  );
+}
+
 describe("prospective pool and score", () => {
-  it("reads the capture snapshot, seals the rankings and counts only cutoffs after the freeze", async () => {
+  it("reads the capture snapshot, imports the dev registry, seals and counts only after the freeze", async () => {
     const root = tempDir("editorial-prospective");
     const source = NodePath.join(root, "source");
     const seed = NodePath.join(root, "seed");
@@ -382,9 +400,26 @@ describe("prospective pool and score", () => {
       toDay: "2026-10-10",
       items: syntheticItems().filter((i) => i.published_at < "2026-10-10"),
     });
+    const configPath = NodePath.join(root, "config.json");
+    NodeFS.writeFileSync(configPath, JSON.stringify(testConfig()));
+    const profilePath = writeProfile(root);
+    const arms = [parseArm(`W=${configPath}:weighted`), parseArm(`V=${configPath}:baseline`)];
+    // Development first: its families.json is the frozen dev registry.
+    const dev = await runPool({
+      corpusDir: seed,
+      profilePath,
+      outDir: NodePath.join(root, "dev"),
+      cutoffs: ["2026-10-07"],
+      arms,
+      embedder: fingerprintEmbedder(),
+    });
+    const registry = NodePath.join(root, "dev", "families.json");
     const corpusDir = NodePath.join(root, "corpus");
     const ledgerPath = NodePath.join(root, "ledger.jsonl");
-    appendLedger(ledgerPath, { kind: "freeze", files: [] });
+    appendLedger(
+      ledgerPath,
+      freezeEntry({ arms, profilePath, files: [configPath], registries: { dev: registry } }),
+    );
     await captureDay({
       corpusDir,
       ledgerPath,
@@ -395,30 +430,27 @@ describe("prospective pool and score", () => {
       seedFrom: seed,
       now: () => new Date("2099-01-01T00:05:00Z"),
     });
-    const configPath = NodePath.join(root, "config.json");
-    NodeFS.writeFileSync(configPath, JSON.stringify(testConfig()));
     const outDir = NodePath.join(root, "pool");
     const pool = await runPool({
       corpusDir: seed,
-      profilePath: writeProfile(root),
+      profilePath,
       outDir,
       cutoffs: ["2026-10-09", "2026-10-11"],
-      arms: [parseArm(`W=${configPath}:weighted`), parseArm(`V=${configPath}:baseline`)],
+      arms,
       ledgerPath,
+      registries: { dev: registry },
       embedder: fingerprintEmbedder(),
     });
     const [retro, prospective] = pool.universe.logical.cutoffs;
     expect(retro!.prospective).toBe(false);
     expect(prospective!.prospective).toBe(true);
     expect(prospective!.operational_cutoff_at).toBe("2099-01-01T00:05:00.000Z");
+    expect(pool.universe.logical.inputs.registries["dev"]).toBe(readRegistry(registry).registry_hash);
+    expect(pool.universe.logical.topics.every((t) => Array.isArray(t.seen_in["dev"]))).toBe(true);
+    expect(dev.universe.logical.topics.length).toBeGreaterThan(0);
     expect(readLedger(ledgerPath).map((e) => e.kind)).toEqual(["freeze", "capture", "rankings"]);
-    const cards = buildTopicCards(pool.universe, { seed: 1 });
-    expect(() => assertSealed(pool.universe, cards, ledgerPath)).not.toThrow();
-    const unsealed = NodePath.join(root, "other-ledger.jsonl");
-    appendLedger(unsealed, { kind: "note" });
-    if (cards.some((c) => c.cutoff === "2026-10-11")) {
-      expect(() => assertSealed(pool.universe, cards, unsealed)).toThrow(/not sealed/);
-    }
+    expect(() => assertSealed(pool.universe, pool.rankings, ledgerPath)).not.toThrow();
+
     const labelsPath = NodePath.join(root, "labels.json");
     NodeFS.writeFileSync(
       labelsPath,
@@ -431,37 +463,360 @@ describe("prospective pool and score", () => {
         })),
       }),
     );
-    const scored = await runScore({
-      universePath: pool.universePath,
-      rankingsPath: pool.rankingsPath,
-      labelPaths: [labelsPath],
-      outDir: NodePath.join(root, "score"),
-      retro: ["2026-10-09"],
-      prospective: ["2026-10-11"],
-      ledgerPath,
-      candidates: ["W"],
-      replicates: 50,
-    });
+    const score = (out: string) =>
+      runScore({
+        universePath: pool.universePath,
+        rankingsPath: pool.rankingsPath,
+        labelPaths: [labelsPath],
+        outDir: NodePath.join(root, out),
+        retro: ["2026-10-09"],
+        prospective: ["2026-10-11"],
+        ledgerPath,
+        candidates: ["W"],
+        replicates: 50,
+      });
+    const scored = await score("score");
     const results = scored.metrics.logical.results["miguel"] as Record<string, { cutoffs: number }>;
     expect(results["prospective"]!.cutoffs).toBe(1);
     expect(results["test"]!.cutoffs).toBe(2);
     expect(NodeFS.readFileSync(scored.reportPath, "utf8")).toContain("Candidato W");
 
-    // A freeze after the capture closes leaves the prospective cutoff out.
-    NodeFS.appendFileSync(
-      ledgerPath,
-      `${JSON.stringify({ kind: "freeze", at: "2100-01-01T00:00:00.000Z", prev_sha256: null })}\n`,
+    // A freeze after the capture closed leaves the prospective cutoff out, and then the pair is
+    // no longer sealed after the latest freeze.
+    appendAt(ledgerPath, { ...readLedger(ledgerPath)[0]!, at: "2100-01-01T00:00:00.000Z" });
+    await expect(score("score-late")).rejects.toThrow(/not sealed after the freeze/);
+  });
+});
+
+/** A universe and rankings small enough to state each case by hand, with valid hashes. */
+function miniEvaluation(
+  root: string,
+  topics: ReadonlyArray<{
+    id: string;
+    family: string;
+    cutoff?: string;
+    members: ReadonlyArray<{ config: string; trend: string; late?: boolean }>;
+    terms?: ReadonlyArray<string>;
+  }>,
+  tops: Readonly<Record<string, Readonly<Record<string, ReadonlyArray<[string, string]>>>>>,
+  options: { prospective?: { cutoff: string; closed: string; corpus: string } } = {},
+) {
+  const cutoffs = [...new Set(Object.keys(tops))].toSorted();
+  const logical = {
+    rule: {},
+    card_rule: {},
+    top: 5,
+    inputs: {
+      profile_hash: "sha256:p",
+      embedding_key: "e",
+      sources: ["hn"],
+      configs: {},
+      followup_threshold: 0.7,
+      text: {},
+      centroids_hash: "c",
+      engine_source_hash: ENGINE_SOURCE_HASH,
+      registries: {},
+    },
+    cutoffs: cutoffs.map((cutoff) => {
+      const p = options.prospective?.cutoff === cutoff ? options.prospective : undefined;
+      return {
+        cutoff,
+        cutoff_at: `${cutoff}T00:00:00.000Z`,
+        operational_cutoff_at: p?.closed ?? `${cutoff}T00:00:00.000Z`,
+        prospective: p !== undefined,
+        corpus_manifest_hash: p?.corpus ?? "m",
+        coverage: {},
+      };
+    }),
+    topics: topics.map((t) => ({
+      topic_id: t.id,
+      card_id: `card_${t.id}`,
+      cutoff: t.cutoff ?? cutoffs[0]!,
+      family_id: t.family,
+      anchor: { trend_id: t.members[0]!.trend, centroid_sha256: "x" },
+      members: t.members.map((m) => ({
+        config_hash: m.config,
+        trend_id: m.trend,
+        centroid_sha256: "x",
+        items: 3,
+        late_popularity_only: m.late ?? false,
+      })),
+      items_before_cutoff: 3,
+      items_7d_by_source: {},
+      terms: t.terms ?? [t.id],
+      headlines: [],
+      seen_in: {},
+    })),
+    families: [...new Set(topics.map((t) => t.family))].map((family_id) => ({
+      family_id,
+      first_cutoff: cutoffs[0]!,
+      topics: topics.filter((t) => t.family === family_id).map((t) => t.id),
+    })),
+  };
+  const universe = {
+    schema_version: "earlyscript.editorial-universe/1",
+    universe_hash: sha256(canonicalJson(logical)),
+    created_at: "x",
+    runs: [],
+    logical,
+  };
+  const arms = [...new Set(Object.values(tops).flatMap((byArm) => Object.keys(byArm)))].toSorted();
+  const rankingsLogical = {
+    top: 5,
+    arms: arms.map((name) => ({
+      name,
+      method: "weighted",
+      config_hash: `cfg-${name}`,
+      keywords_hash: null,
+    })),
+    cutoffs: Object.fromEntries(
+      Object.entries(tops).map(([cutoff, byArm]) => [
+        cutoff,
+        Object.fromEntries(
+          Object.entries(byArm).map(([arm, entries]) => [
+            arm,
+            {
+              ranked: entries.length,
+              top: entries.map(([trend, topic], k) => ({
+                position: k + 1,
+                trend_id: trend,
+                topic_id: topic,
+              })),
+            },
+          ]),
+        ),
+      ]),
+    ),
+  };
+  const rankings = {
+    schema_version: "earlyscript.editorial-rankings/1",
+    rankings_hash: sha256(canonicalJson(rankingsLogical)),
+    universe_hash: universe.universe_hash,
+    logical: rankingsLogical,
+  };
+  NodeFS.mkdirSync(root, { recursive: true });
+  const universePath = NodePath.join(root, "universe.json");
+  const rankingsPath = NodePath.join(root, "rankings.json");
+  NodeFS.writeFileSync(universePath, JSON.stringify(universe));
+  NodeFS.writeFileSync(rankingsPath, JSON.stringify(rankings));
+  const labels = (labeler: string, values: Record<string, LabelValue>, universeHash = universe.universe_hash) => {
+    const path = NodePath.join(root, `labels-${labeler}-${Object.keys(values).length}.json`);
+    NodeFS.writeFileSync(
+      path,
+      JSON.stringify({
+        labeler,
+        universe_hash: universeHash,
+        cards_hash: "sha256:none",
+        labels: Object.entries(values).map(([topic_id, label]) => ({ topic_id, label })),
+      }),
     );
-    const late = await runScore({
-      universePath: pool.universePath,
-      rankingsPath: pool.rankingsPath,
-      labelPaths: [labelsPath],
-      outDir: NodePath.join(root, "score-late"),
-      prospective: ["2026-10-11"],
-      ledgerPath,
+    return path;
+  };
+  return { universePath, rankingsPath, labels, universe: universe as unknown as Universe, rankings: rankings as unknown as Rankings };
+}
+
+describe("Sol's U1 findings (regressions)", () => {
+  it("B1: a later cutoff that links two topics does not make the earlier one a duplicate", async () => {
+    const root = tempDir("u1-b1");
+    // At D, A and B are distinct opportunities; D+1 links them into one family.
+    const e = miniEvaluation(
+      root,
+      [
+        { id: "A", family: "F", cutoff: "2026-10-20", members: [{ config: "cfg-R", trend: "a" }] },
+        { id: "B", family: "F", cutoff: "2026-10-20", members: [{ config: "cfg-R", trend: "b" }] },
+        { id: "X", family: "F", cutoff: "2026-10-21", members: [{ config: "cfg-R", trend: "x" }] },
+      ],
+      { "2026-10-20": { R: [["a", "A"], ["b", "B"]] }, "2026-10-21": { R: [["x", "X"]] } },
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [e.labels("m", { A: "yes", B: "yes", X: "no" })],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20", "2026-10-21"],
       replicates: 10,
     });
-    expect(late.metrics.logical.excluded_prospective).toHaveLength(1);
+    const arm = (out.metrics.logical.results["m"] as any).dev.arms.R;
+    expect(arm.per_cutoff["2026-10-20"]).toBeCloseTo(0.4);
+    expect(arm.duplicates_at_5).toBe(0);
+  });
+
+  it("B2: refuses an empty freeze, a broken chain, another rankings pair and a foreign capture", () => {
+    const root = tempDir("u1-b2");
+    const capture = { cutoff: "2026-11-06", closed: "2026-11-06T00:09:00.000Z", corpus: "sha256:snap" };
+    const e = miniEvaluation(
+      root,
+      [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
+      { "2026-11-06": { R: [["a", "A"]] } },
+      { prospective: capture },
+    );
+    const frozen = NodePath.join(root, "config.json");
+    NodeFS.writeFileSync(frozen, "{}");
+    const freeze = {
+      kind: "freeze",
+      at: "2026-11-05T12:00:00.000Z",
+      arms: e.rankings.logical.arms,
+      profile_hash: "sha256:p",
+      engine_source_hash: ENGINE_SOURCE_HASH,
+      registries: {},
+      files: [{ path: frozen, sha256: sha256("{}") }],
+    };
+    const captureEntry = {
+      kind: "capture",
+      at: capture.closed,
+      cutoff_day: capture.cutoff,
+      closed_at: capture.closed,
+      snapshot_dir: "/snap",
+      corpus_hash: capture.corpus,
+    };
+    const sealEntry = {
+      kind: "rankings",
+      at: "2026-11-06T01:00:00.000Z",
+      universe_hash: e.universe.universe_hash,
+      rankings_hash: e.rankings.rankings_hash,
+    };
+    const ledger = (name: string, entries: ReadonlyArray<Record<string, unknown>>) => {
+      const path = NodePath.join(root, `${name}.jsonl`);
+      for (const entry of entries) appendAt(path, entry);
+      return path;
+    };
+    expect(() => assertSealed(e.universe, e.rankings, ledger("ok", [freeze, captureEntry, sealEntry]))).not.toThrow();
+    expect(() =>
+      assertSealed(e.universe, e.rankings, ledger("empty", [{ ...freeze, files: [] }, captureEntry, sealEntry])),
+    ).toThrow(/names no files/);
+    expect(() =>
+      assertSealed(e.universe, e.rankings, ledger("noseal", [freeze, captureEntry])),
+    ).toThrow(/not sealed/);
+    expect(() =>
+      assertSealed(
+        e.universe,
+        e.rankings,
+        ledger("other", [freeze, captureEntry, { ...sealEntry, rankings_hash: "sha256:other" }]),
+      ),
+    ).toThrow(/not sealed/);
+    expect(() =>
+      assertSealed(
+        e.universe,
+        e.rankings,
+        ledger("arms", [{ ...freeze, arms: [{ ...e.rankings.logical.arms[0]!, config_hash: "B" }] }, captureEntry, sealEntry]),
+      ),
+    ).toThrow(/differ from the freeze/);
+    expect(() =>
+      assertSealed(
+        e.universe,
+        e.rankings,
+        ledger("corpus", [freeze, { ...captureEntry, corpus_hash: "sha256:else" }, sealEntry]),
+      ),
+    ).toThrow(/captured corpus/);
+    const broken = ledger("broken", [freeze, captureEntry, sealEntry]);
+    const lines = NodeFS.readFileSync(broken, "utf8").split("\n");
+    lines[0] = lines[0]!.replace("12:00:00", "12:00:01");
+    NodeFS.writeFileSync(broken, lines.join("\n"));
+    expect(() => assertSealed(e.universe, e.rankings, broken)).toThrow(/breaks the chain/);
+    NodeFS.writeFileSync(frozen, "{\"changed\":true}");
+    expect(() => assertSealed(e.universe, e.rankings, ledger("changed", [freeze, captureEntry, sealEntry]))).toThrow(
+      /changed or is missing/,
+    );
+  });
+
+  it("B3: B6 follows each arm's own position, not the shared card", async () => {
+    const root = tempDir("u1-b3");
+    // One opportunity: C's member is held up only by late GitHub items, R's by HN.
+    const e = miniEvaluation(
+      root,
+      [
+        {
+          id: "A",
+          family: "F",
+          members: [
+            { config: "cfg-C", trend: "c", late: true },
+            { config: "cfg-R", trend: "r" },
+          ],
+        },
+      ],
+      { "2026-10-30": { C: [["c", "A"]], R: [["r", "A"]] } },
+    );
+    const out = await runScore({
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      labelPaths: [e.labels("m", { A: "yes" })],
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-30"],
+      retro: ["2026-10-30"],
+      replicates: 10,
+    });
+    const arms = (out.metrics.logical.results["m"] as any).retro.arms;
+    expect(arms.C.p_at_5).toBe(0);
+    expect(arms.C.counts.unavailable_at_cutoff).toBe(1);
+    expect(arms.R.p_at_5).toBeCloseTo(0.2);
+    expect(lateOnly([{ id: "1", source: "github", published_at: "2026-10-29T01:00:00Z", retrieved_at: "2026-11-05T00:00:00Z" }], Date.parse("2026-10-30T00:00:00Z"), Date.parse("2026-10-30T00:00:00Z"))).toBe(true);
+    expect(lateOnly([{ id: "1", source: "hn", published_at: "2026-10-29T01:00:00Z", retrieved_at: "2026-11-05T00:00:00Z" }], Date.parse("2026-10-30T00:00:00Z"), Date.parse("2026-10-30T00:00:00Z"))).toBe(false);
+  });
+
+  it("B4: refuses absent cutoffs and test partitions with no dev reference", async () => {
+    const root = tempDir("u1-b4");
+    const e = miniEvaluation(
+      root,
+      [{ id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }] }],
+      { "2026-10-30": { R: [["a", "A"]] } },
+    );
+    const run = (opts: { dev?: Array<string>; retro?: Array<string> }) =>
+      runScore({
+        universePath: e.universePath,
+        rankingsPath: e.rankingsPath,
+        labelPaths: [e.labels("m", { A: "yes" })],
+        outDir: NodePath.join(root, "s"),
+        replicates: 10,
+        ...opts,
+      });
+    await expect(run({ dev: ["2026-10-17"], retro: ["2026-10-30"] })).rejects.toThrow(/not in the universe/);
+    await expect(run({ retro: ["2026-10-30"] })).rejects.toThrow(/dev family registry/);
+  });
+
+  it("S2: refuses labels of another universe unless the very same card migrates", async () => {
+    const root = tempDir("u1-s2");
+    const e = miniEvaluation(
+      root,
+      [
+        { id: "A", family: "F", members: [{ config: "cfg-R", trend: "a" }], terms: ["same"] },
+        { id: "B", family: "G", members: [{ config: "cfg-R", trend: "b" }], terms: ["now"] },
+      ],
+      { "2026-10-20": { R: [["a", "A"], ["b", "B"]] } },
+    );
+    const foreign = e.labels("m", { A: "yes", B: "yes" }, "sha256:WRONG");
+    const base = {
+      universePath: e.universePath,
+      rankingsPath: e.rankingsPath,
+      outDir: NodePath.join(root, "s"),
+      dev: ["2026-10-20"],
+      replicates: 10,
+    };
+    await expect(runScore({ ...base, labelPaths: [foreign] })).rejects.toThrow(/pass its cards to migrate/);
+    // The old cards: A identical, B showed other terms then.
+    const cards = NodePath.join(root, "old-cards.jsonl");
+    NodeFS.writeFileSync(
+      cards,
+      [
+        { card_id: "card_A", unit: "topic", topic_id: "A", cutoff: "2026-10-20", terms: ["same"], headlines: [] },
+        { card_id: "card_B", unit: "topic", topic_id: "B", cutoff: "2026-10-20", terms: ["before"], headlines: [] },
+      ]
+        .map((c) => `${JSON.stringify(c)}\n`)
+        .join(""),
+    );
+    const json = JSON.parse(NodeFS.readFileSync(foreign, "utf8"));
+    NodeFS.writeFileSync(foreign, JSON.stringify({ ...json, cards_hash: sha256(NodeFS.readFileSync(cards)) }));
+    const out = await runScore({ ...base, labelPaths: [], migrateLabels: [{ labels: foreign, cards }] });
+    const arm = (out.metrics.logical.results["m"] as any).dev.arms.R;
+    expect(arm.p_at_5).toBeCloseTo(0.2);
+    expect(out.metrics.logical.labels[0]!.migration).toMatchObject({ accepted: 1, dropped: 1 });
+  });
+
+  it("S3: sensitivity blocks follow calendar days, not consecutive cutoffs", () => {
+    // Two cutoffs three weeks apart never share a 7-day block.
+    const draws = blockDraws(["2026-09-13", "2026-10-04"], 7, 200, 3);
+    expect(draws.every((w) => !(w.has("2026-09-13") && w.has("2026-10-04")))).toBe(true);
+    const near = blockDraws(["2026-10-27", "2026-10-30"], 7, 200, 3);
+    expect(near.some((w) => w.has("2026-10-27") && w.has("2026-10-30"))).toBe(true);
   });
 });
 

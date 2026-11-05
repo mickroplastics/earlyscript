@@ -54,7 +54,9 @@ export function slotCredit(slot: Slot, bound: "strict" | "upper"): number {
 
 /**
  * Builds the k slots of a top-k list. Positions beyond the list are empty; the second and later
- * positions of a family already seen higher in the same list are duplicates (P1.1, rule 4).
+ * positions of an opportunity already seen higher in the same list are duplicates (P1.1 rule 4).
+ * The opportunity is the topic at this cutoff, merged with this cutoff's data only, so a later
+ * cutoff never changes these credits (U1-B1); the family serves only the bootstrap.
  */
 export function topSlots(
   arm: string,
@@ -81,8 +83,8 @@ export function topSlots(
         zero: "empty",
       };
     }
-    const duplicate = seen.has(entry.family);
-    seen.add(entry.family);
+    const duplicate = seen.has(entry.topicId);
+    seen.add(entry.topicId);
     return {
       arm,
       cutoff,
@@ -157,29 +159,35 @@ export function unitDraws(units: ReadonlyArray<string>, replicates: number, seed
 }
 
 /**
- * Circular moving-block bootstrap of the cutoffs (sorted): each replicate draws ceil(n/L)
- * blocks of L consecutive cutoffs; a cutoff's weight is how many drawn blocks contain it.
+ * Moving blocks of `blockDays` calendar days (U1-S3): each replicate draws ceil(span / L)
+ * windows [start, start + L) with start uniform from first - (L - 1) to last, so every day is
+ * equally likely to be covered and the ends of the calendar never join. A cutoff's weight is the
+ * number of drawn windows that contain it; a window over a gap without cutoffs adds nothing.
  */
 export function blockDraws(
   cutoffs: ReadonlyArray<string>,
-  blockLength: number,
+  blockDays: number,
   replicates: number,
   seed: number,
 ): Draws {
   const sorted = [...new Set(cutoffs)].toSorted();
-  const n = sorted.length;
-  const length = Math.max(1, Math.min(blockLength, n));
-  const blocks = Math.ceil(n / length);
   const random = seededRandom(seed);
-  if (n === 0) return Array.from({ length: replicates }, () => new Map<string, number>());
+  if (sorted.length === 0) return Array.from({ length: replicates }, () => new Map<string, number>());
+  const dayMs = 86_400_000;
+  const length = Math.max(1, blockDays);
+  const days = sorted.map((c) => Date.parse(`${c.slice(0, 10)}T00:00:00Z`) / dayMs);
+  const first = days[0]!;
+  const last = days.at(-1)!;
+  const span = last - first + 1;
+  const blocks = Math.ceil(span / length);
+  const starts = span + length - 1;
   return Array.from({ length: replicates }, () => {
     const weights = new Map<string, number>();
     for (let b = 0; b < blocks; b++) {
-      const start = Math.floor(random() * n);
-      for (let k = 0; k < length; k++) {
-        const cutoff = sorted[(start + k) % n]!;
-        weights.set(cutoff, (weights.get(cutoff) ?? 0) + 1);
-      }
+      const start = first - (length - 1) + Math.floor(random() * starts);
+      days.forEach((d, k) => {
+        if (d >= start && d < start + length) weights.set(sorted[k]!, (weights.get(sorted[k]!) ?? 0) + 1);
+      });
     }
     return weights;
   });
