@@ -7,6 +7,11 @@ import * as Schema from "effect/Schema";
 
 import { SourceId } from "@earlyscript/editorial-contracts/source";
 
+import { httpTraceWriter } from "./collect.ts";
+import { captureDay } from "./editorial-capture.ts";
+import { writeFollowupLabels } from "./editorial-followup.ts";
+import { runScore } from "./editorial-score.ts";
+import { liveSources, readRssFeedList } from "./sources/index.ts";
 import {
   appendLedger,
   assertSealed,
@@ -149,6 +154,67 @@ export async function editorialCommand(argv: ReadonlyArray<string>): Promise<num
       title: values.title ?? (cards.every((c) => c.unit === "item") ? "Tarjetas de ítems" : "Tarjetas"),
     });
     console.log(JSON.stringify({ ...written, cards: cards.length }));
+    return 0;
+  }
+  if (sub === "hn-labels" && values.universe && values.corpus && values.out) {
+    const result = await writeFollowupLabels({
+      ...embedding,
+      log,
+      universePath: values.universe,
+      corpusDir: values.corpus,
+      out: values.out,
+    });
+    const counts: Record<string, number> = {};
+    for (const l of result.labels) counts[l.label] = (counts[l.label] ?? 0) + 1;
+    console.log(JSON.stringify({ path: result.path, sha256: result.sha256, labels: counts }));
+    return 0;
+  }
+  if (sub === "score" && values.universe && values.rankings && values.labels && values.out) {
+    const result = await runScore({
+      universePath: values.universe,
+      rankingsPath: values.rankings,
+      labelPaths: values.labels,
+      outDir: values.out,
+      ...(values.dev ? { dev: parseCutoffList(values.dev) } : {}),
+      ...(values.retro ? { retro: parseCutoffList(values.retro) } : {}),
+      ...(values.prospective ? { prospective: parseCutoffList(values.prospective) } : {}),
+      ...(values.candidate ? { candidates: values.candidate } : {}),
+      ...(values.reference ? { references: values.reference } : {}),
+      ...(values.ledger ? { ledgerPath: values.ledger } : {}),
+      ...(values.bootstrap ? { replicates: Number(values.bootstrap) } : {}),
+      ...(values.seed ? { seed: Number(values.seed) } : {}),
+      ...(values["block-days"] ? { blockDays: Number(values["block-days"]) } : {}),
+    });
+    console.log(
+      JSON.stringify({
+        metrics: result.metricsPath,
+        report: result.reportPath,
+        metrics_hash: result.metrics.metrics_hash,
+      }),
+    );
+    return 0;
+  }
+  if (sub === "capture" && values.corpus && values.ledger && values.snapshots) {
+    const sources = values.sources ? sourceList(values.sources) : [...EVAL_SOURCES];
+    const rssFeeds = values["rss-feeds"] ? await readRssFeedList(values["rss-feeds"]) : undefined;
+    const traceDir = values.corpus;
+    const result = await captureDay({
+      log,
+      corpusDir: values.corpus,
+      ledgerPath: values.ledger,
+      snapshotsDir: values.snapshots,
+      sources,
+      adapters: (ids) => {
+        const { file, trace } = httpTraceWriter(traceDir);
+        console.error(`HTTP trace: ${file}`);
+        return liveSources(ids, { trace }, rssFeeds ? { rssFeeds } : {});
+      },
+      ...(values.day ? { day: values.day } : {}),
+      ...(values["first-day"] ? { firstDay: values["first-day"] } : {}),
+      ...(values["last-day"] ? { lastDay: values["last-day"] } : {}),
+      ...(values["seed-from"] ? { seedFrom: values["seed-from"] } : {}),
+    });
+    console.log(JSON.stringify(result));
     return 0;
   }
   if (sub === "seal" && values.ledger && values.kind) {
