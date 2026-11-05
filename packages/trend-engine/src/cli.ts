@@ -6,12 +6,14 @@
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
+//   node src/cli.ts eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture ... (see editorial-cli.ts)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
 
 import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus, httpTraceWriter } from "./collect.ts";
+import { editorialCommand } from "./editorial-cli.ts";
 import { purgeCorpus } from "./purge.ts";
 import { repairRobotsOverrideTerms } from "./repair.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
@@ -80,6 +82,7 @@ async function modelCommand(argv: ReadonlyArray<string>): Promise<number> {
 async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
   if (command === "model") return modelCommand(rest);
+  if (command === "eval-editorial") return editorialCommand(rest);
   const { values } = NodeUtil.parseArgs({
     args: [...rest],
     options: {

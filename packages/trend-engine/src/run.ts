@@ -75,6 +75,8 @@ export interface RunOptions {
 export interface EmittedTrend {
   readonly id: string;
   readonly centroid: Float32Array;
+  /** Every member, published before the cutoff; `engine eval-editorial` builds blind cards from them. */
+  readonly itemIds: ReadonlyArray<string>;
 }
 
 export function loadConfig(path: string): { config: EngineConfig; hash: string } {
@@ -254,7 +256,9 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
       .filter((s) => baselinePos.get(s.id)! <= max || weightedPos.get(s.id)! <= max)
       .toSorted((a, b) => baselinePos.get(a.id)! - baselinePos.get(b.id)!);
     const cov = coverageSummary(coverage, sources, curveDays);
-    options.onEmitted?.(emitted.map((s) => ({ id: s.id, centroid: s.signal.centroid })));
+    options.onEmitted?.(
+      emitted.map((s) => ({ id: s.id, centroid: s.signal.centroid, itemIds: s.signal.itemIds })),
+    );
     lap("series_stage_profile_rank");
 
     const createdAt = new Date().toISOString();
