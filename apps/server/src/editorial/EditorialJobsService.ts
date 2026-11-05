@@ -225,9 +225,18 @@ const RunJsonHead = Schema.fromJsonString(
     cutoff_at: Schema.String,
     config_hash: Schema.String,
     started_at: Schema.String,
-    profile: Schema.Struct({ hash: Schema.String }),
+    // The profile file the engine was given: per job and claim, so it names who launched it.
+    profile: Schema.Struct({ hash: Schema.String, path: Schema.optional(Schema.String) }),
   }),
 );
+const ManifestProvenance = Schema.fromJsonString(
+  Schema.Struct({
+    code_hash: Schema.String,
+    config_hash: Schema.String,
+    profile_hash: Schema.String,
+  }),
+);
+const decodeManifestProvenance = Schema.decodeUnknownOption(ManifestProvenance);
 const decodeRunJsonHead = Schema.decodeUnknownOption(RunJsonHead);
 
 const storage = (cause: unknown) =>
@@ -1168,13 +1177,48 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     } satisfies PhaseOutcome;
   });
 
-  const isJobRun = (job: JobRow, run: typeof RunJsonHead.Type) =>
-    run.status === "ok" &&
-    run.cutoff_at === job.cutoff_at &&
-    run.config_hash === job.config_hash &&
-    run.profile.hash === job.profile_hash &&
-    job.started_at !== null &&
-    run.started_at >= job.started_at;
+  /**
+   * Whether `run` is this job's: same key, after it started, launched by one of its claims with
+   * its code (run.json names the claim's `profile.g<n>.json`, its manifest the code). Another
+   * job's run never; one without that record only for a job of the installed engine.
+   */
+  const isJobRun = Effect.fn("EditorialJobsService.isJobRun")(function* (
+    job: JobRow,
+    run: typeof RunJsonHead.Type,
+  ) {
+    if (
+      run.status !== "ok" ||
+      run.cutoff_at !== job.cutoff_at ||
+      run.config_hash !== job.config_hash ||
+      run.profile.hash !== job.profile_hash ||
+      job.started_at === null ||
+      run.started_at < job.started_at
+    ) {
+      return false;
+    }
+    const jobDir = path.resolve(jobDirOf(job.job_id));
+    const profilePath = run.profile.path === undefined ? null : path.resolve(run.profile.path);
+    const claim =
+      profilePath === null || path.dirname(profilePath) !== jobDir
+        ? null
+        : /^profile\.g(\d+)\.json$/.exec(path.basename(profilePath))?.[1];
+    if (claim === null || claim === undefined) {
+      const launchedByAJob =
+        profilePath !== null &&
+        profilePath.startsWith(`${path.resolve(options.jobsDir)}${path.sep}`);
+      return !launchedByAJob && job.code_hash === "";
+    }
+    const manifest = yield* fs
+      .readFileString(path.join(jobDir, `engine-manifest.g${claim}.json`))
+      .pipe(Effect.option);
+    return Option.match(Option.flatMap(manifest, decodeManifestProvenance), {
+      onNone: () => false,
+      onSome: (written) =>
+        written.code_hash === job.code_hash &&
+        written.config_hash === job.config_hash &&
+        written.profile_hash === job.profile_hash,
+    });
+  });
 
   /** A run this job already wrote: same cutoff, configuration and profile, after it started. */
   const findRunOnDisk = Effect.fn("EditorialJobsService.findRunOnDisk")(function* (job: JobRow) {
@@ -1188,7 +1232,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       const head = Option.flatMap(text, decodeRunJsonHead);
       if (Option.isNone(head)) continue;
       const run = head.value;
-      if (isJobRun(job, run) && (found === null || run.started_at > found.startedAt)) {
+      if ((found === null || run.started_at > found.startedAt) && (yield* isJobRun(job, run))) {
         found = { runId: run.run_id, startedAt: run.started_at };
       }
     }
@@ -1203,7 +1247,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
       .readFileString(path.join(runsDir, runId, "run.json"))
       .pipe(Effect.option);
     const head = Option.flatMap(text, decodeRunJsonHead);
-    return Option.isSome(head) && head.value.run_id === runId && isJobRun(job, head.value)
+    return Option.isSome(head) && head.value.run_id === runId && (yield* isJobRun(job, head.value))
       ? runId
       : null;
   });
@@ -1261,7 +1305,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         phase: "run",
       });
     }
-    const profileFile = yield* ensureProfileFile(ctx.job.profile_hash);
+    const storedProfile = yield* ensureProfileFile(ctx.job.profile_hash);
     const configFile = jobFile(ctx, "engine-config", "json");
     yield* fs
       .writeFileString(configFile, `${encodeJson(ctx.plan.config)}\n`)
@@ -1274,6 +1318,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           manifest_hash: ctx.plan.engine.manifestHash,
           config_hash: ctx.job.config_hash,
           profile_hash: ctx.job.profile_hash,
+          // The job's key: what a later claim checks before it adopts this claim's run.
+          code_hash: ctx.job.code_hash,
+          generation: ctx.lease.generation,
           engine_source_hash: ctx.plan.engine.engineSourceHash,
           engine_cli:
             ctx.plan.engine.cli ??
@@ -1282,6 +1329,10 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
         })}\n`,
       )
       .pipe(Effect.mapError(storage));
+    // This claim's own copy of the profile, written after its manifest: run.json records the
+    // path, which ties the run to this job, this claim and its code.
+    const profileFile = jobFile(ctx, "profile", "json");
+    yield* fs.copyFile(storedProfile, profileFile).pipe(Effect.mapError(storage));
     const args = [
       "run",
       "--corpus",

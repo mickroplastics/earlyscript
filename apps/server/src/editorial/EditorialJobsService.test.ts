@@ -113,7 +113,7 @@ if (command === "collect") {
     fs.cpSync(fs.readFileSync(native, "utf8"), path.join(opt("out"), runId), { recursive: true });
     const file = path.join(opt("out"), runId, "run.json");
     const run = JSON.parse(fs.readFileSync(file, "utf8"));
-    fs.writeFileSync(file, JSON.stringify({ ...run, run_id: runId, started_at: new Date().toISOString() }));
+    fs.writeFileSync(file, JSON.stringify({ ...run, run_id: runId, started_at: new Date().toISOString(), profile: { ...run.profile, path: path.resolve(opt("profile")) } }));
   } else {
     fs.mkdirSync(path.join(opt("out"), runId), { recursive: true });
     fs.writeFileSync(
@@ -124,7 +124,7 @@ if (command === "collect") {
         cutoff_at: cutoff,
         config_hash: sha(canonical(config)),
         started_at: new Date().toISOString(),
-        profile: { hash: sha(fs.readFileSync(opt("profile"))) },
+        profile: { hash: sha(fs.readFileSync(opt("profile"))), path: path.resolve(opt("profile")) },
       }),
     );
   }
@@ -895,6 +895,55 @@ describe("EditorialJobsService", () => {
           assert.strictEqual(done?.status, "done");
           assert.notStrictEqual(done?.artifacts.runId, ran?.artifacts.runId);
           assert.strictEqual(fx.trace().filter((line) => line === "run").length, 2);
+        }),
+        { code },
+      );
+    },
+  );
+
+  it.live(
+    "an artifact job retried after a revert and a new approval runs its own code, never the installed run (Sol, B1-R3)",
+    () => {
+      const fx = makeFixture();
+      const code = { current: { cli: null as string | null, hash: null as string | null } };
+      const artifactCode = () => ({
+        cli: fx.engine,
+        hash: engineSourceHash(NodePath.dirname(fx.engine)),
+      });
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const byId = (id: string) =>
+            jobs.list.pipe(Effect.map(({ jobs: list }) => list.find((job) => job.jobId === id)));
+          // 1–3: the installed job waits; code approved; the installed job is replaced and the
+          // artifact's job fails in `run`, pending a retry.
+          const installed = yield* jobs.runNow;
+          code.current = artifactCode();
+          const artifact = yield* jobs.runNow;
+          fx.flag("run", true);
+          yield* jobs.runDue;
+          yield* jobs.runDue;
+          assert.strictEqual((yield* byId(artifact.jobId))?.status, "pending");
+          // 4: reverted; the installed engine runs and writes a valid run after that start.
+          code.current = { cli: null, hash: null };
+          fx.flag("run", false);
+          assert.strictEqual((yield* jobs.runNow).jobId, installed.jobId);
+          yield* sql`UPDATE editorial_jobs SET scheduled_for = ${FUTURE} WHERE job_id = ${artifact.jobId}`;
+          yield* jobs.runDue;
+          const installedRun = (yield* byId(installed.jobId))?.artifacts.runId;
+          assert.isString(installedRun);
+          // 5–6: approved again; the pending artifact job runs its own engine.
+          code.current = artifactCode();
+          assert.strictEqual((yield* jobs.runNow).jobId, artifact.jobId);
+          yield* sql`UPDATE editorial_jobs SET scheduled_for = ${PAST} WHERE job_id = ${artifact.jobId}`;
+          const runsBefore = fx.trace().filter((line) => line === "run").length;
+          yield* jobs.runDue;
+          const done = yield* byId(artifact.jobId);
+          assert.strictEqual(done?.status, "done");
+          assert.notStrictEqual(done?.artifacts.runId, installedRun);
+          assert.strictEqual(fx.trace().filter((line) => line === "run").length, runsBefore + 1);
         }),
         { code },
       );
