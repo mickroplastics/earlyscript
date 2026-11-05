@@ -447,7 +447,10 @@ describe("prospective pool and score", () => {
     expect(NodeFS.readFileSync(scored.reportPath, "utf8")).toContain("Candidato W");
 
     // A freeze after the capture closes leaves the prospective cutoff out.
-    appendLedger(ledgerPath, { kind: "freeze", files: [] });
+    NodeFS.appendFileSync(
+      ledgerPath,
+      `${JSON.stringify({ kind: "freeze", at: "2100-01-01T00:00:00.000Z", prev_sha256: null })}\n`,
+    );
     const late = await runScore({
       universePath: pool.universePath,
       rankingsPath: pool.rankingsPath,
