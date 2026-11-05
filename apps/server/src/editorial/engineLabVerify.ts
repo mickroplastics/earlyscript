@@ -3,7 +3,11 @@
 // report verifies against its job's signed worker result. The operator's `verify` action.
 import { reportHash } from "@earlyscript/engine-lab/compare";
 import { canonicalJson, sha256 } from "@earlyscript/engine-lab/hash";
-import { type JobSpec, resultMismatch, type WorkerResult } from "@earlyscript/engine-lab/result";
+import {
+  type JobSpec,
+  storedResultStatus,
+  type WorkerResult,
+} from "@earlyscript/engine-lab/result";
 import * as Effect from "effect/Effect";
 
 import { manifestIdOf, parseJson } from "./engineLabSupport.ts";
@@ -13,6 +17,8 @@ export interface LedgerCheck {
   readonly ok: boolean;
   readonly counts: Readonly<Record<string, number>>;
   readonly problems: ReadonlyArray<string>;
+  /** Intact reports of an earlier evaluator: not problems, but their candidates need evaluating again. */
+  readonly earlierSchemaReports: ReadonlyArray<string>;
 }
 
 export const verifyLabLedger = Effect.gen(function* () {
@@ -88,16 +94,20 @@ export const verifyLabLedger = Effect.gen(function* () {
     SELECT r.report_id, r.report_json, r.report_hash, r.result_json, j.spec_json, j.secret
     FROM editorial_engine_reports r JOIN editorial_engine_jobs j ON j.job_id = r.job_id
   `;
+  const earlier: Array<string> = [];
   for (const row of reports) {
     const report = parseJson(row.report_json) as { result_signature?: string };
     const result = parseJson(row.result_json) as WorkerResult;
     if (reportHash(report) !== row.report_hash)
       problems.push(`report ${row.report_id} does not hash to its hash`);
-    const mismatch = resultMismatch(
+    const status = storedResultStatus(
       { ...(parseJson(row.spec_json) as JobSpec), secret: row.secret },
       result,
     );
-    if (mismatch !== null) problems.push(`report ${row.report_id}: ${mismatch}`);
+    // Intact evidence of an earlier evaluator is not an integrity problem: it is listed apart,
+    // and its candidate needs evaluating again before any promotion.
+    if (status.kind === "earlier-schema") earlier.push(`${row.report_id} (${status.schema})`);
+    else if (status.kind === "mismatch") problems.push(`report ${row.report_id}: ${status.reason}`);
     if (report.result_signature !== result.signature)
       problems.push(`report ${row.report_id} was not computed from its result`);
   }
@@ -107,6 +117,7 @@ export const verifyLabLedger = Effect.gen(function* () {
   }>`SELECT status, COUNT(*) AS n FROM editorial_engine_jobs GROUP BY status`;
   return {
     ok: problems.length === 0,
+    earlierSchemaReports: earlier,
     counts: {
       manifests: manifests.length,
       activations: activations.length,

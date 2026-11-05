@@ -4,6 +4,7 @@
 //   node src/cli.ts evaluate --jobs-root <dir> --engine-root <dir> --token <token>  (spec on stdin)
 //   node src/cli.ts cancel --jobs-root <dir> --token <token>
 //   node src/cli.ts identify  (input roots, corpus and models dirs on stdin)
+//   node src/cli.ts cache-view --spec <file>  (the nightly's trusted cache preparation)
 //   node src/cli.ts synthetic --out <dir> --from <day> --days <n>
 //   node src/cli.ts subset --from-corpus <dir> --out <new dir> --sources hn,github --from <day> --to <exclusive day>
 import * as NodeFS from "node:fs";
@@ -11,6 +12,7 @@ import * as NodeFS from "node:fs";
 import type { JobSpec } from "./result.ts";
 import { subsetCorpus } from "./corpusSubset.ts";
 import { writeSyntheticCorpus } from "./synthetic.ts";
+import { buildCacheView } from "./cacheView.ts";
 import { cancelJob, evaluateJob, identifyInputs } from "./worker.ts";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -55,6 +57,23 @@ if (command === "evaluate") {
         message: error instanceof Error ? error.message : String(error),
       }),
     );
+  }
+} else if (command === "cache-view") {
+  // A child of the nightly job, under its lock token: cancelling the job ends its process
+  // group, the installed embedder's processes included.
+  const input = JSON.parse(NodeFS.readFileSync(need("spec"), "utf8")) as Parameters<
+    typeof buildCacheView
+  >[0];
+  try {
+    console.log(JSON.stringify({ ok: true, ...(await buildCacheView(input)) }));
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    process.exitCode = 1;
   }
 } else if (command === "cancel") {
   console.log(JSON.stringify({ status: cancelJob(need("jobs-root"), need("token")) }));

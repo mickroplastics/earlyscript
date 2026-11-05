@@ -39,7 +39,6 @@ import { EditorialPresentationService } from "./EditorialPresentationService.ts"
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import { engineSourceHash } from "@earlyscript/engine-lab/hash";
-import { buildCacheView } from "@earlyscript/engine-lab/cacheView";
 import { adoptArtifactRun } from "@earlyscript/engine-lab/runAdoption";
 import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
 import { DEFAULT_DATA_DIR } from "@earlyscript/trend-engine/run";
@@ -108,27 +107,8 @@ export interface EditorialJobsOptions {
   readonly artifactSandbox?: "bwrap" | "unavailable";
   /** Tests only: a stand-in engine's own files, writable to it besides its output. */
   readonly artifactExtraWritable?: ReadonlyArray<string>;
-  /**
-   * Builds the read-only cache an approved artifact's run reads: its cutoff's entries, from the
-   * shared cache or inferred by the installed embedder. Replaced in tests by a stand-in.
-   */
-  readonly prepareArtifactCache?: (
-    input: ArtifactCacheInput,
-  ) => Effect.Effect<string, ArtifactCacheError>;
-}
-
-/** The cache view of an approved artifact's run could not be prepared. */
-export class ArtifactCacheError extends Schema.TaggedError<ArtifactCacheError>()(
-  "ArtifactCacheError",
-  { message: Schema.String },
-) {}
-
-export interface ArtifactCacheInput {
-  readonly corpusDir: string;
-  readonly cutoff: string;
-  readonly profilePath: string;
-  readonly config: Record<string, unknown>;
-  readonly out: string;
+  /** Tests only: a stand-in for engine-lab's CLI, which prepares an artifact's cache view. */
+  readonly cacheViewCli?: string;
 }
 
 export const DEFAULT_JOB_TIMING = {
@@ -1085,57 +1065,73 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     };
   };
 
-  /** The installed engine's code builds the artifact's cache view, in this trusted process. */
-  const prepareArtifactCache =
-    options.prepareArtifactCache ??
-    ((input: ArtifactCacheInput) => {
-      const root = installedRoot();
-      if (root === null) {
-        return Effect.fail(
-          new ArtifactCacheError({
-            message: "An approved artifact needs the installed engine's sources.",
-          }),
-        );
-      }
-      return Effect.tryPromise({
-        try: () =>
-          buildCacheView({
-            engineRoot: root,
-            corpusDir: input.corpusDir,
-            cutoff: input.cutoff,
-            profilePath: input.profilePath,
-            configs: [input.config as never],
-            sharedCache: options.cacheFile,
-            // Inferred by the installed embedder, as the installed nightly would store them.
-            inferredFile: options.cacheFile,
-            infer: {
-              modelDir:
-                options.modelsDir ??
-                path.join(
-                  DEFAULT_DATA_DIR,
-                  "models",
-                  String((input.config.embedder as { revision?: unknown }).revision),
-                ),
-              workers: 2,
-            },
-            out: input.out,
-          }),
-        catch: (cause) =>
-          new ArtifactCacheError({
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-      }).pipe(
-        Effect.flatMap((view) =>
-          view.missing > 0
-            ? Effect.fail(
-                new ArtifactCacheError({
-                  message: `${view.missing} embeddings could not be prepared.`,
-                }),
-              )
-            : Effect.succeed(view.file),
-        ),
-      );
-    });
+  /**
+   * An approved artifact's cache view, built by the installed engine's code in a child under
+   * this job's lock token: losing or cancelling the job ends its process group, embedder
+   * included. It infers with the job's processes and fetches the pinned model when absent.
+   */
+  const prepareCacheView = Effect.fn("EditorialJobsService.prepareCacheView")(function* (
+    ctx: PhaseContext,
+    profileFile: string,
+  ) {
+    const root = installedRoot();
+    const helper =
+      options.cacheViewCli ??
+      (root === null ? null : path.join(root, "packages", "engine-lab", "src", "cli.ts"));
+    const failure = (message: string) =>
+      new PhaseFailure({
+        message: `The approved code's cache view could not be prepared: ${message}`,
+        notice: { code: "engine_failed", phase: "run" },
+      });
+    if (helper === null) {
+      return yield* failure("an approved artifact needs the installed engine's sources.");
+    }
+    const out = jobFile(ctx, "cache-view", "sqlite");
+    const specFile = jobFile(ctx, "cache-view-spec", "json");
+    const revision = (ctx.plan.config.embedder as { revision?: unknown } | undefined)?.revision;
+    yield* fs
+      .writeFileString(
+        specFile,
+        `${encodeJson({
+          engineRoot: root ?? "",
+          corpusDir,
+          cutoff: ctx.job.cutoff_at,
+          profilePath: profileFile,
+          configs: [ctx.plan.config],
+          sharedCache: options.cacheFile,
+          // Inferred by the installed embedder, where the installed nightly would store them.
+          inferredFile: options.cacheFile,
+          infer: {
+            modelDir: options.modelsDir ?? path.join(DEFAULT_DATA_DIR, "models", String(revision)),
+            workers: ctx.workers,
+            allowDownload: true,
+          },
+          out,
+        })}\n`,
+      )
+      .pipe(Effect.mapError(storage));
+    const output = yield* engineRun(
+      ctx,
+      "cache-view",
+      ["cache-view", "--spec", specFile],
+      undefined,
+      helper,
+      false,
+    );
+    const answer = lastJsonLine(output.stdout) as {
+      ok?: boolean;
+      file?: string;
+      missing?: number;
+      message?: string;
+    } | null;
+    if (answer?.ok !== true || answer.file !== out) {
+      return yield* failure(answer?.message ?? `exited with ${output.exitCode}: ${output.tail}`);
+    }
+    if ((answer.missing ?? 0) > 0) {
+      return yield* failure(`${answer.missing} embeddings could not be prepared.`);
+    }
+    return out;
+  });
 
   const engineRun = (
     ctx: PhaseContext,
@@ -1144,6 +1140,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     onStderrLine?: (line: string) => Effect.Effect<void>,
     /** Another CLI of the same engine layout: an approved code manifest's artifact. */
     cli?: string,
+    /** An approved artifact runs isolated; a trusted helper given as `cli` does not. */
+    sandboxed: boolean = cli !== undefined,
   ) => {
     const logFile = jobFile(ctx, logName, "log");
     const tail: Array<string> = [];
@@ -1161,7 +1159,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
           args: [...args, LOCK_TOKEN_FLAG, ctx.token],
           logFile,
           // Approved code is not the installed engine: it runs isolated, like its evaluation.
-          ...(cli === undefined ? {} : { sandbox: artifactSandbox(ctx, cli) }),
+          ...(cli === undefined || !sandboxed ? {} : { sandbox: artifactSandbox(ctx, cli) }),
           onSpawn: (pid) =>
             ctx
               .publishPid(pid)
@@ -1394,7 +1392,21 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     return target;
   });
 
-  const runPhaseEngine = (ctx: PhaseContext) => afterPreviousEngine(ctx, runWithLock(ctx));
+  // An approved artifact's cache view (a copy of the vectors of the whole corpus before the
+  // cutoff, hundreds of megabytes) and its private output go once the run is adopted or failed.
+  const removeArtifactFiles = (ctx: PhaseContext) =>
+    Effect.all(
+      [
+        fs.remove(jobFile(ctx, "cache-view", "sqlite"), { force: true }),
+        fs.remove(artifactOut(ctx), { recursive: true, force: true }),
+      ],
+      { discard: true },
+    ).pipe(Effect.ignore);
+
+  const runPhaseEngine = (ctx: PhaseContext) =>
+    afterPreviousEngine(ctx, runWithLock(ctx)).pipe(
+      Effect.ensuring(ctx.plan.engine.cli === null ? Effect.void : removeArtifactFiles(ctx)),
+    );
 
   const runWithLock = Effect.fn("EditorialJobsService.run")(function* (ctx: PhaseContext) {
     // A run a previous claim already accepted stays the job's run.
@@ -1465,24 +1477,7 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     yield* fs.copyFile(storedProfile, profileFile).pipe(Effect.mapError(storage));
     // An approved artifact reads a cache view of its cutoff, cache-only, and writes its run to
     // a private directory this process collects; the installed engine writes as before.
-    const artifactCache =
-      cli === null
-        ? null
-        : yield* prepareArtifactCache({
-            corpusDir,
-            cutoff: ctx.job.cutoff_at,
-            profilePath: profileFile,
-            config: ctx.plan.config,
-            out: jobFile(ctx, "cache-view", "sqlite"),
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PhaseFailure({
-                  message: `The approved code's cache view could not be prepared: ${cause.message}`,
-                  notice: { code: "engine_failed", phase: "run" },
-                }),
-            ),
-          );
+    const artifactCache = cli === null ? null : yield* prepareCacheView(ctx, profileFile);
     if (cli !== null) {
       yield* fs
         .remove(artifactOut(ctx), { recursive: true, force: true })

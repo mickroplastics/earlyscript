@@ -156,6 +156,43 @@ export const signResult = (
   signature: hmac(secret, canonicalJson(unsigned)),
 });
 
+/** Result schemas an earlier evaluator wrote: their evidence predates today's checks. */
+export const EARLIER_RESULT_SCHEMAS: ReadonlyArray<string> = [
+  "earlyscript.engine-lab-result/1",
+  "earlyscript.engine-lab-result/2",
+];
+
+/**
+ * What a stored result is: today's signed answer to its spec, an intact answer of an earlier
+ * schema (its signature and spec still match; the candidate needs evaluating again), or a
+ * mismatch, which is what an edit of the stored result gives.
+ */
+export function storedResultStatus(
+  spec: JobSpec,
+  result: WorkerResult,
+):
+  | { readonly kind: "current" }
+  | { readonly kind: "earlier-schema"; readonly schema: string }
+  | { readonly kind: "mismatch"; readonly reason: string } {
+  const schema = (result as { schema?: unknown }).schema;
+  if (typeof schema === "string" && EARLIER_RESULT_SCHEMAS.includes(schema)) {
+    const { signature, ...unsigned } = result;
+    const intact =
+      typeof signature === "string" &&
+      sameSignature(signature, hmac(spec.secret, canonicalJson(unsigned))) &&
+      result.token === spec.token &&
+      result.spec_sha256 === specHash(spec);
+    return intact
+      ? { kind: "earlier-schema", schema }
+      : {
+          kind: "mismatch",
+          reason: "an earlier-schema result whose signature or spec does not match",
+        };
+  }
+  const reason = resultMismatch(spec, result);
+  return reason === null ? { kind: "current" } : { kind: "mismatch", reason };
+}
+
 /** Why `result` is not the signed answer to `spec`, or null when it is. */
 export function resultMismatch(spec: JobSpec, result: WorkerResult): string | null {
   if (result.schema !== RESULT_SCHEMA) return "unknown result schema";

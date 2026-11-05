@@ -712,7 +712,7 @@ export async function evaluateJob(spec: JobSpec, options: WorkerOptions): Promis
               infer:
                 spec.cache_only || canonical.models_dir === null
                   ? null
-                  : { modelDir: canonical.models_dir, workers: spec.workers },
+                  : { modelDir: canonical.models_dir, workers: spec.workers, allowDownload: false },
               out: NodePath.join(jobDir, "cache", `${view.cutoff.slice(0, 10)}.sqlite`),
             }),
       );

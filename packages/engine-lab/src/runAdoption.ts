@@ -9,6 +9,30 @@ import * as NodePath from "node:path";
 import { snapshotOutput } from "./worker.ts";
 
 const RUN_ID = /^run_[A-Za-z0-9_]+$/;
+const DOSSIER_FILE = /^dossiers\/[A-Za-z0-9._-]+\.json$/;
+const INCOMING = /^\.incoming-run_[A-Za-z0-9_]+-(\d+)$/;
+
+const pidAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Copies a crashed adoption left behind: their process is gone, so nothing will finish them. */
+export function sweepIncoming(runsDir: string): Array<string> {
+  if (!NodeFS.existsSync(runsDir)) return [];
+  const swept: Array<string> = [];
+  for (const name of NodeFS.readdirSync(runsDir)) {
+    const pid = INCOMING.exec(name)?.[1];
+    if (pid === undefined || pidAlive(Number(pid))) continue;
+    NodeFS.rmSync(NodePath.join(runsDir, name), { recursive: true, force: true });
+    swept.push(name);
+  }
+  return swept;
+}
 
 export function adoptArtifactRun(input: {
   readonly out: string;
@@ -26,6 +50,7 @@ export function adoptArtifactRun(input: {
   if (NodeFS.existsSync(target))
     throw new Error(`${input.runId} is already in the runs directory.`);
   NodeFS.mkdirSync(input.runsDir, { recursive: true });
+  sweepIncoming(input.runsDir);
   const incoming = NodePath.join(input.runsDir, `.incoming-${input.runId}-${process.pid}`);
   NodeFS.rmSync(incoming, { recursive: true, force: true });
   try {
@@ -45,7 +70,25 @@ export function adoptArtifactRun(input: {
       cutoff_at?: unknown;
       config_hash?: unknown;
       profile?: { hash?: unknown; path?: unknown };
+      files?: unknown;
     };
+    // The dossiers it names: plain names inside its own dossiers directory, each a regular file
+    // of this copy. The installed engine's check reads exactly these, so none may lie elsewhere.
+    const runDir = NodePath.join(runs, input.runId);
+    const files = record.files;
+    if (
+      !Array.isArray(files) ||
+      files.some((file) => typeof file !== "string" || !DOSSIER_FILE.test(file)) ||
+      new Set(files).size !== files.length ||
+      files.some((file) => {
+        const stat = NodeFS.lstatSync(NodePath.join(runDir, file as string), {
+          throwIfNoEntry: false,
+        });
+        return stat === undefined || !stat.isFile();
+      })
+    ) {
+      throw new Error("run.json names dossiers outside its own output, twice, or missing.");
+    }
     const problems = [
       record.run_id !== input.runId && "run_id",
       record.status !== "ok" && "status",

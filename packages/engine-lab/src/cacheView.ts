@@ -170,7 +170,16 @@ export async function buildCacheView(input: {
   readonly configs: ReadonlyArray<EngineConfig>;
   readonly sharedCache: string | null;
   readonly inferredFile: string;
-  readonly infer: { readonly modelDir: string; readonly workers: number } | null;
+  /**
+   * Null leaves missing entries missing. `allowDownload` follows the installed engine: the
+   * nightly fetches the pinned model when it is absent; an evaluation, whose models are fixed
+   * by hash, fails clearly instead.
+   */
+  readonly infer: {
+    readonly modelDir: string;
+    readonly workers: number;
+    readonly allowDownload: boolean;
+  } | null;
   readonly out: string;
 }): Promise<CacheView> {
   const engine = await internals(input.engineRoot);
@@ -193,6 +202,7 @@ export async function buildCacheView(input: {
           cacheFile: input.inferredFile,
           modelDir: input.infer.modelDir,
           workers: input.infer.workers,
+          allowDownload: input.infer.allowDownload,
           cacheOnly: false,
         });
         try {

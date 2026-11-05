@@ -144,7 +144,8 @@ if (command === "collect") {
     const run = JSON.parse(fs.readFileSync(file, "utf8"));
     fs.writeFileSync(file, JSON.stringify({ ...run, run_id: runId, started_at: new Date().toISOString(), profile: { ...run.profile, path: path.resolve(opt("profile")) } }));
   } else {
-    fs.mkdirSync(path.join(opt("out"), runId), { recursive: true });
+    fs.mkdirSync(path.join(opt("out"), runId, "dossiers"), { recursive: true });
+    fs.writeFileSync(path.join(opt("out"), runId, "dossiers", "0.json"), "{}");
     fs.writeFileSync(
       path.join(opt("out"), runId, "run.json"),
       JSON.stringify({
@@ -154,11 +155,25 @@ if (command === "collect") {
         config_hash: sha(canonical(config)),
         started_at: new Date().toISOString(),
         profile: { hash: sha(fs.readFileSync(opt("profile"))), path: path.resolve(opt("profile")) },
+        files: ["dossiers/0.json"],
       }),
     );
   }
   console.log(JSON.stringify({ run_id: runId, status: "ok", error: null, dossiers: 3 }));
   event("run done");
+} else if (command === "cache-view") {
+  const spec = JSON.parse(fs.readFileSync(opt("spec"), "utf8"));
+  trace("cache-view workers=" + spec.infer.workers);
+  const event = (line) => fs.appendFileSync(path.join(here, "events.log"), line + "\n");
+  process.on("SIGTERM", () => {
+    event("cache-view killed");
+    process.exit(143);
+  });
+  const slow = path.join(here, "slow-cache");
+  if (fs.existsSync(slow)) await new Promise((resolve) => setTimeout(resolve, Number(fs.readFileSync(slow, "utf8"))));
+  fs.writeFileSync(spec.out, "");
+  event("cache-view done");
+  console.log(JSON.stringify({ ok: true, file: spec.out, entries: 0, inferred: 0, missing: 0 }));
 } else if (command === "check") {
   trace("check");
   console.log(JSON.stringify({ ok: !failing("check") }));
@@ -338,11 +353,8 @@ const withJobs = <A, E>(
   });
   const jobs = EditorialJobsService.layerWith({
     artifactExtraWritable: standInFiles,
-    prepareArtifactCache: (input) =>
-      Effect.sync(() => {
-        NodeFS.writeFileSync(input.out, "");
-        return input.out;
-      }),
+    // The stand-in engine plays engine-lab's CLI too: it writes an empty cache view.
+    cacheViewCli: fx.engine,
     engine:
       options.engine ?? Result.succeed({ cli: fx.engine, defaultConfig: DEFAULT_CONFIG_PATH }),
     jobsDir: NodePath.join(fx.root, "jobs"),
@@ -1024,6 +1036,81 @@ describe("EditorialJobsService", () => {
           assert.isTrue(NodeFS.existsSync(NodePath.join(fx.runsDir, done!.artifacts.runId!)));
         }),
         { code },
+      );
+    },
+  );
+
+  it.live(
+    "prepares an artifact's cache view with the job's processes and leaves no copy behind, after success or failure (Astra S2, Opus S1)",
+    () => {
+      const fx = makeFixture();
+      const code = {
+        current: { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) },
+      };
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const leftovers = (jobDir: string) =>
+            NodeFS.readdirSync(jobDir).filter(
+              (name) =>
+                (name.startsWith("cache-view.") && name.endsWith(".sqlite")) ||
+                name.startsWith("artifact-out."),
+            );
+          const job = yield* jobs.runNow;
+          yield* jobs.runDue;
+          const done = (yield* jobs.list).jobs.find((entry) => entry.jobId === job.jobId)!;
+          assert.strictEqual(done.status, "done");
+          const jobDir = done.artifacts.jobDir;
+          const runLog = NodeFS.readFileSync(NodePath.join(jobDir, "run.g1.log"), "utf8");
+          const workers = /--workers (\d+)/.exec(runLog)?.[1];
+          assert.include(fx.trace(), `cache-view workers=${workers}`);
+          assert.deepStrictEqual(leftovers(jobDir), []);
+          // A failed run removes them too.
+          fx.flag("run", true);
+          // A new job at the same cutoff, as on the next day's plan.
+          yield* sql`DELETE FROM editorial_jobs`;
+          const failing = yield* jobs.runNow;
+          yield* jobs.runDue;
+          const failed = (yield* jobs.list).jobs.find((entry) => entry.jobId === failing.jobId)!;
+          assert.deepStrictEqual(failed.artifacts.failure, { code: "engine_failed", phase: "run" });
+          assert.isTrue(
+            NodeFS.existsSync(NodePath.join(failed.artifacts.jobDir, "cache-view.g1.log")),
+          );
+          assert.deepStrictEqual(leftovers(failed.artifacts.jobDir), []);
+        }),
+        { code },
+      );
+    },
+  );
+
+  it.live(
+    "a lost lease ends an artifact's cache preparation before it writes anything (Astra S1)",
+    () => {
+      const fx = makeFixture();
+      NodeFS.writeFileSync(NodePath.join(fx.root, "slow-cache"), "3000");
+      const code = {
+        current: { cli: fx.engine, hash: engineSourceHash(NodePath.dirname(fx.engine)) },
+      };
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          yield* sql`
+          CREATE TRIGGER block_renewal BEFORE UPDATE OF lease_until ON editorial_jobs
+          WHEN OLD.status = 'running' AND NEW.lease_owner = OLD.lease_owner
+            AND NEW.lease_until > OLD.lease_until
+          BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END
+        `;
+          const job = yield* jobs.runNow;
+          yield* jobs.runDue;
+          assert.deepStrictEqual(fx.events(), ["cache-view killed"]);
+          assert.notInclude(fx.trace(), "run");
+          assert.deepStrictEqual(processesCarrying(job.jobId), []);
+        }),
+        { code, timing: { leaseMs: 600, heartbeatMs: 100 } },
       );
     },
   );

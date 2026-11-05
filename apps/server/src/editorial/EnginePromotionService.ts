@@ -21,7 +21,12 @@ import {
 } from "@earlyscript/engine-lab/manifest";
 import { unifiedDiff } from "@earlyscript/engine-lab/patch";
 import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
-import { type JobSpec, resultMismatch, type WorkerResult } from "@earlyscript/engine-lab/result";
+import {
+  type JobSpec,
+  resultMismatch,
+  storedResultStatus,
+  type WorkerResult,
+} from "@earlyscript/engine-lab/result";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -177,12 +182,21 @@ const REQUEST_COLUMNS =
   "decided_by, decision_reason, decided_at, created_at";
 
 /** Verifies a stored report against its signed worker result; null when it holds. */
+/** Why a stored report is evidence of an earlier evaluator, which no promotion uses. */
+function earlierEvidence(row: ReportRow, spec: JobSpec): string | null {
+  const status = storedResultStatus(spec, parseJson(row.result_json) as WorkerResult);
+  return status.kind === "earlier-schema"
+    ? `The report comes from an earlier evaluator (${status.schema}); evaluate the candidate again.`
+    : null;
+}
+
 function reportTampering(row: ReportRow, spec: JobSpec): string | null {
   const report = parseJson(row.report_json) as DevelopmentReport;
   if (reportHash(report) !== row.report_hash) return "the stored report differs from its hash";
   const result = parseJson(row.result_json) as WorkerResult;
   const mismatch = resultMismatch(spec, result);
-  if (mismatch !== null) return mismatch;
+  if (mismatch !== null && storedResultStatus(spec, result).kind !== "earlier-schema")
+    return mismatch;
   if (report.result_signature !== result.signature)
     return "the report was not computed from its result";
   return null;
@@ -570,6 +584,8 @@ const make = Effect.gen(function* () {
     if (parsed.candidate_hash !== candidate.value.manifest_hash) {
       return yield* labFailure("artifact-mismatch", "That report evaluated another candidate.");
     }
+    const earlier = earlierEvidence(report.value, spec.value.spec);
+    if (earlier !== null) return yield* labFailure("insufficient-evidence", earlier);
     const tampered = reportTampering(report.value, spec.value.spec);
     if (tampered !== null)
       return yield* labFailure("artifact-mismatch", `The report does not verify: ${tampered}.`);
@@ -638,6 +654,8 @@ const make = Effect.gen(function* () {
     );
     const report = Option.getOrThrow(yield* selectReport(request.report_id).pipe(storage));
     const spec = Option.getOrThrow(yield* jobSpec(report.job_id).pipe(storage));
+    const earlier = earlierEvidence(report, spec.spec);
+    if (earlier !== null) return yield* labFailure("insufficient-evidence", earlier);
     const tampered = reportTampering(report, spec.spec);
     if (tampered !== null)
       return yield* labFailure("artifact-mismatch", `The report does not verify: ${tampered}.`);
