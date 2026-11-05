@@ -39,6 +39,10 @@
       "types": "./src/worker.ts",
       "import": "./src/worker.ts"
     },
+    "./testkit": {
+      "types": "./src/testkit.ts",
+      "import": "./src/testkit.ts"
+    },
     "./synthetic": {
       "types": "./src/synthetic.ts",
       "import": "./src/synthetic.ts"

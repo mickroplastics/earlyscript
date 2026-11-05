@@ -80,7 +80,7 @@ const TOPICS: ReadonlyArray<Topic> = [
   {
     key: "airdrop",
     title: "Agent token airdrop for coding agents traders",
-    count: (k) => Math.round(0.2 * 1.26 ** k),
+    count: (k) => Math.round(0.06 * 1.34 ** k),
     authors: 1,
     label: "no",
     grade: null,
@@ -88,7 +88,7 @@ const TOPICS: ReadonlyArray<Topic> = [
   {
     key: "drama",
     title: "Rust compiler benchmark drama on social media",
-    count: (k) => Math.round(0.2 * 1.25 ** k),
+    count: (k) => Math.round(0.06 * 1.34 ** k),
     authors: 2,
     label: "no",
     grade: null,
@@ -100,6 +100,54 @@ const TOPICS: ReadonlyArray<Topic> = [
     authors: 15,
     label: "yes",
     grade: "core",
+  },
+  {
+    key: "indie",
+    title: "Indie hackers ship SaaS products quickly",
+    count: (k) => Math.round(0.6 * 1.115 ** k),
+    authors: 11,
+    label: "yes",
+    grade: "core",
+  },
+  {
+    key: "billing",
+    title: "Billing automation for bootstrapped founders",
+    count: (k) => Math.round(0.6 * 1.115 ** k),
+    authors: 10,
+    label: "yes",
+    grade: "core",
+  },
+  {
+    key: "support",
+    title: "Customer support workflows run by agents",
+    count: (k) => Math.round(0.6 * 1.115 ** k),
+    authors: 13,
+    label: "yes",
+    grade: "core",
+  },
+  {
+    key: "memecoin",
+    title: "Memecoin pump schemes promise agent riches",
+    count: (k) => Math.round(0.06 * 1.34 ** k),
+    authors: 1,
+    label: "no",
+    grade: null,
+  },
+  {
+    key: "gossip",
+    title: "Celebrity gossip rumors about agent startups",
+    count: (k) => Math.round(0.06 * 1.34 ** k),
+    authors: 2,
+    label: "no",
+    grade: null,
+  },
+  {
+    key: "lottery",
+    title: "Lottery number predictions from agent models",
+    count: (k) => Math.round(0.06 * 1.34 ** k),
+    authors: 1,
+    label: "no",
+    grade: null,
   },
 ];
 
@@ -113,6 +161,10 @@ export const SYNTHETIC_PROFILE = {
     "autonomous agent frameworks",
     "rust compiler agents",
     "gpu inference kernels",
+    "indie hackers ship saas products",
+    "billing automation for bootstrapped founders",
+    "customer support workflows run by agents",
+    "agent startups and agent models",
   ],
   exclude: ["football league scores", "tomato garden"],
 } as const;
@@ -308,4 +360,20 @@ function listFiles(root: string, prefix = ""): Array<string> {
       return entry.isDirectory() ? listFiles(root, relative) : [relative];
     })
     .toSorted();
+}
+
+/**
+ * Synthetic "blind" labels for shadow cards, by the topic of their headlines: what a person
+ * following the synthetic channel would say. Only for the synthetic end-to-end mechanism.
+ */
+export function labelSyntheticCards(
+  cards: ReadonlyArray<{
+    readonly card_id: string;
+    readonly headlines: ReadonlyArray<{ readonly title: string }>;
+  }>,
+): Array<{ card_id: string; label: "yes" | "no"; grade: "core" | "adjacent" | null }> {
+  return cards.map((card) => {
+    const topic = TOPICS.find((entry) => entry.title === card.headlines[0]?.title);
+    return { card_id: card.card_id, label: topic?.label ?? "no", grade: topic?.grade ?? null };
+  });
 }
