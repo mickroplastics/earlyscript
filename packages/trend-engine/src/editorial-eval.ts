@@ -365,6 +365,7 @@ export interface CoverageWindow {
   readonly complete: number;
   readonly partial: number;
   readonly unavailable: number;
+  readonly rate_limited: number;
   /** Days with no capture at all: absence of observation, not zero publications. */
   readonly missing: number;
   readonly items: number;
@@ -447,7 +448,7 @@ function coverageWindows(
   const status = new Map(rows.map((r) => [`${r.source}/${r.day}`, r]));
   const days = daysBefore(cutoffDay, 14);
   const window = (source: SourceId, ds: ReadonlyArray<string>): CoverageWindow => {
-    const w = { complete: 0, partial: 0, unavailable: 0, missing: 0, items: 0 };
+    const w = { complete: 0, partial: 0, unavailable: 0, rate_limited: 0, missing: 0, items: 0 };
     for (const day of ds) {
       const row = status.get(`${source}/${day}`);
       if (!row) w.missing++;
