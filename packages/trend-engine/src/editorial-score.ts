@@ -422,11 +422,10 @@ const pct = (x: unknown) => (typeof x === "number" ? x.toFixed(3) : "—");
 const ivl = (i: Interval | undefined) => (i && i.low !== null ? `[${pct(i.low)}, ${pct(i.high)}]` : "—");
 
 function renderReport(
-  logical: Record<string, unknown> & {
-    results: Record<string, unknown>;
-    agreement: ReadonlyArray<Record<string, unknown>>;
-    partitions: Record<string, ReadonlyArray<string>>;
-    excluded_prospective: ReadonlyArray<{ cutoff: string; reason: string }>;
+  logical: {
+    readonly results: Record<string, unknown>;
+    readonly agreement: ReadonlyArray<{ a: string; b: string } & Agreement>;
+    readonly excluded_prospective: ReadonlyArray<{ cutoff: string; reason: string }>;
   },
   hash: string,
   universe: Universe,
@@ -482,7 +481,7 @@ function renderReport(
   if (logical.agreement.length > 0) {
     lines.push("## Acuerdo entre etiquetadores", "", "| A | B | n | Acuerdo | κ | Excluidas (dudas) |", "| --- | --- | --- | --- | --- | --- |");
     for (const a of logical.agreement) {
-      lines.push(`| ${a["a"]} | ${a["b"]} | ${a["n"]} | ${pct(a["agreement"])} | ${pct(a["kappa"])} | ${a["excluded"]} |`);
+      lines.push(`| ${a.a} | ${a.b} | ${a.n} | ${pct(a.agreement)} | ${pct(a.kappa)} | ${a.excluded} |`);
     }
     lines.push("");
   }
