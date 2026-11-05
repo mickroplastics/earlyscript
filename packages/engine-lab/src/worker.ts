@@ -277,6 +277,51 @@ function runArm(input: {
   return collectArm({ ...input, out, durationMs: Date.now() - started });
 }
 
+const DOSSIER_FILE = /^dossiers\/[A-Za-z0-9._-]+\.json$/;
+
+/**
+ * Copies `runs/` and `members.json` of an arm's output into `dest`: directories and regular
+ * single-link files only, opened without following links. A link, a device, a fifo or a file
+ * shared with another path anywhere in them refuses the whole output.
+ */
+function snapshotOutput(out: string, dest: string, mismatch: (message: string) => Error) {
+  const root = NodeFS.lstatSync(out);
+  if (!root.isDirectory() || NodeFS.realpathSync(out) !== out)
+    throw mismatch("its output directory moved.");
+  NodeFS.mkdirSync(dest, { recursive: true });
+  const copy = (rel: string) => {
+    const from = NodePath.join(out, rel);
+    const stat = NodeFS.lstatSync(from);
+    if (stat.isSymbolicLink()) throw mismatch(`${rel} is a link; an arm's output takes no links.`);
+    if (stat.isDirectory()) {
+      NodeFS.mkdirSync(NodePath.join(dest, rel), { recursive: true });
+      for (const name of NodeFS.readdirSync(from)) copy(NodePath.join(rel, name));
+      return;
+    }
+    if (!stat.isFile() || stat.nlink !== 1)
+      throw mismatch(`${rel} is not a plain file of its own.`);
+    const fd = NodeFS.openSync(from, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
+    try {
+      const opened = NodeFS.fstatSync(fd);
+      if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev) {
+        throw mismatch(`${rel} changed while it was read.`);
+      }
+      NodeFS.writeFileSync(NodePath.join(dest, rel), NodeFS.readFileSync(fd));
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+  };
+  for (const entry of ["runs", "members.json"]) {
+    let present = true;
+    try {
+      NodeFS.lstatSync(NodePath.join(out, entry));
+    } catch {
+      present = false;
+    }
+    if (present) copy(entry);
+  }
+}
+
 /**
  * What one arm emitted, read back by this process, which never loads candidate code: the run
  * as the installed engine's reader decodes it, its logical hash recomputed from the dossiers,
@@ -296,7 +341,13 @@ function collectArm(input: {
   const where = `${side} at ${cutoffDay}`;
   const mismatch = (message: string) =>
     new WorkerFailure("artifact-mismatch", `${where}: ${message}`);
-  const runsDir = NodePath.join(out, "runs");
+  // Everything the candidate's arm left is untrusted input: copied here first, regular files
+  // only, no link followed, after the arm's processes are gone (bwrap ends its whole pid
+  // namespace with it). Every later read is of this copy, which the arm never sees.
+  const snapshot = NodePath.join(NodePath.dirname(out), `${NodePath.basename(out)}.collected`);
+  NodeFS.rmSync(snapshot, { recursive: true, force: true });
+  snapshotOutput(out, snapshot, mismatch);
+  const runsDir = NodePath.join(snapshot, "runs");
   const runs = NodeFS.existsSync(runsDir) ? NodeFS.readdirSync(runsDir) : [];
   const finished = runs.filter((name) => /^run_[A-Za-z0-9_]+$/.test(name));
   if (
@@ -306,6 +357,25 @@ function collectArm(input: {
     throw mismatch(`expected one run directory, found ${runs.join(", ") || "none"}.`);
   }
   const runDir = NodePath.join(runsDir, finished[0]!);
+  const listed = (() => {
+    try {
+      return JSON.parse(NodeFS.readFileSync(NodePath.join(runDir, "run.json"), "utf8")) as {
+        run_id?: unknown;
+        files?: unknown;
+      };
+    } catch {
+      throw mismatch("run.json is not JSON.");
+    }
+  })();
+  // The dossiers run.json names: plain names inside the run's own dossiers directory.
+  if (
+    listed.run_id !== finished[0] ||
+    !Array.isArray(listed.files) ||
+    listed.files.some((file) => typeof file !== "string" || !DOSSIER_FILE.test(file)) ||
+    new Set(listed.files).size !== listed.files.length
+  ) {
+    throw mismatch("run.json names files outside its own dossiers, or another run.");
+  }
   let read: ReturnType<typeof readRun>;
   let checked: ReturnType<typeof checkRun>;
   try {
@@ -340,7 +410,7 @@ function collectArm(input: {
   ) {
     throw mismatch("the dossiers are not this run's, one per position.");
   }
-  const membersFile = NodePath.join(out, "members.json");
+  const membersFile = NodePath.join(snapshot, "members.json");
   const raw = NodeFS.existsSync(membersFile)
     ? (JSON.parse(NodeFS.readFileSync(membersFile, "utf8")) as {
         run_id?: string;

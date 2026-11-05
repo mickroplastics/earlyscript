@@ -706,3 +706,82 @@ it.live("approves a code candidate whose exact code was installed meanwhile (Sol
     }),
   ),
 );
+
+it.live(
+  "a candidate that links its output to the reference's gets no report and no promotion (Sol, B1-R2)",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const changes = yield* EngineChangeService;
+        const experiments = yield* EngineExperimentService;
+        const promotion = yield* EnginePromotionService;
+        const active = yield* promotion.active;
+        const rank = NodeFS.readFileSync(
+          NodePath.join(REPO_ROOT, "packages/trend-engine/src/rank.ts"),
+          "utf8",
+        ).split("\n");
+        const injected = [
+          'import solFs from "node:fs";',
+          'process.on("exit", () => {',
+          ' const here=process.cwd(); const ref=here.replace("/candidate/", "/reference/");',
+          ' solFs.renameSync(here+"/runs", here+"/actual-runs");',
+          ' solFs.renameSync(here+"/members.json", here+"/actual-members.json");',
+          ' solFs.symlinkSync(ref+"/runs",here+"/runs");',
+          ' solFs.symlinkSync(ref+"/members.json",here+"/members.json");',
+          "});",
+        ];
+        const patch = [
+          "--- a/packages/trend-engine/src/rank.ts",
+          "+++ b/packages/trend-engine/src/rank.ts",
+          `@@ -1,2 +1,${2 + injected.length} @@`,
+          ` ${rank[0]}`,
+          ...injected.map((line) => `+${line}`),
+          ` ${rank[1]}`,
+          "",
+        ].join("\n");
+        const campaign = yield* changes.createCampaign({
+          projectId: TEST_PROJECT,
+          kind: "development",
+          budget: 3,
+          policy: syntheticPolicy(harness, harness.fixture.cutoffs.slice(0, 1)),
+          actor: "miguel",
+        });
+        const created = yield* changes.createCandidate({
+          projectId: TEST_PROJECT,
+          threadId: "sol",
+          base: active.hash,
+          intent: "forge",
+          hypothesis: "equal",
+          idempotencyKey: "forge",
+          change: { kind: "code", baseSourceHash: active.manifest.code.engine_source_hash, patch },
+        });
+        const queued = yield* changes.evaluate({
+          projectId: TEST_PROJECT,
+          threadId: "sol",
+          candidate: created.candidate.manifestHash,
+          campaignId: campaign.campaignId,
+          idempotencyKey: "forge",
+        });
+        yield* experiments.runDue;
+        const job = yield* experiments.job({ projectId: TEST_PROJECT, jobId: queued.jobId });
+        expect(job).toMatchObject({
+          status: "failed",
+          reportId: null,
+          error: { code: "artifact-mismatch" },
+        });
+        expect(job.error?.message).toContain("is a link");
+        const asked = yield* Effect.flip(
+          promotion.request({
+            projectId: TEST_PROJECT,
+            threadId: "sol",
+            candidate: created.candidate.manifestHash,
+            reportId: `rep_${queued.jobId.slice(4)}`,
+            expectedActive: active.hash,
+            reason: "forged",
+          }),
+        );
+        expect(asked.code).toBe("not-found");
+        expect((yield* promotion.history).filter((row) => row.kind === "promote")).toHaveLength(0);
+      }),
+    ),
+);

@@ -238,6 +238,64 @@ describe("worker against a hostile candidate (Sol, B1)", () => {
   });
 });
 
+describe("an arm's output read as untrusted (Sol, B1-R2)", () => {
+  // Sol's repro-symlink-output.ts: at exit the candidate swaps its output for links to the
+  // reference arm's, and scores everything -999.
+  const exitLinks = [
+    'import solFs from "node:fs";',
+    'process.on("exit", () => {',
+    "  const here = process.cwd();",
+    '  const ref = here.replace("/candidate/", "/reference/");',
+    '  solFs.renameSync(here + "/runs", here + "/actual-runs");',
+    '  solFs.renameSync(here + "/members.json", here + "/actual-members.json");',
+    '  solFs.symlinkSync(ref + "/runs", here + "/runs");',
+    '  solFs.symlinkSync(ref + "/members.json", here + "/members.json");',
+    "});",
+    "",
+  ].join("\n");
+
+  it("refuses links in the output instead of reading the reference through them", async () => {
+    const patched = patchCandidate(fixture, RANK_PATCH(exitLinks));
+    const spec = jobSpec(fixture, {
+      token: "job-b1r2-links",
+      candidate: patched.manifest,
+      files: patched.files,
+      cutoffs: fixture.cutoffs.slice(0, 1),
+    });
+    const result = await evaluateJob(spec, options);
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("artifact-mismatch");
+    expect(result.error?.message).toContain("is a link");
+  });
+
+  it("refuses a run.json that names files outside its dossiers", async () => {
+    const rewrite = [
+      'import fsPoison from "node:fs";',
+      'process.on("exit", () => {',
+      '  const dir = process.cwd() + "/runs";',
+      '  const run = fsPoison.readdirSync(dir).find((name) => name.startsWith("run_"));',
+      '  const file = dir + "/" + run + "/run.json";',
+      '  const value = JSON.parse(fsPoison.readFileSync(file, "utf8"));',
+      '  value.files = ["../../../reference/x/run.json"];',
+      "  fsPoison.writeFileSync(file, JSON.stringify(value));",
+      "});",
+      "",
+    ].join("\n");
+    const patched = patchCandidate(fixture, RANK_PATCH(rewrite));
+    const result = await evaluateJob(
+      jobSpec(fixture, {
+        token: "job-b1r2-files",
+        candidate: patched.manifest,
+        files: patched.files,
+        cutoffs: fixture.cutoffs.slice(0, 1),
+      }),
+      options,
+    );
+    expect(result.error?.code).toBe("artifact-mismatch");
+    expect(result.error?.message).toContain("outside its own dossiers");
+  });
+});
+
 describe("inputs resolved to their canonical paths (Sol, B2)", () => {
   const sealedRoot = NodePath.join(root, "eval-prospectivo");
   const sealed = labFixture(NodePath.join(sealedRoot, "fake"));
