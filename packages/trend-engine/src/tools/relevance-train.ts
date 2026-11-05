@@ -2,6 +2,7 @@
 //   node src/tools/relevance-train.ts --sample sample.jsonl --labels labels.jsonl --cache <sqlite> \
 //     --models <dir> --out config/relevance.v1.json --report report.json \
 //     [--profile profile.json --query-instruction "<text>"] [--workers 3] [--calibration provisional|accepted]
+//     [--lambdas 0.03,0.1,0.3]
 // Trains the relevance probe on judge labels ("unsure" dropped) over the Qwen vectors of
 // the run's own item texts, chooses the penalty and the item threshold by cross-validation
 // over blocks of whole days, and writes the model file the engine configuration names.
@@ -124,6 +125,8 @@ async function main() {
       judge: { type: "string" },
       "model-id": { type: "string" },
       calibration: { type: "string" },
+      lambdas: { type: "string" },
+      targets: { type: "string" },
     },
   });
   if (!values.sample || !values.labels || !values.cache || !values.models || !values.out) {
@@ -141,12 +144,25 @@ async function main() {
   const labelOf = new Map(
     readJsonl<{ id: string; label: string }>(values.labels).map((l) => [l.id, l.label]),
   );
+  // Judge label -> training target; labels outside the map ("unsure") are dropped.
+  const targets = new Map<string, number>(
+    (values.targets ?? "yes=1,no=0").split(",").map((pair) => {
+      const [label, value] = pair.split("=");
+      return [label!, Number(value)];
+    }),
+  );
   const rows = sample
-    .filter((row) => labelOf.get(row.id) === "yes" || labelOf.get(row.id) === "no")
+    .filter((row) => targets.has(labelOf.get(row.id) ?? ""))
     .toSorted((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.id < b.id ? -1 : 1));
-  const unsure = sample.filter((row) => labelOf.get(row.id) === "unsure").length;
+  const unsure = sample.filter(
+    (row) => labelOf.has(row.id) && !targets.has(labelOf.get(row.id)!),
+  ).length;
   const unlabeled = sample.filter((row) => !labelOf.has(row.id)).length;
-  const labels = rows.map((row) => (labelOf.get(row.id) === "yes" ? 1 : 0));
+  const labels = rows.map((row) => targets.get(labelOf.get(row.id)!)!);
+  // Metrics, threshold and separation are on the binary question: any positive target is a yes.
+  const binary = labels.map((y) => (y > 0 ? 1 : 0));
+  const topTarget = Math.max(...targets.values());
+  const core = labels.map((y) => (y === topTarget ? 1 : 0));
 
   const spec = embeddingSpec(config.embedder);
   const embedder = createLocalEmbedder(spec, {
@@ -179,14 +195,15 @@ async function main() {
     rows.map((row) => row.day),
     FOLDS,
   );
-  const grid = LAMBDAS.map((lambda) => {
+  const lambdas = values.lambdas ? values.lambdas.split(",").map(Number) : LAMBDAS;
+  const grid = lambdas.map((lambda) => {
     const t0 = performance.now();
     const oof = crossValidate(vectors, labels, fold, lambda);
     log(`lambda ${lambda}: ${Math.round(performance.now() - t0)} ms`);
     return { lambda, oof, log_loss: logLoss(oof, labels) };
   });
   const chosen = grid.reduce((best, g) => (g.log_loss < best.log_loss - 1e-12 ? g : best));
-  const threshold = bestThreshold(chosen.oof, labels);
+  const threshold = bestThreshold(chosen.oof, binary);
   const fit: LogisticFit = fitLogistic(vectors, labels, chosen.lambda);
 
   const bySource: Record<string, unknown> = {};
@@ -194,7 +211,7 @@ async function main() {
     const idx = rows.flatMap((r, i) => (r.source === source ? [i] : []));
     bySource[source] = metrics(
       idx.map((i) => chosen.oof[i]!),
-      idx.map((i) => labels[i]!),
+      idx.map((i) => binary[i]!),
       threshold,
     );
   }
@@ -218,8 +235,15 @@ async function main() {
     threshold,
     training: {
       rows: rows.length,
-      positives: labels.filter((y) => y === 1).length,
-      negatives: labels.filter((y) => y === 0).length,
+      positives: binary.filter((y) => y === 1).length,
+      negatives: binary.filter((y) => y === 0).length,
+      targets: Object.fromEntries(targets),
+      by_label: Object.fromEntries(
+        [...targets.keys()].map((label) => [
+          label,
+          rows.filter((r) => labelOf.get(r.id) === label).length,
+        ]),
+      ),
       unsure_dropped: unsure,
       unlabeled_dropped: unlabeled,
       published_before: rows.reduce((max, r) => (r.day > max ? r.day : max), ""),
@@ -246,7 +270,9 @@ async function main() {
       fold_rule: "contiguous blocks of whole days, about equal rows",
       lambda_grid: grid.map((g) => ({ lambda: g.lambda, log_loss: r6(g.log_loss) })),
       threshold_rule: "maximum F1 of out-of-fold probabilities, thresholds 0.05 to 0.95",
-      overall: metrics(chosen.oof, labels, threshold),
+      overall: metrics(chosen.oof, binary, threshold),
+      log_loss_graded: r6(chosen.log_loss),
+      core_vs_rest_auc: r6(auc(chosen.oof, core)),
       by_source: bySource,
     },
   };
@@ -254,15 +280,15 @@ async function main() {
   const modelHash = sha256(NodeFS.readFileSync(values.out));
 
   const baselines: Record<string, unknown> = {
-    relevance_oof: separation(chosen.oof, labels),
+    relevance_oof: separation(chosen.oof, binary),
   };
   for (const t of topics) {
     const include = vectors.map((v) => Math.max(...t.include.map((u) => dot(v, u))));
     const exclude = vectors.map((v) => Math.max(...t.exclude.map((u) => dot(v, u))));
-    baselines[`profile_include_${t.label}`] = separation(include, labels);
+    baselines[`profile_include_${t.label}`] = separation(include, binary);
     baselines[`profile_margin_${t.label}`] = separation(
       include.map((x, i) => x - exclude[i]!),
-      labels,
+      binary,
     );
   }
   if (values.oof)

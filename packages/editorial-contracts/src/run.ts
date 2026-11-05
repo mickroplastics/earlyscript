@@ -59,6 +59,26 @@ export const EngineConfig = Schema.Struct({
       signal_min: Schema.Number,
       /** Keep the profile affinity gate as well (profile.include_min, profile.exclude_max). */
       profile_gate: Schema.Boolean,
+      /**
+       * A trend's relevance from its items of the last 7 days: their mean (default), the share
+       * at or above item_min, or the mean without the highest and lowest fifth.
+       */
+      aggregate: Schema.optionalKey(Schema.Literals(["mean", "share", "trimmed_mean"])),
+      /** Relevant items of the last 7 days with distinct titles (digits ignored) an eligible trend needs. */
+      min_relevant_distinct: Schema.optionalKey(Schema.Int),
+      /**
+       * A trend that was in the top `top` of any of the `lookback_days` previous cuts (recomputed
+       * from the items before each, without this rule) keeps a position only if its relevant
+       * items per day since its last top cut reach growth_ratio times their rate in the 7 days
+       * before it. Otherwise it can only fill the cut, after every other candidate.
+       */
+      novelty: Schema.optionalKey(
+        Schema.Struct({
+          lookback_days: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+          top: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+          growth_ratio: Schema.Number,
+        }),
+      ),
     }),
   ),
   rank: Schema.Struct({

@@ -14,6 +14,8 @@ import * as NodeUtil from "node:util";
 import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
 
 import { readRun } from "../check.ts";
+import { sha256 } from "../hash.ts";
+import { asYesNo, topicCardText } from "./calibration-agreement.ts";
 import { DEFAULT_JUDGE_PATH, judgeEntries, loadJudge } from "./judge.ts";
 
 export const TOPIC_HEADLINES = 5;
@@ -24,9 +26,28 @@ export function topicText(dossier: Dossier): string {
       a.published_at > b.published_at ? -1 : a.published_at < b.published_at ? 1 : 0,
     )
     .slice(0, TOPIC_HEADLINES);
-  return `Topic key terms: ${dossier.trend.top_terms.slice(0, 6).join(", ")}\nRecent headlines:\n${recent
-    .map((e) => `- ${e.title}`)
-    .join("\n")}`;
+  return topicCardText(
+    dossier.trend.top_terms,
+    recent.map((e) => e.title),
+  );
+}
+
+/** One judgment per canonical card: same cut, same signal and the same text. */
+export const topicKey = (cut: string, dossier: Dossier) =>
+  `${cut}/${dossier.trend.id}/${sha256(topicText(dossier)).slice(7, 23)}`;
+
+/**
+ * Families across cuts: two top-5 topics are one family when they are the same signal or
+ * share half or more of their evidence. Union-find over the arm's topics in cut order.
+ */
+export function countFamilies(topics: ReadonlyArray<Dossier>): number {
+  const parent = topics.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+  for (let i = 0; i < topics.length; i++)
+    for (let j = 0; j < i; j++)
+      if (topics[i]!.trend.id === topics[j]!.trend.id || sameEvent(topics[i]!, topics[j]!))
+        parent[find(i)] = find(j);
+  return new Set(topics.map((_, i) => find(i))).size;
 }
 
 const sameEvent = (a: Dossier, b: Dossier) => {
@@ -75,7 +96,7 @@ async function main() {
     }
   }
   const entries = tops.flatMap((t) =>
-    t.dossiers.map((d) => ({ id: `${t.cut}/${d.trend.id}`, text: topicText(d) })),
+    t.dossiers.map((d) => ({ id: topicKey(t.cut, d), text: topicText(d) })),
   );
   const judge = loadJudge(values.judge ?? DEFAULT_JUDGE_PATH);
   const { labels, stats } = await judgeEntries(entries, {
@@ -101,10 +122,12 @@ async function main() {
       .toSorted((a, b) => (a.cut < b.cut ? -1 : 1));
     const p5 = cuts.map((t) => {
       let hits = 0;
+      let core = 0;
       t.dossiers.forEach((d, k) => {
-        const label = labelOf.get(`${t.cut}/${d.trend.id}`)!;
+        const label = labelOf.get(topicKey(t.cut, d))!;
         const duplicate = t.dossiers.slice(0, k).some((e) => sameEvent(e, d));
-        if (label.label === "yes" && !duplicate) hits++;
+        if (asYesNo(label.label) === "yes" && !duplicate) hits++;
+        if (label.label === "core" && !duplicate) core++;
         topics.push({
           arm: arm.name,
           cut: t.cut,
@@ -122,12 +145,22 @@ async function main() {
             : null,
         });
       });
-      return { cut: t.cut, p_at_5: hits / 5, emitted: t.emitted, in_top5: t.dossiers.length };
+      return {
+        cut: t.cut,
+        p_at_5: hits / 5,
+        core_at_5: core / 5,
+        emitted: t.emitted,
+        in_top5: t.dossiers.length,
+      };
     });
+    const slots = cuts.flatMap((t) => t.dossiers);
     perArm[arm.name] = {
       dir: arm.dir,
+      slots: slots.length,
+      families: countFamilies(slots),
       ranking: arm.ranking,
       mean_p_at_5: p5.reduce((s, c) => s + c.p_at_5, 0) / Math.max(1, p5.length),
+      mean_core_at_5: p5.reduce((s, c) => s + c.core_at_5, 0) / Math.max(1, p5.length),
       min_emitted: Math.min(...p5.map((c) => c.emitted)),
       cuts: p5,
     };
@@ -148,6 +181,8 @@ async function main() {
           {
             mean_p_at_5: (v as { mean_p_at_5: number }).mean_p_at_5,
             min_emitted: (v as { min_emitted: number }).min_emitted,
+            families: (v as { families: number }).families,
+            slots: (v as { slots: number }).slots,
           },
         ]),
       ),

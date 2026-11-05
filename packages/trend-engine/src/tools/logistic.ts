@@ -128,7 +128,9 @@ export function logLoss(probs: ReadonlyArray<number>, labels: ReadonlyArray<numb
   let sum = 0;
   probs.forEach((p, i) => {
     const q = Math.min(Math.max(p, 1e-12), 1 - 1e-12);
-    sum -= labels[i] === 1 ? Math.log(q) : Math.log(1 - q);
+    // Graded targets between 0 and 1 use the same cross-entropy.
+    const y = labels[i]!;
+    sum -= y * Math.log(q) + (1 - y) * Math.log(1 - q);
   });
   return sum / probs.length;
 }

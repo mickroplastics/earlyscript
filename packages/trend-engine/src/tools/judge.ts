@@ -27,21 +27,25 @@ export const JudgeConfig = Schema.Struct({
   model: Schema.String,
   batch_size: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   max_text_chars: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  /** The labels the rubric defines; yes, no and unsure when absent (judge v1). */
+  labels: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMinLength(2))),
 });
 export type JudgeConfig = typeof JudgeConfig.Type;
 
-export const JudgeLabel = Schema.Literals(["yes", "no", "unsure"]);
-export type JudgeLabel = typeof JudgeLabel.Type;
+export type JudgeLabel = string;
+export const DEFAULT_LABELS = ["yes", "no", "unsure"] as const;
+export const labelsOf = (config: JudgeConfig): ReadonlyArray<string> =>
+  config.labels ?? DEFAULT_LABELS;
 
 const BatchResponse = Schema.Struct({
   results: Schema.Array(
-    Schema.Struct({ id: Schema.String, label: JudgeLabel, reason: Schema.String }),
+    Schema.Struct({ id: Schema.String, label: Schema.String, reason: Schema.String }),
   ),
 });
 const decodeBatch = Schema.decodeUnknownSync(BatchResponse);
 const decodeJudge = Schema.decodeUnknownSync(JudgeConfig);
 
-const RESPONSE_SCHEMA = {
+const responseSchema = (labels: ReadonlyArray<string>) => ({
   type: "object",
   properties: {
     results: {
@@ -50,7 +54,7 @@ const RESPONSE_SCHEMA = {
         type: "object",
         properties: {
           id: { type: "string" },
-          label: { type: "string", enum: ["yes", "no", "unsure"] },
+          label: { type: "string", enum: [...labels] },
           reason: { type: "string" },
         },
         required: ["id", "label", "reason"],
@@ -58,7 +62,7 @@ const RESPONSE_SCHEMA = {
     },
   },
   required: ["results"],
-};
+});
 
 export interface LoadedJudge {
   readonly config: JudgeConfig;
@@ -211,7 +215,7 @@ export async function judgeEntries(
           model: judge.config.model,
           system: judge.rubric,
           prompt,
-          schema: JSON.stringify(RESPONSE_SCHEMA),
+          schema: JSON.stringify(responseSchema(labelsOf(judge.config))),
         });
         const envelope = JSON.parse(raw) as CliEnvelope;
         const output =
@@ -220,6 +224,9 @@ export async function judgeEntries(
         const byId = new Map(results.map((r) => [r.id, r]));
         if (byId.size !== positional.length || positional.some((p) => !byId.has(p.id)))
           throw new Error(`response has ${byId.size} ids for ${positional.length} entries`);
+        const allowed = labelsOf(judge.config);
+        if (results.some((r) => !allowed.includes(r.label)))
+          throw new Error(`response uses a label outside ${allowed.join(", ")}`);
         const call = sha256(canonicalJson({ prompt, started, attempt }));
         NodeFS.writeFileSync(
           NodePath.join(callsDir, `${call.slice(7)}.json`),

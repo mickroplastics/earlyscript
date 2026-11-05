@@ -13,13 +13,15 @@ import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import { canonicalJson, sha256 } from "./hash.ts";
 import { dedupe } from "./rank.ts";
 import {
+  aggregateRelevance,
   checkEmbedding,
+  distinctTitles,
   loadRelevance,
   parseRelevanceModel,
   RELEVANCE_SCHEMA_VERSION,
   relevanceOf,
 } from "./relevance.ts";
-import { CONFIG_DIR, DEFAULT_CONFIG_PATH, loadConfig, runEngine } from "./run.ts";
+import { CONFIG_DIR, DEFAULT_CONFIG_PATH, loadConfig, priorTopDays, runEngine } from "./run.ts";
 import { classify, type CoverageIndex, type SeriesItem } from "./series.ts";
 import {
   CUTOFF,
@@ -149,6 +151,42 @@ describe("relevance model", () => {
     expect(Object.keys(config.rank.weighted.weights)).not.toContain("log_authors_7d");
     expect(config.emit.min_dossiers).toBeGreaterThanOrEqual(5);
     expect(canonicalJson(config)).not.toBe(canonicalJson(loadConfig(DEFAULT_CONFIG_PATH).config));
+  });
+});
+
+describe("trend relevance", () => {
+  it("aggregates by mean, share above the item bar or trimmed mean", () => {
+    const values = [0.9, 0.8, 0.1, 0.1, 0.1];
+    expect(aggregateRelevance(values, "mean", 0.5)).toBeCloseTo(0.4, 12);
+    expect(aggregateRelevance(values, "share", 0.5)).toBe(0.4);
+    // One fifth dropped at each end: 0.1 and 0.9.
+    expect(aggregateRelevance(values, "trimmed_mean", 0.5)).toBeCloseTo(1 / 3, 12);
+    expect(aggregateRelevance([], "share", 0.5)).toBe(0);
+  });
+
+  it("counts versions of a package and reposts once", () => {
+    expect(distinctTitles(["pkg 1.2.3", "PKG 1.2.4", "Claude Code tips", "claude code tips"])).toBe(
+      2,
+    );
+  });
+
+  it("finds the previous cuts where a trend was in the top", () => {
+    const day = (d: number) => `2026-10-${String(d).padStart(2, "0")}`;
+    const signals = [
+      { id: "a", members: [{ day: day(5) }, { day: day(8) }] },
+      { id: "b", members: [{ day: day(8) }] },
+    ];
+    const top = priorTopDays(
+      signals,
+      day(10),
+      { lookback_days: 3, top: 1 },
+      {
+        // a leads until the 9th; b overtakes from then on.
+        eligibleAt: (s, d) => (s.id === "a" ? 1 : d >= day(9) ? 2 : 0),
+      },
+    );
+    expect(top.get("a")).toEqual([day(7), day(8)]);
+    expect(top.get("b")).toEqual([day(9)]);
   });
 });
 
@@ -310,6 +348,44 @@ describe("engine v2 on the synthetic corpus", () => {
     const firstRelevant = dossiers.find((d) => d.relevance?.eligibility === "relevant")!;
     expect(firstRelevant.rankings.weighted.position).toBe(1);
     expect(filled.every((d) => d.rankings.weighted.position > 1)).toBe(true);
+  });
+
+  it("keeps a recurrent trend out of the positions unless it grew since its last top cut", async () => {
+    const { corpusDir, profilePath, outDir } = await setup();
+    const { config: base } = loadConfig(DEFAULT_CONFIG_PATH);
+    const probe = await wordProbe("compiler", base.embedder);
+    const run = (growth_ratio: number) =>
+      runEngine({
+        corpusDir,
+        cutoff: CUTOFF,
+        profilePath,
+        outDir,
+        config: v2TestConfig(
+          probe.hash,
+          {},
+          {
+            aggregate: "share",
+            min_relevant_distinct: 1,
+            novelty: { lookback_days: 7, top: 5, growth_ratio },
+          },
+        ),
+        relevanceModel: probe,
+        embedder: fingerprintEmbedder(),
+      });
+    // The compiler topic leads every earlier cut at a steady three items a day.
+    const strict = await run(1.5);
+    expect(strict.status).toBe("ok");
+    expect(strict.dossiers).toBe(0);
+    expect((strict.stats!["signals"] as { recurrent: number }).recurrent).toBeGreaterThan(0);
+    const lenient = await run(0);
+    expect(lenient.dossiers).toBeGreaterThan(0);
+    const dossier = readRun(NodePath.join(outDir, lenient.run_id)).dossiers.find((d) =>
+      d.trend.top_terms.includes("compiler"),
+    );
+    expect(dossier?.relevance?.novelty?.grew).toBe(true);
+    expect(dossier?.relevance?.novelty?.prior_top_days.length).toBeGreaterThan(0);
+    expect(dossier?.relevance?.aggregate).toBe("share");
+    expect(dossier?.relevance?.relevant_distinct_7d).toBeGreaterThanOrEqual(1);
   });
 
   it("refuses a relevance model whose hash the configuration does not record", async () => {

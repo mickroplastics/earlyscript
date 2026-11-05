@@ -83,6 +83,34 @@ export function checkEmbedding(loaded: LoadedRelevance, embedder: EngineConfig["
 export const sigmoid = (z: number): number =>
   z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z));
 
+export type RelevanceAggregate = "mean" | "share" | "trimmed_mean";
+
+/** A trend's relevance from its items' relevance. */
+export function aggregateRelevance(
+  values: ReadonlyArray<number>,
+  aggregate: RelevanceAggregate,
+  itemMin: number,
+): number {
+  if (values.length === 0) return 0;
+  if (aggregate === "share") return values.filter((v) => v >= itemMin).length / values.length;
+  const sorted = aggregate === "trimmed_mean" ? values.toSorted((a, b) => a - b) : [...values];
+  const cut = aggregate === "trimmed_mean" ? Math.floor(sorted.length / 5) : 0;
+  const kept = sorted.slice(cut, sorted.length - cut);
+  return kept.reduce((sum, v) => sum + v, 0) / kept.length;
+}
+
+/** Distinct titles, case and digits ignored: versions of one package or repost of one story count once. */
+export const distinctTitles = (titles: ReadonlyArray<string>): number =>
+  new Set(
+    titles.map((t) =>
+      t
+        .toLowerCase()
+        .replace(/[\d.]+/g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ),
+  ).size;
+
 /** sigmoid(w·x + b), summed in float64 in index order so it is the same on every run. */
 export function relevanceOf(loaded: LoadedRelevance, vector: Float32Array): number {
   const w = loaded.weights;
