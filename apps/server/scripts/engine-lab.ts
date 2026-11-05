@@ -28,6 +28,7 @@ import {
   layerOptionsWith,
   parseRemote,
 } from "../src/editorial/engineLabSupport.ts";
+import { verifyLabLedger } from "../src/editorial/engineLabVerify.ts";
 import { resolveEngineLocation } from "../src/editorial/engineProcess.ts";
 import * as EditorialDatabase from "../src/editorial/persistence/EditorialDatabase.ts";
 
@@ -163,9 +164,11 @@ const program = Effect.gen(function* () {
     }
     case "job":
       return yield* print(yield* experiments.job({ projectId: null, jobId: need("job") }));
+    case "verify":
+      return yield* print(yield* verifyLabLedger);
     default:
       return yield* Console.log(
-        "engine-lab <active|history|campaign-create|campaign-close|requests|approve|reject|revert|shadow-start|shadow-cards|shadow-score|run-due|job> --db <editorial.sqlite> …",
+        "engine-lab <active|history|campaign-create|campaign-close|requests|approve|reject|revert|shadow-start|shadow-cards|shadow-score|run-due|job|verify> --db <editorial.sqlite> …",
       );
   }
 });
