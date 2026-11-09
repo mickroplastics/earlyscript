@@ -56,7 +56,9 @@ export async function scoreLists(options: {
   readonly run: JudgeRunOptions;
 }) {
   const textOf = options.flat ? cardTextFlat : cardTextV3;
-  const cards: Array<JudgeCard & { arm: string; cutoff: string; topic_id: string }> = [];
+  const cards: Array<
+    JudgeCard & { arm: string; cutoff: string; topic_id: string; item_ids: ReadonlyArray<string> }
+  > = [];
   for (const list of options.lists)
     for (const raw of list.moving) {
       const entry = listEntry(raw, list.cutoff);
@@ -69,25 +71,39 @@ export async function scoreLists(options: {
         arm: list.arm,
         cutoff: list.cutoff,
         topic_id: entry.topic_id,
+        item_ids: entry.item_ids,
       });
     }
   const t0 = Date.now();
   const { combined, stats } = await judgeBoth(cards, options.run);
   const byId = new Map(combined.map((c) => [c.id, c]));
   const names = options.run.judge.config.judges.map((j) => j.name);
+  if (names.join(",") !== "opus,sol")
+    throw new Error(
+      `judge-score writes utility_opus and utility_sol; the judges are ${names.join(", ")}`,
+    );
 
+  // D reads cuts[].{arm, cutoff, emitted, cards[].{topic_id, item_ids, utility_opus, utility_sol}};
+  // the other fields are B's own (both answers, validity, U@10).
   const cells = options.lists.map((list) => {
     const mine = cards.filter((c) => c.arm === list.arm && c.cutoff === list.cutoff);
     const answers = mine.map((c) => byId.get(c.id)!);
     const allAnswered = answers.every((a) => a.utility !== null);
     const valid = mine.length >= SCORE_RULE.min_cards && allAnswered;
     const utilities = answers.map((a) => a.utility).filter((u): u is number => u !== null);
+    const per = (a: (typeof answers)[number], n: string) => {
+      const j = a.judges[n]!;
+      return j.valid && j.answer ? j.answer : null;
+    };
     return {
       arm: list.arm,
       cutoff: list.cutoff,
+      emitted: mine.length,
       list_sha256: list.sha256,
-      cards: mine.length,
       answered_by_both: utilities.length,
+      invalid_answers: Object.fromEntries(
+        names.map((n) => [n, answers.filter((a) => !a.judges[n]!.valid).length]),
+      ),
       valid,
       invalid_reason: valid
         ? null
@@ -95,18 +111,35 @@ export async function scoreLists(options: {
           ? `${mine.length} tarjetas emitidas (< ${SCORE_RULE.min_cards})`
           : "algún juez no respondió a todas",
       u_at_10: valid ? utilities.reduce((s, u) => s + u, 0) / utilities.length : null,
-      answers: mine.map((c) => {
+      cards: mine.map((c) => {
         const a = byId.get(c.id)!;
+        const opus = per(a, "opus");
+        const sol = per(a, "sol");
         return {
           topic_id: c.topic_id,
-          text_sha256: sha256(c.text),
-          fit: a.fit,
+          item_ids: c.item_ids,
+          utility_opus: opus?.utility ?? null,
+          utility_sol: sol?.utility ?? null,
           utility: a.utility,
           utility_difference: a.utility_difference,
+          fit: a.fit,
+          fit_opus: opus?.fit ?? null,
+          fit_sol: sol?.fit ?? null,
+          text_sha256: sha256(c.text),
           judges: Object.fromEntries(
             names.map((n) => {
               const j = a.judges[n]!;
-              return [n, { valid: j.valid, error: j.error, key: j.key, ...j.answer }];
+              return [
+                n,
+                {
+                  valid: j.valid,
+                  error: j.error,
+                  attempts: j.attempts,
+                  calls: j.calls,
+                  key: j.key,
+                  ...j.answer,
+                },
+              ];
             }),
           ),
         };
@@ -149,7 +182,7 @@ export async function scoreLists(options: {
     calls: stats.reduce((s, x) => s + x.calls, 0),
     invalid_answers: stats.reduce((s, x) => s + x.invalid_final, 0),
     seconds: (Date.now() - t0) / 1000,
-    cells,
+    cuts: cells,
     at: new Date().toISOString(),
   };
   NodeFS.mkdirSync(options.out, { recursive: true });

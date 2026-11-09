@@ -107,22 +107,33 @@ export function fromMaquetaCard(card: MaquetaCard, cutoff: string): CardInputV3 
 
 export interface ListEntry {
   readonly topic_id: string;
+  /** The topic's items (A's `item_ids`; without it, the card's headline ids). */
+  readonly item_ids: ReadonlyArray<string>;
   readonly card: CardInputV3;
 }
 
 const isMaqueta = (x: Record<string, unknown>) =>
   typeof x.signal_id === "string" && Array.isArray(x.headlines) && typeof x.state === "string";
 
+const withItems = (x: Record<string, unknown>, topic_id: string, card: CardInputV3): ListEntry => ({
+  topic_id,
+  item_ids:
+    Array.isArray(x.item_ids) && x.item_ids.every((i) => typeof i === "string")
+      ? (x.item_ids as Array<string>)
+      : card.headlines.map((h) => h.id),
+  card,
+});
+
 /** Reads one entry of a list file in A's interface or in the maqueta's shape. */
 export function listEntry(raw: unknown, cutoff: string): ListEntry {
   const x = raw as Record<string, unknown>;
   if (x && typeof x === "object") {
     if (x.card_v3 && typeof x.topic_id === "string")
-      return { topic_id: x.topic_id, card: x.card_v3 as CardInputV3 };
+      return withItems(x, x.topic_id, x.card_v3 as CardInputV3);
     if (isMaqueta(x))
-      return { topic_id: x.signal_id as string, card: fromMaquetaCard(x as never, cutoff) };
+      return withItems(x, x.signal_id as string, fromMaquetaCard(x as never, cutoff));
     if (typeof x.topic_id === "string" && Array.isArray(x.terms) && Array.isArray(x.headlines))
-      return { topic_id: x.topic_id, card: x as unknown as CardInputV3 };
+      return withItems(x, x.topic_id, x as unknown as CardInputV3);
   }
   throw new Error("list entry is neither A's card_v3 nor a maqueta card");
 }

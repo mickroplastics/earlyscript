@@ -608,6 +608,7 @@ describe("judge-score over list files", () => {
     const dir = tmp();
     const entry = (k: number, day: string) => ({
       topic_id: `t${k}`,
+      item_ids: [`i${k}`],
       card_v3: {
         cutoff: day,
         terms: [`term${k}`],
@@ -645,6 +646,18 @@ describe("judge-score over list files", () => {
     expect(report.paired_support).toEqual({ cutoffs: ["2026-10-04"], n: 1 });
     expect(report.summary.V1!.u_at_10_mean_valid).toBe(3);
     expect(report.summary.R4!.valid_cutoffs).toBe(1);
+    const cut = report.cuts.find((c) => c.arm === "V1" && c.cutoff === "2026-10-04")!;
+    expect(cut.emitted).toBe(6);
+    expect(cut.cards[0]).toMatchObject({
+      topic_id: "t0",
+      item_ids: ["i0"],
+      utility_opus: 4,
+      utility_sol: 2,
+      utility: 3,
+      fit_opus: "core",
+      fit_sol: "core",
+    });
+    expect(cut.invalid_answers).toEqual({ opus: 0, sol: 0 });
     // One batch per cutoff and judge: the two arms share the identical cards of a day.
     expect(runners.claude.calls).toHaveLength(2);
     NodeFS.mkdirSync(NodePath.join(dir, "V1"), { recursive: true });
