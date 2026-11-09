@@ -218,6 +218,7 @@ it.effect(
         update: () => Effect.die("unused"),
         activeFile: Effect.die("unused"),
         fileByHash: () => Effect.die("unused"),
+        importFile: () => Effect.die("unused"),
       }),
     ),
 );

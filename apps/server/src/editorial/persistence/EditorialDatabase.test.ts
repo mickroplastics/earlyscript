@@ -29,6 +29,7 @@ import Migration0019 from "./Migrations/019_EditorialJobsCodeHash.ts";
 const EXPECTED_TABLES = [
   "editorial_captures",
   "editorial_decisions",
+  "editorial_engine_config_choices",
   "editorial_events",
   "editorial_jobs",
   "editorial_manual_baseline_blocks",

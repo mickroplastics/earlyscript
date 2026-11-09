@@ -32,6 +32,7 @@ import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
 import { evidenceCommand } from "./editorial/evidenceCli.ts";
+import { profileCommand } from "./editorial/profileCli.ts";
 import { retiredCliCommand } from "./earlyscript/cliCommands.ts";
 import * as EarlyscriptChildProcessEnvironment from "./earlyscript/childProcessEnvironment.ts";
 
@@ -102,6 +103,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       doctorCommand,
       triageCommand,
       evidenceCommand,
+      profileCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

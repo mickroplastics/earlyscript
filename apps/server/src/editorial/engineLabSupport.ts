@@ -8,7 +8,6 @@ import {
   type EngineLabErrorCode,
   type EngineManifestView,
 } from "@earlyscript/editorial-contracts/engineLab";
-import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 import { engineSourceHash, sha256 } from "@earlyscript/engine-lab/hash";
 import type { EngineManifest } from "@earlyscript/engine-lab/manifest";
 import { LabPolicyError } from "@earlyscript/engine-lab/policy";
@@ -221,7 +220,3 @@ export const insertManifest = Effect.fn("EngineLab.insertManifest")(function* (
   const row = yield* selectManifest(sql, input.hash);
   return Option.getOrThrow(row);
 });
-
-/** The configuration the nightly plan starts from: `engine.defaultConfig`, read as an object. */
-export const readDefaultConfig = (engine: EngineLocation): EngineConfig =>
-  parseJson(NodeFS.readFileSync(engine.defaultConfig, "utf8")) as EngineConfig;

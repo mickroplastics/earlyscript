@@ -2395,3 +2395,18 @@ El servidor lee los bloques `card` y `judges` del archivo del expediente con un 
 | Archivo                           | Línea | Motivo                        |
 | --------------------------------- | ----- | ----------------------------- |
 | `packages/contracts/src/index.ts` | 72    | Reexporta `editorialCard.ts`. |
+
+## Motor v3 en la app: brechas de producto (rama `es/motor-v3`, 9 de noviembre de 2026)
+
+Base `42d89b4dc7`. Lo que impedía correr `engine.v3.json` en la corrida nocturna de la app, sin cambiar el motor ni sus listas.
+
+- **B4.** `editorial-eval.ts` calculaba al cargar `EVAL_SOURCE_HASH` y `ENGINE_SOURCE_HASH` leyendo `src/`, que el motor empaquetado no trae; ahora son `evalSourceHash()` y `engineSourceHash()`, perezosas. `tools/judge.ts` ejecutaba su `main` dentro de `dist/cli.mjs` (todo módulo empaquetado ve `import.meta.main`); solo corre si el archivo es `judge.ts`. `stageTrendEngine.ts` arranca el motor empaquetado con `model status` y falla si no imprime JSON.
+- **B1.** `editorial.activeEngineConfig`: migración 020 (`editorial_engine_config_choices`, una fila por elección explícita con hora, hash y archivo anterior; sin filas, `engine.v1.json`). `engineConfigChoice.ts` la lee; la nocturna, el laboratorio y la puntuación del perfil parten de ella. Ajustes › Editorial › Corrida nocturna › «Configuración del motor», con confirmación. El puntero del laboratorio (`editorial_engine_active`) sigue aplicándose encima.
+- **B2.** `nightlyConfig`: una configuración con `sources_cluster` conserva `sources` y `sources_cluster` del archivo; las demás reciben los interruptores, como antes.
+- **B3 y B7.** `engine check` lee `dossier/1` y `dossier/2` (`readRunAnyVersion`), cada uno con su esquema. `check --rerun` separa `reproduces_own_run` de `matches_reference` (`--expect`).
+- **B5.** `earlyscript profile import --file <perfil.json> [--expect <sha256>]` (`profileCli.ts`, `EditorialProfileService.importFile`): guarda los bytes del archivo en `editorial_profiles`.
+- **B6.** `engine corpus import --from <corpus> --to <vivo> [--sources] [--dry-run]` (`corpus-import.ts`).
+
+| Archivo                     | Líneas  | Cambio                                                | Motivo                          |
+| --------------------------- | ------- | ----------------------------------------------------- | ------------------------------- |
+| `apps/server/src/binCli.ts` | 35, 106 | Import de `profileCommand` y montaje tras `evidence`. | Subcomando `profile` en el CLI. |

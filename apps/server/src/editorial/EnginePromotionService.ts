@@ -10,6 +10,7 @@ import type { DevelopmentReport } from "@earlyscript/engine-lab/compare";
 import { reportHash } from "@earlyscript/engine-lab/compare";
 import { artifactCli, artifactProblem, prepareArtifact } from "@earlyscript/engine-lab/artifact";
 import { GATE_RULE, type GateResult } from "@earlyscript/engine-lab/gate";
+import { configHash } from "@earlyscript/engine-lab/policy";
 import {
   diffManifests,
   type EngineManifest,
@@ -36,6 +37,7 @@ import * as Result from "effect/Result";
 
 import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
+import { chosenConfigPath, nightlyConfig, readEngineConfigChoice } from "./engineConfigChoice.ts";
 import {
   EngineLabOptions,
   filesOf,
@@ -45,7 +47,6 @@ import {
   manifestIdOf,
   manifestOf,
   parseJson,
-  readDefaultConfig,
   selectManifest,
   storageFailure,
 } from "./engineLabSupport.ts";
@@ -222,14 +223,26 @@ const make = Effect.gen(function* () {
     } satisfies ProductContext;
   }).pipe(Effect.mapError(storageFailure));
 
-  const defaultConfig = Effect.suspend(() =>
-    Result.isSuccess(options.engine)
-      ? Effect.try({
-          try: () => readDefaultConfig(Result.getOrThrow(options.engine)),
+  // The configuration the nightly run starts from: the operator's choice, else engine.v1.json.
+  const defaultConfig = Effect.suspend(() => {
+    if (!Result.isSuccess(options.engine)) {
+      return Effect.fail(labFailure("executor-unavailable", "No trend engine is installed."));
+    }
+    const engine = options.engine.success;
+    return readEngineConfigChoice(sql).pipe(
+      Effect.flatMap((choice) =>
+        Effect.try({
+          try: () =>
+            parseJson(NodeFS.readFileSync(chosenConfigPath(engine, choice), "utf8")) as Record<
+              string,
+              unknown
+            >,
           catch: storageFailure,
-        })
-      : Effect.fail(labFailure("executor-unavailable", "No trend engine is installed.")),
-  );
+        }),
+      ),
+      Effect.mapError(storageFailure),
+    );
+  });
 
   const selectActivation = (id: string) =>
     sql<ActivationRow>`SELECT ${sql.literal(ACTIVATION_COLUMNS)} FROM editorial_engine_activations WHERE activation_id = ${id}`;
@@ -282,12 +295,15 @@ const make = Effect.gen(function* () {
             const row = Option.getOrThrow(yield* selectManifest(sql, current.manifest_hash));
             const manifest = manifestOf(row);
             const stale = staleReasons(manifest, context);
-            if (manifest.kind !== "installed" || stale.length === 0) {
+            // The installed manifest also follows the configuration the nightly run starts from.
+            const sameConfig =
+              manifest.config_hash === configHash(nightlyConfig(base, enabled) as EngineConfig);
+            if (manifest.kind !== "installed" || (stale.length === 0 && sameConfig)) {
               return { hash: current.manifest_hash, manifest, activationId: current.activation_id };
             }
           }
           const installed = installedManifest({
-            config: { ...base, sources: [...enabled.rank] } as EngineConfig,
+            config: nightlyConfig(base, enabled) as EngineConfig,
             profileHash: context.profileHash,
             sources: { rank: context.rank, collect: context.collect },
             feeds: enabled.rssFeeds,
@@ -318,7 +334,7 @@ const make = Effect.gen(function* () {
             reason:
               current === undefined
                 ? "The engine running when the lab was first used."
-                : "The product's profile, sources, feeds or engine changed outside the lab.",
+                : "The product's profile, sources, feeds, engine or configuration changed outside the lab.",
           });
           yield* sql`
             INSERT INTO editorial_engine_active (id, manifest_hash, activation_id, updated_at)
@@ -337,7 +353,7 @@ const make = Effect.gen(function* () {
   const planActive = Effect.fn("EnginePromotionService.planActive")(function* (
     input: Parameters<EnginePromotionServiceShape["planEngine"]>[0],
   ) {
-    const today = { ...input.defaultConfig, sources: [...input.enabled.rank] };
+    const today = nightlyConfig(input.defaultConfig, input.enabled);
     const code = installedSourceHash(options);
     const rows = yield* sql<{ readonly manifest_hash: string }>`
         SELECT manifest_hash FROM editorial_engine_active WHERE id = 1
@@ -363,12 +379,10 @@ const make = Effect.gen(function* () {
           blocked: artifactProblem(options.artifactsRoot, manifest.code.engine_source_hash),
         }
       : live;
-    // A promoted manifest keeps its configuration; the product's switches stay the sources.
+    // A promoted manifest keeps its configuration; the product's switches stay the sources,
+    // unless the configuration names its own (nightlyConfig, B2).
     return {
-      config: {
-        ...(manifest.config as unknown as Record<string, unknown>),
-        sources: [...input.enabled.rank],
-      },
+      config: nightlyConfig(manifest.config as unknown as Record<string, unknown>, input.enabled),
       manifestHash: current.manifest_hash,
       ...engine,
       stale: staleReasons(manifest, context),
@@ -383,7 +397,7 @@ const make = Effect.gen(function* () {
         ).pipe(
           Effect.annotateLogs({ error: String(error) }),
           Effect.as({
-            config: { ...input.defaultConfig, sources: [...input.enabled.rank] },
+            config: nightlyConfig(input.defaultConfig, input.enabled),
             manifestHash: null,
             engineSourceHash: installedSourceHash(options),
             cli: null,

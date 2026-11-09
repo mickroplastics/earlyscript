@@ -183,6 +183,8 @@ export default defineConfig({
       "*.icon/**",
       // Byte copies of frozen judge inputs; their sha256 is in judge.util.v1.json.
       "packages/trend-engine/judge/profile.*.json",
+      // Byte copy of v3/perfil/singularidev.v2.json; engine.v3.json pins its sha256.
+      "apps/server/src/editorial/fixtures/profiles/*.json",
     ],
     sortPackageJson: {},
     overrides: [

@@ -15,7 +15,13 @@ import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 import * as EditorialProfileService from "./EditorialProfileService.ts";
+import {
+  chosenConfigPath,
+  DEFAULT_ENGINE_CONFIG,
+  readEngineConfigChoice,
+} from "./engineConfigChoice.ts";
 import { resolveEngineLocation } from "./engineProcess.ts";
+import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 
 /** Trace and metric aggregate of each Profile method, merged into `RpcInstrumentation`. */
 export const EDITORIAL_PROFILE_RPC_AGGREGATES = {
@@ -95,18 +101,24 @@ const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unkno
 export const makeHandlers = Effect.gen(function* () {
   const profiles = yield* EditorialProfileService.EditorialProfileService;
   const fs = yield* FileSystem.FileSystem;
-  const configFile = yield* resolveEngineLocation.pipe(
-    Effect.map((location) => location.defaultConfig),
-    Effect.orElseSucceed(() => null),
-  );
-  // The default configuration the nightly run starts from; null when no engine is installed.
-  const scoring =
-    configFile === null
-      ? Effect.succeed(null)
-      : fs.readFileString(configFile).pipe(
-          Effect.map((text) => Option.getOrNull(Option.map(decodeJson(text), engineScoringOf))),
-          Effect.orElseSucceed(() => null),
-        );
+  const location = yield* resolveEngineLocation.pipe(Effect.option);
+  const sql = yield* Effect.serviceOption(EditorialSql);
+  // The configuration the nightly run starts from (the operator's choice, else engine.v1.json);
+  // null when no engine is installed.
+  const scoring = Option.match(location, {
+    onNone: () => Effect.succeed(null),
+    onSome: (engine) =>
+      (Option.isSome(sql)
+        ? readEngineConfigChoice(sql.value).pipe(
+            Effect.orElseSucceed(() => ({ file: DEFAULT_ENGINE_CONFIG, chosenAt: null })),
+          )
+        : Effect.succeed({ file: DEFAULT_ENGINE_CONFIG, chosenAt: null })
+      ).pipe(
+        Effect.flatMap((choice) => fs.readFileString(chosenConfigPath(engine, choice))),
+        Effect.map((text) => Option.getOrNull(Option.map(decodeJson(text), engineScoringOf))),
+        Effect.orElseSucceed(() => null),
+      ),
+  });
   return {
     [EDITORIAL_PROFILE_WS_METHODS.get]: () => Effect.all({ active: profiles.get, scoring }),
     [EDITORIAL_PROFILE_WS_METHODS.history]: () => profiles.history,

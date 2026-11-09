@@ -43,6 +43,22 @@ export interface EditorialProfileServiceShape {
   readonly fileByHash: (
     hash: string,
   ) => Effect.Effect<Option.Option<EditorialProfileFile>, EditorialProfileError>;
+  /**
+   * A profile/1 file the operator brings, stored with its exact bytes, so its hash is the
+   * file's (B5): saving from Ajustes rewrites the JSON and gives another hash. Idempotent: the
+   * same bytes again make no new version, and activate the version that holds them.
+   */
+  readonly importFile: (
+    bytes: string,
+  ) => Effect.Effect<EditorialProfileImportResult, EditorialProfileError>;
+}
+
+export interface EditorialProfileImportResult {
+  readonly active: EditorialProfileVersion;
+  /** False when the active version already held these bytes. */
+  readonly changed: boolean;
+  /** True when a new version was stored; false when an earlier one was activated or kept. */
+  readonly created: boolean;
 }
 
 /** The only reader and writer of `editorial_profiles`. */
@@ -81,6 +97,11 @@ const topicsOf = (json: string): ReadonlyArray<string> =>
   Option.getOrElse(decodeTopics(json), () => []);
 
 const decodeProfileBytes = Schema.decodeSync(Schema.fromJsonString(ProfileSchema));
+const decodeProfileFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ ...ProfileSchema.fields, schema_version: Schema.Literal("profile/1") }),
+  ),
+);
 
 const versionOf = (row: ProfileRow): EditorialProfileVersion => ({
   version: row.version,
@@ -209,7 +230,80 @@ const make = Effect.gen(function* () {
       Effect.mapError(storage),
     );
 
-  return EditorialProfileService.of({ get, history, update, activeFile, fileByHash });
+  const importFile = Effect.fn("EditorialProfileService.importFile")(function* (bytes: string) {
+    const decoded = decodeProfileFile(bytes);
+    if (Option.isNone(decoded)) {
+      return yield* new EditorialProfileError({
+        reason: "invalid-profile",
+        message:
+          "The file is not a profile/1 JSON object with name, audience, include and exclude.",
+      });
+    }
+    const { schema_version: _schema, ...file } = decoded.value;
+    const draft = normalizeEditorialProfileDraft(file);
+    const issues = editorialProfileIssues(draft);
+    if (issues.length > 0) {
+      return yield* new EditorialProfileError({
+        reason: "invalid-profile",
+        message: `The profile is not valid: ${issues.map((i) => `${i.field} ${i.code}`).join(", ")}`,
+        issues,
+      });
+    }
+    // The columns are what Ajustes shows and compares; they must say what the bytes say.
+    if (!sameEditorialProfile(draft, file)) {
+      return yield* new EditorialProfileError({
+        reason: "invalid-profile",
+        message:
+          "The file's name, audience or topics are not normalized (spaces, duplicates); fix the file, its bytes are stored as they are.",
+      });
+    }
+    const hash = sha256(bytes).slice("sha256:".length);
+    const id = yield* newId;
+    const createdAt = yield* nowIso;
+    return yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const current = yield* selectActive(sql);
+          if (current.sha256 === hash) {
+            return { active: versionOf(current), changed: false, created: false };
+          }
+          const stored = yield* sql<{ readonly version: number }>`
+            SELECT version FROM editorial_profiles WHERE sha256 = ${hash}
+            ORDER BY version DESC LIMIT 1
+          `;
+          yield* sql`UPDATE editorial_profiles SET active = 0 WHERE active = 1`;
+          if (stored[0] !== undefined) {
+            yield* sql`UPDATE editorial_profiles SET active = 1 WHERE version = ${stored[0].version}`;
+            return { active: versionOf(yield* selectActive(sql)), changed: true, created: false };
+          }
+          const latest = yield* sql<{ readonly top: number }>`
+            SELECT MAX(version) AS top FROM editorial_profiles
+          `;
+          const next = (latest[0]?.top ?? 0) + 1;
+          yield* sql`
+            INSERT INTO editorial_profiles (
+              profile_id, version, name, audience, include_json, exclude_json, bytes, sha256,
+              origin, created_at, active
+            ) VALUES (
+              ${`profile-${id}`}, ${next}, ${draft.name}, ${draft.audience},
+              ${encodeTopics(draft.include)}, ${encodeTopics(draft.exclude)}, ${bytes},
+              ${hash}, 'operator', ${createdAt}, 1
+            )
+          `;
+          return { active: versionOf(yield* selectActive(sql)), changed: true, created: true };
+        }),
+      )
+      .pipe(Effect.mapError(storage));
+  });
+
+  return EditorialProfileService.of({
+    get,
+    history,
+    update,
+    activeFile,
+    fileByHash,
+    importFile,
+  });
 });
 
 export const layer = Layer.effect(EditorialProfileService, make);

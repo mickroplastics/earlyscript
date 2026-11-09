@@ -38,6 +38,14 @@ import { EditorialProfileService } from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import { EditorialSourcesService, type EnabledSources } from "./EditorialSourcesService.ts";
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
+import {
+  appendEngineConfigChoice,
+  availableEngineConfigs,
+  chosenConfigPath,
+  engineConfigFileSha256,
+  nightlyConfig,
+  readEngineConfigChoice,
+} from "./engineConfigChoice.ts";
 import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import { adoptArtifactRun } from "@earlyscript/engine-lab/runAdoption";
 import { bwrapAvailable } from "@earlyscript/engine-lab/worker";
@@ -419,17 +427,53 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     return next === null ? null : isoOf(next);
   });
 
+  const installedConfigs = () =>
+    Result.isSuccess(options.engine) ? availableEngineConfigs(options.engine.success) : [];
+
   const settingsView = Effect.fn("EditorialJobsService.settingsView")(function* (
     stored: StoredSettings,
     nowMs: number,
   ) {
+    const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
     return {
       enabled: stored.enabled,
       timeOfDay: stored.timeOfDay,
       timezone: stored.timezone,
       workers: stored.workers,
       nextRunAt: yield* nextRunAtOf(stored, nowMs),
+      engineConfig: choice.file,
+      engineConfigChosenAt: choice.chosenAt,
+      engineConfigs: installedConfigs(),
     } satisfies EditorialNightlySettings;
+  });
+
+  /**
+   * The operator's explicit choice of configuration (`editorial.activeEngineConfig`): a new row
+   * with its time when it differs from the active one, nothing when it is the same.
+   */
+  const chooseEngineConfig = Effect.fn("EditorialJobsService.chooseEngineConfig")(function* (
+    file: string,
+    at: string,
+  ) {
+    const current = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+    if (current.file === file) return;
+    if (!Result.isSuccess(options.engine) || !installedConfigs().includes(file)) {
+      return yield* new EditorialJobsError({
+        reason: "invalid-settings",
+        message: `The installed engine has no configuration ${file}.`,
+      });
+    }
+    const digest = engineConfigFileSha256(options.engine.success, file);
+    yield* appendEngineConfigChoice(sql, {
+      file,
+      sha256: digest,
+      previous: current.file,
+      actor: "operator",
+      at,
+    }).pipe(Effect.mapError(storage));
+    yield* Effect.logInfo("The operator changed the nightly engine configuration.").pipe(
+      Effect.annotateLogs({ from: current.file, to: file, sha256: digest }),
+    );
   });
 
   const getSettings = Effect.gen(function* () {
@@ -442,6 +486,17 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     const current = yield* readSettings;
     const nowMs = yield* Clock.currentTimeMillis;
     const now = isoOf(nowMs);
+    if (input.engineConfig !== undefined) {
+      yield* chooseEngineConfig(input.engineConfig, now);
+      // Only the configuration: the schedule row stays as it is (its zone is not saved again).
+      if (
+        input.enabled === undefined &&
+        input.timeOfDay === undefined &&
+        input.workers === undefined
+      ) {
+        return yield* settingsView(current, nowMs);
+      }
+    }
     const enabled = input.enabled ?? current.enabled;
     // Turning it on schedules from now on: a time already past today waits for tomorrow.
     const enabledAt = enabled ? (current.enabled ? (current.enabledAt ?? now) : now) : null;
@@ -476,20 +531,32 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     // No engine, no configuration to hash: the job still gets its row and shows why it failed.
     let base: Record<string, unknown> = {};
     if (Result.isSuccess(options.engine)) {
-      const defaultConfig = options.engine.success.defaultConfig;
-      const decoded = decodeConfigObject(
-        yield* fs.readFileString(defaultConfig).pipe(Effect.mapError(storage)),
-      );
-      if (Option.isNone(decoded)) return yield* storage(`${defaultConfig} is not a JSON object`);
+      // The operator's configuration (`editorial.activeEngineConfig`), engine.v1.json without one.
+      const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+      const configFile = chosenConfigPath(options.engine.success, choice);
+      const text = yield* fs
+        .readFileString(configFile)
+        .pipe(
+          Effect.mapError((cause) =>
+            choice.chosenAt === null
+              ? storage(cause)
+              : storage(
+                  `the chosen engine configuration ${choice.file} is not in the installed engine (${String(cause)})`,
+                ),
+          ),
+        );
+      const decoded = decodeConfigObject(text);
+      if (Option.isNone(decoded)) return yield* storage(`${configFile} is not a JSON object`);
       base = decoded.value;
     }
-    // The engine reads its sources from the configuration, so the switches enter its hash. The
-    // active engine manifest (EnginePromotionService) chooses the rest; with none, the default.
+    // The engine reads its sources from the configuration, so the switches enter its hash,
+    // unless the configuration names its own (nightlyConfig, B2). The active engine manifest
+    // (EnginePromotionService) chooses the rest; with none, the configuration above.
     const { config, ...engine } =
       Option.isSome(engineLab) && Result.isSuccess(options.engine)
         ? yield* engineLab.value.planEngine({ defaultConfig: base, enabled })
         : {
-            config: { ...base, sources: enabled.rank },
+            config: nightlyConfig(base, enabled),
             manifestHash: null,
             engineSourceHash: null,
             cli: null,

@@ -1056,3 +1056,43 @@ it.live(
       }),
     ),
 );
+
+it.live(
+  "the installed manifest follows the operator's engine configuration; one with sources_cluster keeps its sources (B1, B2)",
+  () =>
+    withHarness((harness) =>
+      Effect.gen(function* () {
+        const promotion = yield* EnginePromotionService;
+        const sql = yield* EditorialSql;
+        const before = yield* promotion.active;
+        expect(before.manifest.kind).toBe("installed");
+        // Another configuration beside the default one, with the clustered sources it names.
+        const base = JSON.parse(NodeFS.readFileSync(harness.fixture.config_path, "utf8"));
+        const chosen = {
+          ...base,
+          config_version: "test.chosen",
+          sources: ["github", "hn"],
+          sources_cluster: ["hn"],
+        };
+        NodeFS.writeFileSync(
+          NodePath.join(NodePath.dirname(harness.fixture.config_path), "engine.chosen.json"),
+          JSON.stringify(chosen),
+        );
+        // Unchosen, nothing moves.
+        expect((yield* promotion.active).hash).toBe(before.hash);
+        yield* sql`
+          INSERT INTO editorial_engine_config_choices (config_file, config_sha256, previous_file, actor, created_at)
+          VALUES ('engine.chosen.json', 'sha256:x', 'engine.v1.json', 'operator', ${LAB_CLOCK_START})
+        `;
+        const after = yield* promotion.active;
+        expect(after.hash).not.toBe(before.hash);
+        expect(after.manifest.kind).toBe("installed");
+        expect(after.manifest.config.config_version).toBe("test.chosen");
+        expect(after.manifest.config.sources).toEqual(["github", "hn"]);
+        const history = yield* promotion.history;
+        expect(history[0]?.reason).toContain("configuration");
+        // Read again, it is the same activation.
+        expect((yield* promotion.active).activationId).toBe(after.activationId);
+      }),
+    ),
+);

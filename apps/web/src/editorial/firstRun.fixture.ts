@@ -12,6 +12,9 @@ export const NIGHTLY_OFF: EditorialNightlySettings = {
   timezone: "America/Guayaquil",
   workers: 2,
   nextRunAt: null,
+  engineConfig: "engine.v1.json",
+  engineConfigChosenAt: null,
+  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3.json"],
 };
 
 export const NIGHTLY_ON: EditorialNightlySettings = {

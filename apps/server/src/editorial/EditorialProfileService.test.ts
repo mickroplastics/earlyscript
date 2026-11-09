@@ -56,6 +56,9 @@ const group = EditorialProfileRpcGroup.middleware(RpcScopeAuthorization);
 
 const V1_HASH = `sha256:${NodeCrypto.createHash("sha256").update(SINGULARIDEV_PROFILE_V1).digest("hex")}`;
 
+const V2_FIXTURE = new URL("./fixtures/profiles/singularidev.v2.json", import.meta.url);
+const V2_HASH = "sha256:cc5cc20d8be7faa6eb28eaa09b35fb8200e61da269acdaefac85cf3ecd0e2298";
+
 const EDITED = {
   name: "SingulariDev",
   language: "en",
@@ -184,6 +187,89 @@ describe("EditorialProfileService", () => {
           { field: "include", code: "required" },
         ]);
         assert.strictEqual((yield* profiles.get).version, 1);
+      }),
+    ),
+  );
+
+  it.effect(
+    "imports a profile file byte for byte, so its hash is the file's, and again changes nothing (B5)",
+    () =>
+      withProfiles(
+        Effect.gen(function* () {
+          const profiles = yield* EditorialProfileService.EditorialProfileService;
+          const sql = yield* EditorialSql;
+          // v3/perfil/singularidev.v2.json: no `version` or `language` key, a `version_note`, no
+          // final newline. engine.v3.json pins this sha256.
+          const bytes = NodeFS.readFileSync(V2_FIXTURE, "utf8");
+          const first = yield* profiles.importFile(bytes);
+          assert.deepInclude(first, { changed: true, created: true });
+          assert.strictEqual(first.active.version, 2);
+          assert.strictEqual(first.active.hash, V2_HASH);
+          assert.strictEqual(first.active.include.length, 6);
+          const file = yield* profiles.activeFile;
+          assert.strictEqual(file.hash, V2_HASH);
+          assert.strictEqual(file.bytes, bytes);
+          const rows = yield* sql<{ readonly sha256: string; readonly origin: string }>`
+            SELECT sha256, origin FROM editorial_profiles WHERE active = 1
+          `;
+          assert.deepStrictEqual([...rows], [{ sha256: V2_HASH.slice(7), origin: "operator" }]);
+
+          const again = yield* profiles.importFile(bytes);
+          assert.deepInclude(again, { changed: false, created: false });
+          assert.strictEqual((yield* profiles.history).versions.length, 2);
+
+          // Saving from Ajustes stores its own layout: another version and hash.
+          const unchanged = yield* profiles.update({ ...first.active, language: "en" });
+          assert.isFalse(unchanged.changed);
+          const saved = yield* profiles.update({
+            ...first.active,
+            language: "en",
+            exclude: [...first.active.exclude, "celebrity news"],
+          });
+          assert.isTrue(saved.changed);
+          assert.notStrictEqual(saved.active.hash, V2_HASH);
+          // Importing the file again activates the stored version; no third copy of the bytes.
+          const back = yield* profiles.importFile(bytes);
+          assert.deepInclude(back, { changed: true, created: false });
+          assert.strictEqual(back.active.version, 2);
+          assert.strictEqual((yield* profiles.activeFile).hash, V2_HASH);
+          assert.strictEqual((yield* profiles.history).versions.length, 3);
+        }),
+      ),
+  );
+
+  it.effect(
+    "refuses a file that is not a valid, normalized profile/1 and keeps the active one",
+    () =>
+      withProfiles(
+        Effect.gen(function* () {
+          const profiles = yield* EditorialProfileService.EditorialProfileService;
+          const v2 = JSON.parse(NodeFS.readFileSync(V2_FIXTURE, "utf8")) as Record<string, unknown>;
+          for (const bytes of [
+            "not json",
+            JSON.stringify({ ...v2, schema_version: "profile/2" }),
+            JSON.stringify({ ...v2, include: [] }),
+            JSON.stringify({ ...v2, name: "  SingulariDev  " }),
+          ]) {
+            const error = yield* Effect.flip(profiles.importFile(bytes));
+            assert.strictEqual(error.reason, "invalid-profile");
+          }
+          assert.strictEqual((yield* profiles.get).version, 1);
+        }),
+      ),
+  );
+
+  it.effect("reads the scoring of the configuration the operator chose for the nightly run", () =>
+    withProfiles(
+      Effect.gen(function* () {
+        const sql = yield* EditorialSql;
+        yield* sql`
+          INSERT INTO editorial_engine_config_choices (config_file, config_sha256, previous_file, actor, created_at)
+          VALUES ('engine.v3.json', 'sha256:x', 'engine.v1.json', 'operator', '2026-11-09T05:00:00.000Z')
+        `;
+        const handlers = yield* EditorialProfileRpc.makeHandlers;
+        const view = yield* handlers[EDITORIAL_PROFILE_WS_METHODS.get]();
+        assert.strictEqual(view.scoring?.configVersion, "earlyscript.engine.v3");
       }),
     ),
   );

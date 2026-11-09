@@ -15,6 +15,15 @@ import { Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -83,6 +92,97 @@ export function nextRunText(settings: EditorialNightlySettings): string {
     minute: "2-digit",
   }).format(new Date(settings.nextRunAt));
   return `Próxima: ${when} (${settings.timezone}).`;
+}
+
+const DEFAULT_ENGINE_CONFIG = "engine.v1.json";
+
+function engineConfigStatus(settings: EditorialNightlySettings): string {
+  if (settings.engineConfigChosenAt === null) {
+    return `${settings.engineConfig}, la predeterminada; nunca se cambió.`;
+  }
+  const when = new Intl.DateTimeFormat("es", {
+    timeZone: settings.timezone,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(settings.engineConfigChosenAt));
+  return `${settings.engineConfig}, elegida el ${when} (${settings.timezone}).`;
+}
+
+/**
+ * The configuration file the nightly run starts from. Choosing one only opens a confirmation;
+ * the setting changes when the operator confirms it.
+ */
+function EngineConfigRow({
+  settings,
+  onChange,
+}: {
+  readonly settings: EditorialNightlySettings;
+  readonly onChange: (patch: EditorialNightlySettingsUpdateInput) => void;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const choices = settings.engineConfigs.includes(settings.engineConfig)
+    ? settings.engineConfigs
+    : [settings.engineConfig, ...settings.engineConfigs];
+  return (
+    <>
+      <SettingsRow
+        title="Configuración del motor"
+        description={`El archivo de configuración con que corre el motor cada noche. Sin una elección explícita es ${DEFAULT_ENGINE_CONFIG}. Cambiarla cambia las tendencias de las corridas siguientes, no las anteriores, y queda registrada con su hora.`}
+        status={engineConfigStatus(settings)}
+        control={
+          <Select
+            value={settings.engineConfig}
+            onValueChange={(value) => {
+              if (typeof value === "string" && value !== settings.engineConfig) setPending(value);
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Configuración del motor">
+              <SelectValue>{(value: string | null) => value ?? settings.engineConfig}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {choices.map((choice) => (
+                <SelectItem key={choice} value={choice}>
+                  {choice}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(open) => {
+          if (!open) setPending(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Correr el motor con {pending}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              La próxima corrida nocturna y «Ejecutar ahora» usarán {pending} en lugar de{" "}
+              {settings.engineConfig}. Un trabajo pendiente de hoy se reemplaza por uno con la
+              configuración nueva. El cambio queda registrado con su hora y se puede deshacer
+              eligiendo otra vez la anterior.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancelar</AlertDialogClose>
+            <Button
+              onClick={() => {
+                if (pending !== null) onChange({ engineConfig: pending });
+                setPending(null);
+              }}
+            >
+              Sí, usar {pending}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
 }
 
 function phaseText(phase: EditorialJobPhase): string {
@@ -223,6 +323,7 @@ export function NightlyRunSettingsView({
           </Select>
         }
       />
+      <EngineConfigRow settings={settings} onChange={onChange} />
       {modelCard === undefined ? null : (
         <SettingsRow
           title="Modelo del motor"

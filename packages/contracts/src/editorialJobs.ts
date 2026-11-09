@@ -177,6 +177,15 @@ export const EditorialNightlySettings = Schema.Struct({
   workers: Workers,
   /** The next scheduled time that would run a job (its cutoff has none yet); null while disabled. */
   nextRunAt: Schema.NullOr(IsoDateTime),
+  /**
+   * `editorial.activeEngineConfig`: the configuration file of the installed engine the nightly
+   * run starts from. `engine.v1.json` until the operator chooses another one.
+   */
+  engineConfig: Schema.String,
+  /** When the operator chose it; null while the default was never changed. */
+  engineConfigChosenAt: Schema.NullOr(IsoDateTime),
+  /** The configuration files the installed engine ships; empty without an engine. */
+  engineConfigs: Schema.Array(Schema.String),
 });
 export type EditorialNightlySettings = typeof EditorialNightlySettings.Type;
 
@@ -184,6 +193,10 @@ export const EditorialNightlySettingsUpdateInput = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   timeOfDay: Schema.optionalKey(TimeOfDay),
   workers: Schema.optionalKey(Workers),
+  /** Only an explicit operator action sends it; one of `engineConfigs`. */
+  engineConfig: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^engine\.[A-Za-z0-9][A-Za-z0-9._-]*\.json$/)),
+  ),
 });
 export type EditorialNightlySettingsUpdateInput = typeof EditorialNightlySettingsUpdateInput.Type;
 

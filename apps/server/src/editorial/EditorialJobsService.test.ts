@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests run a stand-in engine script and lay out its files.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -25,7 +26,7 @@ import { engineSourceHash } from "@earlyscript/engine-lab/hash";
 import * as EditorialProfileService from "./EditorialProfileService.ts";
 import { EditorialPresentationService } from "./EditorialPresentationService.ts";
 import * as EditorialSourcesService from "./EditorialSourcesService.ts";
-import { addDays } from "./nightlySchedule.ts";
+import { addDays, canonicalJson, sha256 } from "./nightlySchedule.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import {
   makeTempDir,
@@ -597,6 +598,110 @@ describe("EditorialJobsService", () => {
       }),
     );
   });
+
+  it.live(
+    "keeps engine.v1.json until the operator chooses another configuration, recorded with its time (B1)",
+    () => {
+      const fx = makeFixture();
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const before = yield* jobs.getSettings;
+          assert.strictEqual(before.engineConfig, "engine.v1.json");
+          assert.isNull(before.engineConfigChosenAt);
+          assert.includeMembers([...before.engineConfigs], ["engine.v1.json", "engine.v3.json"]);
+          // Without an explicit choice the nightly run is the one before the setting existed.
+          assert.strictEqual((yield* jobs.runNow).configHash, NATIVE_CONFIG_HASH);
+          // Changing the schedule never touches the configuration.
+          yield* jobs.updateSettings({ workers: 4 });
+          assert.strictEqual((yield* jobs.getSettings).engineConfig, "engine.v1.json");
+          assert.strictEqual((yield* jobs.runNow).configHash, NATIVE_CONFIG_HASH);
+
+          const missing = yield* Effect.flip(
+            jobs.updateSettings({ engineConfig: "engine.v9.json" }),
+          );
+          assert.strictEqual(missing.reason, "invalid-settings");
+          const chosen = yield* jobs.updateSettings({ engineConfig: "engine.v3.json" });
+          assert.strictEqual(chosen.engineConfig, "engine.v3.json");
+          assert.isNotNull(chosen.engineConfigChosenAt);
+          assert.strictEqual(chosen.workers, 4);
+          // The same choice again is not another row.
+          yield* jobs.updateSettings({ engineConfig: "engine.v3.json" });
+          const rows = yield* sql<{
+            readonly config_file: string;
+            readonly config_sha256: string;
+            readonly previous_file: string;
+            readonly actor: string;
+            readonly created_at: string;
+          }>`SELECT config_file, config_sha256, previous_file, actor, created_at FROM editorial_engine_config_choices`;
+          const v3Path = NodePath.join(NodePath.dirname(DEFAULT_CONFIG_PATH), "engine.v3.json");
+          assert.deepStrictEqual(
+            rows.map(({ created_at: _at, ...row }) => row),
+            [
+              {
+                config_file: "engine.v3.json",
+                config_sha256: `sha256:${NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(v3Path)).digest("hex")}`,
+                previous_file: "engine.v1.json",
+                actor: "operator",
+              },
+            ],
+          );
+          assert.strictEqual(rows[0]?.created_at, chosen.engineConfigChosenAt);
+
+          // Back to engine.v1.json is another explicit choice, and the hash is v1's again.
+          yield* jobs.updateSettings({ engineConfig: "engine.v1.json" });
+          assert.strictEqual((yield* jobs.runNow).configHash, NATIVE_CONFIG_HASH);
+          assert.strictEqual(
+            (yield* sql<{
+              readonly n: number;
+            }>`SELECT COUNT(*) AS n FROM editorial_engine_config_choices`)[0]?.n,
+            2,
+          );
+        }),
+      );
+    },
+  );
+
+  it.live(
+    "hands engine.v3.json to the engine as the file has it: the nightly config_hash is the file's (B2)",
+    () => {
+      const fx = makeFixture();
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const v3Path = NodePath.join(NodePath.dirname(DEFAULT_CONFIG_PATH), "engine.v3.json");
+          const v3 = JSON.parse(NodeFS.readFileSync(v3Path, "utf8"));
+          yield* jobs.updateSettings({ engineConfig: "engine.v3.json" });
+          const job = yield* jobs.runNow;
+          // The switches (hn, github in catalogue order) did not replace sources.
+          assert.strictEqual(job.configHash, sha256(canonicalJson(v3)));
+          assert.notStrictEqual(
+            job.configHash,
+            sha256(canonicalJson({ ...v3, sources: job.artifacts.sources.rank })),
+          );
+          corpusUpToDate(fx, job);
+          yield* jobs.runDue;
+          const done = yield* jobs.list.pipe(
+            Effect.map(({ jobs: list }) => list.find((entry) => entry.jobId === job.jobId)),
+          );
+          assert.strictEqual(done?.status, "done");
+          const handed = NodeFS.readdirSync(job.artifacts.jobDir).find((name) =>
+            name.startsWith("engine-config."),
+          );
+          assert.isDefined(handed);
+          const config = JSON.parse(
+            NodeFS.readFileSync(NodePath.join(job.artifacts.jobDir, handed!), "utf8"),
+          );
+          assert.deepStrictEqual(config, v3);
+          // What is collected still follows the switches.
+          assert.deepStrictEqual(done?.artifacts.sources.collect, job.artifacts.sources.collect);
+        }),
+      );
+    },
+  );
 
   it.live("shares one job between the scheduled time and Ejecutar ahora", () => {
     const fx = makeFixture();

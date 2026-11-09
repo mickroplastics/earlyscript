@@ -20,6 +20,9 @@ const SETTINGS: EditorialNightlySettings = {
   timezone: "America/Guayaquil",
   workers: 2,
   nextRunAt: null,
+  engineConfig: "engine.v1.json",
+  engineConfigChosenAt: null,
+  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3.json"],
 };
 
 const phases = (
@@ -92,6 +95,40 @@ describe("NightlyRunSettings", () => {
     expect(onChange).toHaveBeenCalledWith({ enabled: true });
     await userEvent.click(screen.getByRole("button", { name: "Ejecutar ahora" }));
     expect(onRunNow).toHaveBeenCalledOnce();
+  });
+
+  it("changes the engine configuration only after the operator confirms it (B1)", async () => {
+    const { screen, onChange } = await renderView({});
+    await using _screen = screen;
+    await expect
+      .element(screen.getByText("engine.v1.json, la predeterminada; nunca se cambió."))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
+    await userEvent.click(screen.getByRole("option", { name: "engine.v3.json" }));
+    // Choosing opens the confirmation; nothing is saved yet.
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
+    await userEvent.click(screen.getByRole("option", { name: "engine.v3.json" }));
+    await userEvent.click(screen.getByRole("button", { name: "Sí, usar engine.v3.json" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v3.json" });
+  });
+
+  it("shows when the operator chose the configuration", async () => {
+    const { screen } = await renderView({
+      settings: {
+        ...SETTINGS,
+        engineConfig: "engine.v3.json",
+        engineConfigChosenAt: "2026-11-09T05:00:00.000Z",
+      },
+    });
+    await using _screen = screen;
+    await expect
+      .element(
+        screen.getByText("engine.v3.json, elegida el 9 nov 2026, 00:00 (America/Guayaquil)."),
+      )
+      .toBeVisible();
   });
 
   it("holds Ejecutar ahora while a job runs and lists phases, errors and the run", async () => {
