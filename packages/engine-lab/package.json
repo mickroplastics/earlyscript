@@ -79,6 +79,7 @@
   "scripts": {
     "lab": "node src/cli.ts",
     "arm": "node src/arm.ts",
+    "v3": "node src/v3-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },

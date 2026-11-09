@@ -148,8 +148,10 @@ export interface GateResult {
 
 const round = (x: number) => Math.round(x * 1e4) / 1e4;
 
-/** Families: cards linked across cutoffs when half the smaller's items are shared. */
-function familiesOf(members: ReadonlyArray<CardMember>): Map<string, string> {
+/** Families: cards linked across cutoffs when half the smaller's items are shared (also v3's §5a). */
+export function familiesOf(
+  members: ReadonlyArray<Pick<CardMember, "card_id" | "item_ids">>,
+): Map<string, string> {
   const parent = new Map(members.map((m) => [m.card_id, m.card_id]));
   const find = (id: string): string => {
     let root = id;
