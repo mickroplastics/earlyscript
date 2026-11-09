@@ -16,7 +16,7 @@ import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "
 import { checkRun, rerunAndCheck } from "./check.ts";
 import { collectCorpus, httpTraceWriter } from "./collect.ts";
 import { editorialCommand } from "./editorial-cli.ts";
-import { v3Command } from "./judge-v3-cli.ts";
+import { v3Command as v3JudgeCommand } from "./judge-v3-cli.ts";
 import { purgeCorpus } from "./purge.ts";
 import { repairRobotsOverrideTerms } from "./repair.ts";
 import { liveSources, readRssFeedList } from "./sources/index.ts";
@@ -29,7 +29,7 @@ import {
   type ModelCommandLine,
 } from "./embed/modelCommand.ts";
 import { DEFAULT_DATA_DIR, runEngine } from "./run.ts";
-import { v3Command } from "./v3-cli.ts";
+import { v3Command as v3ListsCommand } from "./v3-cli.ts";
 
 /** A mirror of Hugging Face with the same layout, for tests and machines behind a proxy. */
 const MODEL_BASE_URL_ENV = "EARLYSCRIPT_MODEL_BASE_URL";
@@ -49,6 +49,7 @@ const USAGE =
   "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
   "       engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
+  "       engine v3 judge-diag|judge-score|judge-smoke ... (see judge-v3-cli.ts)\n" +
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
@@ -82,6 +83,17 @@ async function modelCommand(argv: ReadonlyArray<string>): Promise<number> {
   }
   console.error(USAGE);
   return 64;
+}
+
+/** `engine v3 <sub>`: one entry for the list builder (A) and the judges (B). */
+function v3Command(argv: ReadonlyArray<string>): Promise<number> {
+  const sub = argv[0];
+  if (sub === "lists") return v3ListsCommand(argv);
+  if (sub === "judge-diag" || sub === "judge-score" || sub === "judge-smoke") {
+    return v3JudgeCommand(argv);
+  }
+  console.error(USAGE);
+  return Promise.resolve(64);
 }
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
