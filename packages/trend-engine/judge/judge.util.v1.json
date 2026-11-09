@@ -7,10 +7,10 @@
   "card_text": {
     "function": "cardTextV3",
     "file": "../src/card-text-v3.ts",
-    "version": "card-text-v3/1",
-    "sha256": "sha256:9e9353a7894e22a876ff83b4ed0191c99ef4db29b45871646379dfb35dd70117"
+    "version": "card-text-v3/2",
+    "sha256": "sha256:333c1454dab07f68ca3b627b082765ee60e12d55f10f59923820be0744c9ba09"
   },
-  "normalizer_version": "card-text-v3/1",
+  "normalizer_version": "card-text-v3/2",
   "judges": [
     { "name": "opus", "cli": "claude", "model": "claude-opus-5-5", "effort": "high" },
     { "name": "sol", "cli": "codex", "model": "gpt-6.1-sol", "effort": "high" }

@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { type CardInputV3, cardTextFlat, cardTextV3 } from "./card-text-v3.ts";
+import { type CardInputV3, cardTextFlat, cardTextV3, cleanText } from "./card-text-v3.ts";
 import { sha256 } from "./hash.ts";
 import {
   DIAG_RULE,
@@ -128,6 +128,75 @@ describe("cardTextV3: closed field list, relative dates", () => {
     expect(text).not.toMatch(/20\d\d-\d\d-\d\d/);
     expect(text).not.toContain("2026");
     expect(cardTextV3(poisoned).text).toBe(cardTextV3(SYNTHETIC_CARD).text);
+  });
+
+  it("hides calendar dates written in titles and terms, keeping E1–E5 on their items (Sol B1)", () => {
+    const dated = [
+      "Released 23 October 2026",
+      "October 23, 2026: launch",
+      "Oct 23 update",
+      "Oct. 23rd recap",
+      "the 23rd of October",
+      "out 23 Oct",
+      "Sept 5, 2026 notes",
+      "October 2026 roundup",
+      "Oct 2026 news",
+      "released 23/10/2026",
+      "10/23/26 notes",
+      "23.10.2026 build",
+      "2026/10/23 log",
+      "2026-10-23T10:00:00Z",
+      "May 5 launch",
+      "on 5 May",
+      "Dec 2025 vs Jan 2026",
+      "OCT 23",
+      "released on october 23",
+    ];
+    for (const title of dated) {
+      const clean = cleanText(title);
+      expect(clean, title).toContain("[date]");
+      expect(clean, title).not.toMatch(/\b(19|20)\d{2}\b|\b(0?[1-9]|[12]\d|3[01])(st|rd|th)?\b/);
+    }
+    for (const kept of [
+      "v1.2.26 release",
+      "Python 3.12.1",
+      "GPT-5 may 3x speed",
+      "agents 5 may fail",
+      "Postgres (2016)",
+      "Top 10 tools",
+      "1/2 price",
+      "March of the robots",
+      "Jan Leike joins",
+      "Claude 3.5 Sonnet",
+    ])
+      expect(cleanText(kept)).toBe(kept);
+    const card: CardInputV3 = {
+      cutoff: "2026-10-24",
+      terms: ["october", "23", "release", "agents"],
+      headlines: [
+        {
+          id: "a",
+          title: "Released 23 October 2026",
+          source: "hn",
+          published_at: "2026-10-23T00:00:00Z",
+        },
+        {
+          id: "b",
+          title: "Agents ship on Oct 22",
+          source: "github",
+          published_at: "2026-10-22T00:00:00Z",
+        },
+      ],
+    };
+    for (const variant of [cardTextV3(card), cardTextFlat(card)]) {
+      expect(variant.text).not.toContain("October 2026");
+      expect(variant.text).not.toContain("Oct 22");
+      expect(variant.evidence).toEqual([
+        { id: "E1", item_id: "a" },
+        { id: "E2", item_id: "b" },
+      ]);
+    }
+    expect(cardTextV3(card).text).toContain("[E1] (hn, 1 day ago) Released [date]");
   });
 
   it("drops headlines and sources dated at or after t, and shows ages relative to t", () => {

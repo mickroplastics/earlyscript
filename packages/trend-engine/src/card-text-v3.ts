@@ -9,7 +9,7 @@
 // relevance.v2. The sha256 of this file is the function's hash in the v3 pre-manifest; the
 // adapters that build a CardInputV3 live elsewhere (judge-v3-inputs.ts) so they do not move it.
 
-export const CARD_TEXT_V3_VERSION = "card-text-v3/1";
+export const CARD_TEXT_V3_VERSION = "card-text-v3/2";
 
 export type Movement = "new" | "weak" | "strong" | "rebound" | "falling" | "stable";
 export type SourceStatus = "comparable" | "partial" | "unused";
@@ -91,16 +91,59 @@ const daysBefore = (cutoffMs: number, value: string): number | null => {
 const ago = (days: number) =>
   days === 0 ? "less than 1 day ago" : days === 1 ? "1 day ago" : `${days} days ago`;
 
+const MONTH_NAMES = [
+  "january",
+  "february",
+  "march",
+  "april",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "jun",
+  "jul",
+  "aug",
+  "sept",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
+// Months match in lower, capitalized or upper case; "May" only capitalized or upper ("you may 3x").
+const MONTH = `(?:${[
+  ...MONTH_NAMES.flatMap((m) => [m, m[0]!.toUpperCase() + m.slice(1), m.toUpperCase()]),
+  "May",
+  "MAY",
+].join("|")})\\.?(?![A-Za-z])`;
+const DAY = "(?<![\\w.-])(?:0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?(?!\\w)";
+const YEAR = "(?:19|20)\\d{2}(?!\\d)";
+
+/** Calendar dates written in free text: ISO, month names (full or short, with or without day or year) and numeric forms. */
+export const CALENDAR_DATES: ReadonlyArray<RegExp> = [
+  /\b(19|20)\d{2}-\d{2}-\d{2}(T[\d:.]+Z?)?\b/g,
+  new RegExp(`${DAY}\\s+(?:of\\s+)?${MONTH}(?:,?\\s+${YEAR})?`, "g"),
+  new RegExp(`(?<![A-Za-z])${MONTH}\\s+${DAY}(?:,?\\s+${YEAR})?`, "g"),
+  new RegExp(`(?<![A-Za-z])${MONTH},?\\s+${YEAR}`, "g"),
+  /(?<![\w./-])(?:0?[1-9]|[12]\d|3[01])[/-](?:0?[1-9]|[12]\d|3[01])[/-](?:(?:19|20)\d{2}|\d{2})(?![\d/])/g,
+  /(?<![\w./-])(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d{2}(?!\d)/g,
+  /(?<![\w./-])(?:19|20)\d{2}[/.](?:0?[1-9]|1[0-2])[/.](?:0?[1-9]|[12]\d|3[01])(?![\d/.])/g,
+];
+
 /**
- * Data, not instructions: control characters and line breaks go, ISO dates become "[date]"
+ * Data, not instructions: control characters and line breaks go, calendar dates become "[date]"
  * (no absolute date reaches the judge), and the text is clipped.
  */
 export const cleanText = (value: string, max = MAX_TITLE_CHARS): string => {
-  const flat = value
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
-    .replace(/\b(19|20)\d{2}-\d{2}-\d{2}(T[\d:.]+Z?)?\b/g, "[date]")
-    .replace(/\s+/g, " ")
-    .trim();
+  let flat = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ");
+  for (const pattern of CALENDAR_DATES) flat = flat.replace(pattern, "[date]");
+  flat = flat.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 };
 
