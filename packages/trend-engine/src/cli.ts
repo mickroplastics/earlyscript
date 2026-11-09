@@ -6,7 +6,7 @@
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
-//   node src/cli.ts corpus import --from <corpus> --to <live corpus> [--sources <ids>] [--dry-run]
+//   node src/cli.ts corpus import --from <corpus> --to <live corpus> (--backup <new dir> | --dry-run) [--sources <ids>]
 //   node src/cli.ts v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <V1|V2|V3|V4|R4|R2|R5|v1|v2|all|A,B> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]
 //   node src/cli.ts eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture ... (see editorial-cli.ts)
 //   node src/cli.ts v3 judge-diag|judge-score|judge-smoke ... (see judge-v3-cli.ts)
@@ -15,7 +15,7 @@ import * as NodeUtil from "node:util";
 
 import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
-import { importCorpus } from "./corpus-import.ts";
+import { formatImportTable, importCorpus } from "./corpus-import.ts";
 import { collectCorpus, httpTraceWriter } from "./collect.ts";
 import { editorialCommand } from "./editorial-cli.ts";
 import { v3Command as v3JudgeCommand } from "./judge-v3-cli.ts";
@@ -55,7 +55,7 @@ const USAGE =
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)\n" +
-  "       engine corpus import --from <corpus> --to <live corpus> [--sources <ids>] [--dry-run]";
+  "       engine corpus import --from <corpus> --to <live corpus> (--backup <new dir> | --dry-run) [--sources <ids>]";
 
 /**
  * `model status` prints `{ status, revision, path, bytesPresent, bytesExpected }`; `model
@@ -89,8 +89,10 @@ async function modelCommand(argv: ReadonlyArray<string>): Promise<number> {
 }
 
 /**
- * `engine corpus import --from <corpus> --to <live> [--sources ids] [--dry-run]`: copies the
- * days before the live corpus's first one (corpus-import.ts). Prints the import record.
+ * `engine corpus import --from <corpus> --to <live> (--backup <new dir> | --dry-run) [--sources
+ * ids]`: copies, per source and per day, the source days the live corpus lacks
+ * (corpus-import.ts). Prints the import record's summary on stdout and the per-source table on
+ * stderr.
  */
 async function corpusCommand(argv: ReadonlyArray<string>): Promise<number> {
   const { values, positionals } = NodeUtil.parseArgs({
@@ -100,10 +102,17 @@ async function corpusCommand(argv: ReadonlyArray<string>): Promise<number> {
       from: { type: "string" },
       to: { type: "string" },
       sources: { type: "string" },
+      backup: { type: "string" },
       "dry-run": { type: "boolean" },
     },
   });
-  if (positionals.length !== 1 || positionals[0] !== "import" || !values.from || !values.to) {
+  if (
+    positionals.length !== 1 ||
+    positionals[0] !== "import" ||
+    !values.from ||
+    !values.to ||
+    (!values.backup && !values["dry-run"])
+  ) {
     console.error(USAGE);
     return 64;
   }
@@ -111,6 +120,7 @@ async function corpusCommand(argv: ReadonlyArray<string>): Promise<number> {
     from: values.from,
     to: values.to,
     ...(values.sources ? { sources: sourceList(values.sources) } : {}),
+    ...(values.backup ? { backup: values.backup } : {}),
     ...(values["dry-run"] ? { dryRun: true } : {}),
   });
   const { files, ...summary } = record;
@@ -119,9 +129,12 @@ async function corpusCommand(argv: ReadonlyArray<string>): Promise<number> {
       ...summary,
       files: files.length,
       copied: files.filter((f) => f.status === "copied").length,
+      filled: files.filter((f) => f.status === "filled").length,
+      present: files.filter((f) => f.status === "present").length,
       skipped: record.skipped.length,
     }),
   );
+  console.error(formatImportTable(record));
   return 0;
 }
 

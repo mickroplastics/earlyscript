@@ -1,11 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off globalDate:off - plain library over corpus/1 files; manifests and rows are decoded with Schema.
-// `engine corpus import --from <corpus> --to <live>`: gives a live corpus the days before its
-// first one from another corpus/1 (eval-largo), so engine v3's five weeks have history from the
-// first night (B6). Only days before the live corpus's `from_day` are copied, byte for byte and
-// each verified against the source manifest; no existing file is overwritten (an identical one
-// counts as copied, so an interrupted import resumes); coverage.jsonl and the manifest are
-// rewritten as `engine collect` does, under its lock; and a record of what was imported goes to
-// `imports/` and to the manifest's `repairs`. `--dry-run` checks everything and writes nothing.
+// `engine corpus import --from <corpus> --to <live> --backup <dir>`: gives a live corpus the
+// source days it lacks from another corpus/1 (eval-largo), so engine v3's five weeks have history
+// from the first night (B6). It decides per source and per day: a day of a source is copied when
+// the live corpus has no coverage row for it (or an `unavailable` row with an empty or missing
+// file) and the day falls before that source's first covered day in the live corpus or in a gap
+// inside its covered span. A source the live corpus never covered takes every source day before
+// the live corpus's `to_day`. Each copied file is verified against the source manifest; a file
+// already in the live corpus with content is never replaced (an identical one counts as present,
+// so an interrupted import resumes); only an empty file of an uncovered day is filled.
+// coverage.jsonl and the manifest are rewritten as `engine collect` does, under its lock, after a
+// verified copy of the whole live corpus goes to `--backup`; the manifest's `repairs` names every
+// imported row with `imported_from`, and the full record goes to `imports/`. `--dry-run` checks
+// everything, writes nothing and reports, per source, the days before and after and the gaps left.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -28,6 +34,7 @@ const decodeItem = Schema.decodeUnknownSync(Item);
 
 const MANIFEST = "corpus-manifest.json";
 const COVERAGE = "coverage.jsonl";
+const LOCK = ".collect.lock";
 export const CORPUS_IMPORT_TOOL = "engine corpus import";
 
 type Manifest = EarlywindowCorpusManifest;
@@ -41,6 +48,11 @@ export interface CorpusImportOptions {
   /** Default: the sources the live corpus has coverage for. */
   readonly sources?: ReadonlyArray<SourceId>;
   readonly dryRun?: boolean;
+  /**
+   * A directory that does not exist yet: before anything is written, the whole live corpus is
+   * copied there and verified. Required unless `dryRun`.
+   */
+  readonly backup?: string;
   readonly now?: () => string;
 }
 
@@ -48,12 +60,35 @@ export interface CorpusImportFile {
   readonly path: string;
   readonly sha256: string;
   readonly bytes: number;
-  /** `copied` now, or `present`: an identical file was already there (a resumed import). */
-  readonly status: "copied" | "present";
+  /**
+   * `copied` now; `present`: an identical file was already there (a resumed import); `filled`:
+   * an empty file of a day the live corpus had as `unavailable` or without coverage was replaced.
+   */
+  readonly status: "copied" | "present" | "filled";
+  /** The live corpus's coverage row this day's row replaces: only ever an `unavailable` one. */
+  readonly replaces: "unavailable" | null;
+}
+
+/** One source's days in the live corpus before and after the import. */
+export interface CorpusImportSourceSummary {
+  readonly source: SourceId;
+  /** Days with a coverage row that is not an `unavailable` day with an empty file. */
+  readonly days_before: number;
+  readonly first_before: string | null;
+  readonly last_before: string | null;
+  /** Days inside [first, last] without such a row. */
+  readonly gaps_before: number;
+  readonly imported: number;
+  readonly days_after: number;
+  readonly first_after: string | null;
+  readonly last_after: string | null;
+  readonly gaps_after: number;
+  /** Uncovered days the source corpus could not give (no file, no row, or `unavailable` too). */
+  readonly skipped: number;
 }
 
 export interface CorpusImportRecord {
-  readonly schema_version: "earlyscript.corpus-import/1";
+  readonly schema_version: "earlyscript.corpus-import/2";
   readonly tool: string;
   readonly imported_at: string;
   readonly dry_run: boolean;
@@ -65,11 +100,12 @@ export interface CorpusImportRecord {
     readonly from_day_before: string;
     readonly from_day_after: string;
   };
+  /** The verified copy of the live corpus made before writing; null when nothing was written. */
+  readonly backup: { readonly dir: string; readonly files: number } | null;
   readonly sources: ReadonlyArray<SourceId>;
-  /** The days considered: the source corpus's days before the live corpus's first one. */
-  readonly days: { readonly from: string | null; readonly to_exclusive: string | null };
+  readonly by_source: ReadonlyArray<CorpusImportSourceSummary>;
   readonly files: ReadonlyArray<CorpusImportFile>;
-  /** Source days not copied, with why: no file or no coverage row in the source corpus. */
+  /** Uncovered live days not filled, with why. */
   readonly skipped: ReadonlyArray<{ readonly path: string; readonly reason: string }>;
   /** Where this record was written; null for a dry run or when nothing was imported. */
   readonly record_path: string | null;
@@ -105,6 +141,16 @@ function verifiedBytes(root: string, entry: FileEntry): Buffer {
   return bytes;
 }
 
+/** The bytes at `file`, or null when there is no file. */
+function bytesAt(file: string): Buffer | null {
+  try {
+    return NodeFS.readFileSync(file);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
 const lines = (bytes: Buffer): Array<unknown> =>
   bytes
     .toString("utf8")
@@ -127,20 +173,72 @@ async function writeNew(file: string, bytes: Buffer | string) {
   }
 }
 
+/** Replaces an empty file, checking again just before that it is still empty. */
+async function fillEmpty(file: string, bytes: Buffer) {
+  if ((await NodeFSP.stat(file)).size !== 0) throw new Error(`${file} is no longer empty`);
+  const tmp = `${file}.import-${process.pid}.tmp`;
+  await NodeFSP.writeFile(tmp, bytes, { flag: "wx" });
+  await NodeFSP.rename(tmp, file);
+}
+
 /** Replaces a file the corpus rewrites on every capture (coverage.jsonl, the manifest). */
 async function replace(file: string, text: string) {
   await NodeFSP.writeFile(`${file}.tmp`, text);
   await NodeFSP.rename(`${file}.tmp`, file);
 }
 
+/** Copies the live corpus (without its lock) to `dir`, which must not exist, and verifies it. */
+function backupCorpus(root: string, dir: string, manifest: Manifest) {
+  const target = NodePath.resolve(dir);
+  const inside = NodePath.relative(root, target);
+  if (inside === "" || !inside.startsWith("..")) {
+    throw new Error(`--backup ${target} is inside the live corpus`);
+  }
+  if (NodeFS.existsSync(target)) throw new Error(`--backup ${target} already exists`);
+  NodeFS.cpSync(root, target, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+    preserveTimestamps: true,
+    filter: (src) => NodePath.basename(src) !== LOCK,
+  });
+  const copied = readManifest(target);
+  if (copied.corpus_hash !== manifest.corpus_hash) {
+    throw new Error(`--backup ${target}: the copied manifest differs`);
+  }
+  for (const entry of copied.files) verifiedBytes(target, entry);
+  return { dir: target, files: copied.files.length };
+}
+
 const byPath = (a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path);
+
+/** Days inside [first, last] of `covered` that it lacks. */
+function span(covered: ReadonlySet<string>) {
+  const days = [...covered].toSorted();
+  const first = days[0] ?? null;
+  const last = days.at(-1) ?? null;
+  const gaps = first && last ? daysBetween(first, last).filter((d) => !covered.has(d)).length : 0;
+  return { days: days.length, first, last, gaps };
+}
+
+interface Planned {
+  readonly source: SourceId;
+  readonly day: string;
+  readonly entry: FileEntry;
+  readonly row: CoverageRecord;
+  readonly bytes: Buffer;
+  readonly replaces: CoverageRecord | null;
+}
 
 export async function importCorpus(options: CorpusImportOptions): Promise<CorpusImportRecord> {
   const now = options.now ?? (() => new Date().toISOString());
   const fromRoot = corpusRoot(options.from);
   const toRoot = NodePath.resolve(options.to);
   if (fromRoot === toRoot) throw new Error("--from and --to are the same corpus");
-  const lockPath = NodePath.join(toRoot, ".collect.lock");
+  if (!options.dryRun && !options.backup) {
+    throw new Error("--backup <dir> is required: the live corpus is copied there before writing");
+  }
+  const lockPath = NodePath.join(toRoot, LOCK);
   // The live corpus must exist: an import never creates one.
   const lock = options.dryRun ? null : await NodeFSP.open(lockPath, "wx");
   try {
@@ -154,9 +252,10 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
     const liveCoverage = liveCoverageEntry
       ? lines(verifiedBytes(toRoot, liveCoverageEntry)).map((row) => decodeCoverage(row))
       : [];
+    const liveRows = new Map(liveCoverage.map((row) => [`${row.source}/${row.day}`, row]));
     const sourceCoverageEntry = sourceFiles.get(COVERAGE);
     if (!sourceCoverageEntry) throw new Error(`${fromRoot} lists no ${COVERAGE}`);
-    const sourceCoverage = new Map(
+    const sourceRows = new Map(
       lines(verifiedBytes(fromRoot, sourceCoverageEntry))
         .map((row) => decodeCoverage(row))
         .map((row) => [`${row.source}/${row.day}`, row]),
@@ -165,103 +264,165 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
       options.sources ?? [...new Set(liveCoverage.map((row) => row.source))].toSorted();
     if (sources.length === 0) throw new Error("No source to import: pass --sources");
 
-    // Only days before the live corpus's first day, and within the source corpus.
-    const end = [live.from_day, source.to_day].toSorted()[0]!;
-    const days = daysBetween(source.from_day, end);
-    const planned: Array<{ day: string; entry: FileEntry; row: CoverageRecord; bytes: Buffer }> =
-      [];
+    // A live day is covered when it has a coverage row, unless that row says `unavailable` and
+    // the day's file is empty or missing: a day collect reached nothing for.
+    const covered = (id: SourceId, day: string) => {
+      const row = liveRows.get(`${id}/${day}`);
+      if (!row) return false;
+      if (row.status !== "unavailable") return true;
+      return (liveFiles.get(`${id}/${day}.jsonl`)?.bytes ?? 0) > 0;
+    };
+
+    const planned: Array<Planned> = [];
     const skipped: Array<{ path: string; reason: string }> = [];
+    const coveredBefore = new Map<SourceId, Set<string>>();
     for (const id of sources) {
-      for (const day of days) {
+      const before = new Set(
+        liveCoverage.filter((r) => r.source === id && covered(id, r.day)).map((r) => r.day),
+      );
+      coveredBefore.set(id, before);
+      // Before the source's first covered day or inside its span; never after its last one,
+      // which the live captures keep. A source never covered: every day before `to_day`.
+      const limit = [...before].toSorted().at(-1) ?? live.to_day;
+      const end = [limit, source.to_day].toSorted()[0]!;
+      for (const day of daysBetween(source.from_day, end)) {
+        if (before.has(day)) continue;
         const path = `${id}/${day}.jsonl`;
         const entry = sourceFiles.get(path);
-        const row = sourceCoverage.get(`${id}/${day}`);
+        const row = sourceRows.get(`${id}/${day}`);
+        const replaces = liveRows.get(`${id}/${day}`) ?? null;
         if (!entry) skipped.push({ path, reason: "no file in the source corpus" });
         else if (!row) skipped.push({ path, reason: "no coverage row in the source corpus" });
-        else planned.push({ day, entry, row, bytes: verifiedBytes(fromRoot, entry) });
+        else if (replaces && row.status === "unavailable") {
+          skipped.push({ path, reason: "unavailable in both corpora" });
+        } else {
+          planned.push({
+            source: id,
+            day,
+            entry,
+            row,
+            replaces,
+            bytes: verifiedBytes(fromRoot, entry),
+          });
+        }
       }
     }
 
-    // What the live corpus refuses (its purges) never enters it, and no item id repeats.
+    // A file already in the live corpus with content is never replaced: that day stays as it is.
+    const imports: Array<Planned & { file: CorpusImportFile }> = [];
+    for (const plan of planned) {
+      const { entry, bytes } = plan;
+      const old = bytesAt(NodePath.join(toRoot, entry.path));
+      let status: CorpusImportFile["status"];
+      if (old === null) status = "copied";
+      else if (old.equals(bytes)) status = "present";
+      else if (old.length === 0) status = "filled";
+      else {
+        skipped.push({
+          path: entry.path,
+          reason: "exists in the live corpus with other content; not replaced",
+        });
+        continue;
+      }
+      const file: CorpusImportFile = {
+        path: entry.path,
+        sha256: entry.sha256,
+        bytes: entry.bytes,
+        status,
+        replaces: plan.replaces ? "unavailable" : null,
+      };
+      imports.push({ ...plan, file });
+    }
+    // What the live corpus refuses (its purges) never enters it, and no item id repeats (a live
+    // file at the same path is the same day, identical by now).
     const purged = purgeFilter(live.purges);
-    const liveIds = new Set<string>();
+    const liveIds = new Map<string, string>();
     for (const entry of live.files) {
       if (!sources.some((id) => entry.path.startsWith(`${id}/`))) continue;
-      for (const raw of lines(verifiedBytes(toRoot, entry))) liveIds.add(decodeItem(raw).id);
+      for (const raw of lines(verifiedBytes(toRoot, entry)))
+        liveIds.set(decodeItem(raw).id, entry.path);
     }
     const seen = new Set<string>();
-    for (const { entry, bytes } of planned) {
+    for (const { entry, bytes } of imports) {
       for (const raw of lines(bytes)) {
         const item = decodeItem(raw);
         if (purged(item)) {
           throw new Error(`${entry.path} holds an item the live corpus purged; nothing imported`);
         }
-        if (liveIds.has(item.id) || seen.has(item.id)) {
+        const livePath = liveIds.get(item.id);
+        if ((livePath !== undefined && livePath !== entry.path) || seen.has(item.id)) {
           throw new Error(`${entry.path} repeats item ${item.id}; nothing imported`);
         }
         seen.add(item.id);
       }
-      const existing = liveFiles.get(entry.path);
-      if (existing && existing.sha256 !== entry.sha256) {
-        throw new Error(`${toRoot}/${entry.path} is in the live manifest with other bytes`);
-      }
-      if (liveCoverage.some((row) => `${row.source}/${row.day}.jsonl` === entry.path)) {
-        throw new Error(`the live corpus already has coverage for ${entry.path}`);
-      }
     }
+    skipped.sort(byPath);
 
-    const files: Array<CorpusImportFile> = [];
-    for (const { entry, bytes } of planned) {
-      const target = NodePath.join(toRoot, entry.path);
-      let present = false;
-      try {
-        const old = await NodeFSP.readFile(target);
-        if (!old.equals(bytes)) throw new Error(`${target} exists with other bytes; not replaced`);
-        present = true;
-      } catch (error) {
-        if (!isMissing(error)) throw error;
-      }
-      files.push({
-        path: entry.path,
-        sha256: entry.sha256,
-        bytes: entry.bytes,
-        status: present ? "present" : "copied",
-      });
-    }
+    const bySource: Array<CorpusImportSourceSummary> = sources.map((id) => {
+      const before = coveredBefore.get(id)!;
+      const mine = imports.filter((p) => p.source === id);
+      const after = new Set(before);
+      for (const p of mine) if (p.row.status !== "unavailable") after.add(p.day);
+      const b = span(before);
+      const a = span(after);
+      return {
+        source: id,
+        days_before: b.days,
+        first_before: b.first,
+        last_before: b.last,
+        gaps_before: b.gaps,
+        imported: mine.length,
+        days_after: a.days,
+        first_after: a.first,
+        last_after: a.last,
+        gaps_after: a.gaps,
+        skipped: skipped.filter((s) => s.path.startsWith(`${id}/`)).length,
+      };
+    });
 
+    const files = imports.map((p) => p.file);
     const importedAt = now();
+    const fromDayAfter = [live.from_day, ...imports.map((p) => p.day)].toSorted()[0]!;
     const base = {
-      schema_version: "earlyscript.corpus-import/1" as const,
+      schema_version: "earlyscript.corpus-import/2" as const,
       tool: CORPUS_IMPORT_TOOL,
       imported_at: importedAt,
       dry_run: options.dryRun === true,
       from: { dir: fromRoot, corpus_hash: source.corpus_hash },
       sources,
-      days: { from: days[0] ?? null, to_exclusive: days.length > 0 ? end : null },
+      by_source: bySource,
       files,
       skipped,
     };
-    const fromDayAfter = [live.from_day, ...planned.map((p) => p.day)].toSorted()[0]!;
-    if (files.length === 0 || options.dryRun) {
+    const toBefore = {
+      dir: toRoot,
+      corpus_hash_before: live.corpus_hash,
+      from_day_before: live.from_day,
+      from_day_after: fromDayAfter,
+    };
+    if (imports.length === 0 || options.dryRun) {
       return {
         ...base,
-        to: {
-          dir: toRoot,
-          corpus_hash_before: live.corpus_hash,
-          corpus_hash_after: null,
-          from_day_before: live.from_day,
-          from_day_after: fromDayAfter,
-        },
+        to: { ...toBefore, corpus_hash_after: null },
+        backup: null,
         record_path: null,
       };
     }
 
-    for (const { entry, bytes } of planned) {
+    // Nothing is written until the whole live corpus is copied and verified elsewhere.
+    const backup = backupCorpus(toRoot, options.backup!, live);
+
+    for (const { entry, bytes, file } of imports) {
       const target = NodePath.join(toRoot, entry.path);
-      if (!NodeFS.existsSync(target)) await writeNew(target, bytes);
+      if (file.status === "copied") await writeNew(target, bytes);
+      else if (file.status === "filled") await fillEmpty(target, bytes);
     }
-    // coverage.jsonl changes as on a capture: the former bytes go to history/ by hash.
-    const coverage = [...liveCoverage, ...planned.map(({ row }) => row)].toSorted(
+    // coverage.jsonl changes as on a capture: the former bytes go to history/ by hash. Imported
+    // rows keep the source's bytes, so the corpus reads as the source over those days; their
+    // provenance (`imported_from`) is in the manifest's repairs, which collect carries over.
+    const rows = new Map(liveRows);
+    for (const { source: id, day, row } of imports) rows.set(`${id}/${day}`, row);
+    const coverage = [...rows.values()].toSorted(
       (a, b) => a.source.localeCompare(b.source) || a.day.localeCompare(b.day),
     );
     const coverageText = jsonl(coverage);
@@ -271,11 +432,11 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
     }
     if (liveCoverageEntry) {
       const old = verifiedBytes(toRoot, liveCoverageEntry);
-      const backup = `history/${sha256(old).slice(7)}.jsonl`;
-      if (!NodeFS.existsSync(NodePath.join(toRoot, backup))) {
-        await writeNew(NodePath.join(toRoot, backup), old);
+      const kept = `history/${sha256(old).slice(7)}.jsonl`;
+      if (!NodeFS.existsSync(NodePath.join(toRoot, kept))) {
+        await writeNew(NodePath.join(toRoot, kept), old);
       }
-      nextFiles.set(backup, { path: backup, sha256: sha256(old), bytes: old.length });
+      nextFiles.set(kept, { path: kept, sha256: sha256(old), bytes: old.length });
     }
     await replace(NodePath.join(toRoot, COVERAGE), coverageText);
     nextFiles.set(COVERAGE, {
@@ -305,11 +466,18 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
         {
           repaired_at: importedAt,
           tool: CORPUS_IMPORT_TOOL,
-          change: `${files.length} day files of ${sources.join(", ")} before ${live.from_day} copied byte for byte with their coverage rows`,
+          change: `${files.length} source days of ${[...new Set(imports.map((p) => p.source))].join(", ")} the live corpus lacked, copied byte for byte with their coverage rows`,
           reason:
             "history for the weeks the engine compares, from a corpus captured with the same adapters; not part of a capture of this corpus",
           from_corpus_hash: source.corpus_hash,
-          days: base.days,
+          rows: imports.map(({ source: id, day, file }) => ({
+            source: id,
+            day,
+            sha256: file.sha256,
+            imported_from: source.corpus_hash,
+            ...(file.replaces ? { replaces: file.replaces } : {}),
+          })),
+          backup: backup.dir,
           record: recordName,
         },
       ],
@@ -317,13 +485,8 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
     const corpusHash = hashCorpus(manifest);
     const record: CorpusImportRecord = {
       ...base,
-      to: {
-        dir: toRoot,
-        corpus_hash_before: live.corpus_hash,
-        corpus_hash_after: corpusHash,
-        from_day_before: live.from_day,
-        from_day_after: fromDayAfter,
-      },
+      to: { ...toBefore, corpus_hash_after: corpusHash },
+      backup,
       record_path: NodePath.join(toRoot, recordName),
     };
     // The record first, so a manifest that names it always has it beside.
@@ -339,4 +502,27 @@ export async function importCorpus(options: CorpusImportOptions): Promise<Corpus
       await NodeFSP.unlink(lockPath);
     }
   }
+}
+
+/** The per-source table of a record, in Markdown, for the operator. */
+export function formatImportTable(record: CorpusImportRecord): string {
+  const range = (first: string | null, last: string | null) =>
+    first && last ? `${first} … ${last}` : "none";
+  const rows = record.by_source.map((s) =>
+    [
+      s.source,
+      `${s.days_before} (${range(s.first_before, s.last_before)})`,
+      s.gaps_before,
+      s.imported,
+      `${s.days_after} (${range(s.first_after, s.last_after)})`,
+      s.gaps_after,
+      s.skipped,
+    ].join(" | "),
+  );
+  return [
+    `${record.dry_run ? "dry run" : "import"}: from_day ${record.to.from_day_before} -> ${record.to.from_day_after}`,
+    "| source | days before (first … last) | gaps before | imported | days after (first … last) | gaps left | skipped |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...rows.map((row) => `| ${row} |`),
+  ].join("\n");
 }

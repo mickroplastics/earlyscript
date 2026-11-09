@@ -2405,7 +2405,7 @@ Base `42d89b4dc7`. Lo que impedía correr `engine.v3.json` en la corrida nocturn
 - **B2.** `nightlyConfig`: una configuración con `sources_cluster` conserva `sources` y `sources_cluster` del archivo; las demás reciben los interruptores, como antes.
 - **B3 y B7.** `engine check` lee `dossier/1` y `dossier/2` (`readRunAnyVersion`), cada uno con su esquema. `check --rerun` separa `reproduces_own_run` de `matches_reference` (`--expect`).
 - **B5.** `earlyscript profile import --file <perfil.json> [--expect <sha256>]` (`profileCli.ts`, `EditorialProfileService.importFile`): guarda los bytes del archivo en `editorial_profiles`.
-- **B6.** `engine corpus import --from <corpus> --to <vivo> [--sources] [--dry-run]` (`corpus-import.ts`).
+- **B6.** `engine corpus import --from <corpus> --to <vivo> (--backup <dir nuevo> | --dry-run) [--sources]` (`corpus-import.ts`). Decide por fuente y por día: copia los días que el vivo no cubre (sin fila, o `unavailable` con archivo vacío) antes del primer día de esa fuente o en un hueco interior; nunca reemplaza un archivo con contenido; copia y verifica el vivo entero en `--backup` antes de escribir; marca cada fila con `imported_from` en `repairs`; imprime la tabla por fuente.
 
 | Archivo                     | Líneas  | Cambio                                                | Motivo                          |
 | --------------------------- | ------- | ----------------------------------------------------- | ------------------------------- |
