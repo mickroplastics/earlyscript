@@ -20,7 +20,13 @@ import { ARMS, runLists } from "./lists-v3.ts";
 import { parseRelevanceModel, RELEVANCE_SCHEMA_VERSION } from "./relevance.ts";
 import { CONFIG_DIR, DEFAULT_CONFIG_PATH, loadConfig, runEngine } from "./run.ts";
 import { loadShared, prepareV3Cut } from "./run-v3.ts";
-import { canonicalUrl, type CoverageIndex, type UnitItem, weeklySeries } from "./series.ts";
+import {
+  canonicalUrl,
+  type CoverageIndex,
+  type UnitItem,
+  weekIndex,
+  weeklySeries,
+} from "./series.ts";
 import { createStackReplay } from "./stack-replay.ts";
 import {
   item,
@@ -188,6 +194,58 @@ describe("weekly series (§2.5)", () => {
         7,
       ).incomplete,
     ).toBe(false);
+  });
+
+  it("puts an item at exactly t − 7k d in W_(k−1) and one at t − 35 d in W4, and refuses t and t + 1 ms", () => {
+    for (let k = 1; k <= 5; k++) {
+      const at = CUT_MS - k * 7 * DAY_MS;
+      expect(weekIndex(CUT_MS, at), `t − ${7 * k} d`).toBe(k - 1);
+      expect(weekIndex(CUT_MS, at + 1), `t − ${7 * k} d + 1 ms`).toBe(k - 1);
+      expect(weekIndex(CUT_MS, at - 1), `t − ${7 * k} d − 1 ms`).toBe(k);
+      const expected = [0, 0, 0, 0, 0];
+      expected[k - 1] = 1;
+      const s = weeklySeries([unit(`b${k}`, "hn", at)], cohort, 7);
+      expect(s.weeks, `series at t − ${7 * k} d`).toEqual(expected);
+      expect(s.bySource.get("hn")!.weeks).toEqual(expected);
+      expect(s.life).toBe(1);
+    }
+    expect(weekIndex(CUT_MS, CUT_MS - 1)).toBe(0);
+    // Before the history window (t − 35 d − 1 ms): out of every week.
+    expect(weeklySeries([unit("old", "hn", CUT_MS - 35 * DAY_MS - 1)], cohort, 7).weeks).toEqual([
+      0, 0, 0, 0, 0,
+    ]);
+    expect(weeklySeries([unit("w0", "hn", CUT_MS - 7 * DAY_MS)], cohort, 7).sourcesW0).toEqual([
+      "hn",
+    ]);
+    expect(weeklySeries([unit("w0", "hn", CUT_MS - 7 * DAY_MS)], cohort, 7).authorsW0).toBe(1);
+    expect(() => weekIndex(CUT_MS, CUT_MS)).toThrow(/not before the cutoff/);
+    expect(() => weekIndex(CUT_MS, CUT_MS + 1)).toThrow(/not before the cutoff/);
+    expect(() => weeklySeries([unit("t", "hn", CUT_MS)], cohort, 7)).toThrow(
+      /not before the cutoff/,
+    );
+    expect(() => weeklySeries([unit("t1", "hn", CUT_MS + 1)], cohort, 7)).toThrow(
+      /not before the cutoff/,
+    );
+  });
+
+  it("matches the day the coverage marks unknown: a '?' week is the same seven days", () => {
+    const w1Days = daysBefore(daysBefore(CUT_DAY, 7)[0]!, 7);
+    const cov = coverageOf(["hn"], "2026-08-01", CUT_DAY, {
+      [`hn/${w1Days[0]}`]: "unavailable",
+      [`hn/${w1Days[6]}`]: "unavailable",
+    });
+    const c = cohortAt(cov, ["hn"], ["hn"], CUT_DAY, "2026-08-01", CMP);
+    expect(c.rows[0]!.unknown_weeks).toEqual([1]);
+    // The first instant of W1's first day and the last of its last day both fall in W1.
+    expect(weekIndex(CUT_MS, dayStart(w1Days[0]!))).toBe(1);
+    expect(weekIndex(CUT_MS, dayStart(w1Days[6]!) + DAY_MS - 1)).toBe(1);
+    const s = weeklySeries(
+      [unit("a", "hn", dayStart(w1Days[0]!)), unit("b", "hn", CUT_MS - 1)],
+      { ...cohort, comparable: ["hn"], unknown: c.unknown },
+      7,
+    );
+    expect(s.weeks).toEqual([1, 0, 0, 0, 0]);
+    expect(s.bySource.get("hn")!.weeks[1]).toBeNull();
   });
 
   it("normalizes the URL two sources share", () => {

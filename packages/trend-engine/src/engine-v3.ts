@@ -30,6 +30,7 @@ import {
   dailyCurve,
   type SeriesItem,
   type UnitItem,
+  weekIndex,
   weeklySeries,
   type WeeklySeries,
 } from "./series.ts";
@@ -723,7 +724,7 @@ export function dossierV2(analysis: CutAnalysis, placed: Placed, ctx: DossierCon
   const cov = coverageSummary(analysis.input.coverage, cohort.comparable, curveDays);
   const weekOfMs = (ms: number) => {
     if (ms < cohort.historyFromMs) return null;
-    const k = Math.floor((analysis.cutoffMs - ms) / (WEEK_DAYS * DAY_MS));
+    const k = weekIndex(analysis.cutoffMs, ms);
     return k < SERIES_WEEKS ? k : null;
   };
   const sourceOrder = [...topic.series.bySource]
