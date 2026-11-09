@@ -313,16 +313,29 @@ describe("labelling order", () => {
 });
 
 describe("text and judge versions of the development scoring", () => {
-  /** A ledger up to v3_judge_diag with the coordinator's two addenda (9 Nov). */
+  /**
+   * A ledger up to v3_judge_diag with the coordinator's two addenda (9 Nov). Every entry
+   * written here shares one millisecond, so the order in the ledger must decide.
+   */
   function withAddenda() {
     const r = premanifested();
-    appendV3(r.root, "v3_oracle", oraclePayload(r.root));
+    const instant = new Date(readV3Ledger(r.root).at(-1)!.at);
+    const now = () => instant;
+    appendV3(r.root, "v3_oracle", oraclePayload(r.root), now);
     const judgeV2 = NodePath.join(r.root, "files", "judge.v2.json");
     NodeFS.writeFileSync(judgeV2, '{"version":"judge.util.v1","discrepan":"si/no"}');
-    appendV3(r.root, "v3_premanifest_2", {
-      campos: { judge_util_v1_sha256_v2: fileSha256(judgeV2), judge_util_v1_sha256_anterior: "x" },
-    });
-    appendV3(r.root, "v3_judge_diag", { fallido: false, kappa: 0.87, acuerdo: 0.97 });
+    appendV3(
+      r.root,
+      "v3_premanifest_2",
+      {
+        campos: {
+          judge_util_v1_sha256_v2: fileSha256(judgeV2),
+          judge_util_v1_sha256_anterior: "x",
+        },
+      },
+      now,
+    );
+    appendV3(r.root, "v3_judge_diag", { fallido: false, kappa: 0.87, acuerdo: 0.97 }, now);
     const cardV2 = NodePath.join(r.root, "files", "card.v2.ts");
     NodeFS.writeFileSync(
       cardV2,
@@ -336,10 +349,15 @@ describe("text and judge versions of the development scoring", () => {
       judge_util_v1_sha256_v2_previo: fileSha256(judgeV2),
       judge_util_v1_sha256_v3: fileSha256(judgeV3),
     };
-    appendV3(r.root, "exposicion", {
-      tipo: "adenda_premanifest",
-      texto: `Adenda 3 al pre-manifiesto: ${JSON.stringify(fields)}`,
-    });
+    appendV3(
+      r.root,
+      "exposicion",
+      {
+        tipo: "adenda_premanifest",
+        texto: `Adenda 3 al pre-manifiesto: ${JSON.stringify(fields)}`,
+      },
+      now,
+    );
     const metrics = NodePath.join(r.root, "metricas.json");
     NodeFS.writeFileSync(
       metrics,
@@ -381,7 +399,7 @@ describe("text and judge versions of the development scoring", () => {
       judge_util_sha256: fileSha256(r.judgeV3),
     });
     const diag = ledger.find((e) => e.kind === "v3_judge_diag")!;
-    expect(versionBefore(versions, diag.at)).toMatchObject({
+    expect(versionBefore(ledger, diag)).toMatchObject({
       card_text_file_sha256: fileSha256(r.premanifest.cardText),
       judge_util_sha256: fileSha256(r.judgeV2),
     });
