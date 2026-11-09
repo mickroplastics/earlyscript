@@ -2,7 +2,8 @@
 // `engine v3 judge-diag`: fit diagnosis of the two utility judges on the 136 eligible cards of the
 // P2 partition (contract v4.2 §3, second declared use of the 60). Target fit yes/no: Miguel's yes
 // (core or adjacent) against no and "unsure"; a judge's yes is fit core or adjacent; an invalid
-// answer counts as no; the combined fit is the judges' agreement and "discrepan" counts as no.
+// answer counts as no; "discrepan" is defined on that yes/no: the combined yes needs both judges'
+// yes (premanifest_2; the three-value combined fit is still stored and reported as descriptive).
 // Phases: `calibracion` (the 76, may be repeated while the rubric is adjusted), `estabilidad`
 // (10 calibration cards judged again with reordered text) and `validacion` (the 60, once: a lock
 // written before the first call refuses any second run, in the output and in the cache).
@@ -43,8 +44,9 @@ export interface DiagRow {
 const judgeYes = (a: StoredAnswer | undefined): YesNo =>
   a?.valid && (a.answer?.fit === "core" || a.answer?.fit === "adjacent") ? "yes" : "no";
 
-const combinedYes = (c: CombinedAnswer): YesNo =>
-  c.fit === "core" || c.fit === "adjacent" ? "yes" : "no";
+/** Both judges say yes (core or adjacent, either grade); a "no", an invalid answer or a split is no. */
+const combinedYes = (c: CombinedAnswer, judges: ReadonlyArray<string>): YesNo =>
+  judges.every((j) => judgeYes(c.judges[j]) === "yes") ? "yes" : "no";
 
 export function kappa(pairs: ReadonlyArray<{ a: YesNo; b: YesNo }>) {
   const n = pairs.length;
@@ -149,16 +151,17 @@ export function diagnose(
     ]),
   );
   const combined = metrics(rows, (r) => ({
-    yes: combinedYes(r.combined),
+    yes: combinedYes(r.combined, judges),
     valid: r.combined.utility !== null,
   }));
-  // Descriptive only: both judges say yes, whatever the grade (core against adjacent is not a "no").
-  const bothYes = kappa(
+  // Descriptive only, the rule before premanifest_2: agreement on the three-value fit.
+  const threeValue = kappa(
     rows.map((r) => ({
       a: r.miguel,
-      b: judges.every((j) => judgeYes(r.combined.judges[j]) === "yes")
-        ? ("yes" as const)
-        : ("no" as const),
+      b:
+        r.combined.fit === "core" || r.combined.fit === "adjacent"
+          ? ("yes" as const)
+          : ("no" as const),
     })),
   );
   const failed = judges.filter((j) => perJudge[j]!.valid < validRequired);
@@ -170,7 +173,7 @@ export function diagnose(
   return {
     judges: perJudge,
     combined,
-    combined_both_yes_descriptive: bothYes,
+    combined_three_value_descriptive: threeValue,
     failed: failed.length > 0,
     failed_reason: failed.length
       ? `diagnóstico fallido: ${failed.map((j) => `${j} ${perJudge[j]!.valid}/${validRequired} válidas`).join(", ")}`

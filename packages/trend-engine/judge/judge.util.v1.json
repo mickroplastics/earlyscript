@@ -25,7 +25,7 @@
   },
   "combine": {
     "utility": "mean of the two judges; null unless both answered validly",
-    "fit": "the common value when both agree; 'discrepan' when they differ or one is invalid"
+    "fit": "stored: the common value when both agree, 'discrepan' when they differ or one is invalid; fit diagnosis: yes only when both judges say yes (core or adjacent, either grade), 'discrepan' on that yes/no counts as no"
   },
   "batch_size": 12,
   "max_text_chars": 4000,

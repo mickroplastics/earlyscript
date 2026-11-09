@@ -580,6 +580,19 @@ describe("fit diagnosis", () => {
     expect(d.calibrated).toBe(false);
     expect(d.failed_reason).toContain("opus 2/3");
     expect(DIAG_RULE.agreement_min).toBe(0.917);
+    // core against adjacent is two yes: a yes in the diagnosis, "discrepan" in the stored fit.
+    const split = [
+      {
+        id: "4",
+        family: "f4",
+        miguel: "yes" as const,
+        combined: combine("4", { opus: ans("core"), sol: ans("adjacent") }),
+      },
+    ];
+    const s = diagnose(split, ["opus", "sol"], 1);
+    expect(split[0]!.combined.fit).toBe("discrepan");
+    expect(s.combined.confusion.miguel_yes_judge_yes).toBe(1);
+    expect(s.combined_three_value_descriptive.agreement).toBe(0);
   });
 
   it("family bootstrap is deterministic", () => {
