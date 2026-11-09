@@ -303,6 +303,7 @@ export const TopicMovement = Schema.Struct({
         source: SourceId,
         title: Schema.String,
         permalink: Schema.String,
+        published_at: Schema.String,
       }),
     ),
   }),
@@ -313,6 +314,9 @@ export const TopicMovement = Schema.Struct({
     /** Weeks among W0..W4 with n ≥ perennial_week_min. */
     heavy_weeks: Schema.Int,
     perennial: Schema.Boolean,
+    /** Perennial antecedent, or n(vida) ≥ 30 with some week before W1 with n ≥ 5 (`saturated_rule`). */
+    saturated: Schema.Boolean,
+    saturated_rule: Schema.String,
     /** "ya decidido el <fecha>": an earlier decision on the same topic; null until decisions are stored. */
     decided_at: Schema.NullOr(Schema.String),
   }),
