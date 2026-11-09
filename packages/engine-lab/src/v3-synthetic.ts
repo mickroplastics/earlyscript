@@ -61,6 +61,7 @@ export function syntheticItems(): Array<SynItem> {
   authors.forEach((author, k) =>
     add("beta", "hn", inclusiveDays("2026-10-10", "2026-10-16")[k]!, {
       author,
+      entities: [`github:beta/repo${k}`],
       url:
         k === 6
           ? "https://example.com/beta/shared"

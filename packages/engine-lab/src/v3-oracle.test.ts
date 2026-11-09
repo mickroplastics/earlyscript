@@ -87,7 +87,7 @@ describe("oracle p4 on a synthetic cut", () => {
     const authors = ["x", "y", "z", "x", "y"];
     const l = labelOf([
       item("hn", "2026-10-05"),
-      ...days(5).map((d, j) => item("hn", d, { author: authors[j]! })),
+      ...days(5).map((d, j) => item("hn", d, { author: authors[j]!, entities: [`hf:m/${j}`] })),
     ]);
     expect(l.label).toBe("despegue");
     expect(l.corroboration).toBe("autores");
@@ -107,6 +107,22 @@ describe("oracle p4 on a synthetic cut", () => {
         .concat(item("hn", "2026-10-05")),
     );
     expect(unlinked.reasons).toContain("sin_corroboracion");
+    // Strict reading: an external URL alone is no linked entity.
+    const urlOnly = labelOf(
+      days(6)
+        .map((d, j) =>
+          item("hn", d, { author: `u${j % 3}`, external_url: `https://blog.example/${j}` }),
+        )
+        .concat(item("hn", "2026-10-05")),
+    );
+    expect(urlOnly.label).toBe("no");
+    expect(urlOnly.reasons).toContain("sin_corroboracion");
+    const otherEntity = labelOf(
+      days(6)
+        .map((d, j) => item("hn", d, { author: `u${j % 3}`, entities: [`npm:pkg${j}`] }))
+        .concat(item("hn", "2026-10-05")),
+    );
+    expect(otherEntity.reasons).toContain("sin_corroboracion");
     const entity = labelOf(
       days(6)
         .map((d, j) =>

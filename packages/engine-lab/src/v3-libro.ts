@@ -331,6 +331,8 @@ export const V3_VARIANT_DEFINITIONS = {
     parametros: VARIANT_PARAMETERS.V4,
   },
   empate: "V1 > V2 > V3 > V4",
+  empate_menos_parametros:
+    "declarado (coordinador, 9 nov): con juez calibrado, en empate de U@10 (< 0,05) gana la de menos parámetros, así que V3 (4) gana antes que V1, V2 y V4 (5); entre iguales, V1 > V2 > V3 > V4",
 } as const;
 
 export const V3_REFERENCE_DEFINITIONS = {
@@ -416,8 +418,8 @@ const need = (path: string, what: string) => {
 /** Every hash and definition of v3_premanifest, computed from the files (read only). */
 export function computePremanifest(files: PremanifestFiles) {
   const contract = NodeFS.readFileSync(need(files.contract, "The contract"), "utf8");
-  if (!/corrección 4\.2/i.test(contract))
-    fail("invalid-change", "The contract carries no correction 4.2.");
+  if (!/^# .*versión 4\.2\b/m.test(contract))
+    fail("invalid-change", "The contract's title is not versión 4.2.");
   const cardText = NodeFS.readFileSync(need(files.cardText, "cardTextV3's file"), "utf8");
   let cardSource: string;
   try {
@@ -434,7 +436,7 @@ export function computePremanifest(files: PremanifestFiles) {
     contrato: {
       path: NodePath.resolve(files.contract),
       sha256: fileSha256(files.contract),
-      version: "4.2 (encabezado 4.1 más la sección 'Decisión 1 de Miguel y corrección 4.2')",
+      version: "4.2",
     },
     rubrica: { path: NodePath.resolve(files.rubric), sha256: fileSha256(files.rubric) },
     card_text_v3: {
@@ -511,6 +513,12 @@ export function premanifestPayload(options: {
   };
 }
 
+/** Coordinator, 9 Nov: P1's sealed cutoffs inside v3's period and what v3 does with them. */
+export const V3_SEALED_CUTOFFS_NOTE = {
+  cortes: ["2026-10-27", "2026-10-30"],
+  uso: "solo producen listas para la ventana de captación [max(T−14, 4 oct), min(T+6, 30 oct)]; no son cortes de despegue del oráculo p4 ni de U@10, y no tienen etiquetas p4",
+} as const;
+
 /** v3_oracle: the p4 definition and the identity anchors; refused once a p4 label exists. */
 export function oraclePayload(root: string) {
   const labels = p4LabelFiles(root);
@@ -524,6 +532,7 @@ export function oraclePayload(root: string) {
     sha256: p4DefinitionHash(),
     anclas_identidad: P4_IDENTITY_ANCHORS,
     anclas_sha256: sha256(canonicalJson(P4_IDENTITY_ANCHORS)),
+    cortes_sellados_p1: V3_SEALED_CUTOFFS_NOTE,
   };
 }
 

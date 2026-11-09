@@ -47,7 +47,7 @@ export const P4_DEFINITION = {
     autores:
       ">= 3 autores distintos (sin mayúsculas, no vacíos) entre los ítems de s en [t, t+7) con entidad enlazada",
     entidad_enlazada:
-      "entities con prefijo github:, arxiv: o hf:, o external_url distinta del permalink del ítem",
+      "estricta: solo entities con prefijo github:, arxiv: o hf:; una external_url cualquiera no cuenta (coordinador, 9 nov)",
     min_fuentes: 2,
     min_autores: 3,
   },
@@ -112,7 +112,6 @@ const ENTITY = /^(github|arxiv|hf):/;
 
 export function indexItem(item: CorpusItem): IndexedItem {
   const url = canonicalUrl(item.external_url);
-  const permalink = canonicalUrl(item.permalink);
   const ms = Date.parse(item.published_at);
   if (Number.isNaN(ms)) throw new Error(`${item.id}: no published_at`);
   return {
@@ -121,8 +120,7 @@ export function indexItem(item: CorpusItem): IndexedItem {
     ms,
     unit: url ?? `id:${item.id}`,
     author: (item.author ?? "").trim().toLowerCase(),
-    linked:
-      (item.entities ?? []).some((e) => ENTITY.test(e)) || (url !== null && url !== permalink),
+    linked: (item.entities ?? []).some((e) => ENTITY.test(e)),
   };
 }
 

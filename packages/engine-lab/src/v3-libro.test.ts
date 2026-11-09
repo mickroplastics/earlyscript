@@ -40,7 +40,10 @@ function freshRoot() {
     return NodePath.join(files, name);
   };
   const premanifest: PremanifestFiles = {
-    contract: write("diseno-v3-v4.md", "# Motor v3\n\n## Decisión 1 de Miguel y corrección 4.2\n"),
+    contract: write(
+      "diseno-v3-v4.md",
+      "# Motor v3: contrato consolidado, versión 4.2\n\n## Decisión 1 de Miguel y corrección 4.2\n",
+    ),
     rubric: write("judge.util.v1.json", '{"version":"judge.util.v1"}'),
     cardText: write(
       "card.ts",
@@ -237,7 +240,10 @@ describe("labelling order", () => {
         ctx(r.root, { corpus: "/x", coverage: "/x", bolsas: "/x", listas: "/x" }),
       ),
     ).rejects.toThrow(/before the v3_oracle/);
-    appendV3(r.root, "v3_oracle", oraclePayload(r.root));
+    const oracle = oraclePayload(r.root);
+    expect(oracle.cortes_sellados_p1.cortes).toEqual(["2026-10-27", "2026-10-30"]);
+    expect(oracle.definicion.corroboracion.entidad_enlazada).toMatch(/^estricta/);
+    appendV3(r.root, "v3_oracle", oracle);
     expect(() => assertCanLabel(readV3Ledger(r.root))).not.toThrow();
   });
 
