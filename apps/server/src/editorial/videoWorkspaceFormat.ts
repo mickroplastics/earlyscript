@@ -175,8 +175,8 @@ export function renderDossierMarkdown(input: {
   return sealDossierFile(`${lines.join("\n").trimEnd()}\n`);
 }
 
-/** Item ids as `checkScript` reads them, Hugging Face's `itm_hf_model_<org>/<name-1.5>` included. */
-const EVIDENCE_HEADING = /^### \[(itm_[a-z][a-z0-9-]*_[A-Za-z0-9_./-]*[A-Za-z0-9_-])\]/gm;
+/** Item ids as `checkScript` reads them, with Hugging Face's "/" and "." and npm's "@". */
+const EVIDENCE_HEADING = /^### \[(itm_[a-z][a-z0-9-]*_[A-Za-z0-9_.@/-]*[A-Za-z0-9_-])\]/gm;
 
 const FRONTMATTER_END = "\n---\n";
 

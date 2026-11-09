@@ -296,16 +296,23 @@ describe("renderDossierMarkdown", () => {
     }
   });
 
-  it("gives script_check Hugging Face model ids, which carry a slash and dots", () => {
+  it("gives script_check Hugging Face and npm ids, which carry slashes, dots and at signs", () => {
     const hf = "itm_hf_model_nvidia/Nemotron-3.5-Embed-8B-BF16";
+    const npm = "itm_npm_@motrix/cli@0.5.0";
     const text = renderDossierMarkdown({
-      dossier: { ...DOSSIER, evidence: [{ ...item(1), itemId: hf, source: "huggingface" }] },
+      dossier: {
+        ...DOSSIER,
+        evidence: [
+          { ...item(1), itemId: hf, source: "huggingface" },
+          { ...item(2), itemId: npm, source: "npm" },
+        ],
+      },
       dossierHash: "sha256:one",
       trendKey: null,
     });
     assert.deepStrictEqual(
       dossierEvidenceOf(text, { dossierId: "dos_terra", dossierHash: "sha256:one" }),
-      { evidence: [{ item_id: hf }] },
+      { evidence: [{ item_id: hf }, { item_id: npm }] },
     );
   });
 
