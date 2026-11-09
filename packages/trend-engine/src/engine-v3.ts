@@ -61,6 +61,22 @@ export const V3_RANK_VALUES = [
   "log_authors_7d",
 ] as const;
 
+export const SATURATED_RULE =
+  "perennial antecedent, or n(vida) >= perennial_life (30) with some week before W1 (W2..W4) with n >= perennial_week_min (5)";
+
+/** Saturation for the card (Opus C): the perennial antecedent or its life clause, stated apart. */
+export function saturated(
+  weeks: ReadonlyArray<number>,
+  life: number,
+  perennial: "heavy_weeks" | "life" | null,
+  cfg: TrajectoryConfig,
+): boolean {
+  return (
+    perennial !== null ||
+    (life >= cfg.perennial_life && weeks.slice(2, 5).some((n) => n >= cfg.perennial_week_min))
+  );
+}
+
 export interface StackedTopic {
   readonly id: string;
   /** Members published before the cutoff, in stacking order. */
@@ -773,7 +789,13 @@ export function dossierV2(analysis: CutAnalysis, placed: Placed, ctx: DossierCon
       return true;
     })
     .slice(0, 2)
-    .map(({ m }) => ({ item_id: m.id, source: m.source, title: m.title, permalink: m.permalink }));
+    .map(({ m }) => ({
+      item_id: m.id,
+      source: m.source,
+      title: m.title,
+      permalink: m.permalink,
+      published_at: m.published_at,
+    }));
   const firsts = [...topic.series.firstBySource]
     .map(([source, first]) => ({ source, ...first }))
     .toSorted((a, b) => a.ms - b.ms || (a.source < b.source ? -1 : 1));
@@ -894,6 +916,8 @@ export function dossierV2(analysis: CutAnalysis, placed: Placed, ctx: DossierCon
         items_total: topic.members.length,
         heavy_weeks: heavyWeeks(topic.series.weeks, analysis.cfg),
         perennial: topic.perennial !== null,
+        saturated: saturated(topic.series.weeks, topic.series.life, topic.perennial, analysis.cfg),
+        saturated_rule: SATURATED_RULE,
         decided_at: decision ? decision.decided_at : null,
       },
       relevance: {

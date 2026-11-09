@@ -384,8 +384,13 @@ describe("engine.v3 run", () => {
     ]);
     expect(zephyr.movement.first_source?.source).toBe("hn");
     expect(zephyr.movement.fit.matched_terms).toContain("agent");
+    expect(zephyr.movement.saturation.saturated).toBe(false);
+    expect(zephyr.movement.fit.headlines.every((h) => h.published_at < CUTOFF)).toBe(true);
     const garden = dossiers.find((d) => d.trend.top_terms.includes("tomato"));
-    if (garden) expect(garden.movement.section).toBe("background");
+    if (garden) {
+      expect(garden.movement.section).toBe("background");
+      expect(garden.movement.saturation.saturated).toBe(true);
+    }
     expect(dossiers.some((d) => d.trend.top_terms.includes("football"))).toBe(false);
     for (const d of dossiers)
       for (const e of d.evidence)
