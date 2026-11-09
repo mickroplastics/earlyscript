@@ -330,4 +330,6 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.main) await main();
+// The engine CLI imports this module (editorial-cli.ts), and in the bundled engine every inlined
+// module shares dist/cli.mjs, where import.meta.main is true: only run when this file is the entry.
+if (import.meta.main && NodePath.basename(import.meta.filename) === "judge.ts") await main();

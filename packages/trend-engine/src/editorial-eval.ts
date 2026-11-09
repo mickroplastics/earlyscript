@@ -86,29 +86,33 @@ export const LATE_POPULARITY_SOURCES: ReadonlyArray<SourceId> = ["github", "hugg
 
 export const DEFAULT_TOP = 5;
 
+let evalSourceHashMemo: string | undefined;
 /**
- * SHA-256 of the engine's source files (src without tests, tools, testkit and this
- * evaluation): a reused run must come from the same code, not only the same configuration.
+ * SHA-256 of src/editorial-*.ts and src/tools/*.ts without tests, recorded by the freeze.
+ * Computed on first use, never at load: the bundled engine has no src/tools (B4).
  */
-/**
- * SHA-256 of the evaluation's own code: src/editorial-*.ts and src/tools/*.ts without tests
- * (Sol, motor-v2 S2). The freeze records it with the engine's; a changed scorer or card
- * generator no longer passes for the frozen one.
- */
-export const EVAL_SOURCE_HASH = (() => {
+export function evalSourceHash(): string {
+  if (evalSourceHashMemo !== undefined) return evalSourceHashMemo;
   const root = import.meta.dirname;
+  const toolsDir = NodePath.join(root, "tools");
+  if (!NodeFS.existsSync(toolsDir)) {
+    throw new Error(
+      `the evaluation code hash needs the engine's source checkout (${toolsDir} is missing)`,
+    );
+  }
   const files = [
     ...NodeFS.readdirSync(root).filter((name) => /^editorial-.*\.ts$/.test(name)),
-    ...NodeFS.readdirSync(NodePath.join(root, "tools")).map((name) => `tools/${name}`),
+    ...NodeFS.readdirSync(toolsDir).map((name) => `tools/${name}`),
   ]
     .filter((path) => path.endsWith(".ts") && !path.endsWith(".test.ts"))
     .toSorted();
-  return sha256(
+  evalSourceHashMemo = sha256(
     files
       .map((path) => `${path}\n${sha256(NodeFS.readFileSync(NodePath.join(root, path)))}`)
       .join("\n"),
   );
-})();
+  return evalSourceHashMemo;
+}
 
 /** The git checkout this code runs from: commit, tree and whether tracked files are unchanged. */
 export function checkoutIdentity(): { commit: string; tree: string; clean: boolean } | null {
@@ -143,7 +147,14 @@ export function assertCheckout(freeze: LedgerEntry) {
   }
 }
 
-export const ENGINE_SOURCE_HASH = (() => {
+let engineSourceHashMemo: string | undefined;
+/**
+ * SHA-256 of the engine's source files (src without tests, tools, testkit and this
+ * evaluation): a reused run must come from the same code, not only the same configuration.
+ * Computed on first use, like `evalSourceHash`, so that loading the bundled engine reads no src.
+ */
+export function engineSourceHash(): string {
+  if (engineSourceHashMemo !== undefined) return engineSourceHashMemo;
   const root = import.meta.dirname;
   const files: Array<string> = [];
   const walk = (rel: string) => {
@@ -157,13 +168,14 @@ export const ENGINE_SOURCE_HASH = (() => {
     }
   };
   walk("");
-  return sha256(
+  engineSourceHashMemo = sha256(
     files
       .toSorted()
       .map((path) => `${path}\n${sha256(NodeFS.readFileSync(NodePath.join(root, path)))}`)
       .join("\n"),
   );
-})();
+  return engineSourceHashMemo;
+}
 export const DEFAULT_CARD_SEED = 20_261_105;
 export const REFERENCE_CONFIG_DIR = NodePath.join(import.meta.dirname, "../config");
 
@@ -971,7 +983,7 @@ export async function runPool(options: PoolOptions): Promise<PoolResult> {
       followup_threshold: Math.min(...thresholds),
       text: first.text,
       centroids_hash: sha256(canonicalJson(centroids)),
-      engine_source_hash: ENGINE_SOURCE_HASH,
+      engine_source_hash: engineSourceHash(),
       registries: Object.fromEntries(
         registries.map(({ name, registry }) => [name, registry.registry_hash]),
       ),
@@ -1113,7 +1125,7 @@ async function poolRun(args: {
     profileHash: args.profileHash,
     embedding: args.embedder.key,
     corpus: manifest.corpus_hash,
-    engine: ENGINE_SOURCE_HASH,
+    engine: engineSourceHash(),
   });
   const dir = NodePath.join(options.outDir, "runs", cutoffAt.slice(0, 10), configHash.slice(7, 19));
   const sidecar = NodePath.join(dir, "emitted.json");
@@ -1378,7 +1390,7 @@ export function verifyFreeze(
   if (freeze["engine_source_hash"] !== inputs.engine_source_hash) {
     throw new Error("engine source differs from the freeze");
   }
-  if (freeze["eval_source_hash"] !== EVAL_SOURCE_HASH) {
+  if (freeze["eval_source_hash"] !== evalSourceHash()) {
     throw new Error("evaluation code (editorial-*.ts, tools/*) differs from the freeze");
   }
   if (canonicalJson(freeze["registries"] ?? {}) !== canonicalJson(inputs.registries)) {
@@ -1423,8 +1435,8 @@ export function freezeEntry(options: {
     kind: "freeze",
     arms: armIdentities(options.arms, options.sources).map(({ config: _config, ...id }) => id),
     profile_hash: fileSha256(options.profilePath),
-    engine_source_hash: ENGINE_SOURCE_HASH,
-    eval_source_hash: EVAL_SOURCE_HASH,
+    engine_source_hash: engineSourceHash(),
+    eval_source_hash: evalSourceHash(),
     git: checkoutIdentity(),
     registries: Object.fromEntries(
       Object.entries(options.registries ?? {})

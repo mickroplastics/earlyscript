@@ -5,10 +5,12 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as FileSystem from "effect/FileSystem";
 import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { build } from "vite-plus/pack";
 
 /** Directory under the app's resources; engineProcess.ts names the same one. */
@@ -48,6 +50,9 @@ const PackageManifest = Schema.Struct({
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(PackageManifest));
+const decodeModelStatus = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ status: Schema.String })),
+);
 
 export const stageTrendEngine = Effect.fn("stageTrendEngine")(function* (input: {
   readonly repoRoot: string;
@@ -162,7 +167,50 @@ export const stageTrendEngine = Effect.fn("stageTrendEngine")(function* (input: 
       message: `onnxruntime-node has no binary for ${hostPlatform}-${hostArch}`,
     });
   }
+  yield* smokeTrendEngine(outDir);
   yield* Effect.log(`[desktop-artifact] Bundled the trend engine into ${outDir}.`);
+});
+
+/**
+ * The bundle must start: `model status` loads every module of dist/cli.mjs and prints one JSON
+ * line. A module that reads src at load or runs its own main (B4) fails here, not in the app.
+ */
+export const smokeTrendEngine = (outDir: string) => Effect.scoped(smokeTrendEngineScoped(outDir));
+const smokeTrendEngineScoped = Effect.fn("smokeTrendEngine")(function* (outDir: string) {
+  const path = yield* Path.Path;
+  const node = yield* HostProcess.ExecutablePath;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(
+    ChildProcess.make(
+      node,
+      [
+        path.join(outDir, "dist/cli.mjs"),
+        "model",
+        "status",
+        "--models",
+        path.join(outDir, "smoke-models-absent"),
+      ],
+      { cwd: outDir },
+    ),
+  );
+  const text = (stream: Stream.Stream<Uint8Array, PlatformError>) =>
+    stream.pipe(
+      Stream.decodeText(),
+      Stream.runFold(
+        () => "",
+        (acc, chunk) => acc + chunk,
+      ),
+    );
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [text(child.stdout), text(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+    { concurrency: "unbounded" },
+  );
+  const status = yield* decodeModelStatus(stdout.trim()).pipe(Effect.option);
+  if (exitCode !== 0 || status._tag === "None") {
+    return yield* new TrendEngineStageError({
+      message: `the bundled engine does not start (exit ${exitCode}): ${stderr.trim().slice(-2000) || stdout.trim()}`,
+    });
+  }
 });
 
 if (import.meta.main) {
