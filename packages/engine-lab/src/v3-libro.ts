@@ -26,7 +26,14 @@ import {
   ledgerLineShas,
   readLedger,
 } from "./v3-ledger.ts";
-import { V3_CAPTURE, V3_ELIGIBILITY, V3_RESAMPLING, V3_RESAMPLING_HASH } from "./v3-metrics.ts";
+import {
+  DISCARD_POLICY,
+  DISCARD_POLICY_HASH,
+  V3_CAPTURE,
+  V3_ELIGIBILITY,
+  V3_RESAMPLING,
+  V3_RESAMPLING_HASH,
+} from "./v3-metrics.ts";
 import {
   P4_DEFINITION,
   P4_IDENTITY_ANCHORS,
@@ -738,6 +745,7 @@ export function devResultsPayload(
   const decision = decide({ ...input, versions: versionsUsed });
   return {
     versiones_texto_y_juez: versionsUsed,
+    politica_descartes: { definicion: DISCARD_POLICY, sha256: DISCARD_POLICY_HASH },
     metricas: { path: NodePath.resolve(metricsPath), sha256: fileSha256(metricsPath) },
     decide_input: input,
     decision,

@@ -427,8 +427,56 @@ export function u10Contrast(
   };
 }
 
-const isExclusion = (reason: string) =>
-  (V3_ELIGIBILITY.razones_de_exclusion as ReadonlyArray<string>).includes(reason.toLowerCase());
+/**
+ * "Descartes solo por exclusión" (§5d) over A's `discards` (coordinator, 9 Nov): allowed are
+ * exclude, generic and the rule-driven keys of `other`; incomplete must be 0; any other key above
+ * 0 makes the list not eligible.
+ */
+export const DISCARD_POLICY = {
+  definicion:
+    "un descarte es la retirada de un candidato admitido por una razón distinta de las reglas estructurales del contrato",
+  permitidos: {
+    exclude: "único descarte autorizado (§2.8)",
+    generic: "marcados y al final (§2.8)",
+  },
+  other_permitidos: {
+    estable_without_perennial: "los estables no se emiten (§2.7, §2.9)",
+    en_caida_without_pending_decision: "en caída solo con decisión previa pendiente (§2.9)",
+    folded_by_topic_identity: "dedup sameTopic (§2.9)",
+    admitted_below_list: "tope de 10 (§2.9)",
+  },
+  debe_ser_cero: { incomplete: "los incompletos se emiten si su movimiento se calcula (§2.5)" },
+  recuentos: { candidates: "recuento, no descarte", exclude_by_topic: "desglose de exclude" },
+  otra_clave: "cualquier otra clave de other > 0, o desconocida > 0: no elegible",
+  sin_campo: "lista sin discards: no elegible",
+} as const;
+export const DISCARD_POLICY_HASH = sha256(canonicalJson(DISCARD_POLICY));
+
+const positive = (v: unknown): boolean =>
+  typeof v === "number"
+    ? v > 0
+    : v !== null && typeof v === "object"
+      ? Object.values(v).some(positive)
+      : false;
+
+/** The keys of one list's `discards` that break DISCARD_POLICY (empty: only allowed ones). */
+export function discardViolations(discards: Readonly<Record<string, unknown>>): Array<string> {
+  const out: Array<string> = [];
+  for (const [key, value] of Object.entries(discards)) {
+    if (key in DISCARD_POLICY.permitidos || key in DISCARD_POLICY.recuentos) continue;
+    if (key in DISCARD_POLICY.debe_ser_cero) {
+      if (positive(value)) out.push(key);
+      continue;
+    }
+    if (key === "other" && value !== null && typeof value === "object") {
+      for (const [sub, n] of Object.entries(value))
+        if (!(sub in DISCARD_POLICY.other_permitidos) && positive(n)) out.push(`other.${sub}`);
+      continue;
+    }
+    if (positive(value)) out.push(key);
+  }
+  return out.toSorted();
+}
 
 export function eligibility(
   listsOfVariant: ReadonlyMap<string, V3List | null>,
@@ -449,8 +497,7 @@ export function eligibility(
             moving.length,
     );
     if (list && (list.discards === null || list.discards === undefined)) missingDiscards++;
-    for (const [reason, n] of Object.entries(list?.discards ?? {}))
-      if (n > 0 && !isExclusion(reason)) otherDiscards.add(reason);
+    for (const reason of discardViolations(list?.discards ?? {})) otherDiscards.add(reason);
   }
   const medEmitted = median(emitted) ?? 0;
   const medShare = median(shares) ?? 0;
@@ -461,6 +508,7 @@ export function eligibility(
     discards_only_exclusion: discardsOk,
     other_discard_reasons: [...otherDiscards].toSorted(),
     cutoffs_without_discards_field: missingDiscards,
+    discard_policy_sha256: DISCARD_POLICY_HASH,
     eligible:
       medEmitted >= V3_ELIGIBILITY.min_emitidos &&
       medShare >= V3_ELIGIBILITY.min_share_include &&

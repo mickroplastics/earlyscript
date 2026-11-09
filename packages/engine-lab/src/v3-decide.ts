@@ -236,6 +236,9 @@ export function decide(input: DecideInput): Decision {
   const recallEvaluable = input.recall.takeoffs >= 15 && input.recall.inc040_denominator > 0;
   if (!recallEvaluable) rows.push("R1");
   rows.push("E1");
+  notes.push(
+    "E1, descartes solo por exclusión (DISCARD_POLICY, coordinador 9 nov): permitidos exclude, generic y en other estable_without_perennial, en_caida_without_pending_decision, folded_by_topic_identity y admitted_below_list; incomplete debe ser 0; cualquier otra clave > 0 o lista sin discards: no elegible; candidates es un recuento.",
+  );
   const eligible = ORDER.filter((v) => input.variants[v].eligible);
   const base = {
     judge_calibrated: calibrated,

@@ -112,6 +112,7 @@ export interface V3Topic {
   readonly topic_id: string;
   readonly item_ids: ReadonlyArray<string>;
   readonly include_score?: number | null;
+  readonly exclude_score?: number | null;
 }
 
 /** Every topic of the v3 clustering at a cutoff, singletons included (A: v3/a/bolsas/<day>.json). */
@@ -128,7 +129,23 @@ export interface V3List {
   readonly moving: ReadonlyArray<V3Topic>;
   readonly background?: ReadonlyArray<V3Topic>;
   /** Topics left out and why: reason -> count (structural eligibility, §5d). */
-  readonly discards?: Readonly<Record<string, number>> | null;
+  readonly discards?: Readonly<Record<string, unknown>> | null;
+}
+
+const score = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/**
+ * A list entry's include and exclude scores: the topic's own, else its card's
+ * `card.profile_fit` (A's dossier/2). Missing stays null and counts as include < 0,40
+ * (coordinator, 9 Nov): the list is not invalid.
+ */
+export function withProfileFit(topic: V3Topic): V3Topic {
+  const fit = (topic as { card?: { profile_fit?: Record<string, unknown> } }).card?.profile_fit;
+  return {
+    ...topic,
+    include_score: score(topic.include_score) ?? score(fit?.["include_score"]),
+    exclude_score: score(topic.exclude_score) ?? score(fit?.["exclude_score"]),
+  };
 }
 
 /** A's list file, read with the field names A may use (moving / en_movimiento / topics). */
@@ -140,12 +157,12 @@ export function readListFile(path: string): V3List {
   };
   const moving = pick("moving", "en_movimiento", "topics");
   if (!moving) throw new Error(`${path}: no moving list (moving, en_movimiento or topics)`);
-  const discards = (raw["discards"] ?? raw["descartes"] ?? null) as Record<string, number> | null;
+  const discards = (raw["discards"] ?? raw["descartes"] ?? null) as Record<string, unknown> | null;
   return {
     cutoff: String(raw["cutoff"] ?? NodePath.basename(path, ".json")).slice(0, 10),
     arm: String(raw["arm"] ?? NodePath.basename(NodePath.dirname(path))),
-    moving,
-    background: pick("background", "de_fondo") ?? [],
+    moving: moving.map(withProfileFit),
+    background: (pick("background", "de_fondo") ?? []).map(withProfileFit),
     discards,
   };
 }

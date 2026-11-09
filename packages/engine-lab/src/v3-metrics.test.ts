@@ -1,10 +1,12 @@
 // @effect-diagnostics globalDate:off - pure metrics on synthetic rows.
 import { describe, expect, it } from "vite-plus/test";
 
-import { dayStart, DAY_MS, inclusiveDays, type V3List } from "./v3-data.ts";
+import { dayStart, DAY_MS, inclusiveDays, type V3List, withProfileFit } from "./v3-data.ts";
 import {
   blockDraws,
   captureWindow,
+  DISCARD_POLICY,
+  discardViolations,
   eligibility,
   type JudgedCut,
   judgedIndex,
@@ -203,5 +205,92 @@ describe("structural eligibility", () => {
       cutoffs_without_discards_field: 21,
     });
     void inclusiveDays;
+  });
+});
+
+describe("DISCARD_POLICY, one test per key", () => {
+  it.each(["exclude", "generic"])("allows %s", (key) => {
+    expect(discardViolations({ [key]: 12 })).toEqual([]);
+  });
+  it.each(["candidates", "exclude_by_topic"])("treats %s as a count, not a discard", (key) => {
+    expect(
+      discardViolations({ [key]: key === "candidates" ? 269 : { "video game releases": 5 } }),
+    ).toEqual([]);
+  });
+  it.each(Object.keys(DISCARD_POLICY.other_permitidos))("allows other.%s", (key) => {
+    expect(discardViolations({ other: { [key]: 91 } })).toEqual([]);
+  });
+  it("needs incomplete = 0", () => {
+    expect(discardViolations({ incomplete: 0 })).toEqual([]);
+    expect(discardViolations({ incomplete: 1 })).toEqual(["incomplete"]);
+  });
+  it("refuses any other key of other above 0, and unknown top-level keys above 0", () => {
+    expect(discardViolations({ other: { item_min: 3 } })).toEqual(["other.item_min"]);
+    expect(discardViolations({ other: { item_min: 0 } })).toEqual([]);
+    expect(discardViolations({ relevance_gate: 2 })).toEqual(["relevance_gate"]);
+    expect(discardViolations({ relevance_gate: 0 })).toEqual([]);
+  });
+  it("accepts A's discards of a real list shape", () => {
+    const a = {
+      candidates: 269,
+      exclude: 74,
+      exclude_by_topic: { politics: 12, "consumer gadget reviews": 53 },
+      generic: 3,
+      incomplete: 0,
+      other: {
+        en_caida_without_pending_decision: 2,
+        estable_without_perennial: 91,
+        folded_by_topic_identity: 8,
+        admitted_below_list: 79,
+      },
+    };
+    expect(discardViolations(a)).toEqual([]);
+    const list: V3List = {
+      cutoff: "x",
+      arm: "V1",
+      moving: Array.from({ length: 10 }, (_, j) => ({
+        topic_id: `t${j}`,
+        item_ids: [],
+        include_score: 0.5,
+      })),
+      discards: a,
+    };
+    expect(eligibility(new Map(V3_CUTOFFS.map((d) => [d, list]))).eligible).toBe(true);
+    const bad = { ...list, discards: { ...a, incomplete: 2 } };
+    expect(eligibility(new Map(V3_CUTOFFS.map((d) => [d, bad])))).toMatchObject({
+      eligible: false,
+      other_discard_reasons: ["incomplete"],
+    });
+  });
+});
+
+describe("include and exclude scores of A's list entries", () => {
+  const entry = (fit: Record<string, unknown> | undefined, own?: number) => ({
+    topic_id: "t",
+    item_ids: [],
+    ...(own === undefined ? {} : { include_score: own }),
+    ...(fit === undefined ? {} : { card: { profile_fit: fit } }),
+  });
+  it("reads card.profile_fit, the topic's own score first", () => {
+    expect(withProfileFit(entry({ include_score: 0.68, exclude_score: 0.54 }))).toMatchObject({
+      include_score: 0.68,
+      exclude_score: 0.54,
+    });
+    expect(withProfileFit(entry({ include_score: 0.68 }, 0.3)).include_score).toBe(0.3);
+  });
+  it("counts a missing score as include < 0,40, without invalidating the list", () => {
+    const missing = withProfileFit(entry(undefined));
+    expect(missing).toMatchObject({ include_score: null, exclude_score: null });
+    const list: V3List = {
+      cutoff: "x",
+      arm: "V1",
+      moving: Array.from({ length: 10 }, () => withProfileFit(entry(undefined))),
+      discards: { exclude: 1 },
+    };
+    expect(eligibility(new Map(V3_CUTOFFS.map((d) => [d, list])))).toMatchObject({
+      median_emitted: 10,
+      median_share_include_040: 0,
+      eligible: false,
+    });
   });
 });
