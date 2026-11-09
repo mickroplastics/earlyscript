@@ -6,6 +6,7 @@
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
+//   node src/cli.ts v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <V1|V2|V3|V4|R4|R2|R5|v1|v2|all|A,B> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]
 //   node src/cli.ts eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture ... (see editorial-cli.ts)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
@@ -26,6 +27,7 @@ import {
   type ModelCommandLine,
 } from "./embed/modelCommand.ts";
 import { DEFAULT_DATA_DIR, runEngine } from "./run.ts";
+import { v3Command } from "./v3-cli.ts";
 
 /** A mirror of Hugging Face with the same layout, for tests and machines behind a proxy. */
 const MODEL_BASE_URL_ENV = "EARLYSCRIPT_MODEL_BASE_URL";
@@ -44,6 +46,7 @@ const USAGE =
   "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--independent-cuts] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
+  "       engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
@@ -83,6 +86,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   const [command, ...rest] = argv;
   if (command === "model") return modelCommand(rest);
   if (command === "eval-editorial") return editorialCommand(rest);
+  if (command === "v3") return v3Command(rest);
   const { values } = NodeUtil.parseArgs({
     args: [...rest],
     options: {
@@ -166,13 +170,20 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     ...(values.models ? { modelDir: values.models } : {}),
     ...(values["allow-unverified-corpus"] ? { allowUnverifiedCorpus: true } : {}),
   };
-  if (command === "run" && values.corpus && values.cutoff && values.profile && values.out) {
+  // engine.v3.json names its profile; v1 and v2 need --profile.
+  if (
+    command === "run" &&
+    values.corpus &&
+    values.cutoff &&
+    (values.profile || values.config) &&
+    values.out
+  ) {
     NodeFS.mkdirSync(values.out, { recursive: true });
     const record = await runEngine({
       ...common,
       corpusDir: values.corpus,
       cutoff: values.cutoff,
-      profilePath: values.profile,
+      profilePath: values.profile ?? "",
       outDir: values.out,
       ...(values.config ? { configPath: values.config } : {}),
     });

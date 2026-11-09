@@ -13,6 +13,8 @@ export interface ProfileScore {
   readonly passes: boolean;
   /** Index of the include topic with the highest cosine. */
   readonly nearest_include: number;
+  /** Index of the exclude topic with the highest cosine; -1 without exclude topics. */
+  readonly nearest_exclude: number;
 }
 
 export function scoreProfile(
@@ -30,14 +32,20 @@ export function scoreProfile(
       nearest_include = index;
     }
   });
-  const exclude_score = topics.exclude.reduce(
-    (best, topic) => Math.max(best, dot(centroid, topic)),
-    topics.exclude.length === 0 ? 0 : -Infinity,
-  );
+  let exclude_score = topics.exclude.length === 0 ? 0 : -Infinity;
+  let nearest_exclude = -1;
+  topics.exclude.forEach((topic, index) => {
+    const cosine = dot(centroid, topic);
+    if (cosine > exclude_score) {
+      exclude_score = cosine;
+      nearest_exclude = index;
+    }
+  });
   return {
     include_score,
     exclude_score,
     passes: include_score >= includeMin && exclude_score < excludeMax,
     nearest_include,
+    nearest_exclude,
   };
 }
