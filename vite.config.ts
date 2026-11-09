@@ -181,6 +181,8 @@ export default defineConfig({
       "apps/mobile/modules/t3-highlights/Vendor/**",
       "apps/mobile/modules/t3-highlights/cpp/generated/**",
       "*.icon/**",
+      // Byte copies of frozen judge inputs; their sha256 is in judge.util.v1.json.
+      "packages/trend-engine/judge/profile.*.json",
     ],
     sortPackageJson: {},
     overrides: [

@@ -1,0 +1,35 @@
+{
+  "judge_version": "earlyscript.judge.util.v1",
+  "rubric": "judge-util-rubric.v1.md",
+  "rubric_sha256": "sha256:e32c373f6cc0ae706ad854a073bc71a7d70c5fb5a2dd860136f6134cf00bdfcb",
+  "profile": "profile.singularidev.v2.json",
+  "profile_sha256": "sha256:cc5cc20d8be7faa6eb28eaa09b35fb8200e61da269acdaefac85cf3ecd0e2298",
+  "card_text": {
+    "function": "cardTextV3",
+    "file": "../src/card-text-v3.ts",
+    "version": "card-text-v3/2",
+    "sha256": "sha256:333c1454dab07f68ca3b627b082765ee60e12d55f10f59923820be0744c9ba09"
+  },
+  "normalizer_version": "card-text-v3/2",
+  "judges": [
+    { "name": "opus", "cli": "claude", "model": "claude-opus-5-5", "effort": "high" },
+    { "name": "sol", "cli": "codex", "model": "gpt-6.1-sol", "effort": "high" }
+  ],
+  "output": {
+    "fit": ["core", "adjacent", "out"],
+    "utility_min": 1,
+    "utility_max": 5,
+    "reason_max_words": 25,
+    "angle_max_words": 40,
+    "max_evidence": 5
+  },
+  "combine": {
+    "utility": "mean of the two judges; null unless both answered validly",
+    "fit": "stored: the common value when both agree, 'discrepan' when they differ or one is invalid; fit diagnosis: yes only when both judges say yes (core or adjacent, either grade), 'discrepan' on that yes/no counts as no"
+  },
+  "batch_size": 12,
+  "max_text_chars": 4000,
+  "max_attempts": 3,
+  "timeout_ms": 900000,
+  "concurrency_per_judge": 2
+}
