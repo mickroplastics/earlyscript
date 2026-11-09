@@ -654,10 +654,13 @@ const latestVersioned = (fields: Record<string, unknown>, key: RegExp): string |
   return best?.value ?? null;
 };
 
-/** Every state of (text function, judge rubric) declared in the ledger, in order. */
-export function declaredVersions(ledger: ReadonlyArray<LedgerEntry>): Array<TextJudgeVersion> {
-  const pre = ledger.find((e) => e.kind === "v3_premanifest");
-  if (!pre) return [];
+/** Every state of (text function, judge rubric) declared in the ledger, with its position. */
+function indexedVersions(
+  ledger: ReadonlyArray<LedgerEntry>,
+): Array<{ readonly version: TextJudgeVersion; readonly index: number }> {
+  const preIndex = ledger.findIndex((e) => e.kind === "v3_premanifest");
+  if (preIndex < 0) return [];
+  const pre = ledger[preIndex]!;
   let state: TextJudgeVersion = {
     card_text_file_sha256:
       ((pre["card_text_v3"] as { file_sha256?: string }) ?? {}).file_sha256 ?? null,
@@ -665,8 +668,8 @@ export function declaredVersions(ledger: ReadonlyArray<LedgerEntry>): Array<Text
     desde: pre.at,
     asiento: "v3_premanifest",
   };
-  const out = [state];
-  for (const e of ledger) {
+  const out = [{ version: state, index: preIndex }];
+  for (const [index, e] of ledger.entries()) {
     const fields = addendumFields(e);
     if (!fields) continue;
     const card = latestVersioned(fields, CARD_KEY);
@@ -678,14 +681,31 @@ export function declaredVersions(ledger: ReadonlyArray<LedgerEntry>): Array<Text
       desde: e.at,
       asiento: e.kind === "exposicion" ? "exposicion adenda_premanifest" : e.kind,
     };
-    out.push(state);
+    out.push({ version: state, index });
   }
   return out;
 }
 
-/** The version in force when an entry was written (the last declared before it). */
-export const versionBefore = (versions: ReadonlyArray<TextJudgeVersion>, at: string) =>
-  versions.findLast((v) => v.desde < at) ?? null;
+/** Every state of (text function, judge rubric) declared in the ledger, in order. */
+export const declaredVersions = (ledger: ReadonlyArray<LedgerEntry>): Array<TextJudgeVersion> =>
+  indexedVersions(ledger).map((v) => v.version);
+
+/**
+ * The version in force when `entry` was written: the last declared before it. Two entries
+ * can share a millisecond; on a tie the position in the ledger decides.
+ */
+export function versionBefore(
+  ledger: ReadonlyArray<LedgerEntry>,
+  entry: LedgerEntry,
+): TextJudgeVersion | null {
+  const at = ledger.indexOf(entry);
+  if (at < 0) return fail("invalid-change", `The entry of ${entry.at} is not in the ledger.`);
+  return (
+    indexedVersions(ledger).findLast(
+      (v) => v.version.desde < entry.at || (v.version.desde === entry.at && v.index < at),
+    )?.version ?? null
+  );
+}
 
 export function devResultsPayload(
   root: string,
@@ -718,7 +738,7 @@ export function devResultsPayload(
     },
   };
   const versions = declaredVersions(ledger);
-  const diagVersion = versionBefore(versions, diag.at);
+  const diagVersion = versionBefore(ledger, diag);
   const used = {
     card_text_file_sha256: fileSha256(scoring.cardText),
     judge_util_sha256: fileSha256(scoring.rubric),
