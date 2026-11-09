@@ -35,6 +35,7 @@ export const RANK_VALUE_NAMES = [
   "include_score",
   "log_items_7d",
   "relevance",
+  "sources_7d",
 ] as const;
 
 export const WEIGHT_MIN = 0;

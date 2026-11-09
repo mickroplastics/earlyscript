@@ -1,0 +1,95 @@
+{
+  "config_version": "earlyscript.engine.v3",
+  "sources": ["hn", "github", "huggingface", "npm", "wikipedia", "rss"],
+  "sources_cluster": ["hn", "github", "huggingface", "npm", "rss"],
+  "embedder": {
+    "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+    "revision": "c25a394dd583836952667c12f008335071b3f43d",
+    "dtype": "q8",
+    "pooling": "last_token",
+    "batch_size": 1,
+    "intra_op_threads": 2
+  },
+  "profile": {
+    "include_min": 0.6,
+    "exclude_max": 0.6,
+    "path": "~/earlyscript-data/hillclimb/v3/perfil/singularidev.v2.json",
+    "sha256": "sha256:cc5cc20d8be7faa6eb28eaa09b35fb8200e61da269acdaefac85cf3ecd0e2298"
+  },
+  "text": {
+    "max_body_chars": 1000,
+    "min_ascii_letter_ratio": 0.9,
+    "excerpt_chars": 500
+  },
+  "cluster": {
+    "threshold": 0.7,
+    "active_days": 30
+  },
+  "stage": {
+    "context_days": 14,
+    "growth_min": 0.69,
+    "growing_min_items_7d": 3,
+    "fading_max": -0.69,
+    "coverage_rule": "equivalent"
+  },
+  "comparable": {
+    "window_days": 35,
+    "max_unavailable": 3,
+    "row_unknown_days": 2,
+    "incomplete_share": 0.3
+  },
+  "trajectory": {
+    "tau_days": 7,
+    "weak_pct": 50,
+    "strong_pct": 90,
+    "min_items_w0": 3,
+    "strong_min_items": 8,
+    "perennial_weeks": 3,
+    "perennial_week_min": 5,
+    "perennial_life": 30,
+    "generic_share": 0.02
+  },
+  "exclude": {
+    "min": 0.6,
+    "relative": true
+  },
+  "rank": {
+    "baseline": {
+      "method": "baseline.items_7d",
+      "weights": {
+        "items_7d": 1
+      }
+    },
+    "weighted": {
+      "method": "weighted_sum.v3",
+      "weights": {
+        "relevance": 1,
+        "growth": 0.25,
+        "log_items_7d": 0.15,
+        "sources_7d": 0.1
+      }
+    }
+  },
+  "emit": {
+    "max_dossiers": 20,
+    "max_evidence": 10,
+    "thin_below": 5,
+    "label_terms": 4,
+    "top_terms": 10,
+    "curve_days": 28,
+    "dedup_cosine": 0.8,
+    "moving": 10,
+    "moving_trajectory_slots": 2,
+    "trajectory_include_min": 0.4,
+    "background": 5
+  },
+  "relevance": {
+    "model": "relevance.v2.json",
+    "sha256": "sha256:8a09bbba4acce7ba5dddf4eddcd78e4b698b00a69848badae4239d06836ea621",
+    "item_min": 0.26,
+    "signal_min": 0.4,
+    "profile_gate": false,
+    "aggregate": "trimmed_mean",
+    "min_relevant_distinct": 3
+  }
+}

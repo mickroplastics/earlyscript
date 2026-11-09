@@ -39,7 +39,7 @@ const VOLATILE = new Set(["run_id", "dossier_id", "created_at"]);
  * SHA-256 of the dossiers in file order, without run ids or timestamps, numbers at six
  * decimals: what two runs of the same corpus, cutoff, configuration and profile reproduce.
  */
-export function logicalHash(dossiers: ReadonlyArray<Dossier>): string {
+export function logicalHash(dossiers: ReadonlyArray<Dossier | object>): string {
   const stripped = JSON.parse(
     JSON.stringify(dossiers, (key, value: unknown) => {
       if (VOLATILE.has(key)) return undefined;

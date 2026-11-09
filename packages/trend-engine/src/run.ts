@@ -128,6 +128,11 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         hash: sha256(canonicalJson(decodeConfig(options.config))),
       }
     : loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH);
+  // engine.v3 (sources_cluster) has its own pipeline and dossier/2.
+  if (config.sources_cluster !== undefined) {
+    const { runEngineV3 } = await import("./run-v3.ts");
+    return runEngineV3({ ...options, config });
+  }
   const profileBytes = NodeFS.readFileSync(options.profilePath);
   const profile = decodeProfile(JSON.parse(profileBytes.toString("utf8")));
   const profileHash = sha256(profileBytes);
@@ -300,6 +305,8 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
         include_score: fit.include_score,
         log_items_7d: Math.log(1 + stage.items_7d),
         relevance: signalRelevance?.score ?? null,
+        // Distinct sources of the last 7 days; engine.v3 weighs it, v1 and v2 do not.
+        sources_7d: new Set(seriesItems.filter((m) => last7.has(m.day)).map((m) => m.source)).size,
       };
       return {
         id: signal.id,
@@ -368,6 +375,7 @@ export async function runEngine(options: RunOptions): Promise<RunRecord> {
             include_score: s.fit.include_score,
             log_items_7d: Math.log(1 + stageAt.items_7d),
             relevance: rel,
+            sources_7d: new Set(recent.map((m) => m.source)).size,
           }).score;
         },
       });

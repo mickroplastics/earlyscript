@@ -245,3 +245,162 @@ export function coverageSummary(
   }
   return { by_source, data_gaps };
 }
+
+// engine.v3 (contract v4.2 §2.5): weekly series aligned to the cutoff over URL-unique items of
+// the comparable sources, without item_min. W_k = [t − 7(k+1) d, t − 7k d).
+
+const TRACKING_PARAM = /^(utm_|ref$|ref_src$|source$|fbclid$|gclid$)/;
+
+/**
+ * The URL two sources share when they point at the same page: https, host without `www.`,
+ * no fragment, no tracking parameters, no trailing slash. Null for a missing or unparsable URL.
+ */
+export function canonicalUrl(url: string | null): string | null {
+  if (url === null || url.trim() === "") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const params = [...parsed.searchParams]
+    .filter(([name]) => !TRACKING_PARAM.test(name.toLowerCase()))
+    .toSorted(([a, av], [b, bv]) => (a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0));
+  const query = params.length === 0 ? "" : `?${new URLSearchParams(params).toString()}`;
+  const path = parsed.pathname.replace(/\/+$/, "");
+  return `https://${host}${parsed.port ? `:${parsed.port}` : ""}${path}${query}`;
+}
+
+/** An observation of a topic: a member, or an item another source published with its URL. */
+export interface UnitItem {
+  readonly id: string;
+  readonly source: SourceId;
+  readonly ms: number;
+  readonly author: string | null;
+  /** Canonical URL, or `id:<item id>` when the item has none: one key, one observation. */
+  readonly key: string;
+}
+
+export interface WeeklyCohort {
+  readonly cutoffMs: number;
+  readonly historyFromMs: number;
+  readonly comparable: ReadonlyArray<SourceId>;
+  /** `${source}|${k}` of the "?" weeks. */
+  readonly unknown: ReadonlySet<string>;
+  readonly incompleteShare: number;
+}
+
+export interface SourceWeeks {
+  /** URL-unique items of the source per week W0..W4; null for a "?" week of a comparable source. */
+  readonly weeks: Array<number | null>;
+  readonly authorsW0: number | null;
+}
+
+export interface WeeklySeries {
+  /** n(W0)..n(W4). */
+  readonly weeks: Array<number>;
+  /** URL-unique observations of the comparable sources in the history window. */
+  readonly life: number;
+  /** Σ 2^(−(t − t_i)/τ) over those observations, t_i the first time each key was seen. */
+  readonly pop: number;
+  readonly authorsW0: number;
+  readonly sourcesW0: Array<SourceId>;
+  /** Share of the W0..W2 items of comparable sources that fall in "?" weeks. */
+  readonly unknownShare: number;
+  readonly incomplete: boolean;
+  /** First observation among the comparable sources over the whole life, in ms. */
+  readonly firstMs: number | null;
+  readonly firstBySource: Map<SourceId, { ms: number; id: string }>;
+  readonly bySource: Map<SourceId, SourceWeeks>;
+}
+
+const WEEK_MS = 7 * 86_400_000;
+const SERIES_WEEK_COUNT = 5;
+
+/**
+ * Items at or after the cutoff must not be passed; the function also refuses them. Every
+ * clustered source gets a row (`bySource`); only the comparable ones count in the series.
+ */
+export function weeklySeries(
+  items: ReadonlyArray<UnitItem>,
+  cohort: WeeklyCohort,
+  tauDays: number,
+): WeeklySeries {
+  const { cutoffMs, historyFromMs } = cohort;
+  const comparable = new Set(cohort.comparable);
+  const firstByKey = new Map<string, number>();
+  const authorsW0 = new Set<string>();
+  const sourcesW0 = new Set<SourceId>();
+  const perSource = new Map<SourceId, { keys: Map<string, number>; authors: Set<string> }>();
+  const firstBySource = new Map<SourceId, { ms: number; id: string }>();
+  let firstMs: number | null = null;
+  let unknownItems = 0;
+  let knownItems = 0;
+  for (const item of items) {
+    if (item.ms >= cutoffMs) throw new Error(`item ${item.id} is not before the cutoff`);
+    const counts = comparable.has(item.source);
+    if (counts) {
+      if (firstMs === null || item.ms < firstMs) firstMs = item.ms;
+      const first = firstBySource.get(item.source);
+      if (!first || item.ms < first.ms || (item.ms === first.ms && item.id < first.id))
+        firstBySource.set(item.source, { ms: item.ms, id: item.id });
+    }
+    if (item.ms < historyFromMs) continue;
+    const k = Math.floor((cutoffMs - item.ms) / WEEK_MS);
+    if (k >= SERIES_WEEK_COUNT) continue;
+    const unknown = cohort.unknown.has(`${item.source}|${k}`);
+    let row = perSource.get(item.source);
+    if (!row) perSource.set(item.source, (row = { keys: new Map(), authors: new Set() }));
+    const seen = row.keys.get(item.key);
+    if (seen === undefined || item.ms < seen) row.keys.set(item.key, item.ms);
+    if (k === 0 && item.author !== null) row.authors.add(item.author);
+    if (!counts) continue;
+    if (k <= 2) {
+      if (unknown) unknownItems++;
+      else knownItems++;
+    }
+    if (unknown) continue;
+    const prior = firstByKey.get(item.key);
+    if (prior === undefined || item.ms < prior) firstByKey.set(item.key, item.ms);
+    if (k === 0) {
+      sourcesW0.add(item.source);
+      if (item.author !== null) authorsW0.add(item.author);
+    }
+  }
+  const weeks = Array.from({ length: SERIES_WEEK_COUNT }, () => 0);
+  let pop = 0;
+  // Summed in ascending time so the float result does not depend on insertion order.
+  const firsts = [...firstByKey.values()].toSorted((a, b) => a - b);
+  for (const ms of firsts) {
+    weeks[Math.floor((cutoffMs - ms) / WEEK_MS)]!++;
+    pop += 2 ** (-(cutoffMs - ms) / (tauDays * 86_400_000));
+  }
+  const bySource = new Map<SourceId, SourceWeeks>();
+  for (const [source, row] of [...perSource].toSorted(([a], [b]) => (a < b ? -1 : 1))) {
+    const rowWeeks: Array<number | null> = Array.from({ length: SERIES_WEEK_COUNT }, () => 0);
+    for (const ms of row.keys.values()) rowWeeks[Math.floor((cutoffMs - ms) / WEEK_MS)]!++;
+    const isComparable = comparable.has(source);
+    for (let k = 0; k < SERIES_WEEK_COUNT; k++)
+      if (isComparable && cohort.unknown.has(`${source}|${k}`)) rowWeeks[k] = null;
+    bySource.set(source, {
+      weeks: rowWeeks,
+      authorsW0: rowWeeks[0] === null ? null : row.authors.size,
+    });
+  }
+  const total = unknownItems + knownItems;
+  const unknownShare = total === 0 ? 0 : unknownItems / total;
+  return {
+    weeks,
+    life: firsts.length,
+    pop,
+    authorsW0: authorsW0.size,
+    sourcesW0: [...sourcesW0].toSorted(),
+    unknownShare,
+    incomplete: total > 0 && unknownShare >= cohort.incompleteShare,
+    firstMs,
+    firstBySource,
+    bySource,
+  };
+}
