@@ -6,7 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { isSealedCutoff } from "@earlyscript/engine-lab/policy";
-import { readRun } from "@earlyscript/trend-engine/check";
+import { readRunAnyVersion } from "@earlyscript/trend-engine/check";
 import * as Effect from "effect/Effect";
 
 import { labFailure } from "./engineLabSupport.ts";
@@ -34,7 +34,7 @@ export const productRuns = Effect.fn("EngineProductRuns.list")(function* (input:
   const runs = names
     .flatMap((name) => {
       try {
-        const { record } = readRun(NodePath.join(runsDir, name));
+        const { record } = readRunAnyVersion(NodePath.join(runsDir, name));
         if (isSealedCutoff(record.cutoff_at)) return [];
         return [
           {
@@ -77,7 +77,7 @@ export const productRun = Effect.fn("EngineProductRuns.read")(function* (input: 
     return yield* labFailure("not-found", `No product run ${input.runId}.`);
   }
   const read = yield* Effect.try({
-    try: () => readRun(dir),
+    try: () => readRunAnyVersion(dir),
     catch: () => labFailure("artifact-mismatch", `Product run ${input.runId} does not decode.`),
   });
   if (isSealedCutoff(read.record.cutoff_at)) {
@@ -111,7 +111,7 @@ export const productRun = Effect.fn("EngineProductRuns.read")(function* (input: 
       itemsPrevious7Days: dossier.trend.items_prev_7d,
       growth: dossier.trend.growth,
       profileFit: dossier.profile_fit,
-      relevance: dossier.relevance?.score ?? null,
+      relevance: "relevance" in dossier ? (dossier.relevance?.score ?? null) : null,
       evidence: dossier.evidence.slice(0, 3).map((item) => ({
         title: item.title,
         source: item.source,

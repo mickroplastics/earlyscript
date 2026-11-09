@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - command-line entry point.
 //   node src/cli.ts run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]
-//   node src/cli.ts check --run <run_dir> [--rerun --out <dir>]
+//   node src/cli.ts check --run <run_dir> [--rerun --out <dir> [--expect <logical_hash>]]
 //   node src/cli.ts backtest --corpus <dir> --profile <file> --out <dir> --cutoffs 2026-10-17..2026-10-30 --baseline hn,github --candidate hn,github,npm [--truth hn,github] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>]
 //   node src/cli.ts check --backtest <backtest.json> [--rerun --out <dir>]
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
+//   node src/cli.ts corpus import --from <corpus> --to <live corpus> [--sources <ids>] [--dry-run]
 //   node src/cli.ts v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <V1|V2|V3|V4|R4|R2|R5|v1|v2|all|A,B> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]
 //   node src/cli.ts eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture ... (see editorial-cli.ts)
 //   node src/cli.ts v3 judge-diag|judge-score|judge-smoke ... (see judge-v3-cli.ts)
@@ -14,6 +15,7 @@ import * as NodeUtil from "node:util";
 
 import { checkBacktest, parseCutoffList, runBacktest, runBacktestMatrix } from "./backtest.ts";
 import { checkRun, rerunAndCheck } from "./check.ts";
+import { importCorpus } from "./corpus-import.ts";
 import { collectCorpus, httpTraceWriter } from "./collect.ts";
 import { editorialCommand } from "./editorial-cli.ts";
 import { v3Command as v3JudgeCommand } from "./judge-v3-cli.ts";
@@ -44,7 +46,7 @@ function sourceList(text: string): Array<SourceId> {
 
 const USAGE =
   "usage: engine run --corpus <dir> --cutoff <iso> --profile <file> --out <dir> [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
-  "       engine check --run <run_dir> [--rerun --out <dir>]\n" +
+  "       engine check --run <run_dir> [--rerun --out <dir> [--expect <logical_hash>]]\n" +
   "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--independent-cuts] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
@@ -52,7 +54,8 @@ const USAGE =
   "       engine v3 judge-diag|judge-score|judge-smoke ... (see judge-v3-cli.ts)\n" +
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
-  "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";
+  "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)\n" +
+  "       engine corpus import --from <corpus> --to <live corpus> [--sources <ids>] [--dry-run]";
 
 /**
  * `model status` prints `{ status, revision, path, bytesPresent, bytesExpected }`; `model
@@ -85,6 +88,43 @@ async function modelCommand(argv: ReadonlyArray<string>): Promise<number> {
   return 64;
 }
 
+/**
+ * `engine corpus import --from <corpus> --to <live> [--sources ids] [--dry-run]`: copies the
+ * days before the live corpus's first one (corpus-import.ts). Prints the import record.
+ */
+async function corpusCommand(argv: ReadonlyArray<string>): Promise<number> {
+  const { values, positionals } = NodeUtil.parseArgs({
+    args: [...argv],
+    allowPositionals: true,
+    options: {
+      from: { type: "string" },
+      to: { type: "string" },
+      sources: { type: "string" },
+      "dry-run": { type: "boolean" },
+    },
+  });
+  if (positionals.length !== 1 || positionals[0] !== "import" || !values.from || !values.to) {
+    console.error(USAGE);
+    return 64;
+  }
+  const record = await importCorpus({
+    from: values.from,
+    to: values.to,
+    ...(values.sources ? { sources: sourceList(values.sources) } : {}),
+    ...(values["dry-run"] ? { dryRun: true } : {}),
+  });
+  const { files, ...summary } = record;
+  console.log(
+    JSON.stringify({
+      ...summary,
+      files: files.length,
+      copied: files.filter((f) => f.status === "copied").length,
+      skipped: record.skipped.length,
+    }),
+  );
+  return 0;
+}
+
 /** `engine v3 <sub>`: one entry for the list builder (A) and the judges (B). */
 function v3Command(argv: ReadonlyArray<string>): Promise<number> {
   const sub = argv[0];
@@ -101,6 +141,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   if (command === "model") return modelCommand(rest);
   if (command === "eval-editorial") return editorialCommand(rest);
   if (command === "v3") return v3Command(rest);
+  if (command === "corpus") return corpusCommand(rest);
   const { values } = NodeUtil.parseArgs({
     args: [...rest],
     options: {
@@ -126,6 +167,7 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
       models: { type: "string" },
       run: { type: "string" },
       rerun: { type: "boolean" },
+      expect: { type: "string" },
       "allow-unverified-corpus": { type: "boolean" },
       cutoffs: { type: "string" },
       baseline: { type: "string" },
@@ -276,13 +318,16 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     return result.ok ? 0 : 1;
   }
   if (command === "check" && values.run) {
-    if (values.rerun && !values.out) {
+    if ((values.rerun && !values.out) || (values.expect && !values.rerun)) {
       console.error(USAGE);
       return 64;
     }
     const result =
       values.rerun && values.out
-        ? await rerunAndCheck(values.run, values.out, common)
+        ? await rerunAndCheck(values.run, values.out, {
+            ...common,
+            ...(values.expect ? { expect: values.expect } : {}),
+          })
         : checkRun(values.run);
     console.log(JSON.stringify(result));
     return result.ok ? 0 : 1;

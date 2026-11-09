@@ -11,7 +11,7 @@ import type { EngineConfig } from "@earlyscript/editorial-contracts/run";
 import type { CoverageStatus, SourceId } from "@earlyscript/editorial-contracts/source";
 
 import { cohortAt, ROW_UNKNOWN_DAYS } from "./comparable.ts";
-import { readRun } from "./check.ts";
+import { checkRun, readRun, readRunAnyVersion, rerunAndCheck } from "./check.ts";
 import { DAY_MS, dayStart, daysBefore, daysBetween } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import type { Embedder } from "./embed/spec.ts";
@@ -453,6 +453,89 @@ describe("engine.v3 run", () => {
     for (const d of dossiers)
       for (const e of d.evidence)
         expect(Date.parse(e.published_at)).toBeLessThan(Date.parse(CUTOFF));
+  });
+
+  it("engine check reads dossier/2 without relaxing it, and --rerun keeps own and other machines apart (B3, B7)", async () => {
+    const { corpusDir, profilePath, probe, config, root } = await v3Setup();
+    const record = await runEngine({
+      corpusDir,
+      cutoff: CUTOFF,
+      profilePath,
+      outDir: NodePath.join(root, "runs"),
+      config,
+      relevanceModel: probe,
+      embedder: fingerprintEmbedder(),
+    });
+    expect(record.status, record.error ?? "").toBe("ok");
+    const runDir = NodePath.join(root, "runs", record.run_id);
+    const checked = checkRun(runDir);
+    expect(checked).toMatchObject({
+      ok: true,
+      recorded: record.logical_hash,
+      recomputed: record.logical_hash,
+      dossier_schema: "earlyscript.dossier/2",
+    });
+    expect(checked.dossiers).toBeGreaterThan(0);
+
+    const options = { relevanceModel: probe, embedder: fingerprintEmbedder() };
+    const rerun = await rerunAndCheck(runDir, NodePath.join(root, "rerun"), {
+      ...options,
+      expect: "sha256:another-machine",
+    });
+    expect(rerun.ok).toBe(true);
+    expect(rerun.rerun?.logical_hash).toBe(record.logical_hash);
+    expect(rerun.reproduction).toMatchObject({
+      same_platform: true,
+      rerun_matches_recorded: true,
+      reproduces_own_run: true,
+      reference: "sha256:another-machine",
+      matches_reference: false,
+    });
+    const same = await rerunAndCheck(runDir, NodePath.join(root, "rerun"), {
+      ...options,
+      expect: record.logical_hash!,
+    });
+    expect(same.reproduction?.matches_reference).toBe(true);
+    const unasked = await rerunAndCheck(runDir, NodePath.join(root, "rerun"), options);
+    expect(unasked.reproduction).toMatchObject({ reference: null, matches_reference: null });
+
+    // A run recorded on another platform: this check cannot speak for that machine.
+    const runFile = NodePath.join(runDir, "run.json");
+    const json = JSON.parse(NodeFS.readFileSync(runFile, "utf8"));
+    const elsewhere = json.platform.arch === "arm64" ? "x64" : "arm64";
+    NodeFS.writeFileSync(
+      runFile,
+      JSON.stringify({ ...json, platform: { ...json.platform, arch: elsewhere } }),
+    );
+    const foreign = await rerunAndCheck(runDir, NodePath.join(root, "rerun"), options);
+    expect(foreign.reproduction).toMatchObject({
+      same_platform: false,
+      rerun_matches_recorded: true,
+      reproduces_own_run: null,
+    });
+    NodeFS.writeFileSync(runFile, JSON.stringify(json));
+
+    // dossier/2 keeps every validation: a dossier without its movement does not decode.
+    const file = NodePath.join(runDir, json.files[0]);
+    const dossier = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    const { movement: _movement, ...withoutMovement } = dossier;
+    NodeFS.writeFileSync(file, JSON.stringify(withoutMovement));
+    expect(() => checkRun(runDir)).toThrow();
+    // Nor does a dossier/2 relabelled dossier/1: each file meets the schema it names.
+    NodeFS.writeFileSync(
+      file,
+      JSON.stringify({ ...dossier, schema_version: "earlyscript.dossier/1" }),
+    );
+    expect(() => readRunAnyVersion(runDir)).toThrow();
+    // A changed field is a changed hash, as for dossier/1.
+    NodeFS.writeFileSync(
+      file,
+      JSON.stringify({ ...dossier, cutoff_at: "2026-10-11T00:00:00.000Z" }),
+    );
+    expect(checkRun(runDir).ok).toBe(false);
+    // The dossier/1 reader still refuses dossier/2, for the callers that need dossier/1 fields.
+    NodeFS.writeFileSync(file, JSON.stringify(dossier));
+    expect(() => readRun(runDir)).toThrow();
   });
 
   it("refuses a profile whose sha256 differs from the configuration's", async () => {
