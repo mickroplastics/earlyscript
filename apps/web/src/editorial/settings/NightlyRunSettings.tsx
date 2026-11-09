@@ -96,9 +96,20 @@ export function nextRunText(settings: EditorialNightlySettings): string {
 
 const DEFAULT_ENGINE_CONFIG = "engine.v1.json";
 
+/** What a configuration file is, for the files whose name alone does not say it. */
+const ENGINE_CONFIG_LABELS: Readonly<Record<string, string>> = {
+  "engine.v3-sel.json": "v3, variante V3 elegida",
+};
+
+/** The file name, followed by what it is when the name alone does not say it. */
+function engineConfigLabel(file: string): string {
+  const label = ENGINE_CONFIG_LABELS[file];
+  return label === undefined ? file : `${file} (${label})`;
+}
+
 function engineConfigStatus(settings: EditorialNightlySettings): string {
   if (settings.engineConfigChosenAt === null) {
-    return `${settings.engineConfig}, la predeterminada; nunca se cambió.`;
+    return `${engineConfigLabel(settings.engineConfig)}, la predeterminada; nunca se cambió.`;
   }
   const when = new Intl.DateTimeFormat("es", {
     timeZone: settings.timezone,
@@ -108,7 +119,7 @@ function engineConfigStatus(settings: EditorialNightlySettings): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(settings.engineConfigChosenAt));
-  return `${settings.engineConfig}, elegida el ${when} (${settings.timezone}).`;
+  return `${engineConfigLabel(settings.engineConfig)}, elegida el ${when} (${settings.timezone}).`;
 }
 
 /**
@@ -140,12 +151,14 @@ function EngineConfigRow({
             }}
           >
             <SelectTrigger size="sm" aria-label="Configuración del motor">
-              <SelectValue>{(value: string | null) => value ?? settings.engineConfig}</SelectValue>
+              <SelectValue>
+                {(value: string | null) => engineConfigLabel(value ?? settings.engineConfig)}
+              </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {choices.map((choice) => (
                 <SelectItem key={choice} value={choice}>
-                  {choice}
+                  {engineConfigLabel(choice)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -160,12 +173,15 @@ function EngineConfigRow({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Correr el motor con {pending}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              ¿Correr el motor con {pending === null ? null : engineConfigLabel(pending)}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              La próxima corrida nocturna y «Ejecutar ahora» usarán {pending} en lugar de{" "}
-              {settings.engineConfig}. Un trabajo pendiente de hoy se reemplaza por uno con la
-              configuración nueva. El cambio queda registrado con su hora y se puede deshacer
-              eligiendo otra vez la anterior.
+              La próxima corrida nocturna y «Ejecutar ahora» usarán{" "}
+              {pending === null ? null : engineConfigLabel(pending)} en lugar de{" "}
+              {engineConfigLabel(settings.engineConfig)}. Un trabajo pendiente de hoy se reemplaza
+              por uno con la configuración nueva. El cambio queda registrado con su hora y se puede
+              deshacer eligiendo otra vez la anterior.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

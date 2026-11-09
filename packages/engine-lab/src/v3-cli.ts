@@ -27,7 +27,7 @@ import {
   p3Closing,
   type PremanifestFiles,
   computePremanifest,
-  premanifestDrift,
+  premanifestCheck,
   premanifestPayload,
   readV3Ledger,
   v3Dir,
@@ -130,22 +130,14 @@ export async function v3LibroCommand(sub: string, ctx: V3Context): Promise<numbe
     case "premanifest": {
       const entered = readV3Ledger(root).find((e) => e.kind === "v3_premanifest");
       if (dry && entered) {
-        // Already entered: recompute every hashed field from the files and compare, writing nothing.
-        const drift = premanifestDrift(entered, computePremanifest(premanifestFiles(ctx)));
-        console.log(
-          JSON.stringify(
-            {
-              dry_run: true,
-              kind: "v3_premanifest",
-              asentado: entered.at,
-              sin_cambios: drift.length === 0,
-              campos_distintos: drift,
-            },
-            null,
-            2,
-          ),
+        // Already entered: recompute every hashed field from the files and compare with the
+        // pre-manifest in force (its addenda resolved), and apart with the original; nothing written.
+        const check = premanifestCheck(
+          readV3Ledger(root),
+          computePremanifest(premanifestFiles(ctx)),
         );
-        return drift.length === 0 ? 0 : 1;
+        console.log(JSON.stringify({ dry_run: true, kind: "v3_premanifest", ...check }, null, 2));
+        return check.sin_cambios ? 0 : 1;
       }
       const payload = premanifestPayload({
         root,

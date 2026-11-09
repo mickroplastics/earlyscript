@@ -703,6 +703,61 @@ describe("EditorialJobsService", () => {
     },
   );
 
+  it.live(
+    "offers engine.v3-sel.json and hands it to the nightly run with the file's hash (Sol B01)",
+    () => {
+      const fx = makeFixture();
+      return withJobs(
+        fx,
+        Effect.gen(function* () {
+          const jobs = yield* EditorialJobsService.EditorialJobsService;
+          const sql = yield* EditorialSql;
+          const selPath = NodePath.join(
+            NodePath.dirname(DEFAULT_CONFIG_PATH),
+            "engine.v3-sel.json",
+          );
+          const bytes = NodeFS.readFileSync(selPath);
+          const sel = JSON.parse(bytes.toString("utf8"));
+          assert.includeMembers(
+            [...(yield* jobs.getSettings).engineConfigs],
+            ["engine.v1.json", "engine.v2.json", "engine.v3.json", "engine.v3-sel.json"],
+          );
+          const chosen = yield* jobs.updateSettings({ engineConfig: "engine.v3-sel.json" });
+          assert.strictEqual(chosen.engineConfig, "engine.v3-sel.json");
+          const job = yield* jobs.runNow;
+          // The file the operator chose is the one the nightly run hands over, hash included.
+          assert.strictEqual(job.configHash, sha256(canonicalJson(sel)));
+          assert.strictEqual(
+            job.configHash,
+            "sha256:03b32be8015a09295b766dce440f0cc2ab0f48fa161ad42f458a38f67526a83b",
+          );
+          const row = (yield* sql<{
+            readonly config_file: string;
+            readonly config_sha256: string;
+          }>`SELECT config_file, config_sha256 FROM editorial_engine_config_choices`)[0];
+          assert.deepStrictEqual(row, {
+            config_file: "engine.v3-sel.json",
+            config_sha256: `sha256:${NodeCrypto.createHash("sha256").update(bytes).digest("hex")}`,
+          });
+          corpusUpToDate(fx, job);
+          yield* jobs.runDue;
+          const handed = NodeFS.readdirSync(job.artifacts.jobDir).find((name) =>
+            name.startsWith("engine-config."),
+          );
+          assert.isDefined(handed);
+          const config = JSON.parse(
+            NodeFS.readFileSync(NodePath.join(job.artifacts.jobDir, handed!), "utf8"),
+          );
+          assert.deepStrictEqual(config, sel);
+          assert.deepStrictEqual(config.rank.weighted, {
+            method: "weighted_sum.v3-sin-fuentes",
+            weights: { relevance: 1, growth: 0.25, log_items_7d: 0.15 },
+          });
+        }),
+      );
+    },
+  );
+
   it.live("shares one job between the scheduled time and Ejecutar ahora", () => {
     const fx = makeFixture();
     return withJobs(

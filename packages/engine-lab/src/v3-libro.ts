@@ -707,6 +707,97 @@ export function versionBefore(
   );
 }
 
+/**
+ * The contract against the bytes entered in the pre-manifest: the same file, or those bytes
+ * followed only by sections appended after them (such as Miguel's decision 2, written after
+ * v3_dev_results). The appended sections are named by their headings, never hidden.
+ */
+export function contractAgainstEntered(path: string, entered: string | undefined) {
+  const bytes = NodeFS.readFileSync(path);
+  const current = sha256(bytes);
+  if (current === entered)
+    return {
+      sha256_asentado: entered,
+      sha256_actual: current,
+      igual: true,
+      prefijo: true,
+      secciones_añadidas: [] as Array<string>,
+    };
+  for (let i = bytes.indexOf(10) + 1; i > 0 && i < bytes.length; i = bytes.indexOf(10, i) + 1) {
+    if (sha256(bytes.subarray(0, i)) !== entered) continue;
+    const rest = bytes.subarray(i).toString("utf8");
+    // Only whole sections may follow: the rest starts, after blank lines, with a heading.
+    if (!/^\s*#/.test(rest)) break;
+    return {
+      sha256_asentado: entered,
+      sha256_actual: current,
+      igual: false,
+      prefijo: true,
+      bytes_asentados: i,
+      secciones_añadidas: rest.split("\n").filter((line) => /^#{1,6} /.test(line)),
+    };
+  }
+  return {
+    sha256_asentado: entered ?? null,
+    sha256_actual: current,
+    igual: false,
+    prefijo: false,
+    secciones_añadidas: [] as Array<string>,
+  };
+}
+
+/**
+ * `premanifest --dry-run` (Sol S01): rubric and card text against the last declared version
+ * (declaredVersions), the contract's entered bytes with appended sections listed, every other
+ * field as entered; the original comparison and each declared version reported apart.
+ */
+export function premanifestCheck(
+  ledger: ReadonlyArray<LedgerEntry>,
+  computed: ReturnType<typeof computePremanifest>,
+) {
+  const entry = ledger.find((e) => e.kind === "v3_premanifest");
+  if (!entry) return fail("invalid-change", "There is no v3_premanifest in the ledger.");
+  const original = premanifestDrift(entry, computed);
+  const versions = declaredVersions(ledger);
+  const inForce = versions.at(-1)!;
+  const contract = contractAgainstEntered(
+    computed.contrato.path,
+    (entry["contrato"] as { sha256?: string } | undefined)?.sha256,
+  );
+  const rubric = computed.rubrica.sha256 === inForce.judge_util_sha256;
+  const cardText = computed.card_text_v3.file_sha256 === inForce.card_text_file_sha256;
+  const differs: Record<string, boolean> = {
+    contrato: !contract.prefijo,
+    rubrica: !rubric,
+    card_text_v3: !cardText,
+  };
+  const drift = Object.keys(computed).filter((k) =>
+    k in differs ? differs[k] : original.includes(k),
+  );
+  return {
+    asentado: entry.at,
+    sin_cambios: drift.length === 0,
+    campos_distintos: drift,
+    vigente: {
+      version: { declarada_en: inForce.asiento, desde: inForce.desde },
+      rubrica: {
+        sha256_actual: computed.rubrica.sha256,
+        sha256_vigente: inForce.judge_util_sha256,
+        igual: rubric,
+      },
+      card_text_v3: {
+        file_sha256_actual: computed.card_text_v3.file_sha256,
+        file_sha256_vigente: inForce.card_text_file_sha256,
+        function_sha256_actual: computed.card_text_v3.function_sha256,
+        igual: cardText,
+      },
+      contrato: contract,
+    },
+    original: { sin_cambios: original.length === 0, campos_distintos: original },
+    versiones_declaradas: versions,
+  };
+}
+
 export function devResultsPayload(
   root: string,
   metricsPath: string,

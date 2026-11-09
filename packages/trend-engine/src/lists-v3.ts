@@ -274,6 +274,23 @@ export interface ArmContext {
   readonly runs: Partial<Record<"v1" | "v2", V1Run>>;
 }
 
+/**
+ * The selection parameters of variants V3 and V4 from engine.v3.json's (V1's): V3 drops the
+ * sources term, V4 halves the relevance weight. config/engine.v3-sel.json is V3's as a product
+ * configuration (selectParamsOf of it equals variantParams("V3", selectParamsOf(engine.v3.json))).
+ */
+export function variantParams(arm: "V3" | "V4", params: SelectParams): SelectParams {
+  if (arm === "V3") {
+    const { sources_7d: _dropped, ...rest } = params.weights;
+    return { ...params, method: `${params.method}-sin-fuentes`, weights: rest };
+  }
+  return {
+    ...params,
+    method: `${params.method}-relevancia-0.5`,
+    weights: { ...params.weights, relevance: 0.5 },
+  };
+}
+
 /** One arm's list at a cutoff over the base analysis. */
 export function armList(arm: Arm, ctx: ArmContext): ArmList {
   const { base, params } = ctx;
@@ -329,7 +346,6 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
     ArmList,
     "moving" | "background" | "unprojected" | "counts" | "discards" | "arm_params"
   >;
-  const weights = { ...params.weights };
   switch (arm) {
     case "V1":
       body = fromSelection(selectV3(base, params), { ...params });
@@ -339,18 +355,9 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
       body = fromSelection(selectV3(ctx.slow, params), { ...params, tau_days: ctx.slow.tauDays });
       break;
     }
-    case "V3": {
-      const { sources_7d: _dropped, ...rest } = weights;
-      const p = { ...params, method: `${params.method}-sin-fuentes`, weights: rest };
-      body = fromSelection(selectV3(base, p), { ...p });
-      break;
-    }
+    case "V3":
     case "V4": {
-      const p = {
-        ...params,
-        method: `${params.method}-relevancia-0.5`,
-        weights: { ...weights, relevance: 0.5 },
-      };
+      const p = variantParams(arm, params);
       body = fromSelection(selectV3(base, p), { ...p });
       break;
     }

@@ -14,7 +14,7 @@ export const NIGHTLY_OFF: EditorialNightlySettings = {
   nextRunAt: null,
   engineConfig: "engine.v1.json",
   engineConfigChosenAt: null,
-  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3.json"],
+  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3-sel.json", "engine.v3.json"],
 };
 
 export const NIGHTLY_ON: EditorialNightlySettings = {

@@ -16,8 +16,10 @@ import { DAY_MS, dayStart, daysBefore, daysBetween } from "./days.ts";
 import { fingerprintEmbedder } from "./embed/fingerprint.ts";
 import type { Embedder } from "./embed/spec.ts";
 import { CutAnalysis, matchedTerms, selectParamsOf, selectV3 } from "./engine-v3.ts";
-import { ARMS, runLists } from "./lists-v3.ts";
+import { ARMS, runLists, variantParams } from "./lists-v3.ts";
 import { parseRelevanceModel, RELEVANCE_SCHEMA_VERSION } from "./relevance.ts";
+import { canonicalJson, sha256 } from "./hash.ts";
+import { score } from "./rank.ts";
 import { CONFIG_DIR, DEFAULT_CONFIG_PATH, loadConfig, runEngine } from "./run.ts";
 import { loadShared, prepareV3Cut } from "./run-v3.ts";
 import {
@@ -642,6 +644,54 @@ describe("engine.v3 run", () => {
     const ids = bag.topics.flatMap((t) => t.item_ids);
     expect(new Set(ids).size).toBe(ids.length);
     expect(bag.topics.every((t) => Date.parse(t.first_at) < dayStart(CUT_DAY))).toBe(true);
+  });
+});
+
+describe("engine.v3-sel.json, the chosen variant V3 as a product configuration (Sol B01)", () => {
+  const selPath = NodePath.join(CONFIG_DIR, "engine.v3-sel.json");
+  const v3Path = NodePath.join(CONFIG_DIR, "engine.v3.json");
+
+  it("selects with variant V3's parameters: engine.v3.json without the sources term", () => {
+    const sel = loadConfig(selPath).config;
+    const v3 = loadConfig(v3Path).config;
+    expect(selectParamsOf(sel)).toEqual(variantParams("V3", selectParamsOf(v3)));
+    expect(sel.rank.weighted).toEqual({
+      method: "weighted_sum.v3-sin-fuentes",
+      weights: { relevance: 1, growth: 0.25, log_items_7d: 0.15 },
+    });
+    // Everything else is engine.v3.json's.
+    const rest = (c: EngineConfig) => ({
+      ...c,
+      config_version: null,
+      rank: { ...c.rank, weighted: null },
+    });
+    expect(rest(sel)).toEqual(rest(v3));
+    expect(sel.config_version).toMatch(/variante V3 elegida por v3_dev_results/);
+  });
+
+  it("scores without a sources contribution", () => {
+    const { method, weights } = selectParamsOf(loadConfig(selPath).config);
+    const scored = score(method, weights, {
+      relevance: 0.5,
+      growth: 1,
+      log_items_7d: 2,
+      sources_7d: 4,
+    });
+    expect(scored.components.map((c) => c.name)).toEqual(["relevance", "growth", "log_items_7d"]);
+    expect(scored.score).toBe(0.5 + 0.25 + 0.3);
+  });
+
+  it("has one config_hash for the file and the decoded configuration, and keeps engine.v3.json's", () => {
+    const raw = JSON.parse(NodeFS.readFileSync(selPath, "utf8"));
+    // No field the schema drops: the server's hash of the file is the run's config_hash.
+    expect(loadConfig(selPath).hash).toBe(sha256(canonicalJson(raw)));
+    expect(loadConfig(selPath).hash).toBe(
+      "sha256:03b32be8015a09295b766dce440f0cc2ab0f48fa161ad42f458a38f67526a83b",
+    );
+    // engine.v3.json, base of the lists V1–V4 and of their frozen hashes, is unchanged.
+    expect(loadConfig(v3Path).hash).toBe(
+      "sha256:1ac9f95c65bb488e3c42082c443ee0ecbbe5eaca5822cb7bbe211f48e82791f9",
+    );
   });
 });
 

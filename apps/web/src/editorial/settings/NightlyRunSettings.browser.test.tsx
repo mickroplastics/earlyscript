@@ -22,7 +22,7 @@ const SETTINGS: EditorialNightlySettings = {
   nextRunAt: null,
   engineConfig: "engine.v1.json",
   engineConfigChosenAt: null,
-  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3.json"],
+  engineConfigs: ["engine.v1.json", "engine.v2.json", "engine.v3-sel.json", "engine.v3.json"],
 };
 
 const phases = (
@@ -113,6 +113,28 @@ describe("NightlyRunSettings", () => {
     await userEvent.click(screen.getByRole("option", { name: "engine.v3.json" }));
     await userEvent.click(screen.getByRole("button", { name: "Sí, usar engine.v3.json" }));
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v3.json" });
+  });
+
+  it("offers engine.v3-sel.json as the chosen V3 variant, beside v1, v2 and v3 (B01)", async () => {
+    const { screen, onChange } = await renderView({});
+    await using _screen = screen;
+    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
+    for (const name of ["engine.v1.json", "engine.v2.json", "engine.v3.json"]) {
+      await expect.element(screen.getByRole("option", { name, exact: true })).toBeVisible();
+    }
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "engine.v3-sel.json (v3, variante V3 elegida)",
+        exact: true,
+      }),
+    );
+    await expect
+      .element(
+        screen.getByText("¿Correr el motor con engine.v3-sel.json (v3, variante V3 elegida)?"),
+      )
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Sí, usar engine.v3-sel.json" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v3-sel.json" });
   });
 
   it("shows when the operator chose the configuration", async () => {

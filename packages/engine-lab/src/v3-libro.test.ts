@@ -19,6 +19,7 @@ import {
   oraclePayload,
   p3Closing,
   p4LabelFiles,
+  premanifestCheck,
   premanifestDrift,
   premanifestPayload,
   versionBefore,
@@ -422,6 +423,72 @@ describe("text and judge versions of the development scoring", () => {
     });
     expect(payload.decision.notes.join(" ")).toMatch(/versiones distintas/);
     expect(payload.decision.chosen).toBe("V1");
+  });
+
+  it("premanifest --dry-run compares with the version in force, the original kept apart (Sol S01)", async () => {
+    const r = withAddenda();
+    const files = { ...r.premanifest, rubric: r.judgeV3, cardText: r.cardV2 };
+    // Miguel's decision 2, appended to the contract after v3_dev_results.
+    const entered = NodeFS.readFileSync(r.premanifest.contract, "utf8");
+    NodeFS.writeFileSync(
+      r.premanifest.contract,
+      `${entered}\n## Decisión 2 de Miguel\n\nV3 elegida.\n`,
+    );
+    const check = premanifestCheck(readV3Ledger(r.root), computePremanifest(files));
+    expect(check.sin_cambios).toBe(true);
+    expect(check.campos_distintos).toEqual([]);
+    expect(check.original.campos_distintos).toEqual(["contrato", "rubrica", "card_text_v3"]);
+    expect(check.vigente.version.declarada_en).toBe("exposicion adenda_premanifest");
+    expect(check.vigente.contrato).toMatchObject({
+      prefijo: true,
+      igual: false,
+      secciones_añadidas: ["## Decisión 2 de Miguel"],
+    });
+    expect(check.versiones_declaradas.map((v) => v.asiento)).toEqual([
+      "v3_premanifest",
+      "v3_premanifest_2",
+      "exposicion adenda_premanifest",
+    ]);
+    // A superseded version is drift against the one in force.
+    const old = premanifestCheck(
+      readV3Ledger(r.root),
+      computePremanifest({ ...files, rubric: r.judgeV2, cardText: r.premanifest.cardText }),
+    );
+    expect(old.campos_distintos).toEqual(["rubrica", "card_text_v3"]);
+    // A change inside the entered bytes of the contract is drift, appended sections or not.
+    NodeFS.writeFileSync(
+      r.premanifest.contract,
+      `${entered.replace("corrección 4.2", "corrección 4.3")}\n## Decisión 2 de Miguel\n`,
+    );
+    const edited = premanifestCheck(readV3Ledger(r.root), computePremanifest(files));
+    expect(edited.campos_distintos).toEqual(["contrato"]);
+    expect(edited.vigente.contrato.prefijo).toBe(false);
+    // Text appended without a heading is not a section: drift.
+    NodeFS.writeFileSync(r.premanifest.contract, `${entered}una línea suelta\n`);
+    expect(
+      premanifestCheck(readV3Ledger(r.root), computePremanifest(files)).campos_distintos,
+    ).toEqual(["contrato"]);
+    // The command exits 0 only without drift against the version in force; it writes nothing.
+    NodeFS.writeFileSync(r.premanifest.contract, `${entered}\n## Decisión 2 de Miguel\n`);
+    const before = NodeFS.readFileSync(v3LedgerPath(r.root), "utf8");
+    const options: Record<string, string> = {
+      contrato: files.contract,
+      rubrica: files.rubric,
+      "card-text": files.cardText,
+      "perfil-v2": files.profileV2,
+      "perfil-v1": files.profileV1,
+      keywords: files.keywords,
+      "medicion-a": files.measurementA,
+    };
+    const c = (extra: Record<string, string>): V3Context => ({
+      root: r.root,
+      opt: (name) => ({ ...options, ...extra })[name],
+      opts: () => [],
+      flag: (f) => f === "dry-run",
+    });
+    expect(await v3Command("libro", ["premanifest"], c({}))).toBe(0);
+    expect(await v3Command("libro", ["premanifest"], c({ rubrica: r.judgeV2 }))).toBe(1);
+    expect(NodeFS.readFileSync(v3LedgerPath(r.root), "utf8")).toBe(before);
   });
 
   it("refuses a scoring version the ledger does not declare", () => {
