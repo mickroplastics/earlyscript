@@ -10,7 +10,9 @@ import {
 } from "@t3tools/contracts";
 import {
   DOSSIER_SCHEMA_VERSION,
+  DOSSIER_V2_SCHEMA_VERSION,
   Dossier,
+  DossierV2,
   type CurvePoint,
 } from "@earlyscript/editorial-contracts/dossier";
 import {
@@ -25,10 +27,9 @@ import * as Schema from "effect/Schema";
 import { cardOf, NO_EXTRAS, type DossierExtras } from "./dossierCard.ts";
 import { trendKeyOf, type TrendKey } from "./trendKey.ts";
 
-// Reader for the runs directory, shared by the read side and the importer. The trend engine
-// writes `earlyscript.run/1` and `earlyscript.dossier/1`; Earlywindow's run.json and
-// `dossier/1` are read for compatibility and converted, so the editorial space only works
-// with `RunInfo` and the native `Dossier`.
+// Reader for the runs directory: native dossier/1 and /2 (engine.v3) and Earlywindow's
+// dossier/1 all become the native `Dossier`. A dossier/2's `movement` block reaches the card
+// through `readDossierExtras`, which reads the file's text.
 
 const OptionalText = Schema.optionalKey(Schema.NullOr(Schema.String));
 
@@ -50,8 +51,8 @@ const EarlywindowRunFile = Schema.Struct({
 const RunFile = Schema.Union([RunRecord, EarlywindowRunFile]);
 type RunFile = typeof RunFile.Type;
 
-/** One dossier file in either format; `toDossiers` converts a run's files to `Dossier`. */
-const DossierFile = Schema.Union([Dossier, EarlywindowDossier]);
+/** One dossier file in any format; `toDossiers` converts a run's files to `Dossier`. */
+const DossierFile = Schema.Union([Dossier, DossierV2, EarlywindowDossier]);
 export type DossierFile = typeof DossierFile.Type;
 
 /** What the editorial space keeps of a run.json, named after its keys. */
@@ -158,6 +159,32 @@ export function runSummary(run: RunInfo, dossierCount: number): EditorialRunSumm
 }
 
 /**
+ * A `dossier/2` as `Dossier`: the fields both share, with the evidence items' week and
+ * `also_in` left out. `movement` stays in the file for the card.
+ */
+function fromDossierV2(file: DossierV2): Dossier {
+  return {
+    schema_version: DOSSIER_SCHEMA_VERSION,
+    origin: file.origin,
+    dossier_id: file.dossier_id,
+    run_id: file.run_id,
+    created_at: file.created_at,
+    cutoff_at: file.cutoff_at,
+    engine: file.engine,
+    profile: file.profile,
+    trend: file.trend,
+    profile_fit: file.profile_fit,
+    rankings: file.rankings,
+    related: file.related,
+    curve: file.curve,
+    coverage: file.coverage,
+    data_gaps: file.data_gaps,
+    evidence: file.evidence.map(({ week: _week, also_in: _alsoIn, ...item }) => item),
+    evidence_status: file.evidence_status,
+  };
+}
+
+/**
  * The run's dossiers as `Dossier`, in the order given. Earlywindow dossiers take their ranking
  * positions from the whole run, so they convert together.
  */
@@ -167,9 +194,11 @@ export function toDossiers(files: ReadonlyArray<DossierFile>): ReadonlyArray<Dos
       files.filter((file): file is EarlywindowDossier => file.schema_version === "dossier/1"),
     ).map((dossier) => [dossier.dossier_id, dossier]),
   );
-  return files.map((file) =>
-    file.schema_version === DOSSIER_SCHEMA_VERSION ? file : converted.get(file.dossier_id)!,
-  );
+  return files.map((file) => {
+    if (file.schema_version === DOSSIER_SCHEMA_VERSION) return file;
+    if (file.schema_version === DOSSIER_V2_SCHEMA_VERSION) return fromDossierV2(file);
+    return converted.get(file.dossier_id)!;
+  });
 }
 
 const dayKey = (ms: number) => DateTime.formatIsoDateUtc(DateTime.makeUnsafe(ms));

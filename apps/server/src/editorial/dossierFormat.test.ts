@@ -1,8 +1,44 @@
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { EditorialDossierId, type EditorialTrendSummary } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
-import { compareTrends, webUrlOrNull, windowCurve } from "./dossierFormat.ts";
+import { readDossierExtras } from "./dossierCard.ts";
+// A dossier of engine.v3 (Opus A, run of 10 Oct 2026), trimmed to two evidence items.
+import dossierV2Fixture from "./fixtures/dossier-v2/01-dos_f352642c441d.json" with { type: "json" };
+import {
+  compareTrends,
+  decodeDossierJson,
+  toDossiers,
+  webUrlOrNull,
+  windowCurve,
+} from "./dossierFormat.ts";
+
+describe("dossier/2", () => {
+  effectIt.effect("decodes and converts to Dossier; the movement block stays for the card", () =>
+    Effect.gen(function* () {
+      const raw = dossierV2Fixture;
+      const text = JSON.stringify(raw);
+      const file = yield* decodeDossierJson(text);
+      expect(file.schema_version).toBe("earlyscript.dossier/2");
+      const [dossier] = toDossiers([file]);
+      expect(dossier!.schema_version).toBe("earlyscript.dossier/1");
+      expect(dossier!.dossier_id).toBe(raw.dossier_id);
+      expect(dossier!.trend).toEqual(raw.trend);
+      expect(dossier!.rankings).toEqual(raw.rankings);
+      expect(dossier!.evidence.map((item) => item.item_id)).toEqual(
+        raw.evidence.map((item) => item.item_id),
+      );
+      expect(dossier!.evidence.every((item) => !("week" in item) && !("also_in" in item))).toBe(
+        true,
+      );
+      const card = readDossierExtras(text).card;
+      expect(card?.movement).toBe(raw.movement.movement);
+      expect(card?.section).toBe(raw.movement.section);
+    }),
+  );
+});
 
 const day = (date: string, items: number, known = true) => ({
   day: date,

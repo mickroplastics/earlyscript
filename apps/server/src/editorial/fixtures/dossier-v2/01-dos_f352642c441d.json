@@ -1,0 +1,483 @@
+{
+  "schema_version": "earlyscript.dossier/2",
+  "origin": "earlyscript",
+  "dossier_id": "dos_f352642c441d",
+  "run_id": "run_20261010_20261109T023556_27ed2e",
+  "created_at": "2026-11-09T02:39:23.055Z",
+  "cutoff_at": "2026-10-10T00:00:00.000Z",
+  "engine": {
+    "version": "0.3.0",
+    "config_hash": "sha256:1ac9f95c65bb488e3c42082c443ee0ecbbe5eaca5822cb7bbe211f48e82791f9",
+    "corpus_hash": "sha256:69b5cbd8e04a686c864eccc6e81a4dc2aa9e7760d23f657c1326e4e531c43e5c",
+    "embedding": {
+      "model": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      "revision": "c25a394dd583836952667c12f008335071b3f43d",
+      "dtype": "q8",
+      "pooling": "last_token",
+      "batch_size": 1,
+      "runtime": "transformers.js@4.3.1+onnxruntime-node@1.30.0+cpu+intra_op_threads=2",
+      "platform": "linux",
+      "arch": "x64"
+    }
+  },
+  "profile": {
+    "name": "SingulariDev",
+    "version": null,
+    "hash": "sha256:cc5cc20d8be7faa6eb28eaa09b35fb8200e61da269acdaefac85cf3ecd0e2298"
+  },
+  "trend": {
+    "id": "sig_a9d731bee8e0",
+    "label": "claude anthropic abusive behavior",
+    "label_source": "terms",
+    "top_terms": [
+      "claude",
+      "anthropic",
+      "abusive",
+      "behavior",
+      "build",
+      "cruel",
+      "missile",
+      "says",
+      "weapons",
+      "bans"
+    ],
+    "stage": "growing",
+    "corroboration": "single_source",
+    "first_seen_at": "2026-09-11T10:07:08.000Z",
+    "last_seen_at": "2026-10-09T13:15:35.000Z",
+    "sources": ["hn"],
+    "items_total": 21,
+    "items_7d": 8,
+    "items_prev_7d": 0,
+    "authors_7d": 8,
+    "growth": 2.197225
+  },
+  "profile_fit": {
+    "include_score": 0.644697,
+    "exclude_score": 0.540754,
+    "passes": true,
+    "nearest_include": "developer tooling, SDKs and protocols for building AI products"
+  },
+  "rankings": {
+    "eligible": 27,
+    "baseline": {
+      "method": "baseline.items_7d",
+      "score": 8,
+      "components": [
+        {
+          "name": "items_7d",
+          "value": 8,
+          "weight": 1,
+          "contribution": 8
+        }
+      ],
+      "position": 4
+    },
+    "weighted": {
+      "method": "weighted_sum.v3",
+      "score": 1.767402,
+      "components": [
+        {
+          "name": "relevance",
+          "value": 0.788512,
+          "weight": 1,
+          "contribution": 0.788512
+        },
+        {
+          "name": "growth",
+          "value": 2.197225,
+          "weight": 0.25,
+          "contribution": 0.549306
+        },
+        {
+          "name": "log_items_7d",
+          "value": 2.197225,
+          "weight": 0.15,
+          "contribution": 0.329584
+        },
+        {
+          "name": "sources_7d",
+          "value": 1,
+          "weight": 0.1,
+          "contribution": 0.1
+        }
+      ],
+      "position": 1
+    }
+  },
+  "related": [],
+  "curve": [
+    {
+      "day": "2026-09-12",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-13",
+      "items": 2,
+      "sources": 1,
+      "authors": 2,
+      "known": true
+    },
+    {
+      "day": "2026-09-14",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-15",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-16",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-17",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-18",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-19",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-20",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-21",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-22",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-23",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-24",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-09-25",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-26",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-27",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-28",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-29",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-09-30",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-01",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-02",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-03",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-04",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-05",
+      "items": 0,
+      "sources": 0,
+      "authors": 0,
+      "known": true
+    },
+    {
+      "day": "2026-10-06",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-07",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-08",
+      "items": 1,
+      "sources": 1,
+      "authors": 1,
+      "known": true
+    },
+    {
+      "day": "2026-10-09",
+      "items": 4,
+      "sources": 1,
+      "authors": 4,
+      "known": true
+    }
+  ],
+  "coverage": {
+    "window_days": 28,
+    "by_source": [
+      {
+        "source": "hn",
+        "days_complete": 28,
+        "days_partial": 0,
+        "days_unavailable": 0
+      },
+      {
+        "source": "github",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      },
+      {
+        "source": "huggingface",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      },
+      {
+        "source": "npm",
+        "days_complete": 0,
+        "days_partial": 28,
+        "days_unavailable": 0
+      }
+    ],
+    "uncertain": false
+  },
+  "data_gaps": [],
+  "evidence": [
+    {
+      "item_id": "itm_hn_50017324",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50017324",
+      "external_url": "https://www.theguardian.com/technology/2026/oct/08/anthropic-bans-abusive-behavior-claude",
+      "published_at": "2026-10-09T07:41:00.000Z",
+      "author": "pelagicAustral",
+      "title": "Anthropic bans users from abusive or cruel behavior towards Claude",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:33:53.039Z",
+      "similarity": 0.87792,
+      "relevance": 0.860222,
+      "week": 0,
+      "also_in": []
+    },
+    {
+      "item_id": "itm_hn_50020061",
+      "source": "hn",
+      "permalink": "https://news.ycombinator.com/item?id=50020061",
+      "external_url": "https://www.anthropic.com/legal/aup",
+      "published_at": "2026-10-09T13:15:35.000Z",
+      "author": "anon373839",
+      "title": "Anthropic Usage Policy to prohibit \"abusive or cruel behavior\" toward Claude",
+      "excerpt": "",
+      "retrieved_at": "2026-10-31T00:33:53.039Z",
+      "similarity": 0.856455,
+      "relevance": 0.934807,
+      "week": 0,
+      "also_in": []
+    }
+  ],
+  "evidence_status": "sufficient",
+  "movement": {
+    "section": "moving",
+    "slot": "rank",
+    "position": 1,
+    "movement": "rebote",
+    "movement_since": "2026-10-08",
+    "movement_since_capped": false,
+    "first_at": "2026-09-11T10:07:08.000Z",
+    "perennial": false,
+    "perennial_rule": null,
+    "incomplete": false,
+    "generic": false,
+    "weeks": [8, 0, 3, 4, 6],
+    "history_from": "2026-09-05",
+    "items_life": 21,
+    "pop": 7.847959,
+    "tau_days": 7,
+    "authors_w0": 8,
+    "sources_w0": ["hn"],
+    "by_source": [
+      {
+        "source": "hn",
+        "status": "comparable",
+        "weeks": [8, 0, 3, 4, 6],
+        "total": 21,
+        "authors_w0": 8
+      },
+      {
+        "source": "github",
+        "status": "comparable",
+        "weeks": [0, 0, 0, 0, 0],
+        "total": 0,
+        "authors_w0": 0
+      },
+      {
+        "source": "huggingface",
+        "status": "comparable",
+        "weeks": [0, 0, 0, 0, 0],
+        "total": 0,
+        "authors_w0": 0
+      },
+      {
+        "source": "npm",
+        "status": "comparable",
+        "weeks": [0, 0, 0, 0, 0],
+        "total": 0,
+        "authors_w0": 0
+      },
+      {
+        "source": "wikipedia",
+        "status": "no_usada",
+        "weeks": [],
+        "total": null,
+        "authors_w0": null
+      },
+      {
+        "source": "rss",
+        "status": "parcial",
+        "weeks": [0, 0, 0, 0, 0],
+        "total": 0,
+        "authors_w0": 0
+      }
+    ],
+    "first_source": {
+      "source": "hn",
+      "at": "2026-09-11T10:07:08.000Z",
+      "item_id": "itm_hn_49655950"
+    },
+    "second_source": null,
+    "fit": {
+      "nearest_include": "developer tooling, SDKs and protocols for building AI products",
+      "nearest_exclude": "politics, elections and legislation without a developer angle",
+      "matched_terms": ["Claude"],
+      "keywords_version": "editorial-eval.keywords.v1",
+      "headlines": [
+        {
+          "item_id": "itm_hn_50017324",
+          "source": "hn",
+          "title": "Anthropic bans users from abusive or cruel behavior towards Claude",
+          "permalink": "https://news.ycombinator.com/item?id=50017324"
+        },
+        {
+          "item_id": "itm_hn_50020061",
+          "source": "hn",
+          "title": "Anthropic Usage Policy to prohibit \"abusive or cruel behavior\" toward Claude",
+          "permalink": "https://news.ycombinator.com/item?id=50020061"
+        }
+      ]
+    },
+    "saturation": {
+      "items_life": 21,
+      "items_total": 21,
+      "heavy_weeks": 2,
+      "perennial": false,
+      "decided_at": null
+    },
+    "relevance": {
+      "score": 0.788512,
+      "model_id": "relevance.v2",
+      "model_hash": "sha256:8a09bbba4acce7ba5dddf4eddcd78e4b698b00a69848badae4239d06836ea621",
+      "aggregate": "trimmed_mean",
+      "items_scored": 8
+    },
+    "cut": {
+      "p50": 9.331232,
+      "p90": 49.900005,
+      "percentile_topics": 286,
+      "comparable_sources": ["hn", "github", "huggingface", "npm"],
+      "candidates": 286,
+      "discarded_by_exclude": 71
+    }
+  }
+}
