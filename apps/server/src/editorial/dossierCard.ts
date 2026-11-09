@@ -163,6 +163,70 @@ function readJudgesBlock(raw: unknown): EditorialJudgeView | null {
   };
 }
 
+/** W0..W4 as the engine writes them, to W3..W0 (oldest first) as the card shows them. */
+const cardWeeks = (weeks: ReadonlyArray<number | null> | null) =>
+  weeks === null ? null : weeks.slice(0, 4).toReversed();
+
+/**
+ * The `movement` block of Opus A's `earlyscript.dossier/2` (branch `es/motor-v3-a`, 9 Nov 2026)
+ * read into the same card block. Weeks come W0..W4; "?" rows of W0..W2 make the coverage line.
+ */
+function readMovementBlock(raw: unknown, evidence: unknown): CardBlock | null {
+  if (!isObject(raw) || !Array.isArray(raw.by_source)) return null;
+  const externalById = new Map<string, string>();
+  if (Array.isArray(evidence)) {
+    for (const item of evidence) {
+      if (!isObject(item)) continue;
+      const id = text(item.item_id);
+      const url = text(item.external_url) ?? text(item.permalink);
+      if (id !== null && url !== null) externalById.set(id, url);
+    }
+  }
+  const rows =
+    list(raw.by_source, (row) => {
+      if (!isObject(row)) return null;
+      const source = text(row.source);
+      if (source === null) return null;
+      const weeks = Array.isArray(row.weeks) ? row.weeks.map((week) => count(week)) : null;
+      return { source, status: text(row.status) ?? "comparable", weeks };
+    }) ?? [];
+  const fit = isObject(raw.fit) ? raw.fit : {};
+  const saturation = isObject(raw.saturation) ? raw.saturation : {};
+  const first = (value: unknown) => (isObject(value) ? sourceDay(value.source, value.at) : null);
+  const position = count(raw.position);
+  return {
+    section: raw.section === "moving" || raw.section === "background" ? raw.section : null,
+    position: position !== null && position >= 1 ? position : null,
+    movement: text(raw.movement),
+    since: day(raw.movement_since),
+    perennial: flag(raw.perennial),
+    weeksBySource: rows.map((row) => ({ ...row, weeks: cardWeeks(row.weeks) })),
+    firstSource: first(raw.first_source),
+    secondSource: first(raw.second_source),
+    nearestInclude: text(fit.nearest_include),
+    keywordTerms: list(fit.matched_terms, text),
+    // dossier/2 has no saturation flag yet: its perennial mark is the conservative reading.
+    saturated: flag(saturation.perennial),
+    headlines: list(fit.headlines, (headline) => {
+      if (!isObject(headline)) return null;
+      const title = text(headline.title);
+      const source = text(headline.source);
+      if (title === null || source === null) return null;
+      const itemId = text(headline.item_id);
+      return {
+        itemId,
+        title,
+        source,
+        url: (itemId === null ? null : externalById.get(itemId)) ?? text(headline.permalink),
+        day: null,
+      };
+    }),
+    incompleteSources: rows
+      .filter((row) => row.status === "comparable" && (row.weeks ?? []).slice(0, 3).includes(null))
+      .map((row) => row.source),
+  };
+}
+
 /**
  * The `card` and `judges` blocks of one dossier file's text. A file whose JSON does not parse
  * has none; the dossier decoder reports that file on its own.
@@ -175,7 +239,10 @@ export function readDossierExtras(fileText: string): DossierExtras {
     return NO_EXTRAS;
   }
   if (!isObject(parsed)) return NO_EXTRAS;
-  return { card: readCardBlock(parsed.card), judges: readJudgesBlock(parsed.judges) };
+  return {
+    card: readCardBlock(parsed.card) ?? readMovementBlock(parsed.movement, parsed.evidence),
+    judges: readJudgesBlock(parsed.judges),
+  };
 }
 
 const MOVEMENTS: Readonly<Record<string, EditorialTrendMovement>> = {
@@ -199,12 +266,15 @@ const MOVEMENTS: Readonly<Record<string, EditorialTrendMovement>> = {
 const movementOf = (code: string | null): EditorialTrendMovement | null =>
   code !== null && Object.hasOwn(MOVEMENTS, code) ? MOVEMENTS[code]! : null;
 
+/** `no_comparable` (clustered, outside the cohort at this cutoff) reads as partial. */
 const STATUSES: Readonly<Record<string, EditorialCardCurveRow["status"]>> = {
   comparable: "comparable",
   partial: "partial",
   parcial: "partial",
+  no_comparable: "partial",
   unused: "unused",
   "no usada": "unused",
+  no_usada: "unused",
   total: "total",
 };
 

@@ -294,6 +294,61 @@ describe("readDossierExtras", () => {
   });
 });
 
+describe("dossier/2 movement block (Opus A)", () => {
+  it("reads its weeks W0..W4 as W3..W0, its codes, first sources, fit and '?' rows", () => {
+    const card = readDossierExtras(
+      JSON.stringify({
+        evidence: [
+          {
+            item_id: "itm_hn_1",
+            permalink: "https://news.ycombinator.com/item?id=1",
+            external_url: "https://example.com/a",
+          },
+        ],
+        movement: {
+          section: "background",
+          slot: "background",
+          position: 2,
+          movement: "senal_fuerte",
+          movement_since: "2026-10-09",
+          perennial: true,
+          by_source: [
+            { source: "hn", status: "comparable", weeks: [5, 0, 3, 1, 9] },
+            { source: "npm", status: "comparable", weeks: [2, null, 0, 0, 0] },
+            { source: "rss", status: "parcial", weeks: [1, 0, 0, 0, 0] },
+            { source: "wikipedia", status: "no_usada", weeks: [] },
+          ],
+          first_source: { source: "hn", at: "2026-09-01T10:00:00.000Z", item_id: "itm_hn_9" },
+          second_source: null,
+          fit: {
+            nearest_include: "AI coding agents and agent harnesses for developers",
+            matched_terms: ["agent"],
+            headlines: [
+              {
+                item_id: "itm_hn_1",
+                source: "hn",
+                title: "A",
+                permalink: "https://news.ycombinator.com/item?id=1",
+              },
+            ],
+          },
+          saturation: { perennial: true, items_life: 40 },
+        },
+      }),
+    ).card;
+    assert.strictEqual(card?.section, "background");
+    assert.strictEqual(card?.movement, "senal_fuerte");
+    assert.strictEqual(card?.since, "2026-10-09");
+    assert.deepStrictEqual(card?.weeksBySource?.[0]?.weeks, [1, 3, 0, 5]);
+    assert.deepStrictEqual(card?.weeksBySource?.[1]?.weeks, [0, 0, null, 2]);
+    assert.deepStrictEqual(card?.firstSource, { source: "hn", day: "2026-09-01" });
+    assert.deepStrictEqual(card?.keywordTerms, ["agent"]);
+    assert.strictEqual(card?.headlines?.[0]?.url, "https://example.com/a");
+    assert.deepStrictEqual(card?.incompleteSources, ["npm"]);
+    assert.strictEqual(card?.saturated, true);
+  });
+});
+
 describe("same topic for 'ya decidido'", () => {
   const row = (overrides: Partial<ThreadDecisionRow>): ThreadDecisionRow => ({
     thread_id: "t1",
