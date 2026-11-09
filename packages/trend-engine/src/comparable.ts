@@ -38,10 +38,6 @@ export interface Cohort {
 
 export const unknownKey = (source: SourceId, week: number) => `${source}|${week}`;
 
-/** k of the week W_k an instant before the cutoff falls in; W0 = [t − 7 d, t). */
-export const weekOf = (cutoffMs: number, ms: number): number =>
-  Math.floor((cutoffMs - ms) / (WEEK_DAYS * DAY_MS));
-
 /**
  * Comparable: coverage lists every day of [t − window, t), at most `max_unavailable` of them
  * unavailable (those only turn a week with 2 or more into "?"). A clustered source missing only

@@ -320,6 +320,16 @@ const WEEK_MS = 7 * 86_400_000;
 const SERIES_WEEK_COUNT = 5;
 
 /**
+ * k of the week W_k = [t − 7(k+1) d, t − 7k d) an instant before the cutoff falls in: the age
+ * a = t − ms is in (7k d, 7(k+1) d], so an item at exactly t − 7 d is in W0 and one at t − 35 d
+ * in W4. Refuses an instant at or after the cutoff.
+ */
+export function weekIndex(cutoffMs: number, ms: number): number {
+  if (ms >= cutoffMs) throw new Error(`instant ${ms} is not before the cutoff ${cutoffMs}`);
+  return Math.ceil((cutoffMs - ms) / WEEK_MS) - 1;
+}
+
+/**
  * Items at or after the cutoff must not be passed; the function also refuses them. Every
  * clustered source gets a row (`bySource`); only the comparable ones count in the series.
  */
@@ -348,7 +358,7 @@ export function weeklySeries(
         firstBySource.set(item.source, { ms: item.ms, id: item.id });
     }
     if (item.ms < historyFromMs) continue;
-    const k = Math.floor((cutoffMs - item.ms) / WEEK_MS);
+    const k = weekIndex(cutoffMs, item.ms);
     if (k >= SERIES_WEEK_COUNT) continue;
     const unknown = cohort.unknown.has(`${item.source}|${k}`);
     let row = perSource.get(item.source);
@@ -374,13 +384,13 @@ export function weeklySeries(
   // Summed in ascending time so the float result does not depend on insertion order.
   const firsts = [...firstByKey.values()].toSorted((a, b) => a - b);
   for (const ms of firsts) {
-    weeks[Math.floor((cutoffMs - ms) / WEEK_MS)]!++;
+    weeks[weekIndex(cutoffMs, ms)]!++;
     pop += 2 ** (-(cutoffMs - ms) / (tauDays * 86_400_000));
   }
   const bySource = new Map<SourceId, SourceWeeks>();
   for (const [source, row] of [...perSource].toSorted(([a], [b]) => (a < b ? -1 : 1))) {
     const rowWeeks: Array<number | null> = Array.from({ length: SERIES_WEEK_COUNT }, () => 0);
-    for (const ms of row.keys.values()) rowWeeks[Math.floor((cutoffMs - ms) / WEEK_MS)]!++;
+    for (const ms of row.keys.values()) rowWeeks[weekIndex(cutoffMs, ms)]!++;
     const isComparable = comparable.has(source);
     for (let k = 0; k < SERIES_WEEK_COUNT; k++)
       if (isComparable && cohort.unknown.has(`${source}|${k}`)) rowWeeks[k] = null;
