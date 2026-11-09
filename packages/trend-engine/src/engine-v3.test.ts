@@ -463,7 +463,7 @@ describe("engine.v3 run", () => {
     expect(a.files).toHaveLength(14);
     const read = (arm: string) =>
       JSON.parse(NodeFS.readFileSync(NodePath.join(root, "a", arm, `${CUT_DAY}.json`), "utf8")) as {
-        moving: Array<{ topic_id: string; card: unknown }>;
+        moving: Array<{ topic_id: string; item_ids: Array<string>; card: unknown }>;
         background: Array<{ topic_id: string; card: unknown }>;
       };
     const cards = new Map<string, string>();
@@ -475,6 +475,7 @@ describe("engine.v3 run", () => {
         expect(card).not.toContain("futuretoken");
       }
     expect(read("V1").moving.length).toBeGreaterThan(0);
+    expect(read("V1").moving.every((e) => e.item_ids.length > 0)).toBe(true);
     const list = JSON.parse(
       NodeFS.readFileSync(NodePath.join(root, "a", "V1", `${CUT_DAY}.json`), "utf8"),
     ) as {

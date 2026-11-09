@@ -9,7 +9,7 @@ import { ARMS, type Arm, isArm, runLists } from "./lists-v3.ts";
 import { sha256 } from "./hash.ts";
 
 const USAGE =
-  "usage: engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]";
+  "usage: engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]";
 
 export async function v3Command(argv: ReadonlyArray<string>): Promise<number> {
   const [sub, ...rest] = argv;
@@ -23,6 +23,7 @@ export async function v3Command(argv: ReadonlyArray<string>): Promise<number> {
       bags: { type: "string" },
       runs: { type: "string" },
       dev: { type: "string" },
+      lists: { type: "string" },
       config: { type: "string" },
       profile: { type: "string" },
       cache: { type: "string" },
@@ -51,6 +52,7 @@ export async function v3Command(argv: ReadonlyArray<string>): Promise<number> {
     ...(values.bags ? { bagsDir: values.bags } : {}),
     ...(values.runs ? { runsDir: values.runs } : {}),
     ...(values.dev ? { developmentCutoffs: parseCutoffList(values.dev) } : {}),
+    ...(values.lists ? { listCutoffs: parseCutoffList(values.lists) } : {}),
     ...(values.config ? { configPath: values.config } : {}),
     ...(values.profile ? { profilePath: values.profile } : {}),
     ...(values.cache ? { cacheFile: values.cache } : {}),
@@ -70,7 +72,7 @@ export async function v3Command(argv: ReadonlyArray<string>): Promise<number> {
     const manifest = {
       schema_version: "earlyscript.v3-lists-manifest/1",
       arms,
-      cutoffs,
+      cutoffs: values.lists ? parseCutoffList(values.lists) : cutoffs,
       development: values.dev ? parseCutoffList(values.dev) : cutoffs,
       files,
       /** Over the files' sha256 in order: what two runs of the same inputs reproduce. */

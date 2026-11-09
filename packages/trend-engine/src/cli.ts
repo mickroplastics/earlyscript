@@ -6,7 +6,7 @@
 //   node src/cli.ts repair-robots-override --corpus <dir> --source arxiv
 //   node src/cli.ts model status|prepare [--models <dir>]
 //   node src/cli.ts purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)
-//   node src/cli.ts v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <V1|V2|V3|V4|R4|R2|R5|v1|v2|all|A,B> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]
+//   node src/cli.ts v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <V1|V2|V3|V4|R4|R2|R5|v1|v2|all|A,B> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]
 //   node src/cli.ts eval-editorial pool|cards|cards-html|hn-labels|score|seal|capture ... (see editorial-cli.ts)
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
@@ -46,7 +46,7 @@ const USAGE =
   "       engine backtest --corpus <dir> --profile <file> --out <dir> --cutoffs <day,day|from..to> --baseline <ids> --candidate <ids> [--candidate <ids> ...] [--independent-cuts] [--truth <ids>] [--config <file>] [--workers n] [--cache <sqlite>] [--cache-only] [--models <dir>] [--allow-unverified-corpus]\n" +
   "       engine check --backtest <backtest.json> [--rerun --out <dir> --corpus <dir> --profile <file>] [--cache <sqlite>] [--cache-only]\n" +
   "       engine collect --corpus <dir> --sources hn,github,lobsters,rss,huggingface,arxiv,wikipedia,npm,stackexchange,bluesky --from <day> --to <exclusive-day> [--rss-feeds <file.json>] [--force]\n" +
-  "       engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
+  "       engine v3 lists --corpus <dir> --cutoff <day|day,day|from..to> --arm <arm|A,B|all> --out <file.json|dir> [--bags <dir>] [--runs <dir>] [--dev <days>] [--lists <days>] [--config <file>] [--profile <file>] [--cache <sqlite>] [--cache-only] [--models <dir>] [--workers n]\n" +
   "       engine model status|prepare [--models <dir>]\n" +
   "       engine repair-robots-override --corpus <dir> --source <id>\n" +
   "       engine purge --corpus <dir> --source <id> (--author <name|bluesky did> | --url <permalink|bluesky at-uri> | --feed <feed-url>)";

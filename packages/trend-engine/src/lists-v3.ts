@@ -106,6 +106,8 @@ export interface ListEntry {
   readonly position: number;
   readonly slot: string;
   readonly topic_id: string;
+  /** Members of the topic published before the cutoff (kept items of the clustered sources). */
+  readonly item_ids: ReadonlyArray<string>;
   readonly arm_score: Scored | null;
   /** v1 and v2: the trend of that engine's run this entry projects. */
   readonly source_trend?: {
@@ -281,6 +283,7 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
       position: p.position,
       slot: p.slot,
       topic_id: p.topic.id,
+      item_ids: base.byId.get(p.topic.id)!.stacked.itemIds,
       arm_score: p.scored,
       card: card(p.topic),
     })),
@@ -288,6 +291,7 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
       position: p.position,
       slot: p.slot,
       topic_id: p.topic.id,
+      item_ids: base.byId.get(p.topic.id)!.stacked.itemIds,
       arm_score: p.scored,
       card: card(p.topic),
     })),
@@ -311,6 +315,7 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
       position: k + 1,
       slot: "rank",
       topic_id: topic.id,
+      item_ids: topic.stacked.itemIds,
       arm_score: null,
       card: card(topic),
     })),
@@ -411,6 +416,7 @@ export function armList(arm: Arm, ctx: ArmContext): ArmList {
           position: k + 1,
           slot: "rank",
           topic_id: topic.id,
+          item_ids: topic.stacked.itemIds,
           arm_score: null,
           source_trend: trend,
           card: card(topic),
@@ -550,6 +556,8 @@ export interface ListsOptions {
   /** Where the v1 and v2 runs go; defaults beside the lists. */
   readonly runsDir?: string;
   readonly developmentCutoffs?: ReadonlyArray<string>;
+  /** Cutoffs whose lists are written; every cutoff by default (bags cover all of them). */
+  readonly listCutoffs?: ReadonlyArray<string>;
   readonly configPath?: string;
   readonly profilePath?: string;
   readonly cacheFile?: string;
@@ -619,6 +627,7 @@ export async function runLists(options: ListsOptions): Promise<ListsResult> {
   const embedder = memoEmbedder(inner);
   const cutoffs = [...new Set(options.cutoffs)].toSorted();
   const development = new Set(options.developmentCutoffs ?? cutoffs);
+  const listed = new Set(options.listCutoffs ?? cutoffs);
   const arms = [...new Set(options.arms)];
   const runsDir =
     options.runsDir ??
@@ -733,7 +742,7 @@ export async function runLists(options: ListsOptions): Promise<ListsResult> {
         profile_hash: profileHash,
         keywords_hash: keywordsHash,
       };
-      for (const arm of arms) {
+      for (const arm of listed.has(cutoffDay) ? arms : []) {
         const list = armList(arm, { base, slow, params, cardOf, header, runs });
         let path: string | null = null;
         if (options.outFile && cutoffs.length === 1 && arms.length === 1) path = options.outFile;
