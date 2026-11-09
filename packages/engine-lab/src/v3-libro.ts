@@ -238,6 +238,9 @@ const DOC = /\.(md|txt)$/i;
  * naming a judge, plus every non-empty file of the extra cache directories), and the rubric
  * files of the repository are not under root/v3, so they never count.
  */
+/** B's judge cache, watched by default. */
+export const V3_JUDGE_CACHE_DIR = (root: string) => NodePath.join(v3Dir(root), "b", "cache");
+
 export function judgeCacheEntries(
   root: string,
   extraDirs: ReadonlyArray<string> = [],
@@ -255,8 +258,12 @@ export function judgeCacheEntries(
     )
     .filter((rel) => !DOC.test(rel))
     .map((rel) => NodePath.join(base, rel));
-  const extra = extraDirs.flatMap((dir) => walk(dir).map((rel) => NodePath.join(dir, rel)));
-  return [...inV3, ...extra].filter((p) => NodeFS.statSync(p).size > 0);
+  // B's standard cache (v3/b/cache/<judge>/answers/...) is always watched (Sol, should).
+  const dirs = [
+    ...new Set([V3_JUDGE_CACHE_DIR(root), ...extraDirs.map((d) => NodePath.resolve(d))]),
+  ];
+  const extra = dirs.flatMap((dir) => walk(dir).map((rel) => NodePath.join(dir, rel)));
+  return [...new Set([...inV3, ...extra])].filter((p) => NodeFS.statSync(p).size > 0);
 }
 
 /** p4 label files under root/v3: files under a labels/p4 segment, or named with p4. */
@@ -439,6 +446,8 @@ export function computePremanifest(files: PremanifestFiles) {
       version: "4.2",
     },
     rubrica: { path: NodePath.resolve(files.rubric), sha256: fileSha256(files.rubric) },
+    // Identity: the whole file (helpers such as cleanText included); the function hash is
+    // informative only (Sol B1 changed cleanText and left cardTextV3's body as it was).
     card_text_v3: {
       path: NodePath.resolve(files.cardText),
       file_sha256: fileSha256(files.cardText),
@@ -484,6 +493,30 @@ export function computePremanifest(files: PremanifestFiles) {
       cohorte: measurement["cohort"] ?? null,
     },
   };
+}
+
+const withoutPaths = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(withoutPaths)
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .filter(([k]) => k !== "path")
+            .map(([k, v]) => [k, withoutPaths(v)]),
+        )
+      : value;
+
+/**
+ * Fields of computePremanifest that differ from the entered pre-manifest. Hashes and
+ * definitions are compared, not the paths: a frozen copy of the same file shows no drift.
+ */
+export function premanifestDrift(
+  entry: Readonly<Record<string, unknown>>,
+  computed: ReturnType<typeof computePremanifest>,
+): Array<string> {
+  return Object.entries(computed)
+    .filter(([k, v]) => canonicalJson(withoutPaths(entry[k])) !== canonicalJson(withoutPaths(v)))
+    .map(([k]) => k);
 }
 
 /**
@@ -574,7 +607,84 @@ export function judgeDiagPayload(options: {
 }
 
 /** v3_dev_results: the metrics file, decide() recomputed on its input, and the row applied. */
-export function devResultsPayload(root: string, metricsPath: string) {
+/** The text function and judge rubric in force after a ledger entry (file hashes). */
+export interface TextJudgeVersion {
+  readonly card_text_file_sha256: string | null;
+  readonly judge_util_sha256: string | null;
+  readonly desde: string;
+  readonly asiento: string;
+}
+
+const CARD_KEY = /^card_text_v3_archivo_sha256_v(\d+)$/;
+const JUDGE_KEY = /^judge_util_v1_sha256_v(\d+)$/;
+
+/**
+ * The fields of an addendum to the pre-manifest: v3_premanifest_2's `campos`, or an
+ * `exposicion --tipo adenda_premanifest` (its `campos`, or the JSON object in its texto).
+ */
+export function addendumFields(entry: LedgerEntry): Record<string, unknown> | null {
+  if (entry.kind === "v3_premanifest_2") return (entry["campos"] as Record<string, unknown>) ?? {};
+  if (entry.kind !== "exposicion" || entry["tipo"] !== "adenda_premanifest") return null;
+  if (entry["campos"] && typeof entry["campos"] === "object")
+    return entry["campos"] as Record<string, unknown>;
+  const text = String(entry["texto"] ?? "");
+  const at = text.indexOf("{");
+  if (at < 0) return {};
+  try {
+    return JSON.parse(text.slice(at)) as Record<string, unknown>;
+  } catch {
+    return fail("invalid-change", `The addendum of ${entry.at} carries no readable JSON.`);
+  }
+}
+
+const latestVersioned = (fields: Record<string, unknown>, key: RegExp): string | null => {
+  let best: { n: number; value: string } | null = null;
+  for (const [k, v] of Object.entries(fields)) {
+    const m = key.exec(k);
+    if (m && typeof v === "string" && (best === null || Number(m[1]) > best.n))
+      best = { n: Number(m[1]), value: v };
+  }
+  return best?.value ?? null;
+};
+
+/** Every state of (text function, judge rubric) declared in the ledger, in order. */
+export function declaredVersions(ledger: ReadonlyArray<LedgerEntry>): Array<TextJudgeVersion> {
+  const pre = ledger.find((e) => e.kind === "v3_premanifest");
+  if (!pre) return [];
+  let state: TextJudgeVersion = {
+    card_text_file_sha256:
+      ((pre["card_text_v3"] as { file_sha256?: string }) ?? {}).file_sha256 ?? null,
+    judge_util_sha256: ((pre["rubrica"] as { sha256?: string }) ?? {}).sha256 ?? null,
+    desde: pre.at,
+    asiento: "v3_premanifest",
+  };
+  const out = [state];
+  for (const e of ledger) {
+    const fields = addendumFields(e);
+    if (!fields) continue;
+    const card = latestVersioned(fields, CARD_KEY);
+    const judge = latestVersioned(fields, JUDGE_KEY);
+    if (card === null && judge === null) continue;
+    state = {
+      card_text_file_sha256: card ?? state.card_text_file_sha256,
+      judge_util_sha256: judge ?? state.judge_util_sha256,
+      desde: e.at,
+      asiento: e.kind === "exposicion" ? "exposicion adenda_premanifest" : e.kind,
+    };
+    out.push(state);
+  }
+  return out;
+}
+
+/** The version in force when an entry was written (the last declared before it). */
+export const versionBefore = (versions: ReadonlyArray<TextJudgeVersion>, at: string) =>
+  versions.findLast((v) => v.desde < at) ?? null;
+
+export function devResultsPayload(
+  root: string,
+  metricsPath: string,
+  scoring: { readonly cardText: string; readonly rubric: string },
+) {
   const ledger = readV3Ledger(root);
   const oracle = ledger.find((e) => e.kind === "v3_oracle");
   const diag = ledger.find((e) => e.kind === "v3_judge_diag");
@@ -600,8 +710,34 @@ export function devResultsPayload(root: string, metricsPath: string) {
       agreement: (diag["acuerdo"] as number | null) ?? null,
     },
   };
-  const decision = decide(input);
+  const versions = declaredVersions(ledger);
+  const diagVersion = versionBefore(versions, diag.at);
+  const used = {
+    card_text_file_sha256: fileSha256(scoring.cardText),
+    judge_util_sha256: fileSha256(scoring.rubric),
+  };
+  const declared = versions.at(-1)!;
+  if (
+    used.card_text_file_sha256 !== declared.card_text_file_sha256 ||
+    used.judge_util_sha256 !== declared.judge_util_sha256
+  ) {
+    fail(
+      "invalid-change",
+      `The scoring used text ${used.card_text_file_sha256} and judge ${used.judge_util_sha256}; the ledger declares ${declared.card_text_file_sha256} and ${declared.judge_util_sha256} (enter an adenda_premanifest first).`,
+    );
+  }
+  const versionsUsed = {
+    diagnostico: diagVersion,
+    puntuacion: { ...used, declarada_en: declared.asiento, desde: declared.desde },
+    cambia_respecto_al_diagnostico:
+      diagVersion === null ||
+      diagVersion.card_text_file_sha256 !== used.card_text_file_sha256 ||
+      diagVersion.judge_util_sha256 !== used.judge_util_sha256,
+    declaradas: versions,
+  };
+  const decision = decide({ ...input, versions: versionsUsed });
   return {
+    versiones_texto_y_juez: versionsUsed,
     metricas: { path: NodePath.resolve(metricsPath), sha256: fileSha256(metricsPath) },
     decide_input: input,
     decision,

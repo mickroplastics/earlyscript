@@ -117,17 +117,16 @@ export function evaluateV3(paths: V3EvalPaths, cutoffs: ReadonlyArray<string> = 
     r4: Object.fromEntries(
       V3_VARIANTS.map((v) => {
         const c = contrasts[v]["R4"]!;
+        // Always with its support: J2 reads it even when there is no difference (Sol, D1).
         return [
           v,
-          c.diff === null
-            ? null
-            : {
-                diff: c.diff,
-                low: c.families.low,
-                high: c.families.high,
-                estimable: c.families.estimable,
-                support: c.support,
-              },
+          {
+            diff: c.diff,
+            low: c.families.low,
+            high: c.families.high,
+            estimable: c.families.estimable,
+            support: c.support,
+          },
         ];
       }),
     ) as DecideInput["r4"],

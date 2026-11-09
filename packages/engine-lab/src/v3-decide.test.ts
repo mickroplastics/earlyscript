@@ -7,13 +7,13 @@ const variant = (eligible: boolean, u10: number | null, recall: number | null) =
   u10,
   recall_inc040: recall,
 });
-const r4 = (diff: number, low: number | null, high: number | null, estimable = true) => ({
-  diff,
-  low,
-  high,
-  estimable,
-  support: 21,
-});
+const r4 = (
+  diff: number | null,
+  low: number | null,
+  high: number | null,
+  estimable = true,
+  support = 21,
+) => ({ diff, low, high, estimable, support });
 
 const base = (over: Partial<DecideInput> = {}): DecideInput => ({
   premanifest_late: false,
@@ -54,6 +54,77 @@ describe("table 5d, one test per row", () => {
     expect(d.rows).toContain("J2");
     expect(d.judge_calibrated).toBe(false);
     expect(d.selection_path).toBe("S2");
+  });
+
+  it("J2 at the selection support: 14 counts as uncalibrated, 15 does not", () => {
+    const at = (n: number) =>
+      decide(base({ judge: { failed: false, kappa: 0.7, agreement: 0.93, selection_support: n } }));
+    expect(at(14).rows).toContain("J2");
+    expect(at(15).rows).not.toContain("J2");
+    expect(at(15).selection_path).toBe("S1");
+  });
+
+  it("J2 on the deciding contrast: Sol's case (R4 support 1, Δ −0,10) is J2 and structural, not P2", () => {
+    const sol = decide(
+      base({
+        judge: { failed: false, kappa: 0.8, agreement: 0.95, selection_support: 21 },
+        variants: {
+          V1: variant(true, 3.9, 0.5),
+          V2: variant(true, 3.6, 0.6),
+          V3: variant(true, 3.5, 0.4),
+          V4: variant(true, 3.4, 0.3),
+        },
+        r4: {
+          V1: r4(-0.1, null, null, false, 1),
+          V2: r4(0.1, -0.1, 0.3),
+          V3: r4(0.1, -0.1, 0.3),
+          V4: r4(0.1, -0.1, 0.3),
+        },
+      }),
+    );
+    expect(sol.rows).toContain("J2");
+    expect(sol.rows).not.toContain("P2");
+    expect(sol.rows).not.toContain("P1");
+    expect(sol.rows).not.toContain("U1");
+    expect(sol).toMatchObject({
+      judge_calibrated: false,
+      selection_path: "S2",
+      chosen: "V2",
+      promote: true,
+      pairs_engine: "v3",
+      decide_version: "5d.2",
+    });
+  });
+
+  it("J2 on the deciding contrast at the limits: R4 support 14 is J2, 15 goes to P2", () => {
+    const at = (n: number) =>
+      decide(base({ r4: { ...base().r4, V2: r4(-0.1, null, null, false, n) } }));
+    const fourteen = at(14);
+    expect(fourteen.rows).toContain("J2");
+    expect(fourteen.rows).not.toContain("P2");
+    expect(fourteen).toMatchObject({ judge_calibrated: false, selection_path: "S2" });
+    const fifteen = at(15);
+    expect(fifteen.rows).not.toContain("J2");
+    expect(fifteen.rows).toEqual(expect.arrayContaining(["U1", "S1", "P2"]));
+    expect(fifteen).toMatchObject({
+      judge_calibrated: true,
+      promote: false,
+      pairs_engine: "engine.v1",
+    });
+  });
+
+  it("J2 when R4 has no judged cutoffs at all (support 0 or no contrast)", () => {
+    const zero = decide(base({ r4: { ...base().r4, V2: r4(null, null, null, false, 0) } }));
+    expect(zero.rows).toContain("J2");
+    const none = decide(base({ r4: { ...base().r4, V2: null } }));
+    expect(none.rows).toContain("J2");
+    expect(none.selection_path).toBe("S2");
+  });
+
+  it("P2 is only for few families: enough support and a non-estimable interval", () => {
+    const d = decide(base({ r4: { ...base().r4, V2: r4(-0.1, null, null, false, 21) } }));
+    expect(d.rows).toContain("P2");
+    expect(d.rows).not.toContain("J2");
   });
 
   it("U1 and S1: with a calibrated judge, the highest U@10; a tie under 0,05 goes to fewer parameters", () => {

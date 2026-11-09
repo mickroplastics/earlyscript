@@ -6,16 +6,22 @@ import * as NodePath from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { v3Command, type V3Context } from "./v3-cli.ts";
-import { appendLedger, readLedger } from "./v3-ledger.ts";
+import { appendLedger, fileSha256, readLedger } from "./v3-ledger.ts";
+import { p4DefinitionHash } from "./v3-oracle.ts";
 import {
   appendV3,
   assertCanLabel,
+  computePremanifest,
+  declaredVersions,
+  devResultsPayload,
   functionSource,
   judgeCacheEntries,
   oraclePayload,
   p3Closing,
   p4LabelFiles,
+  premanifestDrift,
   premanifestPayload,
+  versionBefore,
   type PremanifestFiles,
   readV3Ledger,
   v3LedgerPath,
@@ -156,6 +162,34 @@ describe("v3_premanifest integrity", () => {
     expect(payload.medicion_a_sin_wikipedia.despegues_42_cortes).toBe(58);
   });
 
+  it("detects drift between the entered pre-manifest and the files", () => {
+    const r = premanifested();
+    const entry = readV3Ledger(r.root).find((e) => e.kind === "v3_premanifest")!;
+    expect(premanifestDrift(entry, computePremanifest(r.premanifest))).toEqual([]);
+    const copy = NodePath.join(r.root, "copia-perfil-v2.json");
+    NodeFS.copyFileSync(r.premanifest.profileV2, copy);
+    expect(
+      premanifestDrift(entry, computePremanifest({ ...r.premanifest, profileV2: copy })),
+    ).toEqual([]);
+    NodeFS.writeFileSync(r.premanifest.profileV2, '{"include":["a","b","c"]}');
+    expect(premanifestDrift(entry, computePremanifest(r.premanifest))).toEqual(["perfiles"]);
+  });
+
+  it("identifies the text function by its whole file: a helper change is drift", () => {
+    const r = premanifested();
+    const entry = readV3Ledger(r.root).find((e) => e.kind === "v3_premanifest")!;
+    const before = computePremanifest(r.premanifest).card_text_v3;
+    const text = NodeFS.readFileSync(r.premanifest.cardText, "utf8");
+    NodeFS.writeFileSync(
+      r.premanifest.cardText,
+      text.replace("export const other = 1;", "export const other = 2;"),
+    );
+    const after = computePremanifest(r.premanifest).card_text_v3;
+    expect(after.function_sha256).toBe(before.function_sha256);
+    expect(after.file_sha256).not.toBe(before.file_sha256);
+    expect(premanifestDrift(entry, computePremanifest(r.premanifest))).toEqual(["card_text_v3"]);
+  });
+
   it("fails and says so when B's files do not exist yet", () => {
     const r = openRoot();
     expect(() =>
@@ -180,6 +214,20 @@ describe("v3_premanifest integrity", () => {
     const late = premanifestPayload({ root: r.root, files: r.premanifest, late: true });
     expect(late.tardio).toBe(true);
     expect(late.encontrados_al_asentar.cache_jueces).toEqual([cache]);
+  });
+
+  it("watches B's standard cache v3/b/cache by default, without --judge-cache", () => {
+    const r = openRoot();
+    const answer = NodePath.join(r.root, "v3", "b", "cache", "sol", "answers", "ab12.json");
+    NodeFS.mkdirSync(NodePath.dirname(answer), { recursive: true });
+    NodeFS.writeFileSync(answer, '{"utility":4}');
+    expect(judgeCacheEntries(r.root)).toEqual([answer]);
+    expect(() => premanifestPayload({ root: r.root, files: r.premanifest })).toThrow(
+      /Judge cache entries/,
+    );
+    expect(judgeCacheEntries(r.root, [NodePath.join(r.root, "v3", "b", "cache")])).toEqual([
+      answer,
+    ]);
   });
 
   it("is refused with an entry of an extra judge cache directory, and with a p4 label", () => {
@@ -261,5 +309,107 @@ describe("labelling order", () => {
     const c: V3Context = { ...ctx(r.root, { texto: PROFILE_TEXT }), flag: (f) => f === "dry-run" };
     expect(await v3Command("libro", ["exposicion"], c)).toBe(0);
     expect(NodeFS.readFileSync(v3LedgerPath(r.root), "utf8")).toBe(before);
+  });
+});
+
+describe("text and judge versions of the development scoring", () => {
+  /** A ledger up to v3_judge_diag with the coordinator's two addenda (9 Nov). */
+  function withAddenda() {
+    const r = premanifested();
+    appendV3(r.root, "v3_oracle", oraclePayload(r.root));
+    const judgeV2 = NodePath.join(r.root, "files", "judge.v2.json");
+    NodeFS.writeFileSync(judgeV2, '{"version":"judge.util.v1","discrepan":"si/no"}');
+    appendV3(r.root, "v3_premanifest_2", {
+      campos: { judge_util_v1_sha256_v2: fileSha256(judgeV2), judge_util_v1_sha256_anterior: "x" },
+    });
+    appendV3(r.root, "v3_judge_diag", { fallido: false, kappa: 0.87, acuerdo: 0.97 });
+    const cardV2 = NodePath.join(r.root, "files", "card.v2.ts");
+    NodeFS.writeFileSync(
+      cardV2,
+      `${NodeFS.readFileSync(r.premanifest.cardText, "utf8")}// cleanText B1\n`,
+    );
+    const judgeV3 = NodePath.join(r.root, "files", "judge.v3.json");
+    NodeFS.writeFileSync(judgeV3, '{"version":"judge.util.v1","b1":true}');
+    const fields = {
+      card_text_v3_archivo_sha256_anterior: fileSha256(r.premanifest.cardText),
+      card_text_v3_archivo_sha256_v2: fileSha256(cardV2),
+      judge_util_v1_sha256_v2_previo: fileSha256(judgeV2),
+      judge_util_v1_sha256_v3: fileSha256(judgeV3),
+    };
+    appendV3(r.root, "exposicion", {
+      tipo: "adenda_premanifest",
+      texto: `Adenda 3 al pre-manifiesto: ${JSON.stringify(fields)}`,
+    });
+    const metrics = NodePath.join(r.root, "metricas.json");
+    NodeFS.writeFileSync(
+      metrics,
+      JSON.stringify({
+        p4_sha256: p4DefinitionHash(),
+        decide_input: {
+          premanifest_late: false,
+          judge: { failed: false, kappa: null, agreement: null, selection_support: 21 },
+          recall: { takeoffs: 20, inc040_denominator: 10 },
+          variants: {
+            V1: { eligible: true, u10: 3.9, recall_inc040: 0.5 },
+            V2: { eligible: false, u10: null, recall_inc040: 0 },
+            V3: { eligible: false, u10: null, recall_inc040: 0 },
+            V4: { eligible: false, u10: null, recall_inc040: 0 },
+          },
+          r4: {
+            V1: { diff: 0.2, low: 0.1, high: 0.3, estimable: true, support: 21 },
+            V2: null,
+            V3: null,
+            V4: null,
+          },
+        },
+      }),
+    );
+    return { ...r, judgeV2, judgeV3, cardV2, metrics };
+  }
+
+  it("reads v3_premanifest_2 and the adenda_premanifest exposures in order", () => {
+    const r = withAddenda();
+    const ledger = readV3Ledger(r.root);
+    const versions = declaredVersions(ledger);
+    expect(versions.map((v) => v.asiento)).toEqual([
+      "v3_premanifest",
+      "v3_premanifest_2",
+      "exposicion adenda_premanifest",
+    ]);
+    expect(versions[2]).toMatchObject({
+      card_text_file_sha256: fileSha256(r.cardV2),
+      judge_util_sha256: fileSha256(r.judgeV3),
+    });
+    const diag = ledger.find((e) => e.kind === "v3_judge_diag")!;
+    expect(versionBefore(versions, diag.at)).toMatchObject({
+      card_text_file_sha256: fileSha256(r.premanifest.cardText),
+      judge_util_sha256: fileSha256(r.judgeV2),
+    });
+  });
+
+  it("dev-results declares the scoring versions against the diagnosis's", () => {
+    const r = withAddenda();
+    const payload = devResultsPayload(r.root, r.metrics, { cardText: r.cardV2, rubric: r.judgeV3 });
+    expect(payload.versiones_texto_y_juez).toMatchObject({
+      diagnostico: {
+        card_text_file_sha256: fileSha256(r.premanifest.cardText),
+        judge_util_sha256: fileSha256(r.judgeV2),
+      },
+      puntuacion: {
+        card_text_file_sha256: fileSha256(r.cardV2),
+        judge_util_sha256: fileSha256(r.judgeV3),
+        declarada_en: "exposicion adenda_premanifest",
+      },
+      cambia_respecto_al_diagnostico: true,
+    });
+    expect(payload.decision.notes.join(" ")).toMatch(/versiones distintas/);
+    expect(payload.decision.chosen).toBe("V1");
+  });
+
+  it("refuses a scoring version the ledger does not declare", () => {
+    const r = withAddenda();
+    expect(() =>
+      devResultsPayload(r.root, r.metrics, { cardText: r.premanifest.cardText, rubric: r.judgeV3 }),
+    ).toThrow(/adenda_premanifest/);
   });
 });

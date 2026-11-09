@@ -6,11 +6,11 @@ import * as NodePath from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import {
-  allKeys,
-  BLIND_FORBIDDEN,
   blindExport,
+  blindSchemaPaths,
   directoryHash,
   drawPairs,
+  keyPaths,
   type PairsInput,
   pickCitations,
 } from "./v3-pairs.ts";
@@ -76,23 +76,140 @@ describe("blind export and run hash", () => {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "v3-pairs-"));
   afterAll(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
 
-  it("drops judge, arm and provenance fields at every depth", () => {
-    const card = {
-      title: "t",
-      include_score: 0.7,
-      arm: "V1",
-      config_hash: "sha256:1",
-      judge: { opus: 4 },
-      juez_sol: 3,
-      evidence: [{ item_id: "i1", url: "u", provenance: "run_1", rank: 2 }],
-      dossier: { movement: "nueva", run_id: "r", engine: "v3", variant: "V2" },
-    };
-    const out = blindExport([card]);
-    const keys = [...allKeys(out)];
-    expect(keys.filter((k) => BLIND_FORBIDDEN.test(k) || /judge|juez/i.test(k))).toEqual([]);
-    expect(keys).toEqual(
-      expect.arrayContaining(["title", "include_score", "evidence", "item_id", "movement"]),
-    );
+  /** The exact fields B's judge-score writes per card (judge-v3-score.ts), with nested judges. */
+  const bCard = {
+    topic_id: "t1",
+    item_ids: ["i1"],
+    utility_opus: 5,
+    utility_sol: 1,
+    utility: 3,
+    utility_difference: 4,
+    fit: "discrepan",
+    fit_opus: "core",
+    fit_sol: "out",
+    text_sha256: "sha256:00",
+    arm: "V1",
+    judges: { opus: { valid: true, utility: 5, fit: "core", reason: "r", angle: "a", key: "k" } },
+  };
+  /** A's list entry (listas/<arm>/<day>.json, moving[]), with judge fields smuggled inside. */
+  const aEntry = {
+    ...bCard,
+    position: 1,
+    slot: "rank",
+    arm_score: {
+      method: "weighted_sum.v3",
+      score: 1.2,
+      components: [{ name: "relevance", value: 0.6, weight: 1, contribution: 0.6 }],
+    },
+    card: {
+      schema_version: "earlyscript.dossier/2",
+      cutoff_at: "2026-10-10T00:00:00.000Z",
+      engine: { version: "engine.v3", config_hash: "sha256:c" },
+      profile: { name: "singularidev", version: "v2", hash: "sha256:p" },
+      profile_fit: { include_score: 0.7, exclude_score: 0.1, passes: true },
+      origin: "run_x",
+      related: ["t9"],
+      coverage: { window_days: 35 },
+      data_gaps: [],
+      curve: [{ day: "2026-10-09", items: 2 }],
+      trend: {
+        id: "trd_1",
+        label: "alpha beta",
+        label_source: "provider",
+        top_terms: ["alpha"],
+        items_7d: 3,
+        stage: "growing",
+        growth: 1.2,
+      },
+      movement: {
+        movement: "nueva",
+        movement_since: "2026-10-09",
+        weeks: [3, 0, 0, 0, 0],
+        pop: 2.1,
+        tau_days: 7,
+        relevance: { score: 0.6, model_id: "m" },
+        cut: { p50: 1, p90: 3 },
+        by_source: [
+          {
+            source: "hn",
+            status: "comparable",
+            weeks: [3, 0, 0, 0, 0],
+            total: 3,
+            authors_w0: 2,
+            utility_opus: 4,
+          },
+        ],
+        first_source: { source: "hn", at: "2026-10-08", item_id: "i1", arm: "V1" },
+        second_source: null,
+        fit: {
+          nearest_include: "agents",
+          nearest_exclude: "crypto",
+          matched_terms: ["agent"],
+          keywords_version: "k1",
+          headlines: [
+            { item_id: "i1", source: "hn", title: "T", permalink: "p", judges: { sol: 1 } },
+          ],
+        },
+        saturation: {
+          items_life: 3,
+          items_total: 4,
+          heavy_weeks: 0,
+          perennial: false,
+          decided_at: null,
+        },
+      },
+      evidence: [
+        {
+          item_id: "i1",
+          source: "hn",
+          title: "T",
+          permalink: "p",
+          external_url: "u",
+          published_at: "2026-10-09T01:00:00Z",
+          author: "a",
+          excerpt: "e",
+          relevance: 0.6,
+          similarity: 0.9,
+          retrieved_at: "x",
+          week: 0,
+          also_in: [
+            { source: "npm", item_id: "i2", permalink: "q", published_at: "z", fit_sol: "out" },
+          ],
+        },
+      ],
+      evidence_status: "sufficient",
+      utility_opus: 5,
+      fit_opus: "core",
+      judges: { opus: { utility: 5 } },
+    },
+  };
+  const FORBIDDEN =
+    /utility|fit_|judge|juez|arm|position|slot|score|engine|profile|origin|config|text_sha256|relevance|similarity|^pop$|^cut$|related|label_source|nearest_exclude/;
+
+  it("passes only the allowed schema: nothing of B's output survives (Sol D2)", () => {
+    expect(blindExport([bCard])).toEqual([{}]);
+    expect(blindExport({ cards: [bCard] })).toEqual([{}]);
+  });
+
+  it("projects A's card on the allowed schema, dropping smuggled fields at every depth", () => {
+    const out = blindExport({ moving: [aEntry] });
+    const paths = keyPaths(out);
+    const allowed = blindSchemaPaths();
+    expect([...paths].filter((p) => !allowed.has(p))).toEqual([]);
+    expect([...paths].filter((p) => FORBIDDEN.test(p.split(".").at(-1)!))).toEqual([]);
+    expect(Object.keys(out[0]!)).not.toContain("fit");
+    expect(out[0]).toMatchObject({
+      trend: { label: "alpha beta", top_terms: ["alpha"] },
+      movement: { movement: "nueva", fit: { matched_terms: ["agent"] }, second_source: null },
+      evidence: [{ item_id: "i1", also_in: [{ source: "npm" }] }],
+    });
+  });
+
+  it("never lets an object through a leaf of the schema", () => {
+    const out = blindExport([
+      { card: { cutoff_at: { judge: 5 }, trend: { top_terms: [{ utility_opus: 4 }] } } },
+    ]);
+    expect(out).toEqual([{ trend: {} }]);
   });
 
   it("hashes a run directory by its files", () => {

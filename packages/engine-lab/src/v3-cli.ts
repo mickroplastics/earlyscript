@@ -3,7 +3,7 @@
 //   libro open | exposicion --texto <t> [--tipo <t>] | premanifest [--dry-run] [--tardio]
 //     [--rubrica <judge.util.v1.json>] [--card-text <file with cardTextV3>] [--judge-cache <dir>]...
 //   libro premanifest-2 --campos <json> | oracle [--dry-run] | judge-diag --kappa --acuerdo
-//     --validas-opus --validas-sol [--diag <file>] [--fallido] | dev-results --metricas <file> [--dry-run]
+//     --validas-opus --validas-sol [--diag <file>] [--fallido] | dev-results --metricas <file> --card-text <file> --rubrica <file> [--dry-run]
 //   libro freeze --config (--checkout <dir> | --commit --tree) --corrida <dir> --semilla-pares --semilla-citas --aprobacion <t> [--hash-logico]
 //   libro pairs --motor v3|engine.v1 --resultados <file> | prospective --fecha <día> --resumen <file> | stop --motivo <t>
 //   evaluate [--dry-run] --corpus --coverage --bolsas --listas [--jueces] [--out]   (labels p4 after v3_oracle only)
@@ -26,6 +26,8 @@ import {
   oraclePayload,
   p3Closing,
   type PremanifestFiles,
+  computePremanifest,
+  premanifestDrift,
   premanifestPayload,
   readV3Ledger,
   v3Dir,
@@ -126,6 +128,25 @@ export async function v3LibroCommand(sub: string, ctx: V3Context): Promise<numbe
       return enter("exposicion", { texto: need(ctx, "texto"), ...(tipo ? { tipo } : {}) });
     }
     case "premanifest": {
+      const entered = readV3Ledger(root).find((e) => e.kind === "v3_premanifest");
+      if (dry && entered) {
+        // Already entered: recompute every hashed field from the files and compare, writing nothing.
+        const drift = premanifestDrift(entered, computePremanifest(premanifestFiles(ctx)));
+        console.log(
+          JSON.stringify(
+            {
+              dry_run: true,
+              kind: "v3_premanifest",
+              asentado: entered.at,
+              sin_cambios: drift.length === 0,
+              campos_distintos: drift,
+            },
+            null,
+            2,
+          ),
+        );
+        return drift.length === 0 ? 0 : 1;
+      }
       const payload = premanifestPayload({
         root,
         files: premanifestFiles(ctx),
@@ -165,7 +186,13 @@ export async function v3LibroCommand(sub: string, ctx: V3Context): Promise<numbe
         }),
       );
     case "dev-results":
-      return enter("v3_dev_results", devResultsPayload(root, need(ctx, "metricas")));
+      return enter(
+        "v3_dev_results",
+        devResultsPayload(root, need(ctx, "metricas"), {
+          cardText: need(ctx, "card-text"),
+          rubric: need(ctx, "rubrica"),
+        }),
+      );
     case "freeze": {
       const runDir = need(ctx, "corrida");
       const checkout = ctx.opt("checkout");

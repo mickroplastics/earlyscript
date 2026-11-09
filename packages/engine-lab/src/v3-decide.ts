@@ -106,6 +106,11 @@ export const TABLE_5D = [
 ] as const;
 export type Row5d = (typeof TABLE_5D)[number]["id"];
 export const TABLE_5D_HASH = sha256(canonicalJson(TABLE_5D));
+/**
+ * Version of decide(): the table text is the pre-manifest's; 5d.2 applies J2's minimum of 15
+ * common valid cutoffs to the chosen variant against R4 too (Sol, verification 1a, D1).
+ */
+export const DECIDE_VERSION = "5d.2";
 
 export const JUDGE_CALIBRATION = {
   kappa_min: 0.6,
@@ -156,6 +161,18 @@ export interface DecideInput {
     >
   >;
   readonly miguel_rejects?: boolean;
+  /** Text function and judge of the diagnosis and of the development scoring (file hashes). */
+  readonly versions?: {
+    readonly diagnostico: {
+      readonly card_text_file_sha256: string | null;
+      readonly judge_util_sha256: string | null;
+    } | null;
+    readonly puntuacion: {
+      readonly card_text_file_sha256: string;
+      readonly judge_util_sha256: string;
+    };
+    readonly cambia_respecto_al_diagnostico: boolean;
+  };
   /** Later phases (pairs); absent means "not reached yet". */
   readonly pairs_phase?: {
     readonly freeze_deployed_at_order: boolean;
@@ -181,6 +198,7 @@ export interface Decision {
   readonly exploratory: boolean;
   readonly notes: ReadonlyArray<string>;
   readonly table_hash: string;
+  readonly decide_version: string;
 }
 
 const ORDER = V3_VARIANTS;
@@ -189,6 +207,14 @@ const byOrder = (a: V3Variant, b: V3Variant) => ORDER.indexOf(a) - ORDER.indexOf
 export function decide(input: DecideInput): Decision {
   const rows: Array<Row5d> = [];
   const notes: Array<string> = [];
+  const v = input.versions;
+  if (v) {
+    const short = (h: string | null | undefined) =>
+      h ? h.replace(/^sha256:/, "").slice(0, 8) : "?";
+    notes.push(
+      `Puntuación de desarrollo con texto ${short(v.puntuacion.card_text_file_sha256)} y juez ${short(v.puntuacion.judge_util_sha256)}; diagnóstico con texto ${short(v.diagnostico?.card_text_file_sha256)} y juez ${short(v.diagnostico?.judge_util_sha256)}${v.cambia_respecto_al_diagnostico ? " (versiones distintas, declaradas en las adendas)" : ""}.`,
+    );
+  }
   const j = input.judge;
   let calibrated =
     !j.failed &&
@@ -207,7 +233,6 @@ export function decide(input: DecideInput): Decision {
     notes.push(`Soporte pareado de selección ${j.selection_support} < 15.`);
     calibrated = false;
   }
-  if (calibrated) rows.push("U1");
   const recallEvaluable = input.recall.takeoffs >= 15 && input.recall.inc040_denominator > 0;
   if (!recallEvaluable) rows.push("R1");
   rows.push("E1");
@@ -218,6 +243,7 @@ export function decide(input: DecideInput): Decision {
     eligible,
     exploratory: input.premanifest_late,
     table_hash: TABLE_5D_HASH,
+    decide_version: DECIDE_VERSION,
   };
   if (input.miguel_rejects) {
     rows.push("M1");
@@ -245,34 +271,44 @@ export function decide(input: DecideInput): Decision {
       notes,
     };
   }
-  let chosen: V3Variant;
-  let path: "S1" | "S2" | "S3";
+  const structural = (): { chosen: V3Variant; path: "S2" | "S3" } => {
+    if (!recallEvaluable) return { chosen: eligible.toSorted(byOrder)[0]!, path: "S3" };
+    const value = (v: V3Variant) => input.variants[v].recall_inc040 ?? -1;
+    const best = Math.max(...eligible.map(value));
+    return { chosen: eligible.filter((v) => value(v) === best).toSorted(byOrder)[0]!, path: "S2" };
+  };
+  let selected: { chosen: V3Variant; path: "S1" | "S2" | "S3" };
   if (calibrated && eligible.every((v) => input.variants[v].u10 !== null)) {
-    path = "S1";
     const best = Math.max(...eligible.map((v) => input.variants[v].u10!));
     const tied = eligible.filter((v) => best - input.variants[v].u10! < SELECTION_TIE);
     const fewest = Math.min(...tied.map((v) => VARIANT_PARAMETERS[v]));
-    chosen = tied.filter((v) => VARIANT_PARAMETERS[v] === fewest).toSorted(byOrder)[0]!;
-  } else if (recallEvaluable) {
-    if (calibrated) {
-      notes.push("Juez calibrado sin U@10 en alguna elegible: vía estructural.");
+    selected = {
+      chosen: tied.filter((v) => VARIANT_PARAMETERS[v] === fewest).toSorted(byOrder)[0]!,
+      path: "S1",
+    };
+    // J2 also covers the contrast that decides: the chosen variant against R4 (Sol, D1).
+    const r4Support = input.r4[selected.chosen]?.support ?? 0;
+    if (r4Support < JUDGE_CALIBRATION.soporte_min) {
+      rows.push("J2");
+      notes.push(
+        `Soporte pareado de ${selected.chosen} frente a R4 ${r4Support} < 15: juez no calibrado, vía estructural.`,
+      );
       calibrated = false;
+      selected = structural();
     }
-    path = "S2";
-    const value = (v: V3Variant) => input.variants[v].recall_inc040 ?? -1;
-    const best = Math.max(...eligible.map(value));
-    chosen = eligible.filter((v) => value(v) === best).toSorted(byOrder)[0]!;
   } else {
-    if (calibrated) calibrated = false;
-    path = "S3";
-    chosen = eligible.toSorted(byOrder)[0]!;
+    if (calibrated) notes.push("Juez calibrado sin U@10 en alguna elegible: vía estructural.");
+    calibrated = false;
+    selected = structural();
   }
+  if (calibrated) rows.splice(rows.indexOf("E1"), 0, "U1");
+  const { chosen, path } = selected;
   rows.push(path);
   let stop = false;
   let promote = true;
   let pairs: "v3" | "engine.v1" = "v3";
   const r4 = input.r4[chosen];
-  if (calibrated && r4 && r4.diff !== null) {
+  if (calibrated && r4 && r4.diff !== null && r4.support >= JUDGE_CALIBRATION.soporte_min) {
     if (r4.estimable) {
       rows.push("P1");
       if (r4.diff <= R4_STOP_DIFF && r4.high !== null && r4.high < 0) {
@@ -287,7 +323,7 @@ export function decide(input: DecideInput): Decision {
         pairs = "engine.v1";
       } else notes.push("Intervalo frente a R4 no estimable: se reporta y se sigue.");
     }
-  } else if (calibrated) notes.push("Sin contraste U@10 frente a R4 para la elegida: no decide.");
+  }
   rows.push("P3");
   const phase = input.pairs_phase;
   if (phase && !stop && promote) {
