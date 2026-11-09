@@ -1,0 +1,20 @@
+{
+  "schema_version": "profile/1",
+  "name": "SingulariDev",
+  "audience": "Solo founders and developers building products with AI agents and automation, in English",
+  "include": [
+    "AI coding agents and agent harnesses for developers",
+    "local and open-weight language models running on personal hardware",
+    "automation of software and content workflows with LLM tools",
+    "developer tooling, SDKs and protocols for building AI products",
+    "one-person startups shipping AI products",
+    "home labs and local AI hosting for solo builders: mini PCs, used servers, self-hosted models and agents as a one-person software shop"
+  ],
+  "exclude": [
+    "consumer gadget reviews and smartphone launches",
+    "cryptocurrency prices and token trading",
+    "politics, elections and legislation without a developer angle",
+    "video game releases and esports"
+  ],
+  "version_note": "v2, 2026-11-09: added home-lab / self-hosted builder angle at Miguel's request (recorded as exposure in the v3 ledger: made after seeing the October maqueta lists). Everything else identical to v1."
+}
