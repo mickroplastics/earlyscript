@@ -447,13 +447,15 @@
           "item_id": "itm_hn_50017324",
           "source": "hn",
           "title": "Anthropic bans users from abusive or cruel behavior towards Claude",
-          "permalink": "https://news.ycombinator.com/item?id=50017324"
+          "permalink": "https://news.ycombinator.com/item?id=50017324",
+          "published_at": "2026-10-09T07:41:00.000Z"
         },
         {
           "item_id": "itm_hn_50020061",
           "source": "hn",
           "title": "Anthropic Usage Policy to prohibit \"abusive or cruel behavior\" toward Claude",
-          "permalink": "https://news.ycombinator.com/item?id=50020061"
+          "permalink": "https://news.ycombinator.com/item?id=50020061",
+          "published_at": "2026-10-09T13:15:35.000Z"
         }
       ]
     },
@@ -462,6 +464,8 @@
       "items_total": 21,
       "heavy_weeks": 2,
       "perennial": false,
+      "saturated": false,
+      "saturated_rule": "perennial antecedent, or n(vida) >= perennial_life (30) with some week before W1 (W2..W4) with n >= perennial_week_min (5)",
       "decided_at": null
     },
     "relevance": {

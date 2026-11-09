@@ -205,8 +205,8 @@ function readMovementBlock(raw: unknown, evidence: unknown): CardBlock | null {
     secondSource: first(raw.second_source),
     nearestInclude: text(fit.nearest_include),
     keywordTerms: list(fit.matched_terms, text),
-    // dossier/2 has no saturation flag yet: its perennial mark is the conservative reading.
-    saturated: flag(saturation.perennial),
+    // Files written before `saturation.saturated` existed fall back to the perennial mark.
+    saturated: flag(saturation.saturated) ?? flag(saturation.perennial),
     headlines: list(fit.headlines, (headline) => {
       if (!isObject(headline)) return null;
       const title = text(headline.title);
@@ -218,7 +218,7 @@ function readMovementBlock(raw: unknown, evidence: unknown): CardBlock | null {
         title,
         source,
         url: (itemId === null ? null : externalById.get(itemId)) ?? text(headline.permalink),
-        day: null,
+        day: day(headline.published_at),
       };
     }),
     incompleteSources: rows

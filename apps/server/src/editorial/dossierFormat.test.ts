@@ -5,7 +5,8 @@ import { EditorialDossierId, type EditorialTrendSummary } from "@t3tools/contrac
 import * as Effect from "effect/Effect";
 
 import { readDossierExtras } from "./dossierCard.ts";
-// A dossier of engine.v3 (Opus A, run of 10 Oct 2026), trimmed to two evidence items.
+// A dossier of engine.v3 (Opus A, run of 10 Oct 2026), trimmed to two evidence items;
+// `saturated` and the headlines' `published_at` were added by hand with A's rule.
 import dossierV2Fixture from "./fixtures/dossier-v2/01-dos_f352642c441d.json" with { type: "json" };
 import {
   compareTrends,
@@ -36,6 +37,10 @@ describe("dossier/2", () => {
       const card = readDossierExtras(text).card;
       expect(card?.movement).toBe(raw.movement.movement);
       expect(card?.section).toBe(raw.movement.section);
+      expect(card?.saturated).toBe(raw.movement.saturation.saturated);
+      expect(card?.headlines?.map((headline) => headline.day)).toEqual(
+        raw.movement.fit.headlines.map((headline) => headline.published_at.slice(0, 10)),
+      );
     }),
   );
 });

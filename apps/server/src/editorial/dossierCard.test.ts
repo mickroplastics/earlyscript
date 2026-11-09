@@ -347,6 +347,32 @@ describe("dossier/2 movement block (Opus A)", () => {
     assert.deepStrictEqual(card?.incompleteSources, ["npm"]);
     assert.strictEqual(card?.saturated, true);
   });
+
+  it("prefers saturation.saturated to the perennial mark and dates the headlines", () => {
+    const card = readDossierExtras(
+      JSON.stringify({
+        evidence: [],
+        movement: {
+          movement: "nueva",
+          by_source: [],
+          fit: {
+            headlines: [
+              {
+                item_id: "itm_hn_1",
+                source: "hn",
+                title: "A",
+                permalink: "https://news.ycombinator.com/item?id=1",
+                published_at: "2026-10-08T21:14:00.000Z",
+              },
+            ],
+          },
+          saturation: { perennial: true, saturated: false },
+        },
+      }),
+    ).card;
+    assert.strictEqual(card?.saturated, false);
+    assert.strictEqual(card?.headlines?.[0]?.day, "2026-10-08");
+  });
 });
 
 describe("same topic for 'ya decidido'", () => {
