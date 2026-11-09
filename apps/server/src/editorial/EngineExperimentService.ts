@@ -16,7 +16,7 @@ import {
   type GateResult,
   shadowCards,
 } from "@earlyscript/engine-lab/gate";
-import { EVALUATOR_HASH } from "@earlyscript/engine-lab/evaluator";
+import { currentEvaluatorHash } from "@earlyscript/engine-lab/evaluator";
 import { canonicalInputs } from "@earlyscript/engine-lab/inputs";
 import { readLabelSource } from "@earlyscript/engine-lab/labels";
 import { LabPolicyError } from "@earlyscript/engine-lab/policy";
@@ -374,10 +374,11 @@ const make = Effect.gen(function* () {
             "The campaign predates content identities; create a new one.",
           );
         }
-        if (policy.inputs.evaluator_hash !== EVALUATOR_HASH) {
+        const evaluator = currentEvaluatorHash();
+        if (policy.inputs.evaluator_hash !== evaluator) {
           throw new LabPolicyError(
             "artifact-mismatch",
-            `The evaluator is ${EVALUATOR_HASH}, not the campaign's ${policy.inputs.evaluator_hash}.`,
+            `The evaluator is ${evaluator}, not the campaign's ${policy.inputs.evaluator_hash}.`,
           );
         }
         if (labelsHashOf(labelFilesOf(policy)) !== policy.inputs.labels_hash) {

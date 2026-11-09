@@ -33,7 +33,7 @@ import {
   WEIGHT_MAX,
   WEIGHT_MIN,
 } from "@earlyscript/engine-lab/policy";
-import { EVALUATOR_HASH } from "@earlyscript/engine-lab/evaluator";
+import { currentEvaluatorHash } from "@earlyscript/engine-lab/evaluator";
 import {
   DEFAULT_LIMITS,
   JOB_SPEC_SCHEMA,
@@ -405,7 +405,7 @@ const make = Effect.gen(function* () {
         corpus_hash: input.kind === "shadow" ? null : identity.corpus_hash,
         models_hash: identity.models_hash,
         labels_hash: labelsHash,
-        evaluator_hash: EVALUATOR_HASH,
+        evaluator_hash: currentEvaluatorHash(),
       },
       cutoffs,
       corpus_dir: executorReal.get(input.policy.corpus_dir)!,

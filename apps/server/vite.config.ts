@@ -1,3 +1,5 @@
+import * as NodeURL from "node:url";
+
 import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
 
@@ -6,6 +8,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
+import { evaluatorHash } from "../../packages/engine-lab/src/evaluator.ts";
 
 // NSIS install time tracks file count, not bytes.
 import {
@@ -111,6 +114,13 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
+        // The bundle carries no .ts sources: the engine lab's evaluator identity is the hash of
+        // the sources bundled here (packages/engine-lab/src/evaluator.ts).
+        __EARLYSCRIPT_EVALUATOR_HASH__: JSON.stringify(
+          evaluatorHash(
+            NodeURL.fileURLToPath(new URL("../../packages/engine-lab/src", import.meta.url)),
+          ),
+        ),
         __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
