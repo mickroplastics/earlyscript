@@ -24,6 +24,7 @@ import {
   type LoadedDossier,
   type RunInfo,
 } from "./dossierFormat.ts";
+import { readDossierExtras } from "./dossierCard.ts";
 
 const EDITORIAL_RUNS_DIR_ENV = "EARLYSCRIPT_EDITORIAL_RUNS_DIR";
 
@@ -200,15 +201,18 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
   // One malformed dossier must not hide the rest of the run: it is listed with its reason.
   const readDossier = (file: string) =>
     Effect.result(
-      fs
-        .readFileString(file)
-        .pipe(
-          Effect.flatMap((text) =>
-            decodeDossierJson(text).pipe(
-              Effect.map((dossier) => ({ file, dossier, hash: sha256(text) })),
-            ),
+      fs.readFileString(file).pipe(
+        Effect.flatMap((text) =>
+          decodeDossierJson(text).pipe(
+            Effect.map((dossier) => ({
+              file,
+              dossier,
+              hash: sha256(text),
+              extras: readDossierExtras(text),
+            })),
           ),
         ),
+      ),
     ).pipe(
       Effect.tap((result) =>
         result._tag === "Failure"
@@ -242,6 +246,7 @@ const makeWithRunsDir = Effect.fn("EditorialRunDirectory.make")(function* (runsD
       const loaded = loadRunDossiers(
         entry.run.run_id,
         toDossiers(read.map((item) => item.dossier)),
+        read.map((item) => item.extras),
       );
       const dossiers = loaded.map((dossier, index) => ({
         ...dossier,

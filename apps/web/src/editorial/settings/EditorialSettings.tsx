@@ -2,6 +2,7 @@ import { SettingsPageContainer } from "../../components/settings/settingsLayout"
 import { DraftingSettings } from "./DraftingSettings";
 import { NightlyRunSettings } from "./NightlyRunSettings";
 import { OnboardingSettings } from "./OnboardingSettings";
+import { PairsModeSettings } from "./PairsModeSettings";
 import { SourcesSettings } from "./SourcesSettings";
 import { StudioProfileSettings } from "./StudioProfileSettings";
 
@@ -13,6 +14,7 @@ export function EditorialSettingsPanel() {
       <SourcesSettings />
       <NightlyRunSettings />
       <DraftingSettings />
+      <PairsModeSettings />
       <OnboardingSettings />
     </SettingsPageContainer>
   );

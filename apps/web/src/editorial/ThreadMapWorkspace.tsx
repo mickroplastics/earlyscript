@@ -14,6 +14,7 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../components/ui/tooltip"
 import { useNowSecond } from "../hooks/useNowSecond";
 import { useQuietThreadShell } from "../state/entities";
 import { whyHereReasons, sourceLabel } from "./editorial.logic";
+import { cardCurveLine, cardFitLine, cardMovementLine } from "./trendCard.logic";
 import { editorialEnvironment } from "./state";
 import { ScriptEditor } from "./ScriptEditor";
 import { ThreadMapScript } from "./ThreadMapScript";
@@ -135,13 +136,21 @@ function LoadedDossier({
       <h2 className="font-semibold text-lg">Por qué está aquí</h2>
       <p>
         {dossier?.trend.presentation?.summary.whyItMatters ??
-          (dossier
-            ? whyHereReasons({
-                trend: dossier.trend,
-                affinityThreshold: dossier.affinityThreshold,
-                coverage: dossier.coverage,
-              }).join(" ")
-            : "Cargando el tema…")}
+          (dossier === null
+            ? "Cargando el tema…"
+            : dossier.trend.card === undefined
+              ? whyHereReasons({
+                  trend: dossier.trend,
+                  affinityThreshold: dossier.affinityThreshold,
+                  coverage: dossier.coverage,
+                }).join(" ")
+              : [
+                  cardMovementLine(dossier.trend.card, dossier.run.cutoffAt),
+                  cardCurveLine(dossier.trend.card, dossier.run.cutoffAt),
+                  cardFitLine(dossier.trend.card),
+                ]
+                  .filter((line) => line !== null && line.length > 0)
+                  .join(". "))}
       </p>
       {dossier ? (
         <p>

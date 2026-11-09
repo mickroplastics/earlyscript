@@ -106,6 +106,7 @@ describe("editorial RPC authorization", () => {
       EDITORIAL_WS_METHODS.listRuns,
       EDITORIAL_WS_METHODS.getInbox,
       EDITORIAL_WS_METHODS.getDossier,
+      EDITORIAL_WS_METHODS.getJudgeOpinion,
       EDITORIAL_WS_METHODS.subscribe,
     ]) {
       assert.strictEqual(EDITORIAL_RPC_REQUIRED_SCOPES[method], AuthOrchestrationReadScope);

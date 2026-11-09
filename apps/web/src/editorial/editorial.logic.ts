@@ -303,7 +303,7 @@ export function evidenceHeading(
   return `${heading} · ${from === to ? from : `${from} – ${to}`}`;
 }
 
-export function formatDecimal(value: number): string {
+function formatDecimal(value: number): string {
   return decimalFormat.format(value);
 }
 
@@ -356,25 +356,6 @@ export function coverageStatus(coverage: EditorialSourceCoverage): CoverageStatu
   if (coverage.daysComplete >= coverage.windowDays) return "complete";
   if (coverage.daysComplete === 0 && coverage.daysPartial === 0) return "unavailable";
   return "partial";
-}
-
-export function coverageText(coverage: EditorialSourceCoverage): string {
-  const label = sourceLabel(coverage.source);
-  switch (coverageStatus(coverage)) {
-    case "complete":
-      return `${label} · ${coverage.daysComplete} de ${coverage.windowDays} días completos`;
-    case "partial":
-      return `${label} · ${coverage.daysComplete} de ${coverage.windowDays} días completos, ${coverage.daysPartial} parciales${coverage.daysUnavailable > 0 ? `, ${coverage.daysUnavailable} sin captura` : ""}`;
-    case "unavailable":
-      return `${label} · sin captura en la ventana`;
-  }
-}
-
-export function trendSourceText(trend: Pick<EditorialTrendSummary, "sourceCount" | "sources">) {
-  if (trend.sourceCount <= 1 && trend.sources.length === 1) {
-    return `solo ${sourceLabel(trend.sources[0] ?? "")}`;
-  }
-  return trend.sources.map(sourceLabel).join(", ");
 }
 
 /**

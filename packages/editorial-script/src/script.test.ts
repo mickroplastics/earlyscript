@@ -142,6 +142,20 @@ describe("script checking", () => {
     );
   });
 
+  it("accepts Hugging Face model ids, which carry a slash and dots", () => {
+    const hf = "itm_hf_model_nvidia/Nemotron-3.5-Embed-8B-BF16";
+    const text = fixture("valid").replaceAll("itm_hn_50061234", hf);
+    const report = checkScript(text, {
+      dossier: { evidence: [{ item_id: hf }, { item_id: "itm_github_987" }] },
+    });
+    expect(report.unknownCitations).toEqual([]);
+    expect(report.claimsMap.flatMap((claim) => claim.citations)).toContain(hf);
+    // A trailing dot is sentence punctuation, not part of an id.
+    expect(() =>
+      checkScript(text, { dossier: { evidence: [{ item_id: "itm_hf_model_a/b." }] } }),
+    ).toThrow("Invalid dossier");
+  });
+
   it("normalizes short and multiple references", () => {
     const report = checkScript(fixture("short-form"), { dossier });
     expect(report.ok).toBe(true);

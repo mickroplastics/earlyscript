@@ -113,6 +113,16 @@ export const editorialEnvironment = {
     staleTimeMs: 5 * 60_000,
     refreshTrigger: (target) => inboxRevision(target.environmentId),
   }),
+  /**
+   * The judges' opinion of a card. The card asks for it only outside pairs mode and after the
+   * operator's decision; the server answers `hidden` until that decision exists.
+   */
+  judgeOpinion: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:editorial:judge-opinion",
+    tag: EDITORIAL_WS_METHODS.getJudgeOpinion,
+    staleTimeMs: 60_000,
+    refreshTrigger: (target) => inboxRevision(target.environmentId),
+  }),
   /** Snapshot, then deltas; a reconnect starts again from a snapshot. */
   liveInbox: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
     label: "environment-data:editorial:live-inbox",

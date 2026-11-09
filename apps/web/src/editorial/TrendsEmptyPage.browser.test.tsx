@@ -96,7 +96,7 @@ describe("TrendsEmptyPage", () => {
       .not.toBeInTheDocument();
   });
 
-  it("asks to choose a trend once a run has some", async () => {
+  it("lists the run's cards once it has trends", async () => {
     const run: EditorialInbox = {
       ...NO_RUN,
       run: {
@@ -143,6 +143,10 @@ describe("TrendsEmptyPage", () => {
     };
     const { screen: pending } = renderPage(run, true);
     await using screen = await pending;
-    await expect.element(screen.getByText("Elige una tendencia")).toBeVisible();
+    // An older run has no sections: one list, each trend a card that opens its dossier.
+    await expect
+      .element(screen.getByRole("heading", { name: "Tendencias", exact: true }))
+      .toBeVisible();
+    await expect.element(screen.getByRole("link", { name: "alpha trend" })).toBeVisible();
   });
 });

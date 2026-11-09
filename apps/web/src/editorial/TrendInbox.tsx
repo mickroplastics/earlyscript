@@ -43,6 +43,7 @@ import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
 import { TrendJobIndicator } from "./TrendJobIndicator";
 import { TrendPresentationRunButton } from "./TrendPresentationRunButton";
+import { cardSections, SECTION_TITLES } from "./trendCard.logic";
 
 const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly label: string }> =
   [
@@ -84,6 +85,15 @@ export function useTrendInbox(environmentId: EnvironmentId, sort: EditorialInbox
 
 function InboxNotice({ children }: { readonly children: string }) {
   return <div className="px-2 py-6 text-center text-xs text-muted-foreground/60">{children}</div>;
+}
+
+/** "En movimiento" or "De fondo": a plain label over its rows, never folded. */
+function SectionLabel({ children }: { readonly children: string }) {
+  return (
+    <li className="list-none px-2 pt-2 pb-1 text-xs font-medium text-sidebar-muted-foreground">
+      {children}
+    </li>
+  );
 }
 
 /** A folded section under the active list: "En observación (N)" or "Descartadas (N)". */
@@ -133,6 +143,9 @@ export function TrendInbox({
   const result = useTrendInbox(environmentId, sort);
   const inbox = AsyncResult.getOrElse(result, () => null);
   const sections = inboxSections(inbox?.trends ?? []);
+  // A v3 run lists "En movimiento" and "De fondo" in the engine's order, nothing folded.
+  const cards = cardSections([...sections.visible, ...sections.folded]);
+  const cutoffAt = inbox?.run?.cutoffAt ?? null;
   const showFolded =
     foldedChoice ?? sections.folded.some((trend) => trend.dossierId === activeDossierId);
 
@@ -197,6 +210,7 @@ export function TrendInbox({
       environmentId={environmentId}
       trend={trend}
       isActive={trend.dossierId === activeDossierId}
+      cutoffAt={cutoffAt}
       onContextMenu={(target, position) => void openMenu(target, position)}
       {...(action ? { action } : {})}
     />
@@ -227,7 +241,7 @@ export function TrendInbox({
             {inbox?.run ? (
               <TrendPresentationRunButton environmentId={environmentId} runId={inbox.run.runId} />
             ) : null}
-            {inbox === null || inbox.trends.length === 0 ? null : (
+            {inbox === null || inbox.trends.length === 0 || cards !== null ? null : (
               <Menu>
                 <MenuTrigger
                   render={
@@ -281,8 +295,19 @@ export function TrendInbox({
             undrafted={inbox.trends.filter((trend) => trend.presentation === undefined).length}
           />
           <SidebarMenu aria-label={runGroupLabel(inbox.run, nowMinute)}>
-            {sections.visible.map((trend) => renderRow(trend))}
-            {sections.folded.length > 0 ? (
+            {cards !== null ? (
+              <>
+                <SectionLabel>{SECTION_TITLES.moving}</SectionLabel>
+                {cards.moving.map((trend) => renderRow(trend))}
+                {cards.background.length > 0 ? (
+                  <SectionLabel>{SECTION_TITLES.background}</SectionLabel>
+                ) : null}
+                {cards.background.map((trend) => renderRow(trend))}
+              </>
+            ) : (
+              sections.visible.map((trend) => renderRow(trend))
+            )}
+            {cards === null && sections.folded.length > 0 ? (
               <li className="list-none">
                 <CollapsibleSectionHeader
                   expanded={showFolded}
@@ -292,7 +317,7 @@ export function TrendInbox({
                 </CollapsibleSectionHeader>
               </li>
             ) : null}
-            {showFolded ? sections.folded.map((trend) => renderRow(trend)) : null}
+            {cards === null && showFolded ? sections.folded.map((trend) => renderRow(trend)) : null}
             {sections.snoozed.length > 0 ? (
               <InboxSection
                 label={`En observación (${sections.snoozed.length})`}

@@ -83,7 +83,9 @@ describe("TrendInboxRow", () => {
     await expect
       .element(link)
       .toHaveAttribute("href", `/editorial/env-1/trends/dos_bbb80d57481e?run=${RUN_ID}`);
-    expect(link.element().textContent).toContain("11 publ. · 11 autores · puntaje #13");
+    expect(link.element().textContent).toContain("11 publ. · 11 autores");
+    // No score or rank on screen: they stay in the dossier JSON.
+    expect(link.element().textContent).not.toContain("puntaje");
   });
 
   it("links a trend in production to its thread beside the dossier link", async () => {

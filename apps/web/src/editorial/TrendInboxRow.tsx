@@ -8,6 +8,7 @@ import { Badge } from "../components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { sourceLabel } from "./editorial.logic";
+import { cardMovementLine } from "./trendCard.logic";
 
 const SPARK_BAR_WIDTH = 2;
 const SPARK_GAP = 1;
@@ -68,10 +69,15 @@ export function TrendSparkline({
   );
 }
 
-/** "11 publ. · 11 autores · puntaje #13": fits the default sidebar width. */
-function trendRowMeta(trend: EditorialTrendSummary): string {
+/**
+ * "señal débil, desde hace 4 días" from the brief card; an older run's card has no movement,
+ * so "11 publ. · 11 autores". No score or rank: those stay in the dossier JSON.
+ */
+function trendRowMeta(trend: EditorialTrendSummary, cutoffAt: string | null): string {
+  const movement = trend.card === undefined ? null : cardMovementLine(trend.card, cutoffAt);
+  if (movement !== null) return movement;
   const authors = `${trend.authors7d} ${trend.authors7d === 1 ? "autor" : "autores"}`;
-  return `${trend.items7d} publ. · ${authors} · puntaje #${trend.scoreRank}`;
+  return `${trend.items7d} publ. · ${authors}`;
 }
 
 /** The way back of a snoozed or dismissed row, shown on hover like a thread's wake button. */
@@ -85,12 +91,15 @@ export function TrendInboxRow({
   environmentId,
   trend,
   isActive,
+  cutoffAt = null,
   action,
   onContextMenu,
 }: {
   readonly environmentId: EnvironmentId;
   readonly trend: EditorialTrendSummary;
   readonly isActive: boolean;
+  /** The run's cutoff, from which the card counts its days. */
+  readonly cutoffAt?: string | null;
   readonly action?: TrendRowAction;
   readonly onContextMenu?: (
     trend: EditorialTrendSummary,
@@ -200,7 +209,7 @@ export function TrendInboxRow({
           production && "pe-22",
         )}
       >
-        {trendRowMeta(trend)}
+        {trendRowMeta(trend, cutoffAt)}
       </span>
     </SidebarMenuButton>
   );
