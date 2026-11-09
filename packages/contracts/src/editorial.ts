@@ -15,6 +15,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { EditorialGetJudgeOpinionResult, EditorialTrendCard } from "./editorialCard.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
@@ -27,6 +28,7 @@ export const EDITORIAL_WS_METHODS = {
   listRuns: "editorial.listRuns",
   getInbox: "editorial.getInbox",
   getDossier: "editorial.getDossier",
+  getJudgeOpinion: "editorial.getJudgeOpinion",
   subscribe: "editorial.subscribe",
   markRead: "editorial.markRead",
   snooze: "editorial.snooze",
@@ -181,6 +183,8 @@ export const EditorialTrendSummary = Schema.Struct({
   /** Always sent by servers with the importer; optional so older payloads still decode. */
   trendKey: Schema.optionalKey(EditorialTrendKey),
   inbox: Schema.optionalKey(EditorialTrendInboxState),
+  /** The brief card (engine v3); servers before it do not send one. */
+  card: Schema.optionalKey(EditorialTrendCard),
 });
 export type EditorialTrendSummary = typeof EditorialTrendSummary.Type;
 
@@ -399,6 +403,19 @@ const EditorialGetDossierRpc = Rpc.make(EDITORIAL_WS_METHODS.getDossier, {
   error: Schema.Union([EditorialReadError, EnvironmentAuthorizationError]),
 });
 
+export const EditorialGetJudgeOpinionInput = Schema.Struct({
+  runId: EditorialRunId,
+  dossierId: EditorialDossierId,
+});
+export type EditorialGetJudgeOpinionInput = typeof EditorialGetJudgeOpinionInput.Type;
+
+/** The judges' opinion, only once the operator recorded a decision with utility on the trend. */
+const EditorialGetJudgeOpinionRpc = Rpc.make(EDITORIAL_WS_METHODS.getJudgeOpinion, {
+  payload: EditorialGetJudgeOpinionInput,
+  success: EditorialGetJudgeOpinionResult,
+  error: Schema.Union([EditorialReadError, EnvironmentAuthorizationError]),
+});
+
 const EditorialSubscribeRpc = Rpc.make(EDITORIAL_WS_METHODS.subscribe, {
   payload: EditorialSubscribeInput,
   success: EditorialStreamItem,
@@ -449,6 +466,7 @@ export const EditorialRpcGroup = RpcGroup.make(
   EditorialListRunsRpc,
   EditorialGetInboxRpc,
   EditorialGetDossierRpc,
+  EditorialGetJudgeOpinionRpc,
   EditorialSubscribeRpc,
   EditorialMarkReadRpc,
   EditorialSnoozeRpc,
@@ -467,6 +485,7 @@ export const EDITORIAL_RPC_REQUIRED_SCOPES = {
   [EDITORIAL_WS_METHODS.listRuns]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.getInbox]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.getDossier]: AuthOrchestrationReadScope,
+  [EDITORIAL_WS_METHODS.getJudgeOpinion]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [EDITORIAL_WS_METHODS.markRead]: AuthOrchestrationOperateScope,
   [EDITORIAL_WS_METHODS.snooze]: AuthOrchestrationOperateScope,

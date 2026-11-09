@@ -146,20 +146,91 @@ const DOSSIER: EditorialTrendDossier = {
 };
 
 describe("TrendDossierView", () => {
-  it("outlines an uncaptured day instead of drawing it as zero", async () => {
+  it("shows the brief card in place of ranks, scores, growth and the coverage table", async () => {
     setup();
+    const withCard: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        card: {
+          origin: "v3",
+          section: "moving",
+          position: 1,
+          movement: "weak",
+          since: "2026-10-15",
+          perennial: false,
+          curve: [
+            { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
+            { source: "github", status: "comparable", weeks: [0, 0, null, 2] },
+            { source: "wikipedia", status: "unused", weeks: [] },
+          ],
+          sourceCount: 2,
+          firstSource: { source: "hn", day: "2026-09-09" },
+          secondSource: { source: "github", day: "2026-10-16" },
+          fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
+          saturated: false,
+          headlines: [
+            {
+              itemId: "itm_hn_1",
+              source: "hn",
+              title: "Quantum item 1",
+              day: "2026-10-15",
+              url: "https://example.com/1",
+            },
+          ],
+          evidence: [
+            {
+              itemId: "itm_hn_1",
+              source: "hn",
+              title: "Quantum item 1",
+              day: "2026-10-15",
+              url: "https://example.com/1",
+            },
+            {
+              itemId: "itm_gh_2",
+              source: "github",
+              title: "ibm/qiskit-next",
+              day: "2026-10-16",
+              url: "https://github.com/ibm/qiskit-next",
+            },
+          ],
+          incompleteSources: ["github"],
+          decision: null,
+          priorDecision: null,
+        },
+      },
+    };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
-        dossier={DOSSIER}
-        evidence={DOSSIER}
+        dossier={withCard}
+        evidence={withCard}
         onEvidencePage={() => {}}
       />,
     );
-    const day = (date: string) => screen.container.querySelector(`[data-curve-day="${date}"]`);
-    expect(day("2026-10-17")?.hasAttribute("data-unknown")).toBe(true);
-    expect(day("2026-10-18")?.hasAttribute("data-unknown")).toBe(false);
-    await expect.element(screen.getByText("Cobertura parcial en GitHub")).toBeVisible();
+    await expect.element(screen.getByText("· señal débil, desde hace 4 días")).toBeVisible();
+    await expect
+      .element(
+        screen.getByText(
+          "hn 1→3→0→5 · github 0→0→?→2 · wikipedia no usada · 2 fuentes · apareció en hn hace 40 días",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(screen.getByText("cobertura incompleta en github")).toBeVisible();
+    // The page opens the card's detail: evidence by source with its ids.
+    await expect.element(screen.getByRole("region", { name: "Evidencia de GitHub" })).toBeVisible();
+    expect(screen.container.querySelector('[data-card-evidence="itm_gh_2"]')).not.toBeNull();
+    const text = screen.container.textContent ?? "";
+    for (const removed of [
+      "Por puntaje",
+      "Por volumen",
+      "Afinidad con el canal",
+      "#13",
+      "Por qué está aquí",
+      "Cobertura por fuente",
+    ]) {
+      expect(text).not.toContain(removed);
+    }
   });
 
   it("pages the evidence and opens links outside the app", async () => {
@@ -173,13 +244,10 @@ describe("TrendDossierView", () => {
         onEvidencePage={onEvidencePage}
       />,
     );
-    await expect
-      .element(
-        screen.getByRole("heading", {
-          name: "Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026",
-        }),
-      )
-      .toBeVisible();
+    // The whole evidence of the dossier is one click away, under the card.
+    await userEvent.click(
+      screen.getByText("Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026"),
+    );
     await expect.element(screen.getByText("1–6 de 10")).toBeVisible();
     await expect
       .element(screen.getByText("IBM opened its quantum stack to outside researchers."))
@@ -461,6 +529,7 @@ describe("TrendDossierView", () => {
         onEvidencePage={() => {}}
       />,
     );
+    await userEvent.click(screen.getByText(/^Evidencia seleccionada \(5\)/));
     for (const name of ["Javascript external", "Data external", "File external", "Http external"]) {
       await userEvent.click(screen.getByRole("link", { name }));
     }

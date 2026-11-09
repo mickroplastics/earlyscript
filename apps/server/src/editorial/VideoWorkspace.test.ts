@@ -29,6 +29,7 @@ import {
 } from "./VideoWorkspace.ts";
 import {
   dossierEvidenceOf,
+  hasCurrentDossierLayout,
   isDossierFileOf,
   dossierPathOf,
   renderDossierMarkdown,
@@ -184,9 +185,9 @@ describe("renderDossierMarkdown", () => {
     trendKey: "trend-terra",
   });
 
-  it("writes the dossier's identity, summary, window, coverage and every evidence item", () => {
+  it("writes the dossier's identity, summary, cutoff and every evidence item", () => {
     assert.isTrue(
-      markdown.startsWith("---\nschema: earlyscript.expediente/1\ndossier_id: dos_terra\n"),
+      markdown.startsWith("---\nschema: earlyscript.expediente/2\ndossier_id: dos_terra\n"),
     );
     assert.include(
       markdown,
@@ -195,8 +196,6 @@ describe("renderDossierMarkdown", () => {
     assert.include(markdown, "\n# GPT-6.1 Terra appears in testing\n");
     assert.include(markdown, "- Qué pasó: A new model showed up.");
     assert.include(markdown, "- Corte de la corrida: 2026-10-31T00:00:00.000Z.");
-    assert.include(markdown, "entre el 2026-10-21 y el 2026-10-22 (UTC)");
-    assert.include(markdown, "| hn | 28 | 27 | 1 | 0 |");
     assert.include(markdown, "## Evidencia (2)");
     assert.include(markdown, "### [itm_hn_1] Item 1 title");
     assert.include(markdown, "- URL: https://news.ycombinator.com/item?id=1");
@@ -241,20 +240,91 @@ describe("renderDossierMarkdown", () => {
     assert.isNull(dossierEvidenceOf("# Hook\n\n### [itm_hn_9] x\n", own));
   });
 
-  it("names the engine's codes in Spanish and keeps unknown ones", () => {
+  it("writes the brief card: three lines, the cutoff and one coverage line, never decisions", () => {
     const text = renderDossierMarkdown({
       dossier: {
         ...DOSSIER,
-        rankMethod: "weighted_sum.v0.01",
-        trend: { ...DOSSIER.trend, stage: "growing", corroboration: "single_source" },
+        trend: {
+          ...DOSSIER.trend,
+          card: {
+            origin: "v3",
+            section: "moving",
+            position: 1,
+            movement: "weak",
+            since: "2026-10-27",
+            perennial: false,
+            curve: [
+              { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
+              { source: "npm", status: "comparable", weeks: [0, 0, null, 2] },
+              { source: "rss", status: "partial", weeks: [0, 0, 0, 1] },
+              { source: "wikipedia", status: "unused", weeks: [] },
+            ],
+            sourceCount: 2,
+            firstSource: { source: "hn", day: "2026-09-19" },
+            secondSource: { source: "npm", day: "2026-10-28" },
+            fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
+            saturated: false,
+            headlines: [],
+            evidence: [],
+            incompleteSources: ["rss"],
+            decision: {
+              threadId: "thread-terra",
+              action: "accept",
+              utility: 4,
+              reason: "private motive",
+              decidedAt: "2026-10-30T10:00:00.000Z",
+            },
+            priorDecision: null,
+          },
+        },
       },
       dossierHash: "sha256:one",
       trendKey: null,
     });
-    assert.include(text, "- Etapa: en crecimiento · corroboración: una sola fuente");
-    assert.include(text, "1 por puntuación (suma ponderada, v0.01)");
-    assert.include(markdown, "- Etapa: emerging · corroboración: varias fuentes");
-    assert.include(markdown, "1 por puntuación (weighted)");
+    assert.include(text, "## Tarjeta");
+    assert.include(text, "- GPT-6.1 Terra appears in testing · señal débil, desde hace 4 días\n");
+    assert.include(
+      text,
+      "- hn 1→3→0→5 · npm 0→0→?→2 · rss (parcial) 0→0→0→1 · wikipedia no usada · 2 fuentes · apareció en hn hace 42 días\n",
+    );
+    assert.include(text, "- encaja: AI coding agents (agent) · saturado: no\n");
+    assert.include(text, "- cobertura incompleta en rss\n");
+    assert.notInclude(text, "private motive");
+    assert.notInclude(text, "aceptado");
+    for (const removed of ["puntuación", "Etapa:", "Crecimiento", "| hn |", "afinidad"]) {
+      assert.notInclude(text, removed);
+    }
+  });
+
+  it("gives script_check Hugging Face and npm ids, which carry slashes, dots and at signs", () => {
+    const hf = "itm_hf_model_nvidia/Nemotron-3.5-Embed-8B-BF16";
+    const npm = "itm_npm_@motrix/cli@0.5.0";
+    const text = renderDossierMarkdown({
+      dossier: {
+        ...DOSSIER,
+        evidence: [
+          { ...item(1), itemId: hf, source: "huggingface" },
+          { ...item(2), itemId: npm, source: "npm" },
+        ],
+      },
+      dossierHash: "sha256:one",
+      trendKey: null,
+    });
+    assert.deepStrictEqual(
+      dossierEvidenceOf(text, { dossierId: "dos_terra", dossierHash: "sha256:one" }),
+      { evidence: [{ item_id: hf }, { item_id: npm }] },
+    );
+  });
+
+  it("keeps reading a decided thread's older dossier file, which is not the current layout", () => {
+    const own = { dossierId: "dos_terra", dossierHash: "sha256:one" };
+    const older = markdown.replace(
+      "schema: earlyscript.expediente/2",
+      "schema: earlyscript.expediente/1",
+    );
+    assert.isTrue(isDossierFileOf(older, own));
+    assert.isFalse(hasCurrentDossierLayout(older));
+    assert.isTrue(hasCurrentDossierLayout(markdown));
   });
 });
 

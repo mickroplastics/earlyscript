@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { cardOf, NO_EXTRAS, type DossierExtras } from "./dossierCard.ts";
 import { trendKeyOf, type TrendKey } from "./trendKey.ts";
 
 // Reader for the runs directory, shared by the read side and the importer. The trend engine
@@ -93,6 +94,8 @@ export interface LoadedDossier {
   readonly curve: ReadonlyArray<EditorialCurveDay>;
   readonly coverage: ReadonlyArray<EditorialSourceCoverage>;
   readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
+  /** The judges' opinion the dossier carries; never part of `summary`. */
+  readonly judges: DossierExtras["judges"];
 }
 
 function toRunInfo(run: RunFile): RunInfo {
@@ -243,8 +246,10 @@ export function evidenceRange(
 export function loadRunDossiers(
   runId: string,
   files: ReadonlyArray<Dossier>,
+  extras: ReadonlyArray<DossierExtras> = [],
 ): ReadonlyArray<LoadedDossier> {
-  return files.map((file) => {
+  return files.map((file, index) => {
+    const extra = extras[index] ?? NO_EXTRAS;
     const { trend, rankings } = file;
     const curve = windowCurve(file, file.coverage.window_days || CURVE_WINDOW_DAYS);
     const evidence = evidenceItems(file);
@@ -281,6 +286,7 @@ export function loadRunDossiers(
       sparkline: curve.slice(-SPARKLINE_DAYS).map((day) => (day.known ? day.items : null)),
       isNew: false,
       trendKey: trendKey.key,
+      card: cardOf(file, curve, extra.card),
     };
     return {
       file,
@@ -296,6 +302,7 @@ export function loadRunDossiers(
         daysUnavailable: entry.days_unavailable,
       })),
       evidence,
+      judges: extra.judges,
     };
   });
 }

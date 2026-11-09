@@ -27,7 +27,12 @@ import {
   videoFileExists,
   writeReadOnlyVideoFile,
 } from "./videoFolderFiles.ts";
-import { dossierPathOf, isDossierFileOf, renderDossierMarkdown } from "./videoWorkspaceFormat.ts";
+import {
+  dossierPathOf,
+  hasCurrentDossierLayout,
+  isDossierFileOf,
+  renderDossierMarkdown,
+} from "./videoWorkspaceFormat.ts";
 
 /** What preparing a thread's folder did, for the log and the tests. */
 export interface VideoWorkspaceResult {
@@ -237,6 +242,7 @@ const make = Effect.gen(function* () {
     return (
       !dossier.ok ||
       !isDossierFileOf(dossier.value, thread) ||
+      !hasCurrentDossierLayout(dossier.value) ||
       !dossier.value.includes(scriptLanguageInstruction(channelLanguage))
     );
   });

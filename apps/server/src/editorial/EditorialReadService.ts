@@ -1,6 +1,8 @@
 import {
   EditorialReadError,
   type EditorialGetDossierInput,
+  type EditorialGetJudgeOpinionInput,
+  type EditorialGetJudgeOpinionResult,
   type EditorialGetInboxInput,
   type EditorialInbox,
   type EditorialRunSummary,
@@ -14,6 +16,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import {
+  latestDecisionOf,
+  priorDecisionOf,
+  selectThreadDecisions,
+  type TopicFingerprint,
+} from "./cardDecisions.ts";
 import { EditorialCommandService } from "./EditorialCommandService.ts";
 import { EditorialRunDirectory, type IndexedDossier, type LoadedRun } from "./RunDirectory.ts";
 import { compareTrends, evidenceRange } from "./dossierFormat.ts";
@@ -43,6 +51,13 @@ export interface EditorialReadServiceShape {
   readonly getDossier: (
     input: EditorialGetDossierInput,
   ) => Effect.Effect<EditorialTrendDossier, EditorialReadError>;
+  /**
+   * The judges' opinion of a dossier, only once the operator recorded a decision with utility
+   * on its trend: the decision is stored with its time before the opinion can be read.
+   */
+  readonly getJudgeOpinion: (
+    input: EditorialGetJudgeOpinionInput,
+  ) => Effect.Effect<EditorialGetJudgeOpinionResult, EditorialReadError>;
   /** The state of one trend against the latest run, and that run's new count, from the index. */
   readonly getTrendState: (trendKey: string) => Effect.Effect<
     {
@@ -157,6 +172,69 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** A decided dossier's topic fingerprint, by `run_id/dossier_id`; a run that is gone gives none. */
+  const decidedFingerprints = Effect.fn("EditorialReadService.decidedFingerprints")(function* (
+    runIds: ReadonlyArray<string>,
+  ) {
+    const fingerprints = new Map<string, TopicFingerprint>();
+    for (const runId of runIds) {
+      const entry = yield* directory.find(runId).pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(entry)) continue;
+      const loaded = yield* directory.load(entry.value).pipe(Effect.option);
+      if (Option.isNone(loaded)) continue;
+      for (const dossier of loaded.value.dossiers) {
+        fingerprints.set(`${runId}/${dossier.summary.dossierId}`, {
+          trendKey: dossier.trendKey.key,
+          itemIds: new Set(dossier.file.evidence.map((item) => item.item_id)),
+        });
+      }
+    }
+    return fingerprints;
+  });
+
+  /**
+   * Each card with the operator's latest decision on its trend and, when one was recorded
+   * before the run's cutoff on the same topic, "ya decidido" (`cardDecisions.ts`).
+   */
+  const withDecisions = Effect.fn("EditorialReadService.withDecisions")(function* (
+    row: ReadableRunRow,
+    dossiers: ReadonlyArray<IndexedDossier>,
+  ) {
+    const rows = yield* selectThreadDecisions(sql).pipe(
+      Effect.mapError(unreadable("Cannot read the decisions")),
+    );
+    const cutoffMs = Date.parse(row.cutoff_at);
+    const earlier = rows.filter(
+      (decision) => decision.run_id !== null && Date.parse(decision.decided_at) < cutoffMs,
+    );
+    const fingerprints =
+      earlier.length === 0
+        ? new Map<string, TopicFingerprint>()
+        : yield* decidedFingerprints([...new Set(earlier.map((decision) => decision.run_id!))]);
+    return dossiers.map((dossier): IndexedDossier => {
+      const card = dossier.summary.card;
+      if (card === undefined) return dossier;
+      const own: TopicFingerprint = {
+        trendKey: dossier.trendKey.key,
+        itemIds: new Set(dossier.file.evidence.map((item) => item.item_id)),
+      };
+      const summary: EditorialTrendSummary = {
+        ...dossier.summary,
+        card: {
+          ...card,
+          decision: latestDecisionOf(own.trendKey, rows),
+          priorDecision: priorDecisionOf(
+            own,
+            row.cutoff_at,
+            rows,
+            (decision) => fingerprints.get(`${decision.run_id}/${decision.dossier_id}`) ?? null,
+          ),
+        },
+      };
+      return { ...dossier, summary };
+    });
+  });
+
   const listRuns: EditorialReadServiceShape["listRuns"] = selectRuns(sql).pipe(
     Effect.map((rows) => rows.map(runSummaryOf)),
     Effect.mapError(unreadable("Cannot read the run index")),
@@ -180,7 +258,9 @@ const make = Effect.gen(function* () {
       };
     }
     const loaded = yield* loadRun(row.value);
-    const dossiers = yield* withInbox(row.value, loaded);
+    const dossiers = yield* withInbox(row.value, loaded).pipe(
+      Effect.flatMap((inboxed) => withDecisions(row.value, inboxed)),
+    );
     const trends = dossiers.map((dossier) => dossier.summary).toSorted(compareTrends(sort));
     const offset = input.offset ?? 0;
     return {
@@ -213,7 +293,9 @@ const make = Effect.gen(function* () {
       (candidate) => candidate.summary.dossierId === input.dossierId,
     );
     if (found === undefined) return yield* notFound;
-    const [dossier] = yield* withInbox(row.value, { ...loaded, dossiers: [found] });
+    const [dossier] = yield* withInbox(row.value, { ...loaded, dossiers: [found] }).pipe(
+      Effect.flatMap((inboxed) => withDecisions(row.value, inboxed)),
+    );
     const offset = input.evidenceOffset ?? 0;
     return {
       trend: dossier!.summary,
@@ -231,6 +313,35 @@ const make = Effect.gen(function* () {
       evidenceOffset: offset,
       evidenceRange: evidenceRange(found.evidence),
     };
+  });
+
+  const getJudgeOpinion: EditorialReadServiceShape["getJudgeOpinion"] = Effect.fn(
+    "EditorialReadService.getJudgeOpinion",
+  )(function* (input) {
+    const notFound = new EditorialReadError({
+      reason: "dossier-not-found",
+      message: `Dossier ${input.dossierId} is not in run ${input.runId}.`,
+    });
+    const row = yield* findRunRow(input.runId).pipe(
+      Effect.catchTags({
+        EditorialReadError: (error) =>
+          Effect.fail(error.reason === "run-not-found" ? notFound : error),
+      }),
+    );
+    if (Option.isNone(row)) return yield* notFound;
+    const loaded = yield* loadRun(row.value);
+    const found = loaded.dossiers.find(
+      (candidate) => candidate.summary.dossierId === input.dossierId,
+    );
+    if (found === undefined) return yield* notFound;
+    const rows = yield* selectThreadDecisions(sql).pipe(
+      Effect.mapError(unreadable("Cannot read the decisions")),
+    );
+    const decision = latestDecisionOf(found.trendKey.key, rows);
+    // Hidden comes first, so a closed opinion does not tell whether one exists.
+    if (decision === null || decision.utility === null) return { _tag: "hidden" as const };
+    if (found.judges === null) return { _tag: "none" as const };
+    return { _tag: "shown" as const, view: found.judges, decidedAt: decision.decidedAt };
   });
 
   const getTrendState: EditorialReadServiceShape["getTrendState"] = Effect.fn(
@@ -275,7 +386,13 @@ const make = Effect.gen(function* () {
   });
 
   return EditorialReadService.of(
-    withPresentations(sql, directory, { listRuns, getInbox, getDossier, getTrendState }),
+    withPresentations(sql, directory, {
+      listRuns,
+      getInbox,
+      getDossier,
+      getJudgeOpinion,
+      getTrendState,
+    }),
   );
 });
 

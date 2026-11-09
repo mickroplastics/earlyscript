@@ -22,6 +22,7 @@ export const EDITORIAL_RPC_AGGREGATES = {
   [EDITORIAL_WS_METHODS.listRuns]: "editorial",
   [EDITORIAL_WS_METHODS.getInbox]: "editorial",
   [EDITORIAL_WS_METHODS.getDossier]: "editorial",
+  [EDITORIAL_WS_METHODS.getJudgeOpinion]: "editorial",
   [EDITORIAL_WS_METHODS.subscribe]: "editorial",
   [EDITORIAL_WS_METHODS.markRead]: "editorial",
   [EDITORIAL_WS_METHODS.snooze]: "editorial",
@@ -56,6 +57,7 @@ const unavailableHandlers: EditorialHandlers = {
   [EDITORIAL_WS_METHODS.listRuns]: () => Effect.fail(unavailableRead),
   [EDITORIAL_WS_METHODS.getInbox]: () => Effect.fail(unavailableRead),
   [EDITORIAL_WS_METHODS.getDossier]: () => Effect.fail(unavailableRead),
+  [EDITORIAL_WS_METHODS.getJudgeOpinion]: () => Effect.fail(unavailableRead),
   [EDITORIAL_WS_METHODS.subscribe]: () => Stream.fail(unavailableRead),
   [EDITORIAL_WS_METHODS.markRead]: () => Effect.fail(unavailableCommand),
   [EDITORIAL_WS_METHODS.snooze]: () => Effect.fail(unavailableCommand),
@@ -95,6 +97,7 @@ const makeHandlers = Effect.gen(function* () {
       ),
     [EDITORIAL_WS_METHODS.getInbox]: (input) => imported.pipe(Effect.andThen(read.getInbox(input))),
     [EDITORIAL_WS_METHODS.getDossier]: read.getDossier,
+    [EDITORIAL_WS_METHODS.getJudgeOpinion]: read.getJudgeOpinion,
     [EDITORIAL_WS_METHODS.subscribe]: (input) =>
       Stream.unwrap(
         imported.pipe(Effect.andThen(subscribeInbox(input)), Effect.provide(streamContext)),

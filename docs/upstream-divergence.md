@@ -2383,3 +2383,15 @@ Base `e2c82bf929` (`es/motor-v2`); no es fusionable antes que esa rama. Los mode
 ### Archivos propios
 
 `packages/engine-lab` (política, manifiesto, parches, comparación, compuerta, trabajador con `bwrap`, corpus sintético), `packages/editorial-contracts/src/engineLab.ts`, `apps/server/src/editorial/{EngineChangeService,EngineExperimentService,EnginePromotionService,engineLabSupport,engineLabLayer}.ts`, `apps/server/src/editorial/engine-mcp/`, la migración 018 y `apps/server/scripts/engine-lab.ts`. `packages/trend-engine` no cambia: `ENGINE_SOURCE_HASH` sigue igual que en la base.
+
+## Tarjeta breve del motor v3, modo pares y exportación ciega (rama `es/motor-v3-c`, 9 de noviembre de 2026)
+
+Base `cd910d21ad`. Contrato `hillclimb/v3/diseno-v3-v4.md` 4.2, §1 y decisión 1 de Miguel (tarjeta breve aprobada el 9 de noviembre). Cada tendencia trae `card` (`packages/contracts/src/editorialCard.ts`): tres líneas (título y movimiento; curva por fuente W3→W0, número de fuentes y primera fuente; encaje, saturación y dos titulares) y un detalle (evidencia por fuente con `item_id`, fuentes, «ya decidido», decisión y opinión de los jueces). La pantalla deja de mostrar puesto, puntaje, afinidad numérica, crecimiento, tabla de cobertura y curva diaria; siguen en el JSON del expediente. `expediente.md` pasa a `earlyscript.expediente/2` con las mismas líneas y la evidencia; `/1` sigue leyéndose para los hilos ya decididos.
+
+El servidor lee los bloques `card` y `judges` del archivo del expediente con un lector tolerante (`dossierCard.ts`); sin bloque, deriva lo que un `dossier/1` tiene. «Ya decidido» (`cardDecisions.ts`) busca decisiones humanas anteriores al corte por la misma clave de tendencia o por la mitad de la evidencia compartida. `editorial.getJudgeOpinion` responde `hidden` hasta que exista una decisión con utilidad. El modo pares (`pairsMode.ts`, Ajustes › Editorial) es local al cliente y apaga la opinión de los jueces y la procedencia del título. «Exportar ciega» descarga las tarjetas sin juez, brazo, posición ni procedencia. El validador de guiones acepta ids con `/` y `.` (modelos de Hugging Face).
+
+### Archivos de upstream modificados
+
+| Archivo                           | Línea | Motivo                        |
+| --------------------------------- | ----- | ----------------------------- |
+| `packages/contracts/src/index.ts` | 72    | Reexporta `editorialCard.ts`. |

@@ -110,7 +110,9 @@ const isInvitation = (sentence: string): boolean => {
   );
 };
 
-const ITEM = /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_-]+)|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
+// An item id may carry "/", "." and "@" after its source: `itm_hf_model_<org>/<name-1.5>`, `itm_npm_@scope/pkg@1.0.0`.
+const ITEM =
+  /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_.@/-]*[A-Za-z0-9_-])|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
 
 function citationsIn(text: string): Array<{ offset: number; raw: string; ids: string[] }> {
   const citations = [];
@@ -295,7 +297,7 @@ function dossierIds(dossier: unknown): Set<string> {
       entry === null ||
       !("item_id" in entry) ||
       typeof entry.item_id !== "string" ||
-      !/^itm_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+$/.test(entry.item_id)
+      !/^itm_[a-z][a-z0-9-]*_[A-Za-z0-9_.@/-]*[A-Za-z0-9_-]$/.test(entry.item_id)
     ) {
       throw new TypeError("Invalid dossier: expected evidence[].item_id (line 1, column 1).");
     }

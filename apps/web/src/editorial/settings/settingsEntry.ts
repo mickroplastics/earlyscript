@@ -17,8 +17,17 @@ export const EDITORIAL_ONBOARDING_SECTION_ID = "editorial-onboarding";
 export const EDITORIAL_DATA_HANDLING_ID = "editorial-data-handling";
 export const EDITORIAL_DRAFTING_SECTION_ID = "editorial-drafting";
 export const EDITORIAL_PROFILE_SECTION_ID = "editorial-profile";
+export const EDITORIAL_PAIRS_SECTION_ID = "editorial-pairs";
 
 export const EDITORIAL_SETTINGS_SEARCH_ITEMS = [
+  {
+    id: EDITORIAL_PAIRS_SECTION_ID,
+    title: "Revisión por pares",
+    to: EDITORIAL_SETTINGS_PATH,
+    searchTerms: [
+      "pares pairs revisión review ciego blind jueces judges opinión opinion modo mode",
+    ],
+  },
   {
     id: EDITORIAL_PROFILE_SECTION_ID,
     title: "Perfil del estudio",

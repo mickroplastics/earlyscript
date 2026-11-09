@@ -517,7 +517,7 @@ describe("editorial video RPC, opening a thread", () => {
         const text = NodeFS.readFileSync(`${workspace}/videos/quantum/expediente.md`, "utf8");
         assert.include(text, "dossier_id: dossier-1\ndossier_hash: sha256:dossier\n");
         assert.include(text, "### [itm_hn_1] IBM roadmap");
-        assert.include(text, "- Etapa: en crecimiento · corroboración: una sola fuente");
+        assert.include(text, "## Tarjeta");
         const mtime = NodeFS.statSync(`${workspace}/videos/quantum/expediente.md`).mtimeMs;
 
         // Opening it again finds nothing missing and writes nothing.

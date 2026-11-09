@@ -1,68 +1,39 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
-  EditorialCurveDay,
   EditorialDossierId,
   EditorialEvidenceItem,
   EditorialRunId,
-  EditorialSourceCoverage,
   EditorialTrendDossier,
-  EditorialTrendInboxState,
   EditorialTrendKey,
   EditorialTrendPresentation,
-  EditorialTrendSummary,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
-  ChevronDownIcon,
-  CircleCheckIcon,
   ExternalLinkIcon,
   PanelLeftIcon,
   RefreshCwIcon,
   SparklesIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type MouseEvent } from "react";
 
 import { useOpenLink } from "../browser/useOpenLink";
-import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
-import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Group, GroupSeparator } from "../components/ui/group";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuShortcut,
-  MenuTrigger,
-} from "../components/ui/menu";
 import { useSidebar, useSidebarVisibility } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
-import { useClientSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   citationSegments,
-  coverageStatus,
-  coverageText,
   evidenceHeading,
   evidenceLinks,
   formatDate,
-  formatDay,
-  formatDecimal,
-  growthText,
-  snoozePresetLabel,
-  snoozeStateText,
   sourceLabel,
-  trendSourceText,
-  whyHereReasons,
 } from "./editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "./EditorialPage";
 import {
@@ -70,138 +41,16 @@ import {
   DOSSIER_EVIDENCE_PAGE_SIZE as EVIDENCE_PAGE_SIZE,
   presentationEnvironment,
 } from "./presentationState";
+import { usePairsMode } from "./pairsMode";
 import { editorialEnvironment } from "./state";
-import { useTrendActions, type TrendActions } from "./trendActions";
-import { TrendDismissDialog } from "./TrendDismissDialog";
+import { useTrendActions } from "./trendActions";
+import { TrendCardView } from "./TrendCard";
+import { TrendCardList } from "./TrendCardList";
+import { TrendDecision } from "./TrendDecision";
 import { useTrendInbox } from "./TrendInbox";
 import { useEditorialJobActivity } from "./TrendJobIndicator";
 
 const SPACE_LABEL = "Tendencias";
-
-function DossierSection({
-  title,
-  children,
-  className,
-}: {
-  readonly title: string;
-  readonly children: ReactNode;
-  readonly className?: string;
-}) {
-  return (
-    <section className={cn("flex min-w-0 flex-col gap-2", className)}>
-      <h2 className="text-sm font-medium text-foreground">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function DossierMetric({
-  label,
-  value,
-  detail,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly detail: string;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-base font-medium text-foreground tabular-nums">{value}</span>
-      <span className="text-xs text-muted-foreground">{detail}</span>
-    </div>
-  );
-}
-
-function curveDayLabel(day: EditorialCurveDay): string {
-  const date = formatDay(`${day.day}T00:00:00.000Z`);
-  if (!day.known) return `${date}: sin captura`;
-  return `${date}: ${day.items} ${day.items === 1 ? "publicación" : "publicaciones"}, ${day.authors} ${day.authors === 1 ? "autor" : "autores"}`;
-}
-
-/** Items per day. A day without capture is outlined, never drawn as a zero. */
-function TrendCurve({ curve }: { readonly curve: ReadonlyArray<EditorialCurveDay> }) {
-  const max = Math.max(1, ...curve.map((day) => (day.known ? day.items : 0)));
-  const first = curve[0];
-  const last = curve.at(-1);
-  const unknownDays = curve.filter((day) => !day.known).length;
-  const total = curve.reduce((sum, day) => sum + (day.known ? day.items : 0), 0);
-  return (
-    <figure className="flex flex-col gap-1.5">
-      <div
-        role="img"
-        aria-label={`${total} publicaciones en ${curve.length} días${unknownDays > 0 ? `, ${unknownDays} días sin captura` : ""}.`}
-        className="flex h-24 items-end gap-0.75 border-b border-border"
-      >
-        {curve.map((day) => (
-          <Tooltip key={day.day}>
-            <TooltipTrigger
-              render={
-                day.known ? (
-                  <div
-                    data-curve-day={day.day}
-                    className={cn(
-                      "min-w-0 flex-1 rounded-t-xs",
-                      day.items === 0 ? "h-px bg-border" : "bg-primary/80",
-                    )}
-                    style={day.items === 0 ? undefined : { height: `${(day.items / max) * 100}%` }}
-                  />
-                ) : (
-                  <div
-                    data-curve-day={day.day}
-                    data-unknown=""
-                    className="h-full min-w-0 flex-1 rounded-t-xs border border-b-0 border-dashed border-muted-foreground/40"
-                  />
-                )
-              }
-            />
-            <TooltipPopup side="top">{curveDayLabel(day)}</TooltipPopup>
-          </Tooltip>
-        ))}
-      </div>
-      <figcaption className="flex justify-between gap-2 text-2xs text-muted-foreground tabular-nums">
-        <span>{first ? formatDay(`${first.day}T00:00:00.000Z`) : null}</span>
-        {unknownDays > 0 ? <span>Contorno discontinuo: día sin captura</span> : null}
-        <span>{last ? formatDay(`${last.day}T00:00:00.000Z`) : null}</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-function CoverageList({ coverage }: { readonly coverage: ReadonlyArray<EditorialSourceCoverage> }) {
-  const incomplete = coverage.filter((entry) => coverageStatus(entry) !== "complete");
-  return (
-    <div className="flex flex-col gap-2">
-      <ul className="flex flex-col gap-1">
-        {coverage.map((entry) => (
-          <li
-            key={entry.source}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground"
-          >
-            {coverageStatus(entry) === "complete" ? (
-              <CircleCheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
-            ) : (
-              <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
-            )}
-            <span>{coverageText(entry)}</span>
-          </li>
-        ))}
-      </ul>
-      {incomplete.length > 0 ? (
-        <Alert variant="warning">
-          <TriangleAlertIcon />
-          <AlertTitle>
-            Cobertura parcial en {incomplete.map((entry) => sourceLabel(entry.source)).join(", ")}
-          </AlertTitle>
-          <AlertDescription>
-            Hubo días capturados solo en parte o sin captura: los conteos de esa fuente son un piso,
-            no el total.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-    </div>
-  );
-}
 
 function EvidenceList({
   dossier,
@@ -477,196 +326,6 @@ function DraftPresentationPrompt({ actions }: { readonly actions: TrendPresentat
   );
 }
 
-/** "Seguir observando": growth by default, or one of the thread snooze times. */
-function KeepWatchingControl({
-  environmentId,
-  trendKey,
-  actions,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly trendKey: EditorialTrendKey;
-  readonly actions: TrendActions;
-}) {
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  const [open, setOpen] = useState(false);
-  const presets = open
-    ? // oxlint-disable-next-line react/purity -- Presets are resolved only while the menu is open, so each opening reads a fresh time.
-      resolveSnoozePresets(new Date(), timestampFormat, environmentId)
-    : [];
-  return (
-    <Group aria-label="Seguir observando">
-      <Button size="sm" variant="outline" onClick={() => void actions.keepWatching(trendKey)}>
-        Seguir observando
-      </Button>
-      <GroupSeparator />
-      <Menu open={open} onOpenChange={setOpen}>
-        <MenuTrigger
-          render={<Button size="icon-sm" variant="outline" aria-label="Observar hasta…" />}
-        >
-          <ChevronDownIcon />
-        </MenuTrigger>
-        <MenuPopup side="top" align="end">
-          <MenuItem onClick={() => void actions.keepWatching(trendKey)}>Hasta que crezca</MenuItem>
-          <MenuSeparator />
-          {presets.map((preset) => (
-            <MenuItem
-              key={preset.id}
-              onClick={() => {
-                const picked = pickSnoozePreset(presets, preset.id, timestampFormat, environmentId);
-                if (picked) void actions.keepWatching(trendKey, picked);
-              }}
-            >
-              {snoozePresetLabel(preset.label)}
-              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-            </MenuItem>
-          ))}
-          <MenuItem
-            onClick={async () => {
-              const choice = await requestCustomSnooze();
-              if (choice) void actions.keepWatching(trendKey, choice);
-            }}
-          >
-            Personalizado…
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
-    </Group>
-  );
-}
-
-function trendStateText(state: EditorialTrendInboxState | undefined): string | null {
-  if (state?.dismissed) return `Descartada: ${state.dismissed.reason}`;
-  if (state?.snoozed) return snoozeStateText(state.snoozed);
-  if (state?.production) return "En producción.";
-  return null;
-}
-
-/** The three exits of the dossier, each replaced by its way back once taken. */
-function TrendDecision({
-  environmentId,
-  trend,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly trend: EditorialTrendSummary;
-}) {
-  const actions = useTrendActions(environmentId);
-  const [dismissing, setDismissing] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const { trendKey, inbox: state } = trend;
-  const title = trend.presentation?.title ?? trend.label;
-  const status = trendStateText(state);
-  return (
-    <div className="flex flex-col gap-2 border-t border-border pt-4">
-      {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
-      <div role="group" aria-label="Decisión" className="flex flex-wrap gap-2">
-        {trendKey === undefined ? (
-          <p className="text-sm text-muted-foreground">
-            Este servidor no identifica la tendencia entre corridas; actualízalo para decidir.
-          </p>
-        ) : (
-          <>
-            {state?.production ? (
-              <Button
-                size="sm"
-                render={
-                  <Link
-                    to="/$environmentId/$threadId"
-                    params={{
-                      environmentId,
-                      threadId: ThreadId.make(state.production.threadId),
-                    }}
-                    onClick={() => {
-                      if (state?.production) {
-                        actions.prepareVideo(ThreadId.make(state.production.threadId));
-                      }
-                    }}
-                  />
-                }
-              >
-                Abrir hilo de video
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                disabled={creating}
-                onClick={async () => {
-                  setCreating(true);
-                  // The button comes back even if the action throws.
-                  await actions
-                    .createVideo({ ...trend, trendKey })
-                    .finally(() => setCreating(false));
-                }}
-              >
-                Crear hilo de video
-              </Button>
-            )}
-            {state?.trial ? (
-              <Button
-                size="sm"
-                variant="ghost-muted"
-                render={
-                  <Link
-                    to="/$environmentId/$threadId"
-                    params={{ environmentId, threadId: ThreadId.make(state.trial.threadId) }}
-                  />
-                }
-              >
-                Ver el ensayo
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={creating}
-              title="Mismo tema, sin asistente ni expediente: para comparar por pares"
-              onClick={async () => {
-                setCreating(true);
-                // The button comes back even if the action throws.
-                await actions
-                  .createVideo({ ...trend, trendKey }, "manual")
-                  .finally(() => setCreating(false));
-              }}
-            >
-              Crear hilo manual
-            </Button>
-            {state?.snoozed ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void actions.returnToInbox(trendKey)}
-              >
-                Volver a la bandeja
-              </Button>
-            ) : state?.dismissed ? null : (
-              <KeepWatchingControl
-                environmentId={environmentId}
-                trendKey={trendKey}
-                actions={actions}
-              />
-            )}
-            {state?.dismissed ? (
-              <Button size="sm" variant="outline" onClick={() => void actions.reopen(trendKey)}>
-                Reabrir
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={() => setDismissing(true)}>
-                Descartar…
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-      {dismissing && trendKey !== undefined ? (
-        <TrendDismissDialog
-          trendTitle={title}
-          onConfirm={(reason) => actions.dismiss(trendKey, reason)}
-          onClose={() => setDismissing(false)}
-        />
-      ) : null}
-    </div>
-  );
-}
-
 export function TrendDossierView({
   environmentId,
   dossier,
@@ -686,15 +345,12 @@ export function TrendDossierView({
 }) {
   const { trend } = dossier;
   const presentation = trend.presentation;
-  const reasons = whyHereReasons({
-    trend,
-    affinityThreshold: dossier.affinityThreshold,
-    coverage: dossier.coverage,
-  });
+  // In pairs mode nothing tells which model drafted the title or which engine made the card.
+  const pairsMode = usePairsMode();
   return (
     <>
       <header className="flex min-w-0 flex-col gap-2">
-        {presentation ? (
+        {presentation && !pairsMode ? (
           <p className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <SparklesIcon aria-hidden className="size-3.5" />
             Redactado por el asistente
@@ -708,32 +364,24 @@ export function TrendDossierView({
         <h1 className="text-xl font-semibold text-foreground">
           {presentation?.title ?? trend.label}
         </h1>
-        {presentation ? (
+        {presentation && !pairsMode ? (
           <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">Detalles técnicos</summary>
             <p className="mt-2">Términos del motor: {trend.label}</p>
             <p>Modelo: {presentation.model}</p>
-            <ul aria-label="Términos" className="mt-2 flex flex-wrap gap-1">
-              {trend.terms.map((term) => (
-                <li key={term}>
-                  <Badge variant="secondary">{term}</Badge>
-                </li>
-              ))}
-            </ul>
           </details>
-        ) : trend.subtitle ? (
-          <p className="text-sm text-muted-foreground">{trend.subtitle}</p>
-        ) : null}
-        {!presentation ? (
-          <ul aria-label="Términos" className="flex flex-wrap gap-1">
-            {trend.terms.map((term) => (
-              <li key={term}>
-                <Badge variant="secondary">{term}</Badge>
-              </li>
-            ))}
-          </ul>
         ) : null}
       </header>
+
+      {trend.card === undefined ? null : (
+        <TrendCardView
+          environmentId={environmentId}
+          trend={trend}
+          cutoffAt={dossier.run.cutoffAt}
+          defaultOpen
+          linkTitle={false}
+        />
+      )}
 
       {presentation ? (
         <TrendPresentationSummary
@@ -745,51 +393,18 @@ export function TrendDossierView({
         <DraftPresentationPrompt actions={presentationActions} />
       ) : null}
 
-      <section className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-4">
-        <DossierMetric
-          label="Por volumen"
-          value={`#${trend.volumeRank}`}
-          detail={`${trend.items7d} publicaciones en 7 días · ${trend.items28d} en 28`}
-        />
-        <DossierMetric
-          label="Por puntaje"
-          value={`#${trend.scoreRank}`}
-          detail={`${formatDecimal(trend.score)} · ${growthText(trend.growth)}`}
-        />
-        <DossierMetric
-          label="Afinidad con el canal"
-          value={trend.affinity === null ? "sin dato" : formatDecimal(trend.affinity)}
-          detail={`umbral ${formatDecimal(dossier.affinityThreshold)}`}
-        />
-        <DossierMetric
-          label="Fuentes"
-          value={String(trend.sourceCount)}
-          detail={trendSourceText(trend)}
-        />
-      </section>
-
-      <DossierSection title="Cobertura por fuente">
-        <CoverageList coverage={dossier.coverage} />
-      </DossierSection>
-
-      <DossierSection title={`Publicaciones por día, últimos ${dossier.curve.length}`}>
-        <TrendCurve curve={dossier.curve} />
-      </DossierSection>
-
-      <div className="grid gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <DossierSection title={evidenceHeading(dossier.evidenceTotal, dossier.evidenceRange)}>
+      <details className="group/evidence-all">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">
+          {evidenceHeading(dossier.evidenceTotal, dossier.evidenceRange)}
+        </summary>
+        <div className="mt-3">
           <EvidenceList dossier={evidence} onPage={onEvidencePage} />
-        </DossierSection>
-        <DossierSection title="Por qué está aquí">
-          <ul className="flex list-disc flex-col gap-1.5 ps-4 text-sm text-muted-foreground marker:text-muted-foreground/60">
-            {reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        </DossierSection>
-      </div>
+        </div>
+      </details>
 
-      <TrendDecision environmentId={environmentId} trend={trend} />
+      {trend.card === undefined ? (
+        <TrendDecision environmentId={environmentId} trend={trend} />
+      ) : null}
     </>
   );
 }
@@ -811,8 +426,8 @@ function OpenInboxButton() {
 }
 
 /**
- * Tendencias with no dossier open: "Elige una tendencia" once a run has trends; before
- * that, a pointer to the first-run card at the top of the inbox.
+ * Tendencias with no dossier open: the run's brief cards once it has trends; before that, a
+ * pointer to the first-run card at the top of the inbox.
  */
 export function TrendsEmptyPage({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
@@ -845,12 +460,11 @@ export function TrendsEmptyPage({ environmentId }: { readonly environmentId: Env
       </EditorialEmptyPage>
     );
   }
+  if (inbox === null) return <EditorialPage space={SPACE_LABEL}>{null}</EditorialPage>;
   return (
-    <EditorialEmptyPage
-      space={SPACE_LABEL}
-      title="Elige una tendencia"
-      description="Abre una tendencia de la lista para leer su ficha de tendencia: curva, cobertura, evidencia y por qué está aquí."
-    />
+    <EditorialPage space={SPACE_LABEL}>
+      <TrendCardList environmentId={environmentId} inbox={inbox} />
+    </EditorialPage>
   );
 }
 
