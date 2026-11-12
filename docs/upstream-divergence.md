@@ -228,7 +228,7 @@ Lista completa de archivos revertidos:
 
 ### Marca nativa de escritorio (`es/brand-native`)
 
-Base `d505a14edec99139a73983f54c796699f8d2d15c`, 30 de octubre de 2026. Completa los pendientes macOS de icono, permisos, About, ZIP, bienvenida y ayudante de permisos registrados en Gertrudis. Esta unidad reemplaza la exclusión anterior de los iconos nativos solo para macOS y la de los textos de producto de `WelcomeWizard.tsx`.
+Base `d505a14edec99139a73983f54c796699f8d2d15c`, 30 de octubre de 2026. Completa los pendientes macOS de icono, permisos, About, ZIP, bienvenida y ayudante de permisos registrados en el Mac de prueba. Esta unidad reemplaza la exclusión anterior de los iconos nativos solo para macOS y la de los textos de producto de `WelcomeWizard.tsx`.
 
 Activos propios añadidos en `assets/{dev,prod,nightly}/`: `earlyscript-macos-1024.png` y `earlyscript.icns`. Los tres canales usan el mismo monograma E provisional de `apps/web/public/earlyscript-icon.svg`. Se regeneran en macOS con `node scripts/earlyscript/generate-native-icons.mjs`, mediante `sips` e `iconutil`, sin instalaciones globales. El mismo comando está disponible como `pnpm es:icons:mac`. El ICNS contiene tamaños de 16, 32, 128, 256 y 512 puntos con sus variantes de doble resolución. El empaquetador conserva su generación de `icon.png` a 512 píxeles y `icon.icns` desde el PNG propio. Los ICNS versionados permiten inspeccionar la exportación original sin empaquetar.
 
@@ -453,7 +453,7 @@ Estados: **controlado** (una bandera lo apaga), **pendiente** (envío a terceros
 | `scripts/earlyscript/packages.json` | Clasificación de cada paquete del workspace para la batería rápida, con su motivo.                                |
 | `scripts/earlyscript/scope.ts`      | Comprobación de alcance y ejecución filtrada de `test` y `build`.                                                 |
 | `scripts/earlyscript/scope.test.ts` | Pruebas de la comprobación. Corren al inicio de `es:test` y con las de `@t3tools/scripts` en la batería completa. |
-| `docs/dev-environment-linux.md`     | Requisitos del LXC, resultados por paquete y tiempos de ambas baterías.                                           |
+| `docs/dev-environment-linux.md`     | Requisitos del contenedor de prueba, resultados por paquete y tiempos de ambas baterías.                                           |
 | `docs/upstream-divergence.md`       | Este registro.                                                                                                    |
 
 `scripts/earlyscript/` está dentro del paquete de upstream `@t3tools/scripts`, cuyo `tsconfig.json` incluye `**/*.ts` y cuya prueba usa `--dir .`. Por eso el typecheck y las pruebas de la batería completa cubren estos archivos sin tocar configuración de upstream. Al fusionar, comprobar que siguen pasando `pnpm --filter @t3tools/scripts typecheck` y `pnpm run knip:check`.
@@ -793,14 +793,14 @@ Base: `815f5f2a04`. Comprobación: `git diff --name-status 815f5f2a04..es/engine
 | Línea base `baseline.items_7d` con peso 1 sobre `items_7d` (regla del backtest).                                                                                                                                                                    | `log_items_7d`.                                                                   | `config/engine.v1.json`              |
 | `logical_hash` cubre solo los expedientes; `stats.signals_hash` cubre todas las señales como control adicional. Ya no hay `engine.sqlite` por corrida.                                                                                              | Base por corrida como Earlywindow.                                                | `src/dossier.ts`, `src/run.ts`       |
 | `config_hash` es el SHA-256 del JSON canónico de la configuración, no de los bytes del archivo.                                                                                                                                                     | Bytes del archivo.                                                                | `src/run.ts`                         |
-| Qwen con procesos de 2 hilos y 2 procesos por defecto (`intra_op_threads` entra en la clave de caché aunque no cambie los vectores).                                                                                                                | Más procesos en una máquina libre (Beatriz: 6).                                   | `config/engine.v1.json`, `--workers` |
+| Qwen con procesos de 2 hilos y 2 procesos por defecto (`intra_op_threads` entra en la clave de caché aunque no cambie los vectores).                                                                                                                | Más procesos en una máquina libre (servidor de pruebas: 6).                       | `config/engine.v1.json`, `--workers` |
 | `hash6` del nombre de la corrida = hash de entradas, instante y proceso, para que dos corridas del mismo segundo no choquen.                                                                                                                        | Hash solo de entradas.                                                            | `src/run.ts`                         |
 | El corte se aplica antes de abrir archivos: `corpus_used_hash` cubre los días anteriores al corte y sus filas de cobertura, y es el `corpus_hash` de los expedientes; `corpus_manifest_hash` toma la identidad del corpus congelado del manifiesto. | Hash de todos los archivos, como Earlywindow, que abre días posteriores al corte. | `src/corpus.ts`                      |
 | El embedder local rechaza una especificación con otra revisión, dtype o pooling que los que ejecuta su proceso hijo.                                                                                                                                | Ejecutar lo que pida la configuración.                                            | `src/embed/local.ts`                 |
 
 ### Comparación con la corrida canónica de Earlywindow
 
-Con el mismo corpus, corte y perfil, y los mismos 45.557 textos embebidos, Earlyscript emite 19 expedientes y la canónica 18; coinciden 3 de 5 en el top 5 por línea base y 1 de 5 en el ponderado (`~/earlyscript-data/engine-1/beatriz/a3-comparacion.md`). La explicación propuesta es una hipótesis plausible, no una causa demostrada: la canónica usó vectores de macOS y Earlyscript vectores de Linux x64 (coseno mediano 0,965 entre plataformas para el mismo texto), y con un umbral de 0,70 y un apilado que depende del orden esas diferencias cambiarían qué ítems forman cada señal. La aislaría correr ambos motores sobre los mismos vectores de Linux con reglas equivalentes; no se ejecutó porque Earlywindow solo tiene la caché de macOS y la regla del paso 1 prohíbe reutilizarla.
+Con el mismo corpus, corte y perfil, y los mismos 45.557 textos embebidos, Earlyscript emite 19 expedientes y la canónica 18; coinciden 3 de 5 en el top 5 por línea base y 1 de 5 en el ponderado (`~/earlyscript-data/engine-1/<servidor>/a3-comparacion.md`). La explicación propuesta es una hipótesis plausible, no una causa demostrada: la canónica usó vectores de macOS y Earlyscript vectores de Linux x64 (coseno mediano 0,965 entre plataformas para el mismo texto), y con un umbral de 0,70 y un apilado que depende del orden esas diferencias cambiarían qué ítems forman cada señal. La aislaría correr ambos motores sobre los mismos vectores de Linux con reglas equivalentes; no se ejecutó porque Earlywindow solo tiene la caché de macOS y la regla del paso 1 prohíbe reutilizarla.
 
 ## 11. Fuentes en vivo (motor)
 
@@ -882,7 +882,7 @@ Cambios:
 3. Poda en 1/2, 5/8, 3/4 y 7/8 de las dimensiones: suma parcial más el producto de las normas del resto (Cauchy-Schwarz), con holgura de 1e-9 para el redondeo. Quedan 158.700 millones de multiplicaciones, el 53 % del total; el 94 % de ellas está antes de la mitad.
 4. Hasta la mitad, los ítems pasan de dos en dos: cada coordenada se lee una vez para ambos, con ocho sumas independientes. El segundo ítem recalcula solo el centroide que el primero modificó o abrió.
 
-Corrida completa en Beatriz (corpus `~/earlywindow-data/corpus`, corte `2026-10-19T00:00:00Z`, `singularidev.v1.json`, `config/engine.v1.json`, caché caliente y 0 inferencias):
+Corrida completa en el servidor Linux de pruebas (corpus `~/earlywindow-data/corpus`, corte `2026-10-19T00:00:00Z`, `singularidev.v1.json`, `config/engine.v1.json`, caché caliente y 0 inferencias):
 
 | Código                 | Corrida                               | Total   | Apilado | Memoria pico | `logical_hash`         | `signals_hash`         |
 | ---------------------- | ------------------------------------- | ------- | ------- | ------------ | ---------------------- | ---------------------- |
@@ -1276,7 +1276,7 @@ Pausas (`PAUSE_MS`, una petición a la vez por fuente, así que una conexión po
 | registry.npmjs.org    | 200 con el JSON del paquete npm llamado `robots.txt`; sin reglas             | Permitido                                                                                                      |
 | api.bsky.app          | 200, `Allow: /`                                                              | Permitido                                                                                                      |
 
-Excepción de arXiv (decisión de Miguel, 1 de noviembre de 2026). `export.arxiv.org/robots.txt` prohíbe todo a `*` (confirmado también por Sol), pero los Terms of Use de la API autorizan su uso: «When using the legacy APIs (including OAI-PMH, RSS, and the arXiv API), make no more than one request every three seconds, and limit requests to a single connection at a time.» (https://info.arxiv.org/help/api/tou.html). Antes se intentó una vez más OAI-PMH, que no necesitaría excepción: `https://oaipmh.arxiv.org/robots.txt` no respondió en 30 s ni desde agents ni desde Beatriz, igual que en la verificación de Sol. Implementación:
+Excepción de arXiv (decisión de Miguel, 1 de noviembre de 2026). `export.arxiv.org/robots.txt` prohíbe todo a `*` (confirmado también por Sol), pero los Terms of Use de la API autorizan su uso: «When using the legacy APIs (including OAI-PMH, RSS, and the arXiv API), make no more than one request every three seconds, and limit requests to a single connection at a time.» (https://info.arxiv.org/help/api/tou.html). Antes se intentó una vez más OAI-PMH, que no necesitaría excepción: `https://oaipmh.arxiv.org/robots.txt` no respondió en 30 s ni desde el contenedor de desarrollo ni desde el servidor Linux de pruebas, igual que en la verificación de Sol. Implementación:
 
 - `SourceDescriptor.robots_override` (`reason`, `terms_url`), opcional en `editorial-contracts/src/source.ts`; solo arXiv lo declara. No forma parte de `selection`, así que no cambia el hash del corpus.
 - `robotsGate` recibe la excepción: ante un `Disallow` deja pasar la petición y avisa; un `robots.txt` inalcanzable o con 5xx sigue deteniendo el día. Sin excepción, el mismo `robots.txt` bloquea (prueba).
@@ -1295,7 +1295,7 @@ Procedimiento de borrado (`src/purge.ts`, el módulo de §21; esta rama solo le 
 - `collect` lee esas purgas y no vuelve a guardar un ítem que coincida, aunque el proveedor lo siga sirviendo o se fuerce la recolección. Desde la versión idempotente de `main` (`fd42d3b09d`), una purga sin coincidencias no se registra y una repetida no cambia nada. Consecuencia para Bluesky: una petición de borrado de una publicación que todavía no está en el corpus no impide capturarla después; si el autor la borró en Bluesky, el proveedor ya no la sirve, y si solo pidió no aparecer, hay que repetir la purga tras la siguiente captura.
 - Las ejecuciones (`runs`) ya calculadas con esos ítems no se reescriben: guardan extractos de evidencia. Si un borrado debe alcanzarlas, hay que volver a correr el motor sobre el corpus purgado y borrar la corrida vieja.
 
-Captura real (Beatriz, 31 de octubre de 2026, días 28 y 29 de octubre, corpus temporal `~/earlyscript-data/live/corpus-s2-prueba/`, sin embeddings ni `engine run`; código `b395f401cd`, ya fusionado con `main` `0c91f37f6a`; una captura anterior con `7525f197c` dio los mismos ítems y estados, salvo un 404 pasajero de Wikipedia el 28):
+Captura real (servidor Linux de pruebas, 31 de octubre de 2026, días 28 y 29 de octubre, corpus temporal `~/earlyscript-data/live/corpus-s2-prueba/`, sin embeddings ni `engine run`; código `b395f401cd`, ya fusionado con `main` `0c91f37f6a`; una captura anterior con `7525f197c` dio los mismos ítems y estados, salvo un 404 pasajero de Wikipedia el 28):
 
 | Fuente          | 28 oct           | 29 oct           | Tiempo (2 días) | Observaciones                                                                                                                 |
 | --------------- | ---------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -1311,7 +1311,7 @@ Pruebas: fixtures con la forma de respuestas reales y sin identificadores de per
 
 Correcciones tras la verificación de Sol (1 de noviembre de 2026, APTO CON CORRECCIONES sobre `9a1a0f36df`): `Retry-After` en 502, 503 y 504 en el cliente común; el feed de arXiv se lee con `parseXml` de `xml.ts` (documento bien formado y cerrado, raíz `feed`), y un XML truncado deja la página como fallo, nunca `complete`; Wikipedia es `complete` solo con las 1000 filas originales, comprobadas antes de excluir páginas no artículo; los fixtures de npm y Stack Exchange ya no llevan usuarios ni nombres reales. Catálogo: `wikipedia`, `stackexchange` y `bluesky` pasan de `census` a `sample`, como sus descriptores (lo exige `catalog.test.ts`); Bluesky documenta `engine purge` como método de borrado y pasa de `blocked` a `pending-review` (sigue sin captura: falta confirmar la licencia del contenido y la decisión de retención, M29); npm deja de decir que falta la regla de «conocido»; Wikipedia dice que no guarda resúmenes.
 
-Captura real de un día con las correcciones (Beatriz, 31 de octubre de 2026 05:08 UTC, código `738a8afd0`, corpus temporal `~/earlyscript-data/live/corpus-s2-arxiv-wikipedia/`): arXiv 26 de octubre `complete`, 502 ítems en 10 s (tres páginas), con la nota `robots_override`; Wikipedia 26 de octubre `unavailable` (HTTP 404: Wikimedia tampoco lo sirve a `curl`), y 29 de octubre `complete`, 986 ítems de 1000 filas, en 1 s, sin resúmenes.
+Captura real de un día con las correcciones (servidor Linux de pruebas, 31 de octubre de 2026 05:08 UTC, código `738a8afd0`, corpus temporal `~/earlyscript-data/live/corpus-s2-arxiv-wikipedia/`): arXiv 26 de octubre `complete`, 502 ítems en 10 s (tres páginas), con la nota `robots_override`; Wikipedia 26 de octubre `unavailable` (HTTP 404: Wikimedia tampoco lo sirve a `curl`), y 29 de octubre `complete`, 986 ítems de 1000 filas, en 1 s, sin resúmenes.
 
 ## 20. Fuentes Hugging Face y dev.to (rama `es/sources-hf-devto`, 31 de octubre de 2026)
 
@@ -1356,7 +1356,7 @@ Licencias y condiciones:
 - Hugging Face Hub: límites leídos en `huggingface.co/docs/hub/rate-limits` (500 peticiones de API y 3000 de resolvers por IP cada 5 minutos en anónimo; 1000 y 5000 con cuenta gratuita). Las Condiciones de servicio del Hub son _por confirmar_, porque no se leyeron. El contenido de cada repositorio (tarjetas de modelo) sigue su propia licencia, declarada en la cabecera YAML que la limpieza descarta. Los resúmenes de papers son de sus autores, con la licencia que cada uno eligió en arXiv. El listado `/api/models` no está en el OpenAPI; sus parámetros salen del cliente `huggingface_hub` (_por confirmar_ en la documentación oficial).
 - dev.to: API pública de lectura sin clave. La documentación v1 (`developers.forem.com/api/v1`) no publica límites ni condiciones. La exigencia de `user-agent` y el límite de 10 peticiones cada 30 s vienen de la revisión previa de la referencia beta (v0) y quedan _por confirmar_. El contenido pertenece a sus autores; las condiciones de reutilización de DEV son _por confirmar_. El corpus guarda título, descripción, autor y enlace, no el texto completo.
 
-Capturas reales en Beatriz (31 de octubre de 2026, sin `HF_TOKEN`, sin errores en stderr ni respuestas 429), con `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31`:
+Capturas reales en el servidor Linux de pruebas (31 de octubre de 2026, sin `HF_TOKEN`, sin errores en stderr ni respuestas 429), con `engine collect --sources huggingface,devto --from 2026-10-29 --to 2026-10-31`:
 
 1. 03:47 a 03:49 UTC, 112 s, antes de la compuerta de robots y con el `User-Agent` anterior. Hugging Face: 67 y 89 ítems. dev.to: 2169 y 1832, los dos `complete`. Se conserva en `~/earlyscript-data/live/corpus-s3-prueba-v1/`.
 2. 03:55 a 03:57 UTC, 115 s, con la compuerta, `--force` sobre el mismo corpus. dev.to del 30 subió a 1884 porque `collect` une por id: los 52 nuevos eran todos del 30 de octubre entre las 03:44 y las 04:59 UTC. La primera captura tenía un hueco por una página vieja del CDN, probablemente guardada por los sondeos manuales previos de las 03:39 con `per_page=1000`. Esto motivó la detección descrita arriba. Está en `history/` del mismo directorio.
@@ -1390,7 +1390,7 @@ Correcciones tras la verificación de Sol (rama `es/sources-sample-fix`, base `0
 - H2. Un día accesible sin elegibles ya no es `unavailable`. `devto.ts` separa los fallos de acceso (HTTP, JSON inválido o HTML, orden roto, tope de páginas) de las notas de incompletitud (`day not over`, tramos sin cubrir, listado agotado o vacío) y del tope de 500. `unavailable` solo cuando hay un fallo de acceso y ningún ítem; `partial` con fallo e ítems, con incompletitud o con tope; si no, `complete`, también con cero elegibles en un día terminado. Regresión con el caso de `empty-day.mjs` (día en curso, un artículo sin respuesta: `partial`), un día terminado sin elegibles (`complete`) y una respuesta HTML (`unavailable`).
 - H3. `selection` de Hugging Face declara el cuerpo alternativo: la tarjeta como texto plano, recortada a 4000 caracteres, y, sin tarjeta utilizable (ausente, vacía, prohibida por `robots.txt` o de más de 2 MiB), las etiquetas sin espacio de nombres. Cambia el texto de `selection` y, con él, el hash de los corpus nuevos.
 
-Borrado de los datos de dev.to (1 de noviembre de 2026). En Beatriz, en `~/earlyscript-data/live/`: de `corpus-s3-prueba-v1`, `corpus-s3-prueba` y `corpus-s3-acotado` se quitaron `devto/2026-10-29.jsonl` y `devto/2026-10-30.jsonl`, y de `history/` las cuatro versiones anteriores de días de dev.to (dos en cada uno de los dos primeros). Se reescribieron `coverage.jsonl` sin las filas de dev.to y el manifiesto sin la clave `devto` de `selection` y con `corpus_hash` nuevo. Los tres corpus quedan verificados con `readCorpus` y conservan Hugging Face. En este LXC se borraron las respuestas crudas de la API guardadas en `/tmp` durante el diseño y la parte de dev.to de la copia del corpus acotado en `~/earlyscript-data/sources-hf-devto-verify/`, rehecha del mismo modo. Quedan solo metadatos o contenido fuera del corpus: los `.out` de las capturas y las versiones antiguas de `coverage.jsonl` en `history/` (conteos y notas, sin artículos); `branch.diff` de la verificación de Sol, que incluye el fixture `devto-latest-pages.json`; y ese fixture en el historial de Git y en los checkouts de otras unidades que aún no se han actualizado a `main` (nueve artículos con título y descripción). Para quitarlo del historial habría que reescribirlo, y esa decisión es de Miguel.
+Borrado de los datos de dev.to (1 de noviembre de 2026). En el servidor Linux de pruebas, en `~/earlyscript-data/live/`: de `corpus-s3-prueba-v1`, `corpus-s3-prueba` y `corpus-s3-acotado` se quitaron `devto/2026-10-29.jsonl` y `devto/2026-10-30.jsonl`, y de `history/` las cuatro versiones anteriores de días de dev.to (dos en cada uno de los dos primeros). Se reescribieron `coverage.jsonl` sin las filas de dev.to y el manifiesto sin la clave `devto` de `selection` y con `corpus_hash` nuevo. Los tres corpus quedan verificados con `readCorpus` y conservan Hugging Face. En el contenedor de desarrollo se borraron las respuestas crudas de la API guardadas en `/tmp` durante el diseño y la parte de dev.to de la copia del corpus acotado en `~/earlyscript-data/sources-hf-devto-verify/`, rehecha del mismo modo. Quedan solo metadatos o contenido fuera del corpus: los `.out` de las capturas y las versiones antiguas de `coverage.jsonl` en `history/` (conteos y notas, sin artículos); `branch.diff` de la verificación de Sol, que incluye el fixture `devto-latest-pages.json`; y ese fixture en el historial de Git y en los checkouts de otras unidades que aún no se han actualizado a `main` (nueve artículos con título y descripción). Para quitarlo del historial habría que reescribirlo, y esa decisión es de Miguel.
 
 ## 21. Fuentes Lobste.rs y RSS/Atom (rama `es/sources-lobsters-rss`, 31 de octubre de 2026)
 
@@ -1556,7 +1556,7 @@ Trazabilidad de captura (R5): `engine collect` escribe `<corpus>/http-log/<inici
 
 Excepción a `robots.txt` con sus términos (R6): un día capturado bajo `robots_override` guarda en `coverage.jsonl` la nota «robots_override: <motivo> (terms: <URL>)» y el campo `robots_override: {reason, terms_url}`, y el manifiesto lista esos días en `robots_overrides` (`source`, `day`, `reason`, `terms_url`). `hashCorpus` incluye `robots_overrides` y `repairs` solo cuando existen, así que el hash de un corpus sin ellos sigue siendo el de Earlywindow. `engine repair-robots-override --corpus <dir> --source arxiv` completa los días capturados antes con la URL del descriptor, bajo el mismo bloqueo que `collect`. Manda la cobertura anterior a `history/` y registra la reparación en `repairs` del manifiesto («terms_url added … this is a later repair, not part of the capture»). Es idempotente.
 
-Operación histórica con esquema 2 (Beatriz, 31 de octubre de 2026; nada se registró en ninguna base editorial). Sus resultados no equivalen al protocolo de seguimiento del esquema 3:
+Operación histórica con esquema 2 (servidor Linux de pruebas, 31 de octubre de 2026; nada se registró en ninguna base editorial). Sus resultados no equivalen al protocolo de seguimiento del esquema 3:
 
 - Relleno: copia `~/earlyscript-data/live/corpus-backtest/` del corpus de 28 días de HN y GitHub (`corpus-2026-10-31`, intacto), capturas del 3 al 30 de octubre una fuente a la vez. Hugging Face con `16ed5593cc` (su colector no cambia en `main`); las demás con `53afe315c4`, ya con el `robots_override` de arXiv. Sin traza HTTP (R5 llegó después).
 
@@ -1690,7 +1690,7 @@ Resolución del CLI, en un solo sitio (`apps/server/src/editorial/engineProcess.
 
 Archivos propios: `scripts/earlyscript/stageTrendEngine.ts` (también ejecutable solo: `node scripts/earlyscript/stageTrendEngine.ts <dir>`), `apps/server/src/editorial/engineProcess.test.ts`.
 
-Medido en Gertrudis (M4): `trend-engine` ocupa 122 MB en `Contents/Resources` (85 MB son onnxruntime darwin-arm64); el `.dmg` pasa de 185,0 a 221,8 MB. El empaquetado del motor tarda menos de un segundo. Una corrida nocturna con HN y GitHub, caché llena y modelo ya descargado: captura 2 s, motor 25 s, comprobación 0,1 s, importación 6 ms, redacción 67 s (Claude Haiku); `engine check --run --rerun` con la copia empaquetada reproduce el `logical_hash`.
+Medido en el Mac de prueba (M4): `trend-engine` ocupa 122 MB en `Contents/Resources` (85 MB son onnxruntime darwin-arm64); el `.dmg` pasa de 185,0 a 221,8 MB. El empaquetado del motor tarda menos de un segundo. Una corrida nocturna con HN y GitHub, caché llena y modelo ya descargado: captura 2 s, motor 25 s, comprobación 0,1 s, importación 6 ms, redacción 67 s (Claude Haiku); `engine check --run --rerun` con la copia empaquetada reproduce el `logical_hash`.
 
 ## 27. Exportación de evidencia (rama `es/evidence-export`, 31 de octubre de 2026)
 
@@ -1844,7 +1844,7 @@ Fuera de alcance, observado en la prueba real: T3 renombra el hilo tras el prime
 
 ### Correcciones tras la verificación de Sol (NO APTO sobre `065acde8e6`)
 
-Informe y arneses de Sol en Gertrudis, `~/earlyscript-data/verify-video-context/` (`informe.md`, `adversarial.mjs`, `adversarial-mcp.mjs`). Ningún archivo de upstream nuevo.
+Informe y arneses de Sol en el Mac de prueba, `~/earlyscript-data/verify-video-context/` (`informe.md`, `adversarial.mjs`, `adversarial-mcp.mjs`). Ningún archivo de upstream nuevo.
 
 **H1, escrituras fuera del workspace por enlaces.** Archivo nuevo `videoFolderFiles.ts`. Recorre la ruta componente a componente desde el `realpath` del workspace y comprueba cada carpeta existente con `lstat` antes de crear nada; las que faltan las crea de una en una. Un enlace simbólico en cualquier componente (`videos`, la carpeta del video, `expediente.md`, `guion.md`) se rechaza. El archivo final se abre con `O_NOFOLLOW`; Windows no lo tiene y hace un `lstat` antes. La lectura, la comparación y el `chmod` usan el descriptor abierto. La escritura del expediente sigue yendo por archivo temporal y `rename`, que reemplaza la entrada y no sigue un enlace. El guion se crea con `wx`. Las rutas con `..`, absolutas, con `~`, con barra invertida o con NUL se rechazan.
 
@@ -1865,7 +1865,7 @@ Queda igual: el `AGENTS.md` ya escrito en una instalación no se actualiza si ca
 
 ### Correcciones tras la reverificación de Sol (NO APTO sobre `fdfbea7a68`)
 
-Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda2.md`. H1 a H5 quedaron cerrados para los ataques originales.
+Informe en el Mac de prueba, `~/earlyscript-data/verify-video-context/informe-ronda2.md`. H1 a H5 quedaron cerrados para los ataques originales.
 
 **R1, reabrir el hilo no recuperaba `AGENTS.md`.** `EditorialVideoProject` gana `ensureInstructions(projectId)`: escribe `AGENTS.md` y `CLAUDE.md`, solo si faltan, cuando el proyecto es el Estudio (misma carpeta real), y no toca otro proyecto. `resolve` lo usa al crear y `prepareOnOpen` (`videoRpc.ts`) al abrir, con el proyecto del hilo que da `ThreadManagementService`. `videoThreadLayer.ts` monta ahora `VideoProject.layer` con `provideMerge`, para que `videoRpc.ts` lo tome con `Effect.serviceOption`.
 
@@ -1880,7 +1880,7 @@ Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda2.md
 
 ### Correcciones tras la tercera verificación de Sol (NO APTO sobre `949d354402`)
 
-Informe en Gertrudis, `~/earlyscript-data/verify-video-context/informe-ronda3.md`. R2 y R3 quedaron cerrados.
+Informe en el Mac de prueba, `~/earlyscript-data/verify-video-context/informe-ronda3.md`. R2 y R3 quedaron cerrados.
 
 **R1, reabrir sin recargar no preparaba nada.** La preparación al suscribirse no basta: el átomo de la suscripción (`videoState.ts`) se comparte y vive cinco minutos sin consumidores, así que volver al hilo desde Tendencias no abre otra.
 
@@ -1994,7 +1994,7 @@ Decisiones reversibles:
 
 ### Correcciones tras la verificación de Sol (APTO CON CORRECCIONES sobre `15b605cbde`)
 
-Informe en Beatriz `/home/mick/earlyscript-data/verify-onb-studio/informe.md`.
+Informe en el servidor Linux de pruebas, `~/earlyscript-data/verify-onb-studio/informe.md`.
 
 - **H1, redacciones visibles tras guardar.** El `onSuccess` de `editorial.profile.update` (`apps/web/src/editorial/profile/profileState.ts`) llama también a `bumpInbox` (`editorial/state.ts`): la bandeja y los expedientes ya consultados vuelven a leer y muestran «Desactualizado» sin recargar. Regresión en `profile/profileSave.browser.test.tsx`: con los átomos reales de perfil, bandeja y expediente, y Ajustes real, y solo el transporte simulado por un servidor que marca `stale` las redacciones cuando cambia la versión, se lee un expediente, se abre Ajustes, se guarda la v2 y al volver el expediente y la bandeja dicen «Desactualizado». Sin el `bumpInbox` la prueba falla con «Redacción vigente».
 - **H2, guarda de permisos en el cliente.** `packages/contracts/src/editorialProfile.ts` exporta `EDITORIAL_PROFILE_CLIENT_GUARDED_SCOPES` (`update` con `orchestration:operate`), y un archivo de upstream gana dos líneas:
@@ -2071,7 +2071,7 @@ Comportamiento:
 
 ### Correcciones tras la verificación de Sol (NO APTO sobre `511a1b877d`)
 
-Informe en Beatriz, `/home/mick/earlyscript-data/verify-onb-data/informe.md`. Cero archivos de upstream modificados.
+Informe en el servidor Linux de pruebas, `~/earlyscript-data/verify-onb-data/informe.md`. Cero archivos de upstream modificados.
 
 - **H1, React Compiler.** `submit` de `DataConsentStep.tsx` usaba `try/finally` sin `catch`, que el compilador no admite (`reactCompilerCoverage.test.ts`). Ahora es una cadena de promesas con `.catch` (error en español junto al botón, detalle a la consola) y `.finally`.
 - **H2, qué se guarda.** `SOURCE_ITEM_KEYS` (`packages/editorial-contracts/src/item.ts`) declara las claves de `Item` que escribe cada fuente: las doce comunes y, en RSS, `body_kind` y `feed_url`. `trend-engine/src/testkit/storedKeys.ts` (`expectStoredKeys`) lo comprueba contra los ítems reales de los diez adaptadores en sus pruebas con fixtures (una línea en `earlywindow-sources.test.ts`, `live.test.ts`, `lobsters-rss.test.ts` y `huggingface.test.ts`). En el paso, `COMMON_STORED_FIELDS` y `STORED_FIELDS` describen cada clave en palabras, y una prueba exige que juntos nombren exactamente las claves de cada fuente y que todas las claves de `Item` estén declaradas. Se muestra la línea común «Todas las fuentes guardan además: …». La frase de RSS dejó de ser excluyente.
@@ -2247,7 +2247,7 @@ Siguen en inglés: las filas del registro de trabajo del agente («Thinking», �
 
 ## Aislamiento de T3 Code (rama `es/isolation`, 4 de noviembre de 2026)
 
-Base: `main` en `1aadad83c1`. Objetivo: Earlyscript no comparte nada con el T3 Code real que convive en las mismas máquinas (home `~/.t3`, puerto 3773, servicio `t3code.service`): ni carpetas, ni servicio de fondo, ni variables heredadas, ni enlaces. Corrige los cruces de `~/earlyscript-data/auditoria-aislamiento-2026-11-04/informe.md` y de la auditoría en Clotilde. Informe de la rama: `~/earlyscript-data/isolation/informe.md`; verificación de Sol en `~/earlyscript-data/isolation-verify/informe.md` y sus correcciones (G1 a G3) en la sección «Correcciones tras Sol» del informe de la rama; segunda ronda en `isolation-verify-2/` (G1: un `..` después de una carpeta inexistente ya no se acepta, porque la resolución no puede seguir enlaces tras ese punto; G2: `DocumentText.ts` y el `git` de la exportación lanzan procesos propios sin agentes con el entorno del servidor, excepción aceptada y documentada; con `--base-dir` el servidor no publica `EARLYSCRIPT_HOME`, limitación aceptada).
+Base: `main` en `1aadad83c1`. Objetivo: Earlyscript no comparte nada con el T3 Code real que convive en las mismas máquinas (home `~/.t3`, puerto 3773, servicio `t3code.service`): ni carpetas, ni servicio de fondo, ni variables heredadas, ni enlaces. Corrige los cruces de `~/earlyscript-data/auditoria-aislamiento-2026-11-04/informe.md` y de la auditoría en otra máquina. Informe de la rama: `~/earlyscript-data/isolation/informe.md`; verificación de Sol en `~/earlyscript-data/isolation-verify/informe.md` y sus correcciones (G1 a G3) en la sección «Correcciones tras Sol» del informe de la rama; segunda ronda en `isolation-verify-2/` (G1: un `..` después de una carpeta inexistente ya no se acepta, porque la resolución no puede seguir enlaces tras ese punto; G2: `DocumentText.ts` y el `git` de la exportación lanzan procesos propios sin agentes con el entorno del servidor, excepción aceptada y documentada; con `--base-dir` el servidor no publica `EARLYSCRIPT_HOME`, limitación aceptada).
 
 Decisiones:
 
@@ -2338,7 +2338,7 @@ El panel «Hilo de video» permite marcar y quitar la marca, explica su efecto y
 
 La franja inicial presenta logros observados, tamaño y fechas de la muestra, y límites. Distingue falta de hilos manuales y falta de línea base. Unifica el formato de duración con la línea base, las etiquetas de búsqueda y el conteo de frases con marcador de fuente. Las fechas de decisiones muestran hora local y zona. Los archivos de figuras mantienen el día local; las etiquetas largas de series se parten dentro de su columna para no invadir las barras.
 
-Solo archivos editoriales y contratos propios; ningún componente de upstream se modifica. La barra lateral heredada no recibe insignias. Verificación y capturas en `/home/miguel/earlyscript-data/results-cohort/informe.md`. La copia de datos `results-review` no estaba disponible; la evidencia visual usa fixtures identificadas como tales.
+Solo archivos editoriales y contratos propios; ningún componente de upstream se modifica. La barra lateral heredada no recibe insignias. Verificación y capturas en `~/earlyscript-data/results-cohort/informe.md`. La copia de datos `results-review` no estaba disponible; la evidencia visual usa fixtures identificadas como tales.
 
 ## Paradas del mapa y conversación plegable (rama `es/map-stops`, 4 de noviembre de 2026)
 
@@ -2365,7 +2365,7 @@ En el expediente, los términos del motor, sus etiquetas y el modelo quedan en �
 
 La barra lateral heredada queda pendiente: `SidebarThreadRow.tsx` recibe datos de orquestación sin cohorte editorial y el orden se calcula fuera de los archivos propios. `hiddenFeatures.ts` filtra funciones, y el locale omite expresamente los títulos de usuario; ninguno permite ordenar por cohorte o añadir insignias. No se modifican componentes de upstream ni se reordenan sus nodos por DOM. Alternativa futura: una lista propia de ensayos con suscripción a cohortes, o un punto de montaje aprobado en la lista heredada. El panel editorial del hilo y Resultados conservan la marca «Ensayo» disponible hoy.
 
-Pruebas: lectura y reversión de cohorte, actualización de la suscripción, creación humana posterior con reintento, ausencia de insignia en la fila, acciones del expediente, detalles plegados y desplegados, y nota de mediana vacía. Evidencia y salidas literales en `/home/miguel/earlyscript-data/cohort-inbox/informe.md`. Las capturas usan una copia aislada con fixture visual identificada en ese informe, no resultados humanos nuevos. Ningún archivo de upstream modificado.
+Pruebas: lectura y reversión de cohorte, actualización de la suscripción, creación humana posterior con reintento, ausencia de insignia en la fila, acciones del expediente, detalles plegados y desplegados, y nota de mediana vacía. Evidencia y salidas literales en `~/earlyscript-data/cohort-inbox/informe.md`. Las capturas usan una copia aislada con fixture visual identificada en ese informe, no resultados humanos nuevos. Ningún archivo de upstream modificado.
 
 ## Laboratorio del motor por MCP (rama `es/engine-mcp`, 5 de noviembre de 2026)
 
