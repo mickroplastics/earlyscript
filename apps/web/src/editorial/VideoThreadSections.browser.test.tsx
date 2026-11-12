@@ -285,9 +285,9 @@ describe("VideoThreadSections", () => {
   it("is read-only once decided and offers the result form", async () => {
     using _setup = setup(DECIDED);
     await using screen = await renderWithRegistry(<VideoThreadSections threadRef={THREAD_REF} />);
-    expect(textOf(screen.getByTestId("video-decision-read-only"))).toContain(
-      "Editar · utilidad 4 de 5",
-    );
+    const decided = textOf(screen.getByTestId("video-decision-read-only"));
+    expect(decided).toContain("Editaste este guion");
+    expect(decided).toContain("Lo calificaste 4 de 5: «cambios menores».");
     expect(screen.container.querySelector("form[aria-label='Decisión']")).toBeNull();
     await expect.element(screen.getByText(/Descriptivo, no atribuido al sistema/)).toBeVisible();
     await userEvent.fill(screen.getByLabelText("Vistas"), "1200");
