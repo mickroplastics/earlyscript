@@ -1013,9 +1013,17 @@ Decisiones reversibles:
 - Métricas de video: la observación más reciente por `observed_at`, solo descriptiva, sin atribución al sistema ni al modo.
 - Página: tarjetas de las tres comparaciones; gráfico de barras SVG por etapa (barra = mediana, trazo = RIC, línea discontinua = etapa sin registro), con escala común y sin librería; la misma información en una tabla; tabla de decisiones paginada de 20 en 20 con filtro por modo. Los colores de serie son `primary` (asistido) y `muted-foreground` (manual): el repositorio no define tokens `--chart-*`. El nombre del hilo sale del shell de T3 si existe (con enlace al hilo); si no, de la tendencia o de los primeros ocho caracteres del id.
 - Estado vacío: «Aún no hay decisiones registradas. Resultados se llena con cada hilo de video que cierres.» La bandeja aparece antes de la primera decisión solo si algún conteo es mayor que cero.
-- `ResultsNavigation` lista las secciones de la página como anclas (`useLinkProps` con `hash` y `hashScrollIntoView`), no ítems. Todas apuntan a la misma ruta y el router marca activas a todas con `aria-current="page"`, que `Link` aplica después de cualquier prop y que `activeOptions` no puede apagar sin `includeHash` (que dejaría `page` en la seleccionada). `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active` de las props del enlace; solo la sección que nombra el hash recibe `aria-current="location"` (`sectionAriaCurrent`).
+- `ResultsNavigation` lista las pestañas de la página (Resultados v2) como enlaces a la misma ruta con `?tab=` (`useLinkProps` con `search`), no ítems. El router marcaría activos a todos con `aria-current="page"`, que `Link` aplica después de cualquier prop; `withoutRouteActive` quita `aria-current`, `data-status` y la clase `active`, y solo la pestaña en pantalla recibe `aria-current="true"`.
 - Decisiones tiene tres estados (`ResultsDecisionsState`): «Cargando decisiones…» mientras la página no llegó, un aviso de error con el motivo (`decisionsFailureText`: base no disponible, base ilegible, entorno sin autorización o entorno sin respuesta) y el botón «Reintentar», que refresca el átomo de esa página con `useAtomRefresh`, o la tabla. Tendencias trata el fallo con un aviso y la carga sin contenido; aquí el resumen ya está en pantalla, así que la sección explica lo que falta en lugar de desaparecer.
 - Texto del aviso descriptivo: «Estas diferencias son descriptivas», sin la palabra «ahorro».
+
+### Resultados v2 (rama `es/resultados-v2`, 12 de noviembre de 2026)
+
+La página pasa a tres tarjetas de respuesta, una línea de salvedad y cinco pestañas (`?tab=`, validada en la ruta propia). Todo vive en `apps/web/src/editorial/results/`. El servidor gana un filtro opcional `cohort` en `editorial.results.decisions` (contrato y `EditorialResultsService.ts`, archivos propios) para que la tabla oculte los ensayos sin que «1–20 de N» los cuente. Las figuras siguen montadas en las pestañas ocultas y `FiguresProvider` las ordena con `RESULTS_FIGURE_ORDER`, así que `figuras.md` conserva su numeración.
+
+| Archivo                   | Línea | Alcance                                                                                                                                         |
+| ------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/vite.config.ts` | 137   | `@base-ui/react/tabs` en `optimizeDeps.include` del proyecto `browser`: sin él, Vite reoptimiza a mitad de la primera corrida y un test se cae. |
 
 ## 14. Presentación de tendencias en la interfaz
 
