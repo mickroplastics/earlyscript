@@ -132,7 +132,8 @@ function DecisionsTable({
 }) {
   const firstTrial = page.decisions.findIndex((decision) => decision.cohort === "trial");
   return (
-    <Table aria-label="Decisiones registradas" className="min-w-[44rem] table-fixed">
+    // The fixed columns take 44rem; the rest keeps the thread's column at least 12rem wide.
+    <Table aria-label="Decisiones registradas" className="min-w-[56rem] table-fixed">
       <TableHeader>
         <TableRow>
           <TableHead className="w-28">Fecha</TableHead>
