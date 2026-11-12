@@ -5,63 +5,85 @@ import type { ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
-import { operatorNoteOf, type NumberedSource, type ScriptNotice } from "./videoWorkspace.logic";
+import {
+  citationKey,
+  inlineTokens,
+  operatorNoteOf,
+  type NumberedSource,
+  type ScriptNotice,
+} from "./videoWorkspace.logic";
 
-const TOKEN = /\[[^\]\n]+\]|\{\{[^{}]*\}\}/g;
+/** Where a span sits in the script, so each citation number carries its marker's key. */
+interface SpanPlace {
+  readonly line: number;
+  /** Offset of the span in its paragraph's text. */
+  readonly base: number;
+}
 
 /** Prose with its source numbers as buttons and its blanks as amber marks. */
 function Inline({
   text,
+  place,
   numbers,
+  activeKey,
   onOpenSource,
 }: {
   readonly text: string;
+  readonly place: SpanPlace;
   readonly numbers: ReadonlyMap<string, number>;
-  readonly onOpenSource: (id: string) => void;
+  readonly activeKey: string | null;
+  readonly onOpenSource: (id: string, key: string) => void;
 }) {
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  for (const match of text.matchAll(TOKEN)) {
-    const raw = match[0];
-    if (raw.startsWith("{{")) {
-      parts.push(text.slice(cursor, match.index));
-      parts.push(
-        <mark
-          key={match.index}
-          className="rounded bg-warning/16 px-1 font-mono text-xs text-warning-foreground"
-        >
-          {raw}
-        </mark>,
-      );
-      cursor = match.index + raw.length;
-      continue;
-    }
-    const ids = raw
-      .slice(1, -1)
-      .split(",")
-      .map((token) => token.trim());
-    if (!ids.every((id) => numbers.has(id))) continue;
-    // The number sits against its word, as in print.
-    parts.push(text.slice(cursor, match.index).replace(/\s+$/, ""));
-    parts.push(
-      <sup key={match.index} className="ms-0.5 leading-none">
-        {ids.map((id) => (
-          <button
-            key={id}
-            type="button"
-            className="rounded px-px font-semibold text-2xs text-primary leading-none hover:bg-primary/16 focus-visible:outline-2 focus-visible:outline-ring"
-            aria-label={`Fuente ${numbers.get(id)}`}
-            onClick={() => onOpenSource(id)}
-          >
-            {numbers.get(id)}
-          </button>
-        ))}
-      </sup>,
-    );
-    cursor = match.index + raw.length;
-  }
-  parts.push(text.slice(cursor));
-  return <>{parts}</>;
+  const tokens = inlineTokens(text);
+  return (
+    <>
+      {tokens.map((token, index) => {
+        if (token.kind === "text") {
+          const next = tokens[index + 1];
+          // The number sits against its word, as in print.
+          return next?.kind === "cite" && next.ids.every((id) => numbers.has(id))
+            ? token.text.replace(/\s+$/, "")
+            : token.text;
+        }
+        if (token.kind === "hole") {
+          return (
+            <mark
+              key={token.offset}
+              className="rounded bg-warning/16 px-1 font-mono text-warning-foreground text-xs"
+            >
+              {token.text}
+            </mark>
+          );
+        }
+        if (!token.ids.every((id) => numbers.has(id))) {
+          return text.slice(token.offset, tokens[index + 1]?.offset ?? text.length);
+        }
+        return (
+          <sup key={token.offset} className="ms-0.5 whitespace-nowrap leading-none">
+            {"\u2060"}
+            {token.ids.map((id) => {
+              const key = citationKey(place.line, place.base + token.offset, id);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  data-cite-key={key}
+                  className={cn(
+                    "rounded px-px font-semibold text-2xs text-primary leading-none hover:bg-primary/16 focus-visible:outline-2 focus-visible:outline-ring",
+                    key === activeKey && "bg-primary text-primary-foreground hover:bg-primary",
+                  )}
+                  aria-label={`Fuente ${numbers.get(id)}`}
+                  onClick={() => onOpenSource(id, key)}
+                >
+                  {numbers.get(id)}
+                </button>
+              );
+            })}
+          </sup>
+        );
+      })}
+    </>
+  );
 }
 
 /**
@@ -75,7 +97,7 @@ export function ScriptView({
   uncited,
   activeNoticeLine,
   highlightSource,
-  activeOccurrenceLine,
+  activeCitationKey,
   onOpenSource,
 }: {
   readonly contents: string;
@@ -85,13 +107,19 @@ export function ScriptView({
   readonly uncited: ReadonlySet<string>;
   readonly activeNoticeLine: number | null;
   readonly highlightSource: string | null;
-  readonly activeOccurrenceLine: number | null;
-  readonly onOpenSource: (id: string) => void;
+  /** The marker the citation walk is on; its number and paragraph are marked. */
+  readonly activeCitationKey: string | null;
+  /** The source a number names, and that number's marker. */
+  readonly onOpenSource: (id: string, key: string) => void;
 }) {
   const sections = parseScript(contents).sections.filter((s) => s.kind !== "sources");
   const numbers = new Map(sources.map((source) => [source.id, source.number]));
-  const lit = new Set(sources.find((source) => source.id === highlightSource)?.occurrences ?? []);
+  const occurrences = sources.find((source) => source.id === highlightSource)?.occurrences ?? [];
+  const lit = new Set(occurrences.map((occurrence) => occurrence.line));
+  const activeLine =
+    occurrences.find((occurrence) => occurrence.key === activeCitationKey)?.line ?? null;
   const noticeLines = new Set(notices.map((notice) => notice.line));
+  const inlineProps = { numbers, activeKey: activeCitationKey, onOpenSource };
   return (
     <article
       data-thread-map-script
@@ -121,7 +149,11 @@ export function ScriptView({
                     <span lang="es" className="me-1.5 font-medium text-warning-foreground text-xs">
                       Nota para ti
                     </span>
-                    <Inline text={note} numbers={numbers} onOpenSource={onOpenSource} />
+                    <Inline
+                      text={note}
+                      place={{ line: paragraph.line, base: paragraph.text.indexOf(note) }}
+                      {...inlineProps}
+                    />
                   </span>
                 </aside>
               );
@@ -135,8 +167,8 @@ export function ScriptView({
                 <Inline
                   key={`t${cursor}`}
                   text={paragraph.text.slice(cursor, start)}
-                  numbers={numbers}
-                  onOpenSource={onOpenSource}
+                  place={{ line: paragraph.line, base: cursor }}
+                  {...inlineProps}
                 />,
               );
               const missing = uncited.has(`${claim.line}|${claim.text}`);
@@ -148,7 +180,11 @@ export function ScriptView({
                         <span className="underline decoration-muted-foreground/50 decoration-dotted underline-offset-4" />
                       }
                     >
-                      <Inline text={claim.text} numbers={numbers} onOpenSource={onOpenSource} />
+                      <Inline
+                        text={claim.text}
+                        place={{ line: paragraph.line, base: start }}
+                        {...inlineProps}
+                      />
                     </TooltipTrigger>
                     <TooltipPopup>
                       Sin número de fuente. Puede estar bien: no toda frase necesita una.
@@ -158,8 +194,8 @@ export function ScriptView({
                   <Inline
                     key={`c${start}`}
                     text={claim.text}
-                    numbers={numbers}
-                    onOpenSource={onOpenSource}
+                    place={{ line: paragraph.line, base: start }}
+                    {...inlineProps}
                   />
                 ),
               );
@@ -169,8 +205,8 @@ export function ScriptView({
               <Inline
                 key="rest"
                 text={paragraph.text.slice(cursor)}
-                numbers={numbers}
-                onOpenSource={onOpenSource}
+                place={{ line: paragraph.line, base: cursor }}
+                {...inlineProps}
               />,
             );
             const highlighted = lit.has(paragraph.line);
@@ -183,9 +219,7 @@ export function ScriptView({
                   noticeLines.has(paragraph.line) && "border-warning/70",
                   highlighted && "border-primary bg-primary/8",
                   active && "bg-warning/10 ring-1 ring-warning/50",
-                  highlighted &&
-                    paragraph.line === activeOccurrenceLine &&
-                    "ring-1 ring-primary/60",
+                  paragraph.line === activeLine && "bg-primary/14",
                 )}
               >
                 {pieces}
@@ -283,20 +317,28 @@ export function NoticeBar({
   );
 }
 
-/** The parts the script will have, as quiet lines; one is marked while the agent writes. */
-function PartsSkeleton({ headings }: { readonly headings: ReadonlyArray<string> }) {
+/**
+ * The shape every script takes, as the validator expects it: a Hook, as many numbered blocks as
+ * the topic needs, a Close. No count of blocks is promised.
+ */
+const SCRIPT_SHAPE = [
+  { heading: "Hook", hint: "La entrada: por qué ver este video" },
+  { heading: "Block 1, 2…", hint: "Un bloque por idea, cada dato con su fuente" },
+  { heading: "Close", hint: "El cierre y la pregunta a la audiencia" },
+] as const;
+
+function ScriptShape() {
   return (
-    <ol className="flex flex-col gap-2" aria-label="Partes del guion">
-      {headings.map((heading) => (
+    <ol className="flex flex-col gap-2" aria-label="Forma del guion">
+      {SCRIPT_SHAPE.map((part) => (
         <li
-          key={heading}
+          key={part.heading}
           className="flex items-center gap-4 rounded-md border border-dashed px-3 py-2.5"
         >
-          <span className="w-16 shrink-0 font-medium text-sm">{heading}</span>
-          <span className="flex flex-1 flex-col gap-1.5">
-            <span className="h-1.5 w-11/12 rounded-full bg-muted" />
-            <span className="h-1.5 w-7/12 rounded-full bg-muted/70" />
+          <span className="w-28 shrink-0 font-medium text-sm" lang="en">
+            {part.heading}
           </span>
+          <span className="text-muted-foreground text-sm">{part.hint}</span>
         </li>
       ))}
     </ol>
@@ -305,18 +347,13 @@ function PartsSkeleton({ headings }: { readonly headings: ReadonlyArray<string> 
 
 /** Instead of an empty page: what will appear here, how, and the way to start. */
 export function ScriptEmpty({
-  contents,
   writing,
   onStart,
 }: {
-  readonly contents: string;
   readonly writing: boolean;
   /** Sends the first request; null when the operator cannot ask now. */
   readonly onStart: (() => void) | null;
 }) {
-  const parsed = parseScript(contents).sections.filter((s) => s.kind !== "sources");
-  const headings =
-    parsed.length > 0 ? parsed.map((section) => section.heading) : ["Hook", "Block 1", "Close"];
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2 rounded-lg border bg-card/40 p-4">
@@ -327,7 +364,7 @@ export function ScriptEmpty({
         <p className="text-muted-foreground text-sm leading-relaxed">
           {writing
             ? "Aparecerá aquí en cuanto lo guarde. Mientras tanto puedes leer el tema y sus fuentes."
-            : "El asistente lo escribe en inglés, parte por parte, con el número de su fuente junto a cada dato. Después lo revisas aquí: tocas un número para abrir la fuente y pides los cambios que quieras."}
+            : "El asistente lo escribe en inglés, con el número de su fuente junto a cada dato. Después lo revisas aquí: tocas un número para abrir la fuente y pides los cambios que quieras."}
         </p>
         {onStart && !writing ? (
           <Button size="sm" className="mt-1 self-start" onClick={onStart}>
@@ -335,7 +372,7 @@ export function ScriptEmpty({
           </Button>
         ) : null}
       </div>
-      <PartsSkeleton headings={headings} />
+      <ScriptShape />
     </div>
   );
 }

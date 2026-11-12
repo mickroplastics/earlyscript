@@ -1,4 +1,4 @@
-import { checkScript, parseScript } from "@earlyscript/editorial-script";
+import { checkScript, citationsIn, parseScript } from "@earlyscript/editorial-script";
 import type {
   EditorialEvidenceItem,
   EditorialResultsAction,
@@ -67,14 +67,26 @@ export interface StepperModel {
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
+const clockOf = (date: Date) =>
+  `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+const dayOf = (date: Date, now: Date) =>
+  date.toDateString() === now.toDateString()
+    ? "de hoy"
+    : `del ${date.getDate()} de ${MONTHS[date.getMonth()]}`;
+
 /** «17:05 de hoy» or «17:05 del 9 de nov»: a time of day never read as a measured duration. */
 export function timeOfDay(iso: string, now: Date = new Date()): string {
   const date = new Date(iso);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  return date.toDateString() === now.toDateString()
-    ? `${time} de hoy`
-    : `${time} del ${date.getDate()} de ${MONTHS[date.getMonth()]}`;
+  return `${clockOf(date)} ${dayOf(date, now)}`;
+}
+
+/** «entre las 17:14 y las 17:20 de hoy», the day said once when both fall on it. */
+function spanOfDay(fromIso: string, toIso: string, now: Date = new Date()): string {
+  const from = new Date(fromIso);
+  const to = new Date(toIso);
+  return from.toDateString() === to.toDateString()
+    ? `entre las ${clockOf(from)} y las ${clockOf(to)} ${dayOf(to, now)}`
+    : `entre las ${timeOfDay(fromIso, now)} y las ${timeOfDay(toIso, now)}`;
 }
 
 /** «10 nov 2026 a las 00:11», for recorded dates. */
@@ -182,7 +194,10 @@ export function stepperModel(input: {
       ? {
           tone: "open",
           label: "Falta un dato",
-          text: `Un tramo de «${STEP_TITLE[unresolved.stage]}» quedó abierto al cerrarse la app, desde las ${timeOfDay(unresolved.startedAt, input.now)}. No cuenta hasta que indiques cuándo dejaste de trabajar.`,
+          text:
+            unresolved.recoveredAt === null
+              ? `Un tramo de «${STEP_TITLE[unresolved.stage]}» quedó abierto desde las ${timeOfDay(unresolved.startedAt, input.now)}. No cuenta hasta que digas a qué hora dejaste de trabajar.`
+              : `Un tramo de «${STEP_TITLE[unresolved.stage]}» quedó abierto ${spanOfDay(unresolved.startedAt, unresolved.recoveredAt, input.now)}, cuando se cerró la app. No cuenta hasta que digas a qué hora dejaste de trabajar.`,
           action: "resolve",
         }
       : state._tag === "paused"
@@ -196,7 +211,7 @@ export function stepperModel(input: {
           ? {
               tone: "pause",
               label: "Detenido",
-              text: "El reloj está detenido. Reanúdalo para seguir midiendo tu tiempo.",
+              text: `El reloj está detenido y no mide. Al reanudarlo, cuenta en «${STEP_TITLE[current]}».`,
               action: "restart",
             }
           : current === "read"
@@ -288,6 +303,13 @@ export function uncitedSentences(contents: string): {
   };
 }
 
+/** One citation marker of the script: its paragraph's file line and a key unique to it. */
+export interface SourceOccurrence {
+  readonly line: number;
+  /** `line:offset:id`, the offset of the marker in its paragraph's text. */
+  readonly key: string;
+}
+
 export interface NumberedSource {
   readonly id: string;
   readonly number: number;
@@ -296,9 +318,11 @@ export interface NumberedSource {
   readonly uses: number;
   /** Headings of the script sections that cite it, in order. */
   readonly sections: ReadonlyArray<string>;
-  /** File lines of the paragraphs holding each marker, one entry per marker. */
-  readonly occurrences: ReadonlyArray<number>;
+  /** Each marker naming it, in document order. */
+  readonly occurrences: ReadonlyArray<SourceOccurrence>;
 }
+
+export const citationKey = (line: number, offset: number, id: string) => `${line}:${offset}:${id}`;
 
 /**
  * One numbering for the topic, the script and the browser: the sources the script cites in
@@ -308,19 +332,20 @@ export function numberSources(
   contents: string,
   evidence: ReadonlyArray<EditorialEvidenceItem>,
 ): ReadonlyArray<NumberedSource> {
-  const ast = parseScript(contents);
-  const body = ast.sections.filter((section) => section.kind !== "sources");
-  const paragraphs = body.flatMap((section) =>
-    section.paragraphs.map((paragraph) => ({
-      heading: section.heading,
-      line: paragraph.line,
-      end: paragraph.line + paragraph.text.split("\n").length,
-    })),
-  );
-  const markers = ast.citations.flatMap((citation) => {
-    const paragraph = paragraphs.find((p) => citation.line >= p.line && citation.line < p.end);
-    return paragraph ? [{ id: citation.id, paragraph }] : [];
-  });
+  const markers = parseScript(contents)
+    .sections.filter((section) => section.kind !== "sources")
+    .flatMap((section) =>
+      section.paragraphs.flatMap((paragraph) =>
+        citationsIn(paragraph.text).flatMap((citation) =>
+          citation.ids.map((id) => ({
+            id,
+            heading: section.heading,
+            line: paragraph.line,
+            key: citationKey(paragraph.line, citation.offset, id),
+          })),
+        ),
+      ),
+    );
   const order = [
     ...new Set([...markers.map((marker) => marker.id), ...evidence.map((item) => item.itemId)]),
   ];
@@ -331,10 +356,129 @@ export function numberSources(
       number: index + 1,
       evidence: evidence.find((item) => item.itemId === id) ?? null,
       uses: mine.length,
-      sections: [...new Set(mine.map((marker) => marker.paragraph.heading))],
-      occurrences: mine.map((marker) => marker.paragraph.line),
+      sections: [...new Set(mine.map((marker) => marker.heading))],
+      occurrences: mine.map(({ line, key }) => ({ line, key })),
     };
   });
+}
+
+export type InlineToken =
+  | { readonly kind: "text"; readonly text: string; readonly offset: number }
+  | { readonly kind: "hole"; readonly text: string; readonly offset: number }
+  | { readonly kind: "cite"; readonly ids: ReadonlyArray<string>; readonly offset: number };
+
+/**
+ * A span of script prose as text, blanks to fill (`{{…}}`) and citation markers, read with the
+ * parser's own rules so `[hn:1]` and `[itm_hn_1]` both name `itm_hn_1`. Offsets are in `text`.
+ */
+export function inlineTokens(text: string): ReadonlyArray<InlineToken> {
+  const marks = [
+    ...citationsIn(text).map((citation) => ({
+      offset: citation.offset,
+      length: citation.raw.length,
+      token: { kind: "cite" as const, ids: citation.ids, offset: citation.offset },
+    })),
+    ...[...text.matchAll(HOLE)].map((match) => ({
+      offset: match.index,
+      length: match[0].length,
+      token: { kind: "hole" as const, text: match[0], offset: match.index },
+    })),
+  ].sort((left, right) => left.offset - right.offset);
+  const tokens: InlineToken[] = [];
+  let cursor = 0;
+  for (const mark of marks) {
+    if (mark.offset < cursor) continue;
+    if (mark.offset > cursor) {
+      tokens.push({ kind: "text", text: text.slice(cursor, mark.offset), offset: cursor });
+    }
+    tokens.push(mark.token);
+    cursor = mark.offset + mark.length;
+  }
+  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor), offset: cursor });
+  return tokens;
+}
+
+export type SummarySegment =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "cite"; readonly id: string; readonly number: number };
+
+/**
+ * The trend's summary with its citations numbered by the script's numbering, never by position:
+ * a source the dossier lacks keeps its number elsewhere. Unknown markers stay as written.
+ */
+export function summarySegments(
+  text: string,
+  numbers: ReadonlyMap<string, number>,
+): ReadonlyArray<SummarySegment> {
+  const segments: SummarySegment[] = [];
+  const pushText = (value: string) => {
+    if (value.length === 0) return;
+    const last = segments.at(-1);
+    if (last?.kind === "text")
+      segments[segments.length - 1] = { kind: "text", text: last.text + value };
+    else segments.push({ kind: "text", text: value });
+  };
+  let cursor = 0;
+  for (const citation of citationsIn(text)) {
+    if (!citation.ids.every((id) => numbers.has(id))) continue;
+    // The number sits against its claim.
+    pushText(text.slice(cursor, citation.offset).replace(/\s+$/, ""));
+    for (const id of citation.ids) segments.push({ kind: "cite", id, number: numbers.get(id)! });
+    cursor = citation.offset + citation.raw.length;
+  }
+  pushText(text.slice(cursor));
+  return segments;
+}
+
+/**
+ * Which script the thread shows: the working file before the decision, the version the
+ * decision names after it, or none when the decision was recorded without a saved version.
+ */
+export function scriptSource(
+  video: EditorialVideoState,
+):
+  | { readonly kind: "live" }
+  | { readonly kind: "decided"; readonly hash: string }
+  | { readonly kind: "none" } {
+  if (video.decision === null) return { kind: "live" };
+  const hash = video.decision.scriptVersionHash;
+  return hash === null ? { kind: "none" } : { kind: "decided", hash };
+}
+
+/**
+ * The moment a typed time of day («23:52», «0:05», «23.55») names inside an open segment: the
+ * first day, from the segment's start, on which that time falls before the cut. Null when it
+ * is not a time or falls outside the segment.
+ */
+export function stopTimeIso(
+  typed: string,
+  interval: { readonly startedAt: string; readonly recoveredAt: string | null },
+  now: Date = new Date(),
+): string | null {
+  const match = /^(\d{1,2})[:.h](\d{2})$/.exec(typed.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  const start = new Date(interval.startedAt);
+  const end = interval.recoveredAt === null ? now : new Date(interval.recoveredAt);
+  for (let day = 0; day <= 2; day++) {
+    const candidate = new Date(start);
+    candidate.setDate(start.getDate() + day);
+    candidate.setHours(hours, minutes, 0, 0);
+    // The minute the segment started counts: its seconds are inside the typed minute.
+    const floor = new Date(start);
+    floor.setSeconds(0, 0);
+    if (candidate < floor) continue;
+    if (candidate > end) return null;
+    return new Date(Math.max(candidate.getTime(), start.getTime())).toISOString();
+  }
+  return null;
+}
+
+/** The time of a step with an open segment: what is measured, said as a floor, never «00:00». */
+export function openStageTime(ms: number): string {
+  return Math.floor(ms / 1000) === 0 ? "sin medir" : `al menos ${formatClock(ms)}`;
 }
 
 /** Where a source opens: its discussion page, else the link it points to. */

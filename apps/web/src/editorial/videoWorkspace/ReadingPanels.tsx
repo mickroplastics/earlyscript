@@ -1,11 +1,11 @@
-import type { EditorialEvidenceItem, EditorialTrendDossier } from "@t3tools/contracts";
+import type { EditorialTrendDossier } from "@t3tools/contracts";
 import { ExternalLinkIcon, GlobeIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
-import { citationSegments, sourceLabel, whyHereReasons } from "../editorial.logic";
+import { sourceLabel, whyHereReasons } from "../editorial.logic";
 import { cardMovementLine } from "../trendCard.logic";
-import { sourceUrl, type NumberedSource } from "./videoWorkspace.logic";
+import { sourceUrl, summarySegments, type NumberedSource } from "./videoWorkspace.logic";
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
@@ -37,7 +37,7 @@ function SourceNumber({
 }
 
 /** Segments keyed by where they start in the text, stable across renders. */
-function keyed(segments: ReturnType<typeof citationSegments>) {
+function keyed(segments: ReturnType<typeof summarySegments>) {
   let offset = 0;
   return segments.map((segment) => {
     const key = `${segment.kind}-${offset}`;
@@ -49,16 +49,16 @@ function keyed(segments: ReturnType<typeof citationSegments>) {
 /** One sentence block of the trend's summary, its citations renumbered like the script's. */
 function SummaryText({
   text,
-  ordered,
+  numbers,
   onOpenSource,
 }: {
   readonly text: string;
-  readonly ordered: ReadonlyArray<EditorialEvidenceItem>;
+  readonly numbers: ReadonlyMap<string, number>;
   readonly onOpenSource: (id: string) => void;
 }) {
   return (
     <p className="text-base leading-7">
-      {keyed(citationSegments(text, ordered)).map(({ key, segment }) =>
+      {keyed(summarySegments(text, numbers)).map(({ key, segment }) =>
         segment.kind === "text" ? (
           <span key={key}>{segment.text}</span>
         ) : (
@@ -66,7 +66,7 @@ function SummaryText({
             key={key}
             number={segment.number}
             label={`Fuente ${segment.number}`}
-            onOpen={() => onOpenSource(segment.itemId)}
+            onOpen={() => onOpenSource(segment.id)}
           />
         ),
       )}
@@ -87,8 +87,7 @@ export function TopicPanel({
   readonly trendLink: React.ReactNode;
 }) {
   const { trend, run } = dossier;
-  // `citationSegments` numbers by position: hand it the evidence in the script's order.
-  const ordered = sources.flatMap((source) => (source.evidence ? [source.evidence] : []));
+  const numbers = new Map(sources.map((source) => [source.id, source.number]));
   const summary = trend.presentation?.summary;
   const cited = new Set(trend.presentation?.citedItemIds ?? []);
   const citedSources = sources.filter((source) => cited.has(source.id));
@@ -133,7 +132,7 @@ export function TopicPanel({
             >
               {block.label}
             </h3>
-            <SummaryText text={block.text} ordered={ordered} onOpenSource={onOpenSource} />
+            <SummaryText text={block.text} numbers={numbers} onOpenSource={onOpenSource} />
           </section>
         ))
       ) : (

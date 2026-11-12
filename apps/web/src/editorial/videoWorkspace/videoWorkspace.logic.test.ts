@@ -3,10 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DECIDED, JUST_CREATED, WRITING } from "../videoThread.fixture";
 import {
+  inlineTokens,
   numberSources,
+  openStageTime,
   scriptNotices,
+  scriptSource,
   stageSumNote,
   stepperModel,
+  stopTimeIso,
+  summarySegments,
   timeOfDay,
   uncitedSentences,
 } from "./videoWorkspace.logic";
@@ -65,9 +70,11 @@ describe("stepperModel", () => {
       clock: { ...WRITING.clock, state: { _tag: "idle" } },
     };
     expect(statuses(stopped)).toEqual(["done", "paused", "pending"]);
-    expect(stepperModel({ video: stopped, parts: DRAFTED, agentWorking: false }).now.action).toBe(
-      "restart",
-    );
+    const restart = stepperModel({ video: stopped, parts: DRAFTED, agentWorking: false });
+    expect(restart.now.action).toBe("restart");
+    // It restarts in the step on screen, and says which.
+    expect(restart.current).toBe("write");
+    expect(restart.now.text).toContain("«Escribir y revisar»");
 
     const open: EditorialVideoState = {
       ...WRITING,
@@ -175,7 +182,24 @@ describe("numberSources", () => {
     ]);
     expect(sources[0]?.sections).toEqual(["Hook", "Block 1"]);
     // One entry per marker: the Hook's second paragraph cites it once, the operator note once.
-    expect(sources[0]?.occurrences).toEqual([3, 5, 9, 11]);
+    expect(sources[0]?.occurrences.map((occurrence) => occurrence.line)).toEqual([3, 5, 9, 11]);
+  });
+
+  it("reads abbreviated markers as the parser does and keeps each marker apart", () => {
+    const script =
+      "# Hook\n\nOne claim here, cited twice. [hn:1] Another one, same source. [itm_hn_1]\n";
+    const [source] = numberSources(script, [item("itm_hn_1")]);
+    expect(source).toEqual(expect.objectContaining({ id: "itm_hn_1", number: 1, uses: 2 }));
+    const keys = source?.occurrences.map((occurrence) => occurrence.key) ?? [];
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    // The keys are the ones the rendered script gives its numbers.
+    const offsets = inlineTokens(
+      "One claim here, cited twice. [hn:1] Another one, same source. [itm_hn_1]",
+    )
+      .filter((token) => token.kind === "cite")
+      .map((token) => `3:${token.offset}:itm_hn_1`);
+    expect(offsets).toEqual(keys);
   });
 
   it("keeps a cited id missing from the dossier, without its evidence", () => {
@@ -192,5 +216,69 @@ describe("stageSumNote", () => {
     );
     expect(stageSumNote([17_000, 666_000, 28_000], 711_000)).toBeNull();
     expect(stageSumNote([null, 1_000], null)).toBeNull();
+  });
+});
+
+describe("inlineTokens", () => {
+  it("splits prose into text, blanks and normalized citations", () => {
+    expect(inlineTokens("Did it work? {{yes/no}}. [hn:1, itm_gh_2]")).toEqual([
+      { kind: "text", text: "Did it work? ", offset: 0 },
+      { kind: "hole", text: "{{yes/no}}", offset: 13 },
+      { kind: "text", text: ". ", offset: 23 },
+      { kind: "cite", ids: ["itm_hn_1", "itm_gh_2"], offset: 25 },
+    ]);
+    // A bracket that is not a citation stays as text.
+    expect(inlineTokens("See [the docs] here.")).toEqual([
+      { kind: "text", text: "See [the docs] here.", offset: 0 },
+    ]);
+  });
+});
+
+describe("summarySegments", () => {
+  it("numbers the topic with the script's numbers, even past a source missing from the dossier", () => {
+    const sources = numberSources(SCRIPT, [item("itm_hn_2")]);
+    const numbers = new Map(sources.map((source) => [source.id, source.number]));
+    // The script cites itm_hn_1 and itm_hn_3, absent here: itm_hn_2 is still number 3.
+    expect(summarySegments("A trend [itm_hn_2] and an unknown one [itm_hn_9].", numbers)).toEqual([
+      { kind: "text", text: "A trend" },
+      { kind: "cite", id: "itm_hn_2", number: 3 },
+      { kind: "text", text: " and an unknown one [itm_hn_9]." },
+    ]);
+  });
+});
+
+describe("scriptSource", () => {
+  it("never stands the working file in for a decided version that was not saved", () => {
+    expect(scriptSource(WRITING)).toEqual({ kind: "live" });
+    expect(scriptSource(DECIDED)).toEqual({ kind: "decided", hash: "9f2c1ab07d3e4c55aa10" });
+    expect(
+      scriptSource({ ...DECIDED, decision: { ...DECIDED.decision!, scriptVersionHash: null } }),
+    ).toEqual({ kind: "none" });
+  });
+});
+
+describe("stopTimeIso", () => {
+  const at = (day: number, hour: number, minute: number) =>
+    new Date(2026, 10, day, hour, minute).toISOString();
+  const interval = { startedAt: at(9, 23, 41), recoveredAt: at(10, 0, 20) };
+
+  it("places a typed time of day inside the open segment, on the right day", () => {
+    expect(stopTimeIso("23:52", interval)).toBe(at(9, 23, 52));
+    expect(stopTimeIso("0:05", interval)).toBe(at(10, 0, 5));
+    expect(stopTimeIso("23.55", interval)).toBe(at(9, 23, 55));
+  });
+
+  it("refuses what is not a time inside the segment", () => {
+    expect(stopTimeIso("23:30", interval)).toBeNull();
+    expect(stopTimeIso("1:00", interval)).toBeNull();
+    expect(stopTimeIso("25:00", interval)).toBeNull();
+    expect(stopTimeIso("mañana", interval)).toBeNull();
+  });
+});
+
+describe("openStageTime", () => {
+  it("says what was measured without a misleading zero", () => {
+    expect(openStageTime(0)).toBe("sin medir");
+    expect(openStageTime(666_000)).toBe("al menos 11:06");
   });
 });

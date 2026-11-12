@@ -114,7 +114,11 @@ const isInvitation = (sentence: string): boolean => {
 const ITEM =
   /^(?:itm_([a-z][a-z0-9-]*)_([A-Za-z0-9_.@/-]*[A-Za-z0-9_-])|([a-z][a-z0-9-]*):([A-Za-z0-9_-]+))$/;
 
-function citationsIn(text: string): Array<{ offset: number; raw: string; ids: string[] }> {
+/**
+ * The citation markers of a span of prose, as the parser reads them: offset in the text, the
+ * marker as written, and its item ids normalized (`[hn:1]` names `itm_hn_1`).
+ */
+export function citationsIn(text: string): Array<{ offset: number; raw: string; ids: string[] }> {
   const citations = [];
   for (const match of text.matchAll(/\[([^\]\n]+)\]/g)) {
     const tokens = (match[1] ?? "").split(",").map((token) => token.trim());

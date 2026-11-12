@@ -24,7 +24,7 @@ function LocalizedScript() {
         uncited={new Set()}
         activeNoticeLine={null}
         highlightSource={null}
-        activeOccurrenceLine={null}
+        activeCitationKey={null}
         onOpenSource={() => {}}
       />
     </div>
