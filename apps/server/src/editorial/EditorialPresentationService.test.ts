@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import {
   hashTrendPresentationInput,
+  trendPresentationEvidenceNote,
   type TrendPresentationGenerationInput,
   type TrendPresentationGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
@@ -46,6 +47,8 @@ interface Generator {
   readonly offTopic: Ref.Ref<number>;
   /** How many of the next answers are longer than the prompt asks. */
   readonly long: Ref.Ref<number>;
+  /** How many of the next answers write their own evidence note before the application's. */
+  readonly ownNote: Ref.Ref<number>;
 }
 
 const LONG_WHAT_HAPPENED = `${"Un titular informa de un avance en circuitos cuánticos. ".repeat(9).trim()}`;
@@ -66,7 +69,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v6",
+    promptVersion: "trend-presentation.v7",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -96,7 +99,14 @@ const textGenerationLayer = (generator: Generator) =>
             Math.max(0, left - 1),
           );
           const long = yield* Ref.getAndUpdate(generator.long, (left) => Math.max(0, left - 1));
+          const ownNote = yield* Ref.getAndUpdate(generator.ownNote, (left) =>
+            Math.max(0, left - 1),
+          );
           const reply = answer(input, calls.length);
+          if (ownNote > 0) {
+            const whatHappened = `${reply.summary.whatHappened} Solo hay titulares; los artículos no se han leído. ${trendPresentationEvidenceNote(input.evidence)}`;
+            return { ...reply, summary: { ...reply.summary, whatHappened } };
+          }
           if (long > 0) {
             return { ...reply, summary: { ...reply.summary, whatHappened: LONG_WHAT_HAPPENED } };
           }
@@ -121,6 +131,7 @@ const makeGenerator = Effect.gen(function* () {
     gate: yield* Ref.make<Deferred.Deferred<void> | null>(null),
     offTopic: yield* Ref.make(0),
     long: yield* Ref.make(0),
+    ownNote: yield* Ref.make(0),
   } satisfies Generator;
 });
 
@@ -206,7 +217,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v6");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v7");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);
@@ -278,6 +289,26 @@ describe("EditorialPresentationService", () => {
           (yield* presentationRows).map((row) => [row.revision, row.status]),
           [[1, "ready"]],
         );
+      }),
+    ),
+  );
+
+  it.effect("retries once a text with its own evidence note, whatever the evidence holds", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.ownNote, 1);
+        const result = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.match(result.presentation.summary.whatHappened, /^Pasó algo \[itm_\w+\]\.$/);
+        assert.deepStrictEqual(
+          (yield* Ref.get(generator.calls)).map((call) => call.rejectedBecause),
+          [
+            undefined,
+            "it wrote a note about the evidence (headlines, excerpts, articles not read), which the application adds (Qué pasó: «solo hay titulares»; Qué pasó: «no se han leido»)",
+          ],
+        );
+        assert.strictEqual((yield* shown).get(QUANTUM)?.status, "current");
       }),
     ),
   );

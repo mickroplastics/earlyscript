@@ -8,7 +8,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v6";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v7";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
@@ -102,8 +102,56 @@ const languageInstruction = (language: string) => {
   return name ? `${name} (${language})` : `the language with BCP 47 code "${language}"`;
 };
 
-const promptEvidence = (evidence: ReadonlyArray<TrendPresentationEvidence>) =>
+const promptEvidence = <Item>(evidence: ReadonlyArray<Item>) =>
   evidence.slice(0, MAX_EVIDENCE_ITEMS);
+
+const MIN_EXCERPT_WORDS = 4;
+
+/** An excerpt that says something; a bare link or "Related: <links>" is not one. */
+const isReadableExcerpt = (excerpt: string) =>
+  (excerpt.replace(/\S*https?:\/\/\S*/g, " ").match(/\p{L}+/gu) ?? []).length >= MIN_EXCERPT_WORDS;
+
+type EvidenceNoteCase = "headlines" | "mostHeadlines" | "half" | "mostExcerpts" | "excerpts";
+
+const EVIDENCE_NOTES: Readonly<Record<"es" | "en", Readonly<Record<EvidenceNoteCase, string>>>> = {
+  es: {
+    headlines: "Solo hay titulares; los artículos no se han leído.",
+    mostHeadlines: "Solo hay titulares de la mayoría; los artículos no se han leído.",
+    half: "Hay extractos breves de la mitad; los artículos no se han leído.",
+    mostExcerpts: "Hay extractos breves de la mayoría; los artículos no se han leído.",
+    excerpts: "Hay titulares y extractos breves; los artículos no se han leído.",
+  },
+  en: {
+    headlines: "Only headlines are available; the articles were not read.",
+    mostHeadlines: "Most items have only a headline; the articles were not read.",
+    half: "Half the items have a short excerpt; the articles were not read.",
+    mostExcerpts: "Most items have a short excerpt; the articles were not read.",
+    excerpts: "Headlines and short excerpts are available; the articles were not read.",
+  },
+};
+
+/**
+ * The sentence the application appends to whatHappened, saying what the drafting read: only
+ * headlines, short excerpts, or a mix. Computed from the evidence sent, never left to the
+ * model. Null without evidence. Languages without a note of their own get the English one.
+ */
+export function trendPresentationEvidenceNote(
+  evidence: ReadonlyArray<Pick<TrendPresentationEvidence, "excerpt">>,
+  language = "es",
+): string | null {
+  const sent = promptEvidence(evidence);
+  if (sent.length === 0) return null;
+  const readable = sent.filter((item) => isReadableExcerpt(item.excerpt)).length;
+  const notes = EVIDENCE_NOTES[language.trim() === "es" ? "es" : "en"];
+  if (readable === 0) return notes.headlines;
+  if (readable === sent.length) return notes.excerpts;
+  if (readable * 2 < sent.length) return notes.mostHeadlines;
+  return readable * 2 === sent.length ? notes.half : notes.mostExcerpts;
+}
+
+/** Room left for the model in whatHappened once the note and its space are appended. */
+const whatHappenedBudget = (note: string | null) =>
+  note === null ? WHAT_HAPPENED_CHARS : WHAT_HAPPENED_CHARS - note.length - 1;
 
 function formatTrend(trend: TrendPresentationTrend): string[] {
   const coverage = trend.coverage.map((entry) => {
@@ -138,6 +186,7 @@ function formatEvidence(evidence: ReadonlyArray<TrendPresentationEvidence>): str
 export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput) {
   const language = input.language?.trim() || "es";
   const evidence = promptEvidence(input.evidence);
+  const note = trendPresentationEvidenceNote(evidence, language);
   const prompt = [
     "You brief the editor of a YouTube channel on one news topic. The editor reads your brief to decide whether the topic deserves a video.",
     "Write like an editor summarizing the news for a colleague: what was announced or released, what people are discussing, and which positions appear. Talk about the news, never about how it was collected.",
@@ -150,7 +199,7 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
         ]
       : []),
     `- title: one line, at most ${MAX_TREND_TITLE_CHARS} characters, naming the subject the evidence items share (what most of them are about), not the most striking single item; no clickbait, no quotes, no trailing period. A standout piece of news can go in whatHappened instead.`,
-    `- summary.whatHappened: two or three sentences, at most ${WHAT_HAPPENED_CHARS} characters including citation markers. Start with the most important fact. Say what was announced, released, reported or argued, and which positions or disagreements appear. Group items that say the same thing and cite them together; with many items, name the three or four that matter most rather than listing every one.`,
+    `- summary.whatHappened: two or three sentences, at most ${whatHappenedBudget(note)} characters including citation markers. Start with the most important fact. Say what was announced, released, reported or argued, and which positions or disagreements appear. Group items that say the same thing and cite them together; with many items, name the three or four that matter most rather than listing every one.${note === null ? "" : ` The application appends this sentence after it, for at most ${WHAT_HAPPENED_CHARS} in all: “${note}”`}`,
     `- summary.whyItMatters: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, connecting the news to the supplied channel profile, as an editorial reading. If the connection is weak or unclear, say so plainly.`,
     `- summary.videoAngle: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, proposing a possible video question, explanation, or demonstration grounded in the evidence. Present it as a possibility, not as something already demonstrated. Any tool, product or article it names gets its [itemId] right after the name, and it attributes to that tool or product only features its title or excerpt states.`,
     "- Write impersonally in the title and all three parts. Never use the first person, singular or plural. Never comment on your own writing, on these instructions, or on what you are or are not doing (no “Lo señalo tal cual”, no “sin recomendar acción”).",
@@ -164,8 +213,10 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- Describe a product only with what its title or excerpt says: do not add that it is open source, free, local, or that it runs or replaces another product unless the evidence states it; prefer the item's own wording.",
     "- Each product or tool named carries only what its own item says, with that item's [itemId] next to its name. Never merge the capabilities of two products in one sentence or one shared purpose. A product that offers the features of another is not that other product and does not run it.",
     "- Do not extend to several items what only one of them says.",
-    "- When an excerpt gives a figure with a contrast or a limit (another figure it is compared with, “still falls short”), keep the contrast next to the figure.",
-    "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”. When the evidence is only headlines, say once, briefly and impersonally, that only headlines are available (for example: “Solo hay titulares; los artículos no se han leído.”).",
+    "- When the evidence gives a figure with a condition, a basis or a contrast (“if shares list at the top of the range”, “fully diluted”, “according to X”, “up to”, “estimated”, another figure it is compared with, “still falls short”), keep it next to the figure, in the same sentence, every time the figure appears. A figure compared with another one goes with both. whyItMatters and videoAngle do not repeat a figure whatHappened already gives. When an excerpt adds a condition to a figure in its title, the condition applies.",
+    "- Keep each excerpt's meaning: a problem an announcement says it addresses is not a trait of the announced product.",
+    "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”.",
+    "- Do not write any note about what the evidence consists of (only headlines, excerpts, articles not read); the application adds it.",
     "- Use coverage_data only to state what is unknown (for example, that a single source was captured). Do not turn it into causes, importance, or forecasts.",
     "- Do not recommend prioritizing, deprioritizing, selecting, rejecting, publishing, or postponing this topic. Do not score, rank, or compare topics. The human editor makes those decisions.",
     "- If support is missing, omit the claim or state what remains unknown. Do not invent relevance or details to fill the three parts.",
@@ -285,17 +336,24 @@ export function finalizeTrendPresentation(
     warnings.push(`The title was cut to ${MAX_TREND_TITLE_CHARS} characters.`);
   }
 
+  const note = trendPresentationEvidenceNote(evidence, input.language?.trim() || "es");
   const summaryPart = (key: keyof TrendPresentationSummary) => {
     const raw = singleLine(output.summary[key]);
-    const value = spanish ? latinAmericanVideo(raw) : raw;
-    if (value.length === 0) warnings.push(`The model returned an empty ${key}.`);
-    const asked = key === "whatHappened" ? WHAT_HAPPENED_CHARS : SHORT_PART_CHARS;
-    if (value.length > MAX_SUMMARY_PART_CHARS) {
+    const written = spanish ? latinAmericanVideo(raw) : raw;
+    if (written.length === 0) warnings.push(`The model returned an empty ${key}.`);
+    if (written.length > MAX_SUMMARY_PART_CHARS) {
       warnings.push(`${key} was cut to ${MAX_SUMMARY_PART_CHARS} characters.`);
-    } else if (value.length > asked) {
+    }
+    const kept = truncateGraphemes(written, MAX_SUMMARY_PART_CHARS);
+    const value =
+      key !== "whatHappened" || note === null || kept.length === 0
+        ? kept
+        : `${kept}${/[.!?…]$/.test(kept) ? "" : "."} ${note}`;
+    const asked = key === "whatHappened" ? WHAT_HAPPENED_CHARS : SHORT_PART_CHARS;
+    if (written.length <= MAX_SUMMARY_PART_CHARS && value.length > asked) {
       warnings.push(`${key} has ${value.length} characters; the prompt asks for at most ${asked}.`);
     }
-    return truncateGraphemes(value, MAX_SUMMARY_PART_CHARS);
+    return value;
   };
   const summary = {
     whatHappened: summaryPart("whatHappened"),

@@ -8,6 +8,7 @@ import {
   hashTrendPresentationInput,
   TREND_PRESENTATION_PROMPT_VERSION,
   MAX_TREND_TITLE_CHARS,
+  trendPresentationEvidenceNote,
   trendPresentationLengthProblems,
   type TrendPresentationPromptInput,
 } from "./editorialTextGenerationPrompts.ts";
@@ -50,6 +51,9 @@ const input: TrendPresentationPromptInput = {
   ],
 };
 
+/** One of the two items has a readable excerpt. */
+const NOTE = "Hay extractos breves de la mitad; los artículos no se han leído.";
+
 const output = {
   title: "La computación cuántica gana herramientas abiertas",
   summary: {
@@ -91,7 +95,18 @@ describe("buildTrendPresentationPrompt", () => {
     expect(prompt).toContain("Never merge the capabilities of two products");
     expect(prompt).toContain("does not run it");
     expect(prompt).toContain("Do not extend to several items what only one of them says.");
-    expect(prompt).toContain("keep the contrast next to the figure");
+    // Round 3: a valuation without its "top of the range" condition, and a headlines-only note
+    // on a story drafted from excerpts.
+    expect(prompt).toContain("keep it next to the figure, in the same sentence, every time");
+    expect(prompt).toContain("A figure compared with another one goes with both.");
+    expect(prompt).toContain("do not repeat a figure whatHappened already gives");
+    expect(prompt).toContain("is not a trait of the announced product");
+    expect(prompt).toContain("When an excerpt adds a condition to a figure in its title");
+    expect(prompt).toContain(
+      `at most 385 characters including citation markers. Start with the most important fact.`,
+    );
+    expect(prompt).toContain(`appends this sentence after it, for at most 450 in all: “${NOTE}”`);
+    expect(prompt).toContain("Do not write any note about what the evidence consists of");
     expect(buildTrendPresentationPrompt({ ...input, language: "en" }).prompt).not.toContain(
       "vídeo",
     );
@@ -127,9 +142,75 @@ describe("buildTrendPresentationPrompt", () => {
   );
 });
 
+describe("trendPresentationEvidenceNote", () => {
+  const READABLE = "The company could end up being worth more if its shares list at the top.";
+  const items = (...excerpts: ReadonlyArray<string>) => excerpts.map((excerpt) => ({ excerpt }));
+
+  it.each([
+    [items("", ""), "Solo hay titulares; los artículos no se han leído."],
+    [items(READABLE, READABLE), "Hay titulares y extractos breves; los artículos no se han leído."],
+    // The IPO of round 3: a bare link is not an excerpt, so two of five have one.
+    [
+      items(
+        "",
+        "",
+        "https://epyhia.com/anthropic-ipo-valuation-talks-drop-to-1-3...",
+        READABLE,
+        READABLE,
+      ),
+      "Solo hay titulares de la mayoría; los artículos no se han leído.",
+    ],
+    [
+      items("Related: https://example.org/a / https://example.org/b", ""),
+      "Solo hay titulares; los artículos no se han leído.",
+    ],
+    [items(READABLE, ""), "Hay extractos breves de la mitad; los artículos no se han leído."],
+    [
+      items(READABLE, READABLE, ""),
+      "Hay extractos breves de la mayoría; los artículos no se han leído.",
+    ],
+    [items("Short note.", ""), "Solo hay titulares; los artículos no se han leído."],
+  ])("names what the drafting read: %j", (evidence, note) => {
+    expect(trendPresentationEvidenceNote(evidence)).toBe(note);
+  });
+
+  it("counts only the items sent, and has no note without evidence", () => {
+    expect(
+      trendPresentationEvidenceNote([...items(...Array(12).fill(READABLE)), ...items("")]),
+    ).toBe("Hay titulares y extractos breves; los artículos no se han leído.");
+    expect(trendPresentationEvidenceNote([])).toBeNull();
+    expect(trendPresentationEvidenceNote(items(""), "en")).toBe(
+      "Only headlines are available; the articles were not read.",
+    );
+  });
+});
+
+const withNote = (summary: typeof output.summary) => ({
+  ...summary,
+  whatHappened: `${summary.whatHappened} ${NOTE}`,
+});
+
 describe("finalizeTrendPresentation", () => {
-  it("keeps a valid reply unchanged and without warnings", () => {
-    expect(finalizeTrendPresentation(input, output)).toEqual({ ...output, warnings: [] });
+  it("appends the evidence note to a valid reply, without warnings", () => {
+    expect(finalizeTrendPresentation(input, output)).toEqual({
+      ...output,
+      summary: withNote(output.summary),
+      warnings: [],
+    });
+  });
+
+  it("closes the sentence before the note, and adds none to an empty part", () => {
+    const ended = finalizeTrendPresentation(input, {
+      ...output,
+      summary: { ...output.summary, whatHappened: "Google publica un avance [itm_hn_1]" },
+    });
+    expect(ended.summary.whatHappened).toBe(`Google publica un avance [itm_hn_1]. ${NOTE}`);
+
+    const empty = finalizeTrendPresentation(input, {
+      ...output,
+      summary: { ...output.summary, whatHappened: " " },
+    });
+    expect(empty.summary.whatHappened).toBe("");
   });
 
   it("drops a citation to an id outside the evidence and warns", () => {
@@ -150,7 +231,7 @@ describe("finalizeTrendPresentation", () => {
     };
     const result = finalizeTrendPresentation(input, { ...output, summary, citedItemIds: [] });
 
-    expect(result.summary).toEqual(summary);
+    expect(result.summary).toEqual(withNote(summary));
     expect(result.citedItemIds).toEqual(["itm_hn_2", "itm_hn_1"]);
     expect(result.warnings).toEqual([]);
   });
@@ -159,7 +240,7 @@ describe("finalizeTrendPresentation", () => {
     const summary = { ...output.summary, whatHappened: "Un titular informa algo [itm_made_up]." };
     const result = finalizeTrendPresentation(input, { ...output, summary });
 
-    expect(result.summary.whatHappened).toBe("Un titular informa algo [itm_made_up].");
+    expect(result.summary.whatHappened).toBe(`Un titular informa algo [itm_made_up]. ${NOTE}`);
     expect(result.citedItemIds).toEqual(["itm_hn_1", "itm_hn_2"]);
     expect(result.warnings).toEqual(['Dropped a citation to unknown evidence id "itm_made_up".']);
   });
@@ -208,12 +289,14 @@ describe("finalizeTrendPresentation", () => {
       summary: { ...output.summary, whatHappened },
     });
 
-    expect(result.summary.whatHappened).toBe(whatHappened);
+    // The note counts: the limit is for what the page shows.
+    const stored = `${whatHappened}. ${NOTE}`;
+    expect(result.summary.whatHappened).toBe(stored);
     expect(result.warnings).toEqual([
-      `whatHappened has ${whatHappened.length} characters; the prompt asks for at most 450.`,
+      `whatHappened has ${stored.length} characters; the prompt asks for at most 450.`,
     ]);
     expect(trendPresentationLengthProblems(result.summary)).toEqual([
-      `whatHappened has ${whatHappened.length} characters and must have at most 450`,
+      `whatHappened has ${stored.length} characters and must have at most 450`,
     ]);
     expect(trendPresentationLengthProblems(output.summary)).toEqual([]);
   });

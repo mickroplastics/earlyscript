@@ -24,6 +24,7 @@ export type {
 } from "./editorialTextGenerationPrompts.ts";
 export {
   hashTrendPresentationInput,
+  trendPresentationEvidenceNote,
   trendPresentationLengthProblems,
 } from "./editorialTextGenerationPrompts.ts";
 

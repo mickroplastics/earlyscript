@@ -1,6 +1,7 @@
-import type {
-  TrendPresentationEvidence,
-  TrendPresentationGenerationResult,
+import {
+  trendPresentationEvidenceNote,
+  type TrendPresentationEvidence,
+  type TrendPresentationGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
 // The assistant's summary talks about the news, never about how it was collected or about its
@@ -16,7 +17,7 @@ export interface VoiceProblem {
   readonly part: string;
   /** The matched words, for the log and the retry; never shown to the operator. */
   readonly words: string;
-  readonly kind: "collection" | "self";
+  readonly kind: "collection" | "self" | "note";
 }
 
 /** Same marker the prompt asks for: `[itemId]`, without spaces or nested brackets. */
@@ -24,11 +25,13 @@ const CITATION_MARKER = /\[[^[\]\s]+\]/g;
 
 /** Lowercase, without citation markers or diacritics, so "Clúster [itm_1]" reads "cluster". */
 const voiceText = (text: string) =>
-  text
-    .replace(CITATION_MARKER, " ")
+  accentedText(text)
     .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
+    .replace(/\p{Diacritic}/gu, "");
+
+/** Lowercase, without citation markers; same positions as `voiceText` for one NFC text. */
+const accentedText = (text: string) =>
+  text.replace(CITATION_MARKER, " ").normalize("NFC").toLowerCase();
 
 const wordsOf = (text: string) => text.match(/[\p{L}\p{N}]+/gu) ?? [];
 
@@ -43,6 +46,8 @@ const GATHERED = "(?:recogid|recopilad|registrad|capturad|agrupad|reunid)";
 const PHRASE_RULES: ReadonlyArray<{
   readonly pattern: RegExp;
   readonly kind: VoiceProblem["kind"];
+  /** Matched with the accents kept: "creo" is the writer, "creó" someone in the news. */
+  readonly accented?: true;
 }> = [
   // Something that gathered the items, doing the gathering.
   {
@@ -61,6 +66,18 @@ const PHRASE_RULES: ReadonlyArray<{
   },
   {
     pattern: new RegExp(`\\b(?:ha|han|habia|habian|fue|fueron) sido ${GATHERED}[oa]s?\\b`),
+    kind: "collection",
+  },
+  // The simple passive with the pieces as subject: "los titulares fueron recogidos". Other
+  // subjects stay news: "los datos fueron recogidos por la NASA".
+  {
+    pattern: new RegExp(
+      `\\b(?:${PIECES}|noticias) (?:\\w+ )?(?:fue|fueron|son|eran) ${GATHERED}[oa]s?\\b`,
+    ),
+    kind: "collection",
+  },
+  {
+    pattern: new RegExp(`\\b(?:recogid|recopilad|capturad)[oa]s? (?:de|en|desde) ${SOURCES}`),
     kind: "collection",
   },
   {
@@ -102,9 +119,18 @@ const PHRASE_RULES: ReadonlyArray<{
   },
   // First person; not "veo", which is also a video model's name.
   {
-    pattern: /\b(?:creo|creemos|pienso|pensamos|hemos|nosotros|nosotras|vemos|consideramos)\b/,
+    pattern: /\b(?:creemos|pienso|pensamos|hemos|nosotros|nosotras|vemos|consideramos)\b/,
     kind: "self",
   },
+  { pattern: /(?<!\p{L})creo(?!\p{L})/u, kind: "self", accented: true },
+  // A note about the evidence: the application appends the one that fits.
+  {
+    pattern: /\bsolo (?:hay |se dispone de |existen )?(?:titulares|extractos)\b/,
+    kind: "note",
+  },
+  { pattern: /\b(?:titulares y extractos|extractos breves)\b/, kind: "note" },
+  { pattern: /\bno se (?:ha|han) leido\b/, kind: "note" },
+  { pattern: /\bsin leer (?:los |el )?(?:articulos?|textos?)\b/, kind: "note" },
 ];
 
 /** Words that name the collection; allowed only inside the evidence's own expression. */
@@ -158,16 +184,25 @@ function jargonOutsideEvidence(text: string, evidence: string): string | null {
 // Labels as the dossier page names each part; the operator reads them in the error.
 export const VOICE_TITLE_PART = "título";
 
-const VOICE_PARTS: ReadonlyArray<readonly [string, (presentation: VoicePresentation) => string]> = [
+const VOICE_PARTS: ReadonlyArray<
+  readonly [string, (presentation: VoicePresentation, note: string | null) => string]
+> = [
   [VOICE_TITLE_PART, (presentation) => presentation.title],
-  ["Qué pasó", (presentation) => presentation.summary.whatHappened],
+  [
+    "Qué pasó",
+    ({ summary }, note) =>
+      note !== null && summary.whatHappened.endsWith(note)
+        ? summary.whatHappened.slice(0, -note.length)
+        : summary.whatHappened,
+  ],
   ["Encaje con el canal", (presentation) => presentation.summary.whyItMatters],
   ["Ángulo de video", (presentation) => presentation.summary.videoAngle],
 ];
 
 /**
- * Phrases about the collection process or the writer instead of the news, one per match;
- * empty when the text is about the news.
+ * Phrases about the collection process, the writer or the evidence instead of the news, one
+ * per match; empty when the text is about the news. The evidence note the application appends
+ * to «Qué pasó» is not the model's and is not checked.
  */
 export function trendPresentationVoiceProblems(
   presentation: VoicePresentation,
@@ -176,14 +211,17 @@ export function trendPresentationVoiceProblems(
   const evidenceWords = ` ${wordsOf(
     voiceText(evidence.map((item) => `${item.title} ${item.excerpt}`).join(" ")),
   ).join(" ")} `;
+  const note = trendPresentationEvidenceNote(evidence);
   const problems: VoiceProblem[] = [];
   for (const [part, read] of VOICE_PARTS) {
-    const text = voiceText(read(presentation));
+    const raw = read(presentation, note);
+    const text = voiceText(raw);
+    const accented = accentedText(raw);
     const found: VoiceProblem[] = [];
     const spans: Array<readonly [number, number]> = [];
     // One problem per phrase: "el motor registro 11" is not also "registro 11 elementos".
     for (const rule of PHRASE_RULES) {
-      const match = rule.pattern.exec(text);
+      const match = rule.pattern.exec(rule.accented ? accented : text);
       if (match === null) continue;
       const words = match[0].replace(/^[.!?\s]+/, "");
       const end = match.index + match[0].length;
@@ -214,6 +252,9 @@ export function voiceRetryReason(problems: ReadonlyArray<VoiceProblem>): string 
     problems.some((problem) => problem.kind === "self")
       ? "it commented on its own writing or instructions instead of the news"
       : null,
+    problems.some((problem) => problem.kind === "note")
+      ? "it wrote a note about the evidence (headlines, excerpts, articles not read), which the application adds"
+      : null,
   ].filter((reason) => reason !== null);
   return `${reasons.join(", and ")} (${voiceProblemsText(problems)})`;
 }
@@ -241,6 +282,11 @@ export function voiceFailureMessage(problems: ReadonlyArray<VoiceProblem>): stri
       "describían cómo se reunieron los datos y no las noticias",
     ),
     sentence("self", "comentaba su propia redacción", "comentaban su propia redacción"),
+    sentence(
+      "note",
+      "añadía su propia nota sobre la evidencia",
+      "añadían su propia nota sobre la evidencia",
+    ),
     "Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
   ]
     .filter((part) => part !== null)
