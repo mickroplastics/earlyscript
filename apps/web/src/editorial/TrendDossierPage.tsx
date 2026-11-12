@@ -396,7 +396,13 @@ export function TrendDossierView({
         title={presentation?.title ?? trend.label}
         cutoffAt={dossier.run.cutoffAt}
       />
-      <div className="grid gap-8 @3xl/dossier:grid-cols-[minmax(0,1fr)_22rem]">
+      <div
+        className={cn(
+          "grid gap-8",
+          // Without a card (an older server) the story takes the whole width.
+          card !== undefined && "@3xl/dossier:grid-cols-[minmax(0,1fr)_22rem]",
+        )}
+      >
         <TrendStory
           presentation={presentation}
           card={card}
