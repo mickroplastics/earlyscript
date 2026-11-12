@@ -7,7 +7,7 @@ import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { closingStrip, domainNote } from "./results.logic";
 import { ResultsBox } from "./resultsMarks";
-import { shortResultsDate } from "./resultsOverview.logic";
+import { shortResultsDate, shortResultsDay } from "./resultsOverview.logic";
 
 const yearDate = (iso: string) => shortResultsDate(iso, { year: true });
 
@@ -30,13 +30,21 @@ export function ResultsCaveat({ summary }: { readonly summary: EditorialResultsS
           </AlertDescription>
           <AlertAction>
             <CollapsibleTrigger render={<Button variant="link" size="xs" />}>
-              {open ? "Ocultar" : "Muestra y límites"}
+              {/* Both labels share one cell, so the button keeps its width and the text its breaks. */}
+              <span className="grid justify-items-end underline underline-offset-2">
+                <span className="col-start-1 row-start-1">
+                  {open ? "Ocultar" : "Muestra y límites"}
+                </span>
+                <span aria-hidden className="invisible col-start-1 row-start-1">
+                  Muestra y límites
+                </span>
+              </span>
             </CollapsibleTrigger>
           </AlertAction>
         </Alert>
         <CollapsiblePanel>
           <ResultsBox className="mt-2 grid gap-4 @3xl:grid-cols-3">
-            {closingStrip(summary, yearDate).map((block) => (
+            {closingStrip(summary, yearDate, shortResultsDay).map((block) => (
               <div key={block.title} className="flex min-w-0 flex-col gap-1">
                 <h3 className="text-xs font-medium text-foreground">{block.title}</h3>
                 <p className="text-xs text-muted-foreground tabular-nums">{block.text}</p>

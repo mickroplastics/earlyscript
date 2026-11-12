@@ -366,6 +366,7 @@ function localResultsDate(iso: string): string {
 export function closingStrip(
   summary: EditorialResultsSummary,
   formatDate: (iso: string) => string = localResultsDate,
+  formatDay: (day: string) => string = (day) => day,
 ) {
   const human = summary.humanThreads ?? summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
   const closed = summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
@@ -392,7 +393,7 @@ export function closingStrip(
     },
     {
       title: "Muestra",
-      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${formatDate(firstTrial.createdAt)} y ${formatDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${formatDate(summary.firstDecidedAt)} hasta ${formatDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${formatDay(baseline.firstDay)} y ${formatDay(baseline.lastDay ?? baseline.firstDay)}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${formatDate(firstTrial.createdAt)} y ${formatDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${formatDate(summary.firstDecidedAt)} hasta ${formatDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
     },
     {
       title: "Límites",

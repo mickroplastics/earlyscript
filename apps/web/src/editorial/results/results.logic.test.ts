@@ -302,16 +302,19 @@ describe("closingStrip", () => {
     expect(blocks[2]?.text).toContain("no mide un efecto");
   });
 
-  it("writes the sample dates with the formatter it is given", () => {
+  it("writes the sample dates with the formatters it is given", () => {
     const blocks = closingStrip(
       {
         ...summary([]),
         trials: [{ threadId: "t", environmentId: "e", createdAt: "2026-11-03T20:00:00.000Z" }],
         firstDecidedAt: "2026-11-09T20:30:00.000Z",
         lastDecidedAt: "2026-11-10T05:11:00.000Z",
+        baselineSample: { blocks: 17, firstDay: "2026-10-01", lastDay: "2026-10-14" },
       },
       (iso) => iso.slice(0, 10),
+      (day) => `día ${day.slice(8)}`,
     );
+    expect(blocks[1]?.text).toContain("17 bloques de línea base entre día 01 y día 14");
     expect(blocks[1]?.text).toContain("entre 2026-11-03 y 2026-11-03");
     expect(blocks[1]?.text).toContain("desde 2026-11-09 hasta 2026-11-10");
   });

@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { useQuietThreadShells } from "../../state/entities";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
@@ -52,6 +52,16 @@ export interface ResultsOverviewControls {
   readonly onRetry: () => void;
 }
 
+/** The header line breaks only between its parts, never inside one. */
+function HeaderLine({ text }: { readonly text: string }) {
+  return text.split(" · ").map((part, index) => (
+    <Fragment key={part}>
+      {index > 0 ? "\u00a0· " : null}
+      <span className="whitespace-nowrap">{part}</span>
+    </Fragment>
+  ));
+}
+
 /** The Results space with its data; the page fetches, this renders. */
 export function ResultsView({
   summary,
@@ -86,10 +96,12 @@ export function ResultsView({
       <header className="flex min-w-0 flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-1 basis-96 flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">Resultados</h1>
-          <p className="text-sm text-pretty text-muted-foreground tabular-nums">
-            {decided
-              ? headerLineText(summary, localTimeZone())
-              : "Ninguna decisión registrada todavía."}
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {decided ? (
+              <HeaderLine text={headerLineText(summary, localTimeZone())} />
+            ) : (
+              "Ninguna decisión registrada todavía."
+            )}
           </p>
         </div>
         {exportAction}
