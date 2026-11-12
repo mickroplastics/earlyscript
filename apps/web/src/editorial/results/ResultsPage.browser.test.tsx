@@ -6,6 +6,8 @@ import type {
   EditorialResultsSummary,
 } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -275,6 +277,25 @@ describe("ResultsPage", () => {
     expect(tableRead()).toEqual({ limit: DECISIONS_PAGE_SIZE, cohort: "human" });
     await userEvent.click(screen.getByText(/Mostrar los 2 ensayos/));
     await vi.waitFor(() => expect(tableRead()).toEqual({ limit: DECISIONS_PAGE_SIZE }));
+  });
+
+  it("says a failed reread of the dots instead of the last read it kept", async () => {
+    reads.summary = SUMMARY;
+    reads.decisions = [MANUAL_DECISION, decision({})];
+    reads.decisionInputs = [];
+    const previous = AsyncResult.success({ offset: 0, total: 2, decisions: reads.decisions });
+    reads.atoms = new Map([
+      [
+        `decisions:${JSON.stringify({ limit: 100 })}`,
+        Atom.make(AsyncResult.failWithPrevious("down", { previous: Option.some(previous) })),
+      ],
+    ]);
+    await using screen = await render(<ResultsPage environmentId={"env-1" as EnvironmentId} />);
+    await expect
+      .element(screen.getByText("No se pudieron leer los puntos por ficha · raya: mediana."))
+      .toBeVisible();
+    expect(textOf(screen.container)).not.toContain("Puntos no disponibles");
+    await expect.element(screen.getByRole("button", { name: "Reintentar" })).toBeVisible();
   });
 });
 

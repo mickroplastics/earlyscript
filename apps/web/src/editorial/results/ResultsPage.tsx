@@ -169,15 +169,17 @@ function useThreadTitles(): ReadonlyMap<string, string> {
 function decisionsState(
   result: AsyncResult.AsyncResult<EditorialResultsDecisionPage, unknown>,
 ): ResultsDecisionsState {
-  const page = AsyncResult.getOrElse(result, () => null);
-  if (page !== null) return { _tag: "ready", page };
-  if (result._tag === "Failure" && !result.waiting) {
-    return {
-      _tag: "failure",
-      message: decisionsFailureText(Option.getOrUndefined(Cause.findErrorOption(result.cause))),
-    };
+  // A failed reread keeps the last success inside; it is not the current read, so say the failure.
+  if (result._tag === "Failure") {
+    return result.waiting
+      ? { _tag: "loading" }
+      : {
+          _tag: "failure",
+          message: decisionsFailureText(Option.getOrUndefined(Cause.findErrorOption(result.cause))),
+        };
   }
-  return { _tag: "loading" };
+  const page = AsyncResult.getOrElse(result, () => null);
+  return page === null ? { _tag: "loading" } : { _tag: "ready", page };
 }
 
 export function ResultsPage({ environmentId }: { readonly environmentId: EnvironmentId }) {
