@@ -6,20 +6,65 @@ import type {
   EditorialResultsSummary,
 } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { DECISIONS_PAGE_SIZE } from "./DecisionsTab";
 import { FiguresProvider, useFigures } from "./FigureFrame";
 import { ManualBaselineView } from "./ManualBaselineSection";
 import { BASELINE_RECORD } from "./manualBaseline.fixture";
 import { RESULTS_FIGURE_ORDER } from "./resultsFigures.logic";
 import {
+  ResultsPage,
   ResultsView,
   type ResultsDecisionsControls,
   type ResultsOverviewControls,
 } from "./ResultsPage";
+
+// The page's reads, served from memory; each decisions read records the input it asked with.
+const reads = vi.hoisted(() => ({
+  summary: null as EditorialResultsSummary | null,
+  decisions: [] as Array<EditorialResultsDecision>,
+  decisionInputs: [] as Array<Readonly<Record<string, unknown>>>,
+  atoms: new Map<string, unknown>(),
+}));
+
+vi.mock(import("../resultsState"), async (original) => {
+  const real = await original();
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const cached = (key: string, value: () => unknown) => {
+    if (!reads.atoms.has(key)) reads.atoms.set(key, Atom.make(AsyncResult.success(value())));
+    return reads.atoms.get(key) as never;
+  };
+  return {
+    ...real,
+    editorialResultsEnvironment: {
+      ...real.editorialResultsEnvironment,
+      summary: () => cached("summary", () => reads.summary),
+      baseline: () => cached("baseline", () => null),
+      decisions: ({ input }: { readonly input: Readonly<Record<string, unknown>> }) => {
+        reads.decisionInputs.push(input);
+        return cached(`decisions:${JSON.stringify(input)}`, () => ({
+          offset: 0,
+          total: reads.decisions.length,
+          decisions: reads.decisions,
+        }));
+      },
+    } as never,
+  };
+});
+
+vi.mock(import("../EditorialPage"), async (original) => ({
+  ...(await original()),
+  EditorialPage: ({ children }: { readonly children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock(import("../../state/entities"), async (original) => ({
+  ...(await original()),
+  useQuietThreadShells: () => [],
+}));
 
 const MINUTE = 60_000;
 
@@ -212,6 +257,26 @@ function FigureIds() {
     </button>
   );
 }
+
+describe("ResultsPage", () => {
+  it("asks for the trials only once the box is ticked", async () => {
+    reads.summary = { ...SUMMARY, trials: TRIALS };
+    reads.decisions = [MANUAL_DECISION, decision({})];
+    reads.decisionInputs = [];
+    reads.atoms = new Map();
+    await using screen = await render(<ResultsPage environmentId={"env-1" as EnvironmentId} />, {
+      router: "/?tab=decisiones",
+    });
+    const tableRead = () =>
+      reads.decisionInputs.findLast((input) => input.limit === DECISIONS_PAGE_SIZE);
+    await expect
+      .element(screen.getByRole("table", { name: "Decisiones registradas" }))
+      .toBeVisible();
+    expect(tableRead()).toEqual({ limit: DECISIONS_PAGE_SIZE, cohort: "human" });
+    await userEvent.click(screen.getByText(/Mostrar los 2 ensayos/));
+    await vi.waitFor(() => expect(tableRead()).toEqual({ limit: DECISIONS_PAGE_SIZE }));
+  });
+});
 
 describe("ResultsView", () => {
   it("shows an empty comparison as a baseline note instead of a headline number", async () => {
