@@ -1,143 +1,203 @@
 # Earlyscript
 
-Earlyscript es un estudio editorial para un operador que decide, cada mañana, de qué video hablar. Detecta qué temas crecen en comunidades técnicas públicas, los presenta como fichas de tendencia con evidencia enlazada y acompaña la escritura de un guion de video en un hilo de conversación con un agente de código, con la decisión final del operador registrada con utilidad, motivo y tiempos. Es un fork privado de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783` del 30 de octubre de 2026; el README original de T3 Code se conserva literalmente en [`docs/README-t3code.md`](docs/README-t3code.md); sus enlaces relativos se interpretaban desde la raíz del repositorio.
+Earlyscript es un estudio editorial para una persona que decide, cada día, sobre qué tema grabar un video. Cada noche guarda lo que se publicó en varias comunidades técnicas públicas y un motor de tendencias propone los temas que se mueven y que encajan con el canal. El operador elige un tema y escribe el guion en un hilo de conversación, con un agente de código o a mano. Al final registra su decisión con una nota de utilidad, un motivo y el tiempo que le llevó. Earlyscript es un fork de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783` del 30 de octubre de 2026. El README original de T3 Code se conserva en [`docs/README-t3code.md`](docs/README-t3code.md).
 
-## Propósito académico y estado
+## Propósito académico
 
-Earlyscript es el prototipo del proyecto de titulación "Arnés agéntico basado en modelos de lenguaje y análisis semántico de tendencias para priorizar ideas de contenido en YouTube orientadas a la adquisición de miembros para SingulariDev" (Miguel Ángel Brito Espejo, Maestría en Inteligencia Artificial Aplicada, Universidad de Las Américas, 2026; auspiciante Bistec LLC). Sustituye como producto final a [Earlywindow](https://git.r.biste.cc/miguel/earlywindow), cuya aplicación de escritorio queda como antecedente y cuyo motor de tendencias se porta aquí.
+Earlyscript es el prototipo del proyecto de titulación "Arnés agéntico basado en modelos de lenguaje y análisis semántico de tendencias para priorizar ideas de contenido en YouTube orientadas a la adquisición de miembros para SingulariDev" (Miguel Ángel Brito Espejo, Maestría en Inteligencia Artificial Aplicada, Universidad de Las Américas, 2026; auspiciante Bistec LLC). Los resultados de la evaluación están en el informe final del proyecto, no en este repositorio.
 
-Estado al 31 de octubre de 2026, sobre `main` `f75eebfae2`: están fusionados y verificados por un segundo modelo la capa de marca, las banderas que apagan telemetría y esconden funciones ajenas al estudio, la batería de pruebas en Linux, el motor de tendencias con fuentes en vivo, el validador del guion, la base editorial, el espacio Tendencias con títulos y resúmenes del asistente, la bandeja con sus tres acciones, el lector de corridas en el formato nativo del motor y en el de Earlywindow, el hilo de video (servidor y pantalla) y el espacio Resultados. La política que bloquea agentes en hilos manuales está implementada; la pantalla del modo manual y la corrida nocturna no están iniciadas. No se ha hecho todavía ningún ejercicio de evaluación humana; el espacio Resultados solo ha mostrado datos de prueba (resultado reportado, sin registro en el repositorio).
+## Versión evaluada
 
-## Problema y solución
+La versión evaluada en la tesis es el commit `ded88d5a8b`, con la etiqueta `motor-v3-pares`. Corre el motor v3 con la configuración [`packages/trend-engine/config/engine.v3-sel.json`](packages/trend-engine/config/engine.v3-sel.json) (`config_hash` `sha256:03b32be8…`) y el perfil del canal v2. Esa combinación se congeló el 9 de noviembre de 2026, antes de sortear los seis pares de ejercicios del operador.
 
-El fundador de SingulariDev investiga y prioriza ideas de video a mano, estima esa carga en más de 20 horas semanales y no conserva un registro que una señales, evidencia y decisiones. Earlyscript separa cuatro responsabilidades:
+Qué hace el motor v3:
 
-1. **Evidencia.** Adaptadores de solo lectura capturan historias de Hacker News y repositorios nuevos de GitHub, día a día, con fecha, URL, autor y texto acotado, en un corpus por archivos con manifiesto SHA-256.
-2. **Cálculo.** Un motor determinista, sin modelo de lenguaje, embebe los textos con Qwen3-Embedding-0.6B en CPU, los apila por cercanía de coseno en señales, calcula series diarias, etapa (creciendo, estable, decayendo), afinidad con el perfil del canal y dos rankings (por volumen de siete días y por fórmula ponderada), y emite la unión de las 20 primeras tendencias de cada ranking, ordenada por volumen de siete días, con hasta 40 fichas distintas, cada una con evidencia. Cada corrida lleva huellas de configuración, corpus y resultado.
-3. **Síntesis.** El asistente redacta, una vez por corrida, un título y un resumen de tres párrafos por tendencia, citando identificadores de evidencia; no cambia el orden ni el puntaje. En el hilo de video, el operador escribe el guion en un archivo Markdown con o sin agente; un validador cuenta afirmaciones y citas.
-4. **Decisión.** Solo el operador decide (crear hilo de video, seguir observando o descartar una tendencia; aceptar, editar, rechazar o diferir un guion) con utilidad de 1 a 5, motivo obligatorio y tiempos por etapa. El agente no puede invocar ese camino.
+- **Fuentes.** Captura seis fuentes públicas por día UTC: Hacker News, GitHub, Hugging Face, npm, 14 blogs por RSS y Wikipedia. Agrupa las cinco primeras. Wikipedia se guarda pero no se agrupa, porque su texto fijo formaba grupos de miles de páginas.
+- **Agrupamiento.** Convierte cada titular, con hasta 1.000 caracteres de cuerpo, en un vector con Qwen3-Embedding-0.6B en local. Une cada publicación al tema más parecido (coseno mayor que 0,70) o abre uno nuevo.
+- **Movimiento.** Cuenta las publicaciones de cada tema por semana y fuente durante 35 días. Le asigna un movimiento: nueva, señal débil, señal fuerte, rebote, en caída o estable. La popularidad pierde peso con los días, como en BERTrend.
+- **Encaje.** Una sonda logística sobre los vectores ([`config/relevance.v2.json`](packages/trend-engine/config/relevance.v2.json)) da a cada titular una relevancia de 0 a 1 para la audiencia. El perfil del canal descarta los temas que caen en sus exclusiones.
+- **Tarjeta breve.** Emite 10 temas "En movimiento" y 5 temas "De fondo". Cada tarjeta dice en tres líneas cómo se mueve el tema y desde cuándo, cuántas publicaciones tuvo por semana y fuente, con qué tema del perfil encaja, su saturación y dos enlaces. El detalle y la evidencia van en un desplegable.
 
-El modelo de lenguaje no participa en recolectar, agrupar ni ordenar. Los modelos de embeddings y de lenguaje no se entrenan: se calibran umbrales, pesos y perfil.
+Ningún modelo de lenguaje participa en capturar, agrupar ni ordenar. Con la misma entrada, el motor da la misma salida, y cada corrida guarda una huella que permite comprobarlo. El modelo de lenguaje solo interviene en el hilo de video, cuando el operador escribe con un agente.
 
-## Requisitos y dependencias
+`main` contiene además `engine.v2.json` y un laboratorio del motor (`packages/engine-lab/`), apagados. No forman parte de la versión evaluada.
 
-- Linux x86_64 (Debian 13 probado) o macOS arm64. Node 26.12.1 y pnpm 12.14.0. Unos 2 GB de RAM por proceso de embeddings.
-- Al menos un agente de código instalado y con sesión iniciada en la máquina: Claude Code o Codex. Earlyscript no pide claves de API: usa los agentes instalados, como T3 Code.
-- Sin claves para las fuentes. `GITHUB_TOKEN` es opcional y solo amplía la cuota de GitHub.
-- El modelo `onnx-community/Qwen3-Embedding-0.6B-ONNX` (revisión `c25a394`, q8) se descarga de Hugging Face en la primera corrida a `~/earlyscript-data/models/`.
-- Dependencias de T3 Code para la batería completa en Linux: ver [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md).
+## Requisitos
 
-## Ejecución paso a paso
+- macOS arm64 (macOS 27 probado) o Linux x86_64 (Debian 13 probado).
+- Node 26.12.1 y pnpm 12.14.0 (`engines` y `packageManager` del `package.json` raíz).
+- Unos 2 GB de memoria por proceso de embeddings. El motor usa dos procesos por defecto.
+- Un agente de código instalado y con sesión iniciada, por ejemplo Claude Code o Codex, para el hilo de video asistido. Earlyscript usa los agentes instalados, como T3 Code, y no pide claves de API.
+- Ninguna clave para las fuentes. `GITHUB_TOKEN` es opcional y solo amplía la cuota de GitHub.
+- El modelo `onnx-community/Qwen3-Embedding-0.6B-ONNX`, revisión `c25a394`, cuantizado q8 (unos 600 MB). Se descarga de Hugging Face una sola vez en `~/earlyscript-data/models/`, en la primera corrida o con `engine model prepare`.
+- Para compilar la app de macOS: Xcode Command Line Tools y Rust con el target `aarch64-apple-darwin` ([`docs/earlyscript-macos.md`](docs/earlyscript-macos.md)). Para la batería completa en Linux: [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md).
 
-Desde la raíz del checkout. Si la terminal se abrió desde T3 Code, anteponer `env -u T3CODE_HOME` para no usar sus datos.
+## Paso a paso
+
+Los comandos se ejecutan desde la raíz del checkout. `pnpm --filter` ejecuta cada script dentro de su paquete, así que las rutas que se le pasan deben ser absolutas. Si la terminal se abrió desde T3 Code, conviene anteponer `env -u T3CODE_HOME` para no usar los datos de ese T3 Code.
+
+### 1. Instalar
 
 ```sh
-# 1. Instalar y comprobar
+git clone https://github.com/mickroplastics/earlyscript.git
+cd earlyscript
+git checkout motor-v3-pares        # la versión evaluada; omitir para usar main
 pnpm install --frozen-lockfile
 pnpm es:typecheck
-pnpm es:test            # pruebas de los paquetes propios y de los módulos que tocan
+pnpm es:test                       # pruebas de los paquetes propios y de los módulos que tocan
+```
 
-# 2. Capturar fuentes (HN y GitHub, por día UTC; --to excluye el día)
-pnpm --filter @earlyscript/trend-engine engine collect \
-  --corpus ~/earlyscript-data/corpus --sources hn,github \
-  --from 2026-10-03 --to 2026-10-31
+### 2. Arrancar la aplicación
 
-# 3. Crear el perfil del canal (ejemplo mínimo, no el perfil usado en las mediciones)
-mkdir -p ~/earlyscript-data/profiles
-cat > ~/earlyscript-data/profiles/ejemplo.json <<'JSON'
-{
-  "schema_version": "profile/1",
-  "name": "SingulariDev",
-  "audience": "Developers",
-  "include": ["developer tools"],
-  "exclude": []
-}
-JSON
+En desarrollo:
 
-# 4. Correr el motor con un corte y el perfil
-pnpm --filter @earlyscript/trend-engine engine run \
-  --corpus ~/earlyscript-data/corpus --cutoff 2026-10-31T00:00:00Z \
-  --profile ~/earlyscript-data/profiles/ejemplo.json \
-  --out ~/earlyscript-data/runs --workers 2
-
-# 5. Volver a ejecutar una corrida y comparar huellas (sin --rerun solo recalcula la huella de las fichas existentes)
-# Sustituir RUN_ID por la carpeta producida en el paso anterior.
-pnpm --filter @earlyscript/trend-engine engine check \
-  --run "$HOME/earlyscript-data/runs/RUN_ID" \
-  --rerun --out "$HOME/earlyscript-data/reruns"
-
-# 6. Validar un guion (rutas absolutas: pnpm ejecuta el script dentro del paquete)
-pnpm --filter @earlyscript/editorial-script check \
-  /ruta/absoluta/guion.md --dossier /ruta/absoluta/ficha.json
-
-# 7. Arrancar el estudio
+```sh
 pnpm dev
 ```
 
-El perfil del canal (`packages/editorial-contracts/src/profile.ts`) exige `schema_version` `profile/1`, `name`, `audience`, `include` con al menos un tema y `exclude`; `version` es opcional. Se versiona por hash en cada corrida. El guion exige los encabezados `# Hook`, bloques `# Block 1` en adelante y `# Close`, con `# Sources` opcional, y citas como `[itm_hn_50061234]`; el formato completo está en [`packages/editorial-script/README.md#formato`](packages/editorial-script/README.md#formato). `--dossier` recibe una ficha generada por el motor. Los puertos base del estudio son 14773 y 5743; pueden cambiar según el worktree, la configuración y la disponibilidad, así que hay que leer los puertos efectivos y la URL de emparejamiento en el log. En la interfaz, el espacio Tendencias lee las corridas de `~/earlyscript-data/runs/` y las importa a `editorial.sqlite`; el botón "Redactar todas las de esta corrida" pide al asistente los títulos y resúmenes.
+Los puertos base son 14773 para el servidor y 5743 para la web. Pueden cambiar según el worktree y la disponibilidad: el log muestra los puertos efectivos y la URL de emparejamiento. En desarrollo, la app usa el motor del propio checkout.
 
-Para empaquetar la aplicación de escritorio: `pnpm es:build` y después `pnpm dist:desktop:dmg:arm64` (macOS) o `pnpm dist:desktop:linux`. Las aplicaciones no están firmadas.
+Como aplicación de escritorio, que lleva el motor dentro:
 
-## Pipeline
-
-```
-fuentes (HN, GitHub) ──collect──▶ corpus/1 por día y fuente, manifiesto SHA-256
-                                       │ corte
-                                       ▼
-   Qwen3 q8 en CPU ──▶ apilado por coseno 0,70 ──▶ series diarias ──▶ etapa y afinidad
-                                       │
-                                       ▼
-          dos rankings (items_7d y fórmula) ──▶ run.json + fichas (earlyscript.dossier/1)
-                                       │ importador
-                                       ▼
-   editorial.sqlite ◀── espacio Tendencias (título y resumen del asistente) ── decisión
-                                       │ crear hilo de video
-                                       ▼
-   hilo de T3 Code con agente ──▶ guion Markdown con versiones ──▶ script_check ──▶ decisión
-                                       │
-                                       ▼
-                              espacio Resultados (descriptivo)
+```sh
+pnpm es:build
+pnpm dist:desktop:dmg:arm64        # macOS; pnpm dist:desktop:linux en Linux (AppImage)
 ```
 
-El método del motor es el de Earlywindow `engine.v0.02`: texto de título más 1.000 caracteres, filtro de idioma por proporción de letras ASCII, duplicados por URL, apilado en orden de publicación con ventana activa de 30 días, crecimiento `ln((ítems de 7 días + 1) / (ítems de los 7 previos + 1))`, fórmula `0,5 × crecimiento + 0,2 × ln(1 + autores) + 0,3 × afinidad`. Los parámetros, incluido el máximo de 20 por ranking, están en [`packages/trend-engine/config/engine.v1.json`](packages/trend-engine/config/engine.v1.json) y se declaran como hipótesis en cada `run.json`. Detalle en [`packages/trend-engine/README.md`](packages/trend-engine/README.md).
+El motor solo se incluye si se compila en la misma plataforma y arquitectura que el destino. Las aplicaciones no están firmadas. La instalación, la apertura sin firma y la ubicación de cada dato en macOS están en [`docs/earlyscript-macos.md`](docs/earlyscript-macos.md).
 
-## Organización del repositorio
+### 3. Preparar el perfil del canal
 
-| Carpeta                                                          | Contenido                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/editorial-contracts/`                                  | Esquemas de ítem, fuente, corrida, ficha de tendencia, perfil y decisión, y lector del formato de Earlywindow                                                                                                                               |
-| `packages/trend-engine/`                                         | Motor: fuentes, corpus, embeddings, apilado, series, rankings, corrida y verificación; CLI `engine`                                                                                                                                         |
-| `packages/editorial-script/`                                     | Validador del guion; CLI `check`                                                                                                                                                                                                            |
-| `apps/server/src/editorial/`                                     | Base `editorial.sqlite` con migraciones 001 a 006, servicios de lectura, comando, importación, presentaciones, resultados, reloj de trabajo e hilo de video; política que bloquea agentes en hilos manuales; herramienta MCP `script_check` |
-| `apps/web/src/editorial/`                                        | Barra lateral con espacios, bandeja y ficha de tendencia, panel de decisión, reloj, resultados                                                                                                                                              |
-| `apps/server/src/earlyscript/`, `apps/desktop/src/earlyscript/`  | Banderas que apagan telemetría, analítica y funciones escondidas en la capa más alta del servidor                                                                                                                                           |
-| `packages/shared/src/earlyscriptBrand.ts`, `earlyscriptFlags.ts` | Marca, puertos, directorio base y banderas                                                                                                                                                                                                  |
-| `scripts/earlyscript/`                                           | Batería rápida `es:*` y comprobación de alcance                                                                                                                                                                                             |
-| `docs/upstream-divergence.md`                                    | Registro archivo por archivo de lo que difiere de T3 Code                                                                                                                                                                                   |
-| `docs/dev-environment-linux.md`                                  | Preparación del entorno y resultados de la batería en Linux                                                                                                                                                                                 |
-| Resto del árbol                                                  | T3 Code sin cambios o con enganches de una línea registrados                                                                                                                                                                                |
+El perfil v2 del canal está en el repositorio, en [`packages/trend-engine/judge/profile.singularidev.v2.json`](packages/trend-engine/judge/profile.singularidev.v2.json). `engine.v3-sel.json` exige su huella exacta (`sha256:cc5cc20d…`), así que se copia byte a byte y no se edita.
 
-Los datos viven fuera del repositorio, en `~/earlyscript-data/`: `corpus/`, `runs/`, `models/`, `embeddings/` (caché SQLite por modelo, plataforma y texto) y `profiles/`. No se versionan corpus, corridas, bases ni credenciales.
+```sh
+mkdir -p ~/earlyscript-data/profiles
+cp packages/trend-engine/judge/profile.singularidev.v2.json ~/earlyscript-data/profiles/
+shasum -a 256 ~/earlyscript-data/profiles/profile.singularidev.v2.json   # cc5cc20d…
+```
 
-## Pruebas y evidencia
+### 4. Capturar fuentes
 
-- `pnpm es:test` ejecuta las pruebas de los paquetes propios y de los módulos de T3 Code que tocan; la batería completa de upstream (`pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`) es la compuerta prevista de cada fusión (`docs/dev-environment-linux.md`). Las pruebas de equivalencia del apilado acelerado con la versión directa están en `packages/trend-engine/src/cluster.test.ts`.
-- Cada unidad de trabajo tiene rama propia, informe y veredicto de un segundo modelo en solo lectura ("apto", "apto con correcciones", "no apto") antes de fusionar; los informes y los registros de ejecución se conservan fuera del árbol versionado, en `~/earlyscript-data/` y en la base documental de la tesis.
-- Corrida real del 31 de octubre de 2026, con su `run.json` conservado como fixture en `apps/server/src/editorial/fixtures/native-runs/`: 28.593 registros leídos (28 días completos de HN y 28 parciales de GitHub), 26.037 textos embebidos, 8.776 señales, 99 en crecimiento, 15 fichas elegibles, 374 s. El desglose por fuente (28.311 de HN y 282 de GitHub) y las 15 fichas completas están solo en la corrida fuera del repositorio (`~/earlyscript-data/runs/run_20261031_20261031T003855_5e57bf/`) y en el informe de la tesis.
-- Comparación con Earlywindow sobre el mismo corpus, corte y perfil, documentada en [`docs/upstream-divergence.md`](docs/upstream-divergence.md) (sección del motor, paso 1): 19 fichas frente a 18; coinciden 3 de 5 en el top 5 por volumen; los vectores de Linux no reproducen los de macOS (coseno mediano 0,965 para el mismo texto).
-- Resultados reportados, no verificables desde el repositorio (la evidencia se conserva fuera del árbol versionado y en el informe de la tesis): typecheck de 39 paquetes y 122 pruebas editoriales en 15 archivos sobre `main` el 31 de octubre; batería completa en 630 s en un servidor Linux de 22 núcleos y 706 s en una Mac mini; huella lógica de la corrida de referencia reproducida tres veces; 401 casos de equivalencia del apilado; 3 fichas redactadas con `claude-haiku-5-5` en 12 a 22 s sin atribuciones inventadas en la revisión; retrospectiva y robustez medidas en Earlywindow en macOS (P@5 de 0,95 frente a 1,00 de la línea base por volumen; orden estable ante ±20 % en los pesos; selección sensible al umbral de apilado), no repetidas aquí.
+```sh
+pnpm --filter @earlyscript/trend-engine engine collect \
+  --corpus ~/earlyscript-data/corpus \
+  --sources hn,github,huggingface,npm,wikipedia,rss \
+  --from 2026-10-05 --to 2026-11-09
+```
+
+`--from` incluye el día y `--to` lo excluye. El motor v3 mira 35 días antes del corte, así que el ejemplo captura 35 días para un corte el 9 de noviembre. Cada fuente y día queda marcado como completo, parcial o no disponible en `coverage.jsonl`. El corpus lleva un manifiesto con la huella SHA-256 de cada archivo. La captura no ejecuta modelos. `--rss-feeds <archivo.json>` cambia la lista de blogs, que por defecto es la de [`src/sources/rss-feeds.ts`](packages/trend-engine/src/sources/rss-feeds.ts).
+
+### 5. Correr el motor v3
+
+```sh
+pnpm --filter @earlyscript/trend-engine engine model prepare      # opcional: descarga el modelo antes
+pnpm --filter @earlyscript/trend-engine engine run \
+  --corpus ~/earlyscript-data/corpus \
+  --cutoff 2026-11-09T00:00:00Z \
+  --config "$PWD/packages/trend-engine/config/engine.v3-sel.json" \
+  --profile ~/earlyscript-data/profiles/profile.singularidev.v2.json \
+  --out ~/earlyscript-data/runs --workers 2
+```
+
+El corte debe caer a las 00:00 UTC. El comando imprime una línea JSON con `run_id`, `status`, el número de expedientes y `logical_hash`. La corrida queda en `~/earlyscript-data/runs/<run_id>/`: `run.json` con el corte, la configuración y su hash, el perfil y su hash, la cobertura y los tiempos, y un expediente por tema en `dossiers/`, con esquema `dossier/2`. Los vectores se guardan en una caché (`~/earlyscript-data/embeddings/embeddings.sqlite`): la primera corrida tarda más y las siguientes reutilizan lo calculado.
+
+### 6. Comprobar una corrida
+
+```sh
+RUN=~/earlyscript-data/runs/<run_id>
+pnpm --filter @earlyscript/trend-engine engine check --run "$RUN"
+pnpm --filter @earlyscript/trend-engine engine check --run "$RUN" \
+  --rerun --out ~/earlyscript-data/reruns
+```
+
+Sin `--rerun`, `check` valida los expedientes y recalcula su huella. Con `--rerun`, repite la corrida con la configuración, el corpus y el perfil que registró `run.json`, y compara la huella lógica de las dos. Por eso el corpus y el perfil deben seguir en la misma ruta. `--expect <logical_hash>` compara además con una huella conocida. La huella lógica cubre los expedientes sin sus identificadores ni fechas de creación. Los vectores de macOS arm64 y de Linux x86_64 difieren un poco, así que una corrida se compara consigo misma en la misma plataforma.
+
+### 7. Usar el motor v3 en la aplicación
+
+La aplicación captura las fuentes, corre el motor, comprueba la corrida y la importa cada noche, o al pulsar "Ejecutar ahora". Para que use la versión evaluada:
+
+1. Abrir la app una vez, para que aplique sus migraciones, y cerrarla.
+2. Importar el perfil v2 con sus bytes exactos. Guardarlo desde Ajustes lo reescribe y cambia su huella.
+
+   ```sh
+   node apps/server/src/bin.ts profile import --base-dir ~/.earlyscript \
+     --file ~/earlyscript-data/profiles/profile.singularidev.v2.json \
+     --expect sha256:cc5cc20d8be7faa6eb28eaa09b35fb8200e61da269acdaefac85cf3ecd0e2298
+   ```
+
+3. Abrir la app. En Ajustes › Editorial › Fuentes, activar la captura de Hacker News, GitHub, Hugging Face, npm, Wikipedia y RSS.
+4. En Ajustes › Editorial › Corrida nocturna › Configuración del motor, elegir `engine.v3-sel.json`. Sin una elección explícita, la app corre `engine.v1.json`. El cambio queda registrado con su hora.
+5. Pulsar "Ejecutar ahora". Las fases son captura, corrida, comprobación con repetición e importación. Las tarjetas aparecen en el espacio Tendencias.
+
+Si el corpus de la app tiene menos de 35 días, los temas salen con filas parciales o no comparables. `engine corpus import --from <corpus> --to ~/earlyscript-data/live (--backup <carpeta nueva> | --dry-run) --sources <ids>` copia días históricos de otro corpus, por fuente y día, con respaldo previo.
+
+### 8. Validar un guion
+
+```sh
+pnpm --filter @earlyscript/editorial-script check \
+  /ruta/absoluta/guion.md --dossier /ruta/absoluta/expediente.json
+```
+
+El guion lleva `# Hook`, bloques `# Block 1` en adelante, `# Close` y, si se quiere, `# Sources`. Las citas tienen la forma `[itm_hn_50061234]`. El validador cuenta las afirmaciones con y sin cita. No comprueba que la fuente respalde la afirmación. El formato completo está en [`packages/editorial-script/README.md`](packages/editorial-script/README.md#formato).
+
+## Dónde quedan los datos
+
+Nada de esto se versiona.
+
+| Qué                                                    | Ruta                                                            |
+| ------------------------------------------------------ | --------------------------------------------------------------- |
+| Estado de la app: hilos, `editorial.sqlite`, registros | `~/.earlyscript/userdata/`                                      |
+| Corpus que captura la app                              | `~/earlyscript-data/live/` (`EARLYSCRIPT_EDITORIAL_CORPUS_DIR`) |
+| Corridas que lee el espacio Tendencias                 | `~/earlyscript-data/runs/` (`EARLYSCRIPT_EDITORIAL_RUNS_DIR`)   |
+| Modelo de embeddings                                   | `~/earlyscript-data/models/<revisión>/`                         |
+| Caché de embeddings                                    | `~/earlyscript-data/embeddings/embeddings.sqlite`               |
+
+## Decisiones y tiempos
+
+Solo el operador decide. Sobre una tendencia, puede crear un hilo de video, seguir observándola o descartarla. Sobre un guion, puede aceptarlo, editarlo, rechazarlo o aplazarlo, con una nota de utilidad de 1 a 5 y un motivo obligatorio. El agente no puede registrar decisiones.
+
+Cada decisión queda en `editorial.sqlite`, ligada a la corrida, al expediente y a la versión del guion que la produjeron. Un reloj mide el tiempo activo por etapa y se detiene con la decisión. El hilo manual tiene navegador integrado y editor, y el servidor impide que actúe un agente en él. El modo pares (Ajustes › Editorial › Revisión por pares) oculta cualquier indicio del origen de cada tarjeta, y la exportación ciega prepara los guiones para revisores externos. Los resultados de la tesis se leyeron en solo lectura de esa base.
+
+## Limitaciones
+
+- El motor necesita 35 días de historia por fuente para comparar semanas. Con menos, las filas salen parciales o no comparables.
+- La cobertura de GitHub, Hugging Face y npm siempre es parcial: cada consulta trae una muestra del día ordenada por popularidad actual. Un RSS solo lista sus últimas entradas. Al capturar días pasados, estas fuentes no reconstruyen lo que se sabía entonces.
+- Las fuentes son técnicas y en inglés. Muchas historias de Hacker News no tienen cuerpo, así que la evidencia suele ser un titular.
+- La relevancia la da una sonda entrenada con etiquetas de un juez basado en un modelo de lenguaje. La utilidad de la configuración elegida la estimaron jueces del mismo tipo, comparados con el operador solo en si un tema encaja con el canal.
+- Las tarjetas son apoyo de lectura, no una predicción. El motor no demostró ventaja frente a una lista por palabras clave del perfil.
+- Los vectores, y por tanto las huellas, dependen de la plataforma.
 
 ## Fuentes y condiciones de uso
 
-- Hacker News, por la API pública de Algolia, sin clave: historias sin comentarios. Los términos de Y Combinator restringen el uso comercial y la redistribución del contenido; el corpus se guarda en local para evaluación académica y no se redistribuye.
-- GitHub, por la API de búsqueda de repositorios, sin clave: repositorios creados cada día con 20 estrellas o más, primera página de 100 ordenada por estrellas actuales; cobertura siempre parcial.
-- Los textos contienen nombres públicos de autores y no son anónimos. No se recogen comentarios ni datos de cuentas. El corpus se puede borrar por fuente y antigüedad.
-- Lo que se envía al proveedor del agente: para los títulos, los términos, conteos y evidencia de cada ficha; en el hilo de video, lo que el operador escriba o adjunte. Telemetría, analítica de terceros y comprobación de actualizaciones de T3 Code están apagadas.
+- Hacker News por la API pública de Algolia: historias, sin comentarios. Los términos de Y Combinator restringen el uso comercial y la redistribución. El corpus se guarda en local y no se redistribuye.
+- GitHub por su API de búsqueda: repositorios creados cada día con 20 estrellas o más.
+- Hugging Face: modelos creados cada día y artículos destacados del día.
+- npm: paquetes publicados cada día, por búsqueda de palabras clave en el registro.
+- RSS: 14 blogs técnicos sobre IA y programación.
+- Wikipedia: lista de páginas más vistas, sin texto de artículos.
+- Los textos guardan nombres públicos de autores. No se recogen comentarios ni datos de cuentas. `engine purge` borra registros de un autor, de una URL o de un feed.
+- Al proveedor del agente solo llega lo que el operador escribe o adjunta en el hilo, y los títulos y resúmenes que pida al asistente. Telemetría, analítica y comprobación de actualizaciones de T3 Code están apagadas.
 
-## Sesgos y limitaciones conocidas
+## Organización del repositorio
 
-Dos fuentes técnicas en inglés dominadas por anuncios de grandes proveedores; el filtro de idioma deja pasar textos en español; la mayoría de las historias de HN no tienen cuerpo, así que la evidencia suele ser un título; la selección depende del umbral de apilado y de la plataforma de los vectores; el ranking ponderado no supera al orden por volumen en la retrospectiva de Earlywindow; la hipótesis de avisar una o dos semanas antes no quedó respaldada. Las fichas son apoyo de lectura, no predicción, y las métricas de los videos se registran a mano y de forma descriptiva.
+| Carpeta                                                         | Contenido                                                                                                                                       |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/editorial-contracts/`                                 | Esquemas de ítem, fuente, corrida, expediente (`dossier/1` y `dossier/2`), perfil y decisión                                                    |
+| `packages/trend-engine/`                                        | Motor: fuentes, corpus, embeddings, agrupamiento, movimiento, relevancia, corrida y comprobación; CLI `engine`. Configuraciones en `config/`    |
+| `packages/editorial-script/`                                    | Validador del guion; CLI `check`                                                                                                                |
+| `packages/engine-lab/`                                          | Laboratorio de variantes del motor, apagado en la versión evaluada                                                                              |
+| `apps/server/src/editorial/`                                    | Base `editorial.sqlite` con sus migraciones, corrida nocturna, importación de corridas, hilo de video, reloj, decisiones y CLI `profile import` |
+| `apps/web/src/editorial/`                                       | Espacio Tendencias, tarjetas, bandeja, hilo de video y modo manual, panel de decisión, reloj, resultados y ajustes editoriales                  |
+| `apps/server/src/earlyscript/`, `apps/desktop/src/earlyscript/` | Banderas que apagan telemetría y esconden funciones ajenas al estudio                                                                           |
+| `packages/shared/src/earlyscriptBrand.ts`                       | Marca, puertos, directorio base y esquema de URL                                                                                                |
+| `scripts/earlyscript/`                                          | Batería rápida `es:*`, comprobación de alcance y empaquetado del motor                                                                          |
+| `docs/upstream-divergence.md`                                   | Registro archivo por archivo de lo que difiere de T3 Code                                                                                       |
+| Resto del árbol                                                 | T3 Code sin cambios o con enganches de una línea registrados                                                                                    |
 
 ## Desarrollo
 
-Reglas del fork en [`AGENTS.md`](AGENTS.md): fusión regular de upstream, código aditivo, capa de marca fina, funciones escondidas por banderas, registro de divergencia. Entorno y baterías en [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md). Earlyscript convive con un T3 Code instalado porque usa `~/.earlyscript`, los puertos 4773, 14773 y 5743, el esquema `earlyscript://` y el binario `earlyscript`; todo está en `packages/shared/src/earlyscriptBrand.ts`. Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre.
+Las reglas del fork están en [`AGENTS.md`](AGENTS.md): código aditivo, capa de marca fina, funciones escondidas por banderas y registro de divergencia. `pnpm es:test` ejecuta las pruebas de los paquetes propios. La batería completa de T3 Code (`pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`) se describe en [`docs/dev-environment-linux.md`](docs/dev-environment-linux.md). Earlyscript convive con un T3 Code instalado porque usa `~/.earlyscript`, los puertos 4773, 14773 y 5743, el esquema `earlyscript://` y el binario `earlyscript`. Las variables `T3CODE_HOME`, `T3CODE_PORT`, `T3CODE_PORT_OFFSET` y `PORT` conservan su nombre.
+
+## Licencia y créditos
+
+Earlyscript se basa en [T3 Code](https://github.com/pingdotgg/t3code), de T3 Tools, publicado con licencia MIT. Este fork conserva esa licencia en [`LICENSE`](LICENSE). El motor de tendencias porta y amplía el de Earlywindow, el prototipo anterior del mismo proyecto. El modelo de embeddings es Qwen3-Embedding-0.6B en su versión ONNX de onnx-community.
