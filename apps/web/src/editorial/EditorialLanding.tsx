@@ -32,9 +32,6 @@ export function EditorialLanding({ children }: { readonly children: ReactNode })
   // Until the catalog knows the primary environment, upstream's landing must not start a draft.
   if (!decidable && claim === "pending") return null;
   if (target === null || environmentId === null) return children;
-  if (target.space === "results") {
-    return <Navigate to="/editorial/$environmentId/results" params={{ environmentId }} replace />;
-  }
   return target.trend ? (
     <Navigate
       to="/editorial/$environmentId/trends/$dossierId"

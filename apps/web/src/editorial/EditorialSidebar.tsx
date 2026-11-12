@@ -1,7 +1,7 @@
 import { EditorialDossierId, EditorialRunId, type EnvironmentId } from "@t3tools/contracts";
 import { useMatches, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
-import { ChartColumnIcon, MessagesSquareIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
+import { MessagesSquareIcon, TrendingUpIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, type ComponentProps } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
@@ -12,11 +12,16 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip"
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { readPrimaryEnvironmentId, usePrimaryEnvironmentId } from "../state/environments";
-import { compactCount, isThreadRouteId, resolveRouteSpace, spaceTabName } from "./editorial.logic";
+import {
+  compactCount,
+  isThreadRouteId,
+  resolveRouteSpace,
+  spaceTabName,
+  spaceTabTarget,
+} from "./editorial.logic";
 import { selectEnvironmentSpace, useSpaceStore, type EditorialSpace } from "./spaceStore";
 import { useSidebarLocale } from "./locale/ShellLocale";
 import { NewManualThreadButton } from "./NewManualThreadButton";
-import { ResultsNavigation } from "./results/ResultsNavigation";
 import { TrendInbox, useTrendInbox } from "./TrendInbox";
 
 const SPACES: ReadonlyArray<{
@@ -26,7 +31,6 @@ const SPACES: ReadonlyArray<{
 }> = [
   { space: "threads", label: "Hilos", Icon: MessagesSquareIcon },
   { space: "trends", label: "Tendencias", Icon: TrendingUpIcon },
-  { space: "results", label: "Resultados", Icon: ChartColumnIcon },
 ];
 
 /** Remembers each space's last destination as the router resolves, deep links included. */
@@ -66,9 +70,12 @@ function useRecordSpaceDestinations() {
 function SpaceTabs({
   environmentId,
   space,
+  routeSpace,
 }: {
   readonly environmentId: EnvironmentId;
   readonly space: EditorialSpace;
+  /** The space of the page on screen; `null` on Results, Settings and Usage. */
+  readonly routeSpace: EditorialSpace | null;
 }) {
   const navigate = useNavigate();
   const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
@@ -94,9 +101,6 @@ function SpaceTabs({
           : navigate({ to: "/editorial/$environmentId/trends", params: { environmentId } }));
         return;
       }
-      case "results":
-        void navigate({ to: "/editorial/$environmentId/results", params: { environmentId } });
-        return;
     }
   };
 
@@ -111,8 +115,9 @@ function SpaceTabs({
         className="w-full"
         value={[space]}
         onValueChange={(next) => {
-          const selected = SPACES.find((entry) => entry.space === next[0]);
-          if (selected && selected.space !== space) open(selected.space);
+          const pressed = SPACES.find((entry) => entry.space === next[0])?.space;
+          const target = spaceTabTarget({ pressed, shown: space, routeSpace });
+          if (target !== null) open(target);
         }}
       >
         {SPACES.map(({ space: entrySpace, label, Icon }) => {
@@ -155,9 +160,10 @@ function SpaceTabs({
 }
 
 /**
- * The main sidebar with Earlyscript's spaces: Threads (upstream's sidebar, untouched), Trends
- * and Results. The space switch sits under the title bar in every space: it renders first so
- * it keeps focus across switches, and CSS order places it after the space's title bar.
+ * The main sidebar with Earlyscript's spaces: Threads (upstream's sidebar, untouched) and
+ * Trends. Results is a page, opened from the bottom row: the sidebar keeps the list it had.
+ * The space switch sits under the title bar in every space: it renders first so it keeps focus
+ * across switches, and CSS order places it after the space's title bar.
  */
 export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
   useRecordSpaceDestinations();
@@ -170,14 +176,17 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = routeEnvironmentId ?? primaryEnvironmentId;
   const storedSpace = useSpaceStore((state) => selectEnvironmentSpace(state, environmentId).space);
-  const space = resolveRouteSpace(routeId) ?? storedSpace;
+  const routeSpace = resolveRouteSpace(routeId);
+  const space = routeSpace ?? storedSpace;
   // Upstream's sidebar in Spanish: the scope is `[data-app-sidebar]`, found from this wrapper.
   const localeAnchor = useRef<HTMLDivElement>(null);
   useSidebarLocale(localeAnchor);
 
   return (
     <>
-      {environmentId ? <SpaceTabs environmentId={environmentId} space={space} /> : null}
+      {environmentId ? (
+        <SpaceTabs environmentId={environmentId} space={space} routeSpace={routeSpace} />
+      ) : null}
       {environmentId && space === "threads" ? (
         <NewManualThreadButton environmentId={environmentId} />
       ) : null}
@@ -191,14 +200,10 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
         ) : (
           <>
             <SidebarChromeHeader isElectron={isElectron} />
-            {space === "trends" ? (
-              <TrendInbox
-                environmentId={environmentId}
-                activeDossierId={routeDossierId ? EditorialDossierId.make(routeDossierId) : null}
-              />
-            ) : (
-              <ResultsNavigation environmentId={environmentId} />
-            )}
+            <TrendInbox
+              environmentId={environmentId}
+              activeDossierId={routeDossierId ? EditorialDossierId.make(routeDossierId) : null}
+            />
             <SidebarChromeFooter />
           </>
         )}

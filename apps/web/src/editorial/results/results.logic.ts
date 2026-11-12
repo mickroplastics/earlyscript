@@ -9,27 +9,6 @@ import type {
   EditorialResultsSummary,
 } from "@t3tools/contracts";
 
-/**
- * Link props without the route-active marks (`aria-current="page"`, `data-status` and the
- * `active` class, the only class the anchors get from the router): the tab links share one
- * route, so the router marks all of them.
- */
-export function withoutRouteActive<P extends object>(
-  props: P,
-): Omit<P, "aria-current" | "data-status" | "className"> {
-  const {
-    "aria-current": _current,
-    "data-status": _status,
-    className: _className,
-    ...rest
-  } = props as P & {
-    readonly "aria-current"?: unknown;
-    readonly "data-status"?: unknown;
-    readonly className?: unknown;
-  };
-  return rest;
-}
-
 export const RESULTS_MODES: ReadonlyArray<EditorialResultsMode> = ["assisted", "manual"];
 
 export const RESULTS_STAGES: ReadonlyArray<EditorialResultsStage> = [

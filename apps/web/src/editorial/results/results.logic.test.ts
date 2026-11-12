@@ -6,7 +6,6 @@ import {
   coverageNote,
   decisionsFailureText,
   recordedTotalText,
-  withoutRouteActive,
   decisionThreadLabel,
   decisionTotalText,
   emptySideText,
@@ -248,18 +247,6 @@ describe("coverage", () => {
     expect(plain(recordedTotalText(comparison("recorded", { assisted: 1, manual: 0 })))).toBe(
       "Total de etapas registradas, mediana: asistido 37 min (n = 4) · manual 1 h 40 min (n = 3)",
     );
-  });
-});
-
-describe("tab links", () => {
-  it("drops the route-active marks of a link", () => {
-    const props = withoutRouteActive({
-      href: "/editorial/env/results?tab=etapas",
-      "aria-current": "page",
-      "data-status": "active",
-      className: "active",
-    });
-    expect(props).toEqual({ href: "/editorial/env/results?tab=etapas" });
   });
 });
 

@@ -9,36 +9,6 @@ import {
   type ResultsTabId,
 } from "./resultsOverview.logic";
 
-/** The id of a tab's panel, for the sidebar to move focus into it. */
-function resultsPanelId(tab: ResultsTabId): string {
-  return `resultados-${tab}`;
-}
-
-/**
- * Scrolls a panel to just under the fixed tab bar and focuses it, once it is visible: the
- * sidebar link changes the tab through the URL, so the panel shows on a later render.
- */
-export function focusResultsPanel(tab: ResultsTabId) {
-  const panel = document.getElementById(resultsPanelId(tab));
-  if (panel === null) return;
-  const land = () => {
-    const bar = document.querySelector<HTMLElement>("[data-results-tabbar]");
-    panel.style.scrollMarginTop = `${bar?.offsetHeight ?? 0}px`;
-    panel.scrollIntoView({ block: "start" });
-    panel.focus({ preventScroll: true });
-  };
-  if (!panel.hasAttribute("hidden")) {
-    land();
-    return;
-  }
-  const observer = new MutationObserver(() => {
-    if (panel.hasAttribute("hidden")) return;
-    observer.disconnect();
-    land();
-  });
-  observer.observe(panel, { attributes: true, attributeFilter: ["hidden"] });
-}
-
 /**
  * The tab in `?tab=`, resolved against the visible tabs, and the way to change it. The URL
  * keeps the tab so a link opens Results on it; changing tabs replaces the entry.
@@ -115,7 +85,7 @@ export function ResultsTabs({
       className="flex min-w-0 flex-col"
     >
       {/* The opaque band under the line keeps scrolled content off it while the bar is fixed. */}
-      <div data-results-tabbar="" className="sticky top-0 z-10 bg-background pb-3">
+      <div className="sticky top-0 z-10 bg-background pb-3">
         <Tabs.List
           activateOnFocus
           loopFocus
@@ -141,7 +111,6 @@ export function ResultsTabs({
           key={tab.id}
           value={tab.id}
           keepMounted
-          id={resultsPanelId(tab.id)}
           className="flex min-w-0 flex-col gap-4 rounded-sm pt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[hidden]:hidden"
         >
           {panels[tab.id]}

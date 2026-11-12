@@ -3,6 +3,7 @@ import {
   EditorialRunId,
   type EditorialSourceCoverage,
   type EditorialTrendSummary,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,6 +17,7 @@ import {
   growthBand,
   growthText,
   inboxSections,
+  isResultsRouteId,
   resolveLandingTarget,
   resolveRouteSpace,
   runGroupLabel,
@@ -23,10 +25,12 @@ import {
   snoozePresetLabel,
   snoozeStateText,
   spaceTabName,
+  spaceTabTarget,
   splitInbox,
   trendMenuItems,
   whyHereReasons,
 } from "./editorial.logic";
+import { migrateSpaceState, selectEnvironmentSpace } from "./spaceStore";
 
 const RUN_ID = EditorialRunId.make("run_20261019_20261027T003754_2263f7");
 
@@ -69,7 +73,10 @@ describe("resolveRouteSpace", () => {
   it("maps editorial and thread routes to their space and leaves the rest to the store", () => {
     expect(resolveRouteSpace("/_chat/editorial/$environmentId/trends")).toBe("trends");
     expect(resolveRouteSpace("/_chat/editorial/$environmentId/trends/$dossierId")).toBe("trends");
-    expect(resolveRouteSpace("/_chat/editorial/$environmentId/results")).toBe("results");
+    // Results is a page: the sidebar keeps the list it had.
+    expect(resolveRouteSpace("/_chat/editorial/$environmentId/results")).toBeNull();
+    expect(isResultsRouteId("/_chat/editorial/$environmentId/results")).toBe(true);
+    expect(isResultsRouteId("/_chat/editorial/$environmentId/trends")).toBe(false);
     expect(resolveRouteSpace("/_chat/$environmentId/$threadId")).toBe("threads");
     expect(resolveRouteSpace("/_chat/draft/$draftId")).toBe("threads");
     expect(resolveRouteSpace("/_chat/")).toBeNull();
@@ -82,7 +89,61 @@ describe("resolveLandingTarget", () => {
     const trend = { runId: RUN_ID, dossierId: QUANTUM.dossierId };
     expect(resolveLandingTarget({ space: "threads", trend })).toBeNull();
     expect(resolveLandingTarget({ space: "trends", trend })).toEqual({ space: "trends", trend });
-    expect(resolveLandingTarget({ space: "results", trend: null })).toEqual({ space: "results" });
+  });
+});
+
+describe("spaceTabTarget", () => {
+  it("opens another space, and the shown one from a page that is not its own", () => {
+    expect(spaceTabTarget({ pressed: "trends", shown: "threads", routeSpace: "threads" })).toBe(
+      "trends",
+    );
+    // On a thread, pressing Hilos again (the toggle deselects) stays put.
+    expect(spaceTabTarget({ pressed: undefined, shown: "threads", routeSpace: "threads" })).toBe(
+      null,
+    );
+    // On Results the shown list's tab still leads to its space, pressed or deselected.
+    expect(spaceTabTarget({ pressed: undefined, shown: "trends", routeSpace: null })).toBe(
+      "trends",
+    );
+    expect(spaceTabTarget({ pressed: "threads", shown: "threads", routeSpace: null })).toBe(
+      "threads",
+    );
+    expect(spaceTabTarget({ pressed: "threads", shown: "trends", routeSpace: null })).toBe(
+      "threads",
+    );
+  });
+});
+
+describe("migrateSpaceState", () => {
+  it("reopens a stored Results space, or any unknown one, as the Threads list", () => {
+    const trend = { runId: RUN_ID, dossierId: QUANTUM.dossierId };
+    const migrated = migrateSpaceState({
+      byEnvironment: {
+        a: { space: "results", trend },
+        b: { space: "trends", trend },
+        c: { space: "threads", trend: null },
+        d: {},
+      },
+      threadsHref: "/env/thread",
+    });
+    expect(migrated).toEqual({
+      byEnvironment: {
+        a: { space: "threads", trend },
+        b: { space: "trends", trend },
+        c: { space: "threads", trend: null },
+        d: { space: "threads", trend: null },
+      },
+      threadsHref: "/env/thread",
+    });
+    // A stored Results never claims the root: the app opens on the Threads list.
+    expect(
+      editorialClaimsRoot({
+        pathname: "/",
+        claim: "pending",
+        state: selectEnvironmentSpace(migrated, "a" as EnvironmentId),
+      }),
+    ).toBe(false);
+    expect(migrateSpaceState(undefined)).toEqual({ byEnvironment: {}, threadsHref: null });
   });
 });
 
@@ -90,7 +151,7 @@ describe("spaceTabName", () => {
   it("keeps the whole name and the count for assistive tech", () => {
     expect(spaceTabName("Tendencias", 18)).toBe("Tendencias, 18 nuevas");
     expect(spaceTabName("Tendencias", 1)).toBe("Tendencias, 1 nueva");
-    expect(spaceTabName("Resultados", null)).toBe("Resultados");
+    expect(spaceTabName("Hilos", null)).toBe("Hilos");
     expect(compactCount(18)).toBe("18");
     expect(compactCount(140)).toBe("99+");
   });
@@ -273,15 +334,8 @@ describe("coverageStatus", () => {
 describe("editorialClaimsRoot", () => {
   const trends = { space: "trends", trend: null } as const;
   const threads = { space: "threads", trend: null } as const;
-  it("claims / once for a stored Trends or Results space and yields everything else", () => {
+  it("claims / once for a stored Trends space and yields everything else", () => {
     expect(editorialClaimsRoot({ pathname: "/", claim: "pending", state: trends })).toBe(true);
-    expect(
-      editorialClaimsRoot({
-        pathname: "/",
-        claim: "pending",
-        state: { space: "results", trend: null },
-      }),
-    ).toBe(true);
     expect(editorialClaimsRoot({ pathname: "/", claim: "pending", state: threads })).toBe(false);
     // The redirect is still resolving: the claim holds even if the store changed meanwhile.
     expect(editorialClaimsRoot({ pathname: "/", claim: "editorial", state: threads })).toBe(true);
