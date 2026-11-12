@@ -184,6 +184,16 @@ export function videoFigure(summary: EditorialResultsSummary): FigureBody {
   };
 }
 
+/** The numbering of `figuras.md` (Figura 1 to 6), whatever tab holds each figure. */
+export const RESULTS_FIGURE_ORDER = [
+  "tiempos",
+  "etapas",
+  "linea-base",
+  "utilidad",
+  "bandeja",
+  "video",
+];
+
 /** Figure titles and captions of the Results page, kept apart from the page layout. */
 export const RESULTS_FIGURE_TEXT = {
   tiempos: {
