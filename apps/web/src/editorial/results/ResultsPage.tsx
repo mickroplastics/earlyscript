@@ -52,11 +52,14 @@ export interface ResultsOverviewControls {
   readonly onRetry: () => void;
 }
 
-/** The header line breaks only between its parts, never inside one. */
+/**
+ * The header line breaks only between its parts, never inside one; a separator opens the next
+ * line, never closes one.
+ */
 function HeaderLine({ text }: { readonly text: string }) {
   return text.split(" · ").map((part, index) => (
     <Fragment key={part}>
-      {index > 0 ? "\u00a0· " : null}
+      {index > 0 ? " ·\u00a0" : null}
       <span className="whitespace-nowrap">{part}</span>
     </Fragment>
   ));
@@ -208,7 +211,7 @@ export function ResultsPage({ environmentId }: { readonly environmentId: Environ
       <EditorialEmptyPage
         space={SPACE_LABEL}
         title="No se pudieron leer los resultados"
-        description="La base editorial de este entorno no respondió. Vuelve a abrir el espacio en un momento."
+        description="La base editorial de este entorno no respondió. Vuelve a abrir Resultados en un momento."
       />
     ) : (
       <EditorialPage space={SPACE_LABEL}>{null}</EditorialPage>
