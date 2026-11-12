@@ -7,19 +7,25 @@ import type { BaselineSeries } from "./manualBaseline.logic";
 
 type SeriesMark = EditorialResultsMode | BaselineSeries;
 
-/** Assisted wears the primary hue; manual the neutral ink, lighter when it is an estimate. */
+/**
+ * Assisted wears the primary hue; manual the neutral ink. An estimate is the same ink, lighter
+ * and outlined, so it keeps its contrast on both themes without passing for the timed series.
+ */
 export const SERIES_FILL: Readonly<Record<SeriesMark, string>> = {
   assisted: "fill-primary",
   manual: "fill-muted-foreground/70",
   cronometrado: "fill-muted-foreground/70",
-  reconstruido: "fill-muted-foreground/30",
+  reconstruido: "fill-muted-foreground/30 stroke-muted-foreground",
 };
 export const SERIES_BACKGROUND: Readonly<Record<SeriesMark, string>> = {
   assisted: "bg-primary",
   manual: "bg-muted-foreground/70",
   cronometrado: "bg-muted-foreground/70",
-  reconstruido: "bg-muted-foreground/30",
+  reconstruido: "bg-muted-foreground/30 border border-muted-foreground",
 };
+
+/** The empty part of a share bar, visible on a light card too. */
+export const TRACK_BACKGROUND = "bg-muted-foreground/15";
 
 /** The colour key of a series; its name is always written beside it. */
 export function SeriesSwatch({ series }: { readonly series: SeriesMark }) {
@@ -47,8 +53,19 @@ export function ResultsNote({ children }: { readonly children: ReactNode }) {
   );
 }
 
+/** A long note as a short list, one idea per line. */
+export function ResultsNoteList({ children }: { readonly children: ReactNode }) {
+  return (
+    <ul className="flex list-disc flex-col gap-0.5 ps-4 text-xs text-muted-foreground marker:text-muted-foreground/60 [&_b]:font-medium [&_b]:text-foreground">
+      {children}
+    </ul>
+  );
+}
+
 const BAR_HEIGHT = 10;
 const ROW_HEIGHT = 14;
+/** A median far below the scale still shows as a mark; its value is written beside it. */
+const MIN_BAR_PX = 4;
 
 /** Four columns shared by the stage and baseline charts: group, series, bar, value. */
 export const STAGE_BAR_COLUMNS = "grid-cols-[7rem_5.5rem_minmax(0,1fr)_9rem]";
@@ -118,6 +135,9 @@ export function MedianBarRow({
                 x="0"
                 y={(ROW_HEIGHT - BAR_HEIGHT) / 2}
                 width={percent(median)}
+                style={
+                  median > 0 ? { width: `max(${MIN_BAR_PX}px, ${percent(median)})` } : undefined
+                }
                 height={BAR_HEIGHT}
                 rx={2}
                 className={SERIES_FILL[series]}

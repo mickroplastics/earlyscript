@@ -36,6 +36,7 @@ import {
   MedianBarRow,
   ResultsBox,
   ResultsNote,
+  ResultsNoteList,
   SeriesSwatch,
 } from "./resultsMarks";
 import { shortResultsDate } from "./resultsOverview.logic";
@@ -91,7 +92,7 @@ function ComparisonSide({
       <span
         className={cn(
           "text-lg leading-tight font-semibold tabular-nums",
-          secondary ? "text-muted-foreground" : "text-foreground",
+          secondary ? "text-foreground/70" : "text-foreground",
         )}
       >
         {medianText(stats)}
@@ -211,12 +212,17 @@ function ComparisonTable({
         </TableBody>
       </Table>
       {both ? (
-        <p className="text-xs text-muted-foreground tabular-nums">
-          Las dos semanas juntas, mezclando cronometrado y reconstruido: búsqueda{" "}
-          {baselineStatsText(both.search)}; escritura en bloques con escritura{" "}
-          {baselineStatsText(both.writingNonZero)}; escritura en todos los bloques, descartes con 0
-          min incluidos, {baselineStatsText(both.writing)}.
-        </p>
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground tabular-nums">
+          <p>Las dos semanas juntas, mezclando cronometrado y reconstruido:</p>
+          <ResultsNoteList>
+            <li>Búsqueda: {baselineStatsText(both.search)}</li>
+            <li>Escritura en bloques con escritura: {baselineStatsText(both.writingNonZero)}</li>
+            <li>
+              Escritura en todos los bloques, descartes con 0 min incluidos:{" "}
+              {baselineStatsText(both.writing)}
+            </li>
+          </ResultsNoteList>
+        </div>
       ) : null}
     </div>
   );
@@ -230,7 +236,7 @@ function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord
         <h3 className="text-xs font-medium text-foreground">Tiempo registrado por semana</h3>
         <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           {record.weeks.map((week) => (
-            <li key={week.from} className="flex flex-wrap justify-between gap-x-3 tabular-nums">
+            <li key={week.from} className="flex flex-col tabular-nums">
               <span className="text-foreground">{weekRangeText(week)}</span>
               <span>
                 {weekMinutesText(week)} · {weekDaysText(week)}
@@ -246,13 +252,16 @@ function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord
       {both ? (
         <div className="flex min-w-0 flex-col gap-2">
           <h3 className="text-xs font-medium text-foreground">En qué terminó cada bloque</h3>
-          <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <ul className="grid w-fit grid-cols-[minmax(0,1fr)_auto] gap-x-8 gap-y-1.5 text-xs text-muted-foreground">
             {both.outcomes
               .filter((entry) => entry.blocks > 0)
               .map((entry) => (
-                <li key={entry.resultado} className="flex justify-between gap-3 tabular-nums">
+                <li
+                  key={entry.resultado}
+                  className="col-span-2 grid grid-cols-subgrid tabular-nums"
+                >
                   <span className="text-foreground">{outcomeLabel(entry.resultado)}</span>
-                  <span>{entry.blocks}</span>
+                  <span className="text-end">{entry.blocks}</span>
                 </li>
               ))}
           </ul>
