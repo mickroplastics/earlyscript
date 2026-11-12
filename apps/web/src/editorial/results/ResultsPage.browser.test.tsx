@@ -363,7 +363,14 @@ describe("ResultsView", () => {
   it("compares the two modes by medians with n, without a saving", async () => {
     await using screen = await render(
       <ResultsView
-        summary={SUMMARY}
+        summary={{
+          ...SUMMARY,
+          // Fewer scores than timed threads in one mode, more in the other.
+          modes: SUMMARY.modes.map((entry) => ({
+            ...entry,
+            utility: { ...entry.utility, n: entry.mode === "assisted" ? 5 : 2 },
+          })),
+        }}
         decisions={controls()}
         overview={OVERVIEW}
         threadTitles={new Map()}
@@ -381,6 +388,12 @@ describe("ResultsView", () => {
     expect(textOf(recorded)).toContain("Cobertura parcial: incluye 1 hilo");
     expect(recorded?.closest("[data-comparison=total]")).toBeNull();
     expect(screen.container.textContent).not.toMatch(/ahorr/i);
+    // The utility card counts its own sample, not the time card's.
+    const utility = screen
+      .getByRole("heading", { name: /^Utilidad registrada/ })
+      .element().parentElement;
+    expect(textOf(utility?.querySelector('[data-kpi-side="assisted"]'))).toContain("n = 5");
+    expect(textOf(utility?.querySelector('[data-kpi-side="manual"]'))).toContain("n = 2");
     // A stage that never ran in a mode is a dashed line, not a zero-length bar.
     const missing = screen.container.querySelector('[data-stage-bar="manual:read"]');
     expect(missing?.querySelector("rect")).toBeNull();
