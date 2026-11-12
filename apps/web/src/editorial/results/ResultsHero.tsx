@@ -21,7 +21,13 @@ import {
   provisionalNote,
   sizeText,
 } from "./results.logic";
-import { ResultsBox, SERIES_BACKGROUND, SERIES_FILL, SeriesSwatch } from "./resultsMarks";
+import {
+  ResultsBox,
+  SERIES_BACKGROUND,
+  SERIES_FILL,
+  SeriesSwatch,
+  TRACK_BACKGROUND,
+} from "./resultsMarks";
 import {
   citationShare,
   compactDurations,
@@ -32,6 +38,7 @@ import {
   utilityBars,
   utilityDistributionText,
   type ProcessPoints,
+  type StripDot,
 } from "./resultsOverview.logic";
 
 /** The dots of the time card: loading, unavailable (the medians alone), or one per thread. */
@@ -51,10 +58,10 @@ function KpiCard({
   readonly foot: ReactNode;
 }) {
   return (
-    <ResultsBox className="flex flex-col gap-3">
-      <h2 className="text-xs text-muted-foreground">{question}</h2>
+    <ResultsBox className="flex flex-col gap-3 @3xl:row-span-4 @3xl:grid @3xl:grid-rows-subgrid">
+      <h2 className="text-xs text-balance text-muted-foreground">{question}</h2>
       <div className="grid grid-cols-2 gap-2">{children}</div>
-      {chart}
+      <div className="flex min-w-0 flex-col justify-end">{chart}</div>
       <div className="mt-auto flex flex-col gap-0.5 border-t border-border pt-2 text-xs text-muted-foreground">
         {foot}
       </div>
@@ -102,15 +109,26 @@ function KpiSide({
   );
 }
 
-const STRIP_HEIGHT = 40;
-const STRIP_AXIS = STRIP_HEIGHT / 2;
-const STRIP_ROW: Readonly<Record<EditorialResultsMode, number>> = { assisted: 10, manual: 30 };
-const DOT_RADIUS = 4.5;
-const STACK_STEP = 4;
+const DOT_RADIUS = 4;
+/** One dot's height and a hair: stacked dots touch without overlapping. */
+const STACK_STEP = 9;
+/** From the axis to the centre of the first dot of each mode. */
+const ROW_OFFSET = 7;
+/** Room above and below the outer dots for the median rule. */
+const STRIP_EDGE = 7;
+/**
+ * Closest two dots may sit on one row, as a share of the scale: a dot and a hair on the
+ * narrowest card (about 220 px of strip).
+ */
+const DOT_GAP = (2 * DOT_RADIUS + 1) / 220;
+
+const outerStack = (dots: ReadonlyArray<StripDot>) =>
+  dots.reduce((outer, dot) => Math.max(outer, dot.stack), 0);
 
 /**
- * One dot per thread on a shared duration scale, assisted above the axis and manual below; a
- * rule at each median. Without dots, the median and the interquartile range alone.
+ * One dot per thread on a shared duration scale, assisted above the axis and manual below; dots
+ * too close to tell apart stack outwards, never sideways. A rule at each median. Without dots,
+ * the median and the interquartile range alone.
  */
 function TimeStrip({
   comparison,
@@ -123,21 +141,28 @@ function TimeStrip({
   const axis = durationAxis(stripMaxMs(points, comparison), formatDuration);
   const x = (ms: number) => `${Math.min(100, Math.max(0, (ms / axis.max) * 100))}%`;
   const labels = compactDurations(axis.ticks.slice(1).map((tick) => tick.label));
+  const dots: Readonly<Record<EditorialResultsMode, ReadonlyArray<StripDot>>> = {
+    assisted: points ? stripLayout(points.assisted, axis.max, DOT_GAP) : [],
+    manual: points ? stripLayout(points.manual, axis.max, DOT_GAP) : [],
+  };
+  const axisY = STRIP_EDGE + ROW_OFFSET + outerStack(dots.assisted) * STACK_STEP;
+  const height = axisY + ROW_OFFSET + outerStack(dots.manual) * STACK_STEP + STRIP_EDGE;
   return (
-    <div className="flex flex-col gap-1">
+    // The end padding leaves the last tick's label room to sit centred on its tick.
+    <div className="flex flex-col gap-1 pe-5">
       <svg
         role="img"
         aria-label={`Tiempo por ficha, proceso completo. ${timeStripText(points, comparison)}`}
         width="100%"
-        height={STRIP_HEIGHT}
+        height={height}
         className="overflow-visible"
         data-time-strip={points === null ? "medians" : "dots"}
       >
-        <line x1="0" x2="100%" y1={STRIP_AXIS} y2={STRIP_AXIS} className="stroke-border" />
+        <line x1="0" x2="100%" y1={axisY} y2={axisY} className="stroke-border" />
         {RESULTS_MODES.map((mode) => {
           const stats = comparison[mode];
-          const row = STRIP_ROW[mode];
           const away = mode === "assisted" ? -1 : 1;
+          const row = axisY + away * ROW_OFFSET;
           return (
             <g key={mode}>
               {points === null && stats.q1Ms !== null && stats.q3Ms !== null && stats.n > 1 ? (
@@ -150,18 +175,16 @@ function TimeStrip({
                   className={SERIES_FILL[mode]}
                 />
               ) : null}
-              {points
-                ? stripLayout(points[mode], axis.max).map((dot) => (
-                    <circle
-                      key={`${dot.ms}:${dot.stack}`}
-                      data-dot={mode}
-                      cx={`${dot.x * 100}%`}
-                      cy={row + away * dot.stack * STACK_STEP}
-                      r={DOT_RADIUS}
-                      className={SERIES_FILL[mode]}
-                    />
-                  ))
-                : null}
+              {dots[mode].map((dot) => (
+                <circle
+                  key={`${dot.ms}:${dot.stack}`}
+                  data-dot={mode}
+                  cx={`${dot.x * 100}%`}
+                  cy={row + away * dot.stack * STACK_STEP}
+                  r={DOT_RADIUS}
+                  className={SERIES_FILL[mode]}
+                />
+              ))}
               {stats.medianMs === null ? null : (
                 <line
                   x1={x(stats.medianMs)}
@@ -179,58 +202,60 @@ function TimeStrip({
       </svg>
       <div aria-hidden className="relative h-3.5 text-2xs text-muted-foreground tabular-nums">
         <span className="absolute start-0">0</span>
-        {axis.ticks.slice(1).map((tick, index) => {
-          const last = index === axis.ticks.length - 2;
-          return (
-            <span
-              key={tick.value}
-              className={cn("absolute whitespace-nowrap", last ? "end-0" : "-translate-x-1/2")}
-              style={last ? undefined : { left: x(tick.value) }}
-            >
-              {labels[index]}
-            </span>
-          );
-        })}
+        {axis.ticks.slice(1).map((tick, index) => (
+          <span
+            key={tick.value}
+            className="absolute -translate-x-1/2 whitespace-nowrap"
+            style={{ left: x(tick.value) }}
+          >
+            {labels[index]}
+          </span>
+        ))}
       </div>
     </div>
   );
 }
 
-const HISTOGRAM_HEIGHT = 36;
+const HISTOGRAM_HEIGHT = 40;
 
-/** Threads per utility score, both modes side by side in each score. */
+/**
+ * Threads per utility score, both modes side by side in each score, on one baseline: a score
+ * nobody gave has no column.
+ */
 function UtilityHistogram({ summary }: { readonly summary: EditorialResultsSummary }) {
+  const groups = utilityBars(summary);
   return (
     <div className="flex items-end gap-4">
-      <div
-        role="img"
-        aria-label={utilityDistributionText(summary)}
-        className="flex items-end gap-3.5"
-      >
-        {utilityBars(summary).map((group) => (
-          <div key={group.score} className="flex flex-col items-center gap-1">
-            <div className="flex items-end gap-0.5" style={{ height: HISTOGRAM_HEIGHT }}>
+      <div role="img" aria-label={utilityDistributionText(summary)} className="flex flex-col gap-1">
+        <div
+          className="flex items-end gap-3.5 border-b border-border"
+          style={{ height: HISTOGRAM_HEIGHT }}
+        >
+          {groups.map((group) => (
+            <div key={group.score} className="flex w-5.5 items-end justify-center gap-0.5">
               {RESULTS_MODES.map((mode) => (
                 <span
                   key={mode}
                   data-utility-bar={`${mode}:${group.score}`}
-                  className={cn(
-                    "w-2.5 rounded-t-xs",
-                    SERIES_BACKGROUND[mode],
-                    group.counts[mode] === 0 && "opacity-25",
-                  )}
+                  className={cn("w-2.5 rounded-t-xs", SERIES_BACKGROUND[mode])}
                   style={{
                     height:
                       group.counts[mode] === 0
-                        ? 1
+                        ? 0
                         : Math.max(2, Math.round(group.heights[mode] * HISTOGRAM_HEIGHT)),
                   }}
                 />
               ))}
             </div>
-            <span className="text-2xs text-muted-foreground tabular-nums">{group.score}</span>
-          </div>
-        ))}
+          ))}
+        </div>
+        <div className="flex gap-3.5 text-2xs text-muted-foreground tabular-nums">
+          {groups.map((group) => (
+            <span key={group.score} className="w-5.5 text-center">
+              {group.score}
+            </span>
+          ))}
+        </div>
       </div>
       <span className="max-w-20 pb-4 text-2xs text-muted-foreground">fichas por puntuación</span>
     </div>
@@ -240,9 +265,9 @@ function UtilityHistogram({ summary }: { readonly summary: EditorialResultsSumma
 /** The share of claims with a marker, assisted on top; the counts are written beside. */
 function CitationTracks({ summary }: { readonly summary: EditorialResultsSummary }) {
   return (
-    <div aria-hidden className="flex flex-col gap-2">
+    <div aria-hidden className="my-auto flex flex-col gap-3">
       {RESULTS_MODES.map((mode) => (
-        <span key={mode} className="block h-2.5 overflow-hidden rounded-full bg-muted">
+        <span key={mode} className={cn("block h-3 overflow-hidden rounded-full", TRACK_BACKGROUND)}>
           <span
             className={cn("block h-full rounded-full", SERIES_BACKGROUND[mode])}
             style={{ width: `${citationShare(modeSummary(summary, mode)) * 100}%` }}
@@ -308,7 +333,10 @@ function TimeCard({
   );
 }
 
-/** The three answers first: time per script, utility and cited claims, each mode side by side. */
+/**
+ * The three answers first: time per script, utility and cited claims, each mode side by side.
+ * The cards share their rows (question, figures, chart, foot) so each line reads across.
+ */
 export function ResultsHero({
   summary,
   points,
@@ -320,7 +348,7 @@ export function ResultsHero({
     <div className="grid gap-3 @3xl:grid-cols-3">
       <TimeCard summary={summary} points={points} />
       <KpiCard
-        question="Utilidad registrada por el operador · media, de 1 a 5"
+        question={"Utilidad registrada por el operador · media, de 1\u00a0a\u00a05"}
         chart={<UtilityHistogram summary={summary} />}
         foot={<span>Las valoraciones de revisores externos no están aquí.</span>}
       >

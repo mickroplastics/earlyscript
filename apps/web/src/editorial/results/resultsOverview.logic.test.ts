@@ -16,6 +16,7 @@ import {
   rowDateText,
   scriptRows,
   shortResultsDate,
+  shortResultsDay,
   splitValueUnit,
   stripLayout,
   timeStripText,
@@ -144,11 +145,21 @@ describe("completeProcessPoints", () => {
 });
 
 describe("stripLayout", () => {
-  it("stacks equal values without moving them sideways", () => {
-    const dots = stripLayout([10 * MINUTE, 10.2 * MINUTE, 20 * MINUTE], 40 * MINUTE);
+  it("stacks close values without moving them sideways", () => {
+    const dots = stripLayout([10 * MINUTE, 10.2 * MINUTE, 20 * MINUTE], 40 * MINUTE, 0.04);
     expect(dots.map((dot) => dot.stack)).toEqual([0, 1, 0]);
     expect(dots[0]?.x).toBe(0.25);
     expect(dots[1]?.x).toBeCloseTo(0.255);
+  });
+
+  it("puts each dot in the lowest row with room, so a cluster stays countable", () => {
+    const minutes = [29.73, 25.77, 49.58, 28.89, 26.2, 29.63];
+    const dots = stripLayout(
+      minutes.map((value) => value * MINUTE),
+      50 * MINUTE,
+      0.04,
+    );
+    expect(dots.map((dot) => dot.stack)).toEqual([2, 0, 0, 0, 1, 1]);
   });
 });
 
@@ -195,6 +206,7 @@ describe("dates", () => {
     expect(shortResultsDate("2026-11-10T05:11:00.000Z", { year: true, timeZone: ZONE })).toBe(
       "10 nov 2026, 0:11",
     );
+    expect(shortResultsDay("2026-10-01")).toBe("1 oct 2026");
     const last = "2026-11-10T05:11:00.000Z";
     expect(rowDateText("2026-11-03T20:00:00.000Z", last, ZONE)).toBe("3 nov, 15:00");
     expect(rowDateText("2025-12-03T20:00:00.000Z", last, ZONE)).toBe("3 dic 2025, 15:00");

@@ -93,7 +93,10 @@ function ComparisonCard({
 }) {
   const text = COMPARISON_TEXT[comparison.key];
   return (
-    <ResultsBox data-comparison={comparison.key} className="flex flex-col gap-3 p-3.5">
+    <ResultsBox
+      data-comparison={comparison.key}
+      className="flex flex-col gap-3 p-3.5 @3xl:row-span-3 @3xl:grid @3xl:grid-rows-subgrid"
+    >
       <div className="flex flex-col gap-0.5">
         <h3 className="text-xs font-medium text-foreground">{text.title}</h3>
         <p className="text-xs text-muted-foreground">{text.measures}</p>

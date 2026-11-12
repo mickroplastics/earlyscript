@@ -19,7 +19,6 @@ import {
 } from "./results.logic";
 
 const NBSP = " ";
-const HALF_MINUTE_MS = 30_000;
 
 /** The detail tabs of the Results page, in order; `?tab=` carries the id. */
 const RESULTS_TABS = [
@@ -78,6 +77,16 @@ export function shortResultsDate(
     minute: "2-digit",
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   }).format(new Date(iso));
+}
+
+/** A calendar day ("2026-10-01") in the same short form: "1 oct 2026". */
+export function shortResultsDay(day: string): string {
+  return new Intl.DateTimeFormat("es", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
 }
 
 function calendarYear(iso: string, timeZone: string): string {
@@ -202,20 +211,33 @@ export function stripMaxMs(points: ProcessPoints | null, comparison: EditorialRe
 
 export interface StripDot {
   readonly ms: number;
-  /** Position on the scale, 0 to 1; the position is the datum, so ties never move sideways. */
+  /** Position on the scale, 0 to 1; the position is the datum, so dots never move sideways. */
   readonly x: number;
-  /** How many equal dots (to the half minute) sit below this one. */
+  /** The row of the stack, 0 next to the axis; a dot too close to another goes one row out. */
   readonly stack: number;
 }
 
-export function stripLayout(values: ReadonlyArray<number>, maxMs: number): ReadonlyArray<StripDot> {
-  const seen = new Map<number, number>();
-  return values.map((ms) => {
-    const key = Math.round(ms / HALF_MINUTE_MS);
-    const stack = seen.get(key) ?? 0;
-    seen.set(key, stack + 1);
-    return { ms, x: maxMs > 0 ? Math.min(1, Math.max(0, ms / maxMs)) : 0, stack };
-  });
+/**
+ * Each dot in the lowest row where it stays `minGap` (a share of the scale) apart from the dots
+ * already there, from the shortest time up; the result keeps the order of `values`.
+ */
+export function stripLayout(
+  values: ReadonlyArray<number>,
+  maxMs: number,
+  minGap = 0,
+): ReadonlyArray<StripDot> {
+  const x = (ms: number) => (maxMs > 0 ? Math.min(1, Math.max(0, ms / maxMs)) : 0);
+  const rows: Array<number> = [];
+  const stacks = new Map<number, number>();
+  const order = values.map((ms, index) => ({ ms, index })).toSorted((a, b) => a.ms - b.ms);
+  for (const { ms, index } of order) {
+    const at = x(ms);
+    let stack = rows.findIndex((last) => at - last >= minGap && at !== last);
+    if (stack === -1) stack = rows.length;
+    rows[stack] = at;
+    stacks.set(index, stack);
+  }
+  return values.map((ms, index) => ({ ms, x: x(ms), stack: stacks.get(index) ?? 0 }));
 }
 
 /** The dot strip in words, for its `aria-label`. */
