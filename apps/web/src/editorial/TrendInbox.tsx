@@ -6,6 +6,7 @@ import {
   type EditorialTrendKey,
   type EditorialTrendSummary,
   type EnvironmentId,
+  trendTitle,
 } from "@t3tools/contracts";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
@@ -30,7 +31,7 @@ import {
   MenuTrigger,
 } from "../components/ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenu } from "../components/ui/sidebar";
-import { inboxSections, runGroupLabel, trendMenuItems } from "./editorial.logic";
+import { inboxSections, runGroupLabel, snoozeWhenLabel, trendMenuItems } from "./editorial.logic";
 import {
   EMPTY_INBOX_VIEW,
   editorialEnvironment,
@@ -165,16 +166,20 @@ export function TrendInbox({
     if (clicked._tag === "Failure" || clicked.value === null) return;
     const choice = clicked.value;
     if (choice.startsWith("snooze:")) {
-      const until =
-        choice === "snooze:custom"
-          ? await requestCustomSnooze()
-          : pickSnoozePreset(
-              presets,
-              choice.slice("snooze:".length),
-              timestampFormat,
-              environmentId,
-            );
-      if (until) void actions.keepWatching(trendKey, until);
+      if (choice === "snooze:custom") {
+        const custom = await requestCustomSnooze();
+        if (custom) void actions.keepWatching(trendKey, custom);
+        return;
+      }
+      const picked = pickSnoozePreset(
+        presets,
+        choice.slice("snooze:".length),
+        timestampFormat,
+        environmentId,
+      );
+      if (picked) {
+        void actions.keepWatching(trendKey, { ...picked, whenLabel: snoozeWhenLabel(picked) });
+      }
       return;
     }
     switch (choice) {
@@ -197,7 +202,7 @@ export function TrendInbox({
         void actions.returnToInbox(trendKey);
         return;
       case "dismiss":
-        setDismissing({ trendKey, title: trend.presentation?.title ?? trend.label });
+        setDismissing({ trendKey, title: trendTitle(trend) });
         return;
       case "reopen":
         void actions.reopen(trendKey);

@@ -14,7 +14,13 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../test/render";
-import { TrendDossierView, type TrendPresentationActions } from "./TrendDossierPage";
+import { SidebarMenu, SidebarProvider } from "../components/ui/sidebar";
+import {
+  TrendDossierScreen,
+  TrendDossierView,
+  type TrendPresentationActions,
+} from "./TrendDossierPage";
+import { TrendInboxRow } from "./TrendInboxRow";
 import { NO_MODEL_DESCRIPTION } from "./videoThreadTarget";
 
 const STUDIO_TARGET = {
@@ -194,6 +200,33 @@ const CARD: NonNullable<EditorialTrendDossier["trend"]["card"]> = {
   priorDecision: null,
 };
 
+/** The quantum dossier with a stored story the dossier no longer draws. */
+const outdatedDossier = (stored: {
+  readonly title: string;
+  readonly titleRejected?: boolean;
+}): EditorialTrendDossier => ({
+  ...DOSSIER,
+  trend: {
+    ...DOSSIER.trend,
+    card: CARD,
+    presentation: {
+      title: stored.title,
+      summary: {
+        whatHappened: "En los últimos 7 días el motor registró 11 elementos.",
+        whyItMatters: "Importa.",
+        videoAngle: "Un video.",
+      },
+      citedItemIds: [],
+      provider: "claudeAgent",
+      model: "claude-haiku-5-5",
+      promptVersion: "trend-presentation.v3",
+      generatedAt: "2026-10-31T12:00:00.000Z",
+      status: "outdated",
+      ...(stored.titleRejected ? { titleRejected: true } : {}),
+    },
+  },
+});
+
 describe("TrendDossierView", () => {
   it("shows movement with weekly values and keeps ranks and scores off screen", async () => {
     setup();
@@ -224,18 +257,18 @@ describe("TrendDossierView", () => {
       );
     // An uncaptured week is a "?", never a zero.
     expect(chart.element().textContent).toContain("?sin captura");
-    await expect.element(screen.getByText("Sin publicaciones en npm.")).toBeVisible();
-    await expect
-      .element(screen.getByText("Captura parcial en npm: un cero no confirma ausencia."))
-      .toBeVisible();
+    // One sentence for a quiet source whose capture was partial, never two that contradict.
+    expect(screen.container.textContent).toContain(
+      "Sin publicaciones registradas en npm; su captura fue parcial, así que un cero no confirma ausencia.",
+    );
+    expect(screen.container.textContent).not.toContain("Sin publicaciones en npm");
     // GitHub has bars, but its daily capture was partial: said next to the figure.
     await expect
       .element(
-        screen.getByText(
-          "Captura diaria incompleta en GitHub (0 de 28 días completos): sus cifras pueden quedarse cortas.",
-        ),
+        screen.getByRole("button", { name: /^Captura diaria incompleta\W+Días.*quedarse cortas/ }),
       )
       .toBeVisible();
+    expect(screen.container.textContent).toContain("cortas.: GitHub 0 de 28 días.");
     expect(screen.container.textContent).not.toContain("Cobertura incompleta en GitHub");
     // The third week has no total: GitHub did not capture it.
     expect(screen.container.textContent).toContain("7en la última semana");
@@ -799,13 +832,12 @@ describe("TrendDossierView", () => {
         onEvidencePage={() => {}}
       />,
     );
-    await expect
-      .element(
-        screen.getByText("Sin captura completa en GitHub: no se sabe si tuvo publicaciones."),
-      )
-      .toBeVisible();
-    await expect.element(screen.getByText("Sin publicaciones en npm.")).toBeVisible();
     await expect.element(screen.getByText("Última semana sin captura completa")).toBeVisible();
+    expect(screen.container.textContent).toContain(
+      "Sin publicaciones en npm. Sin captura completa en GitHub: no se sabe si tuvo publicaciones.",
+    );
+    // Without a total next to it, the lone series still says whose bars these are.
+    await expect.element(screen.getByText("Hacker News", { exact: true })).toBeVisible();
     const text = screen.container.textContent ?? "";
     expect(text).not.toContain("Sin publicaciones en GitHub");
     expect(text).not.toContain("en la última semana");
@@ -921,31 +953,10 @@ describe("TrendDossierView", () => {
   it("draws no story written with an older prompt and offers to draft it again", async () => {
     setup();
     const onRegenerate = vi.fn();
-    const outdated: EditorialTrendDossier = {
-      ...DOSSIER,
-      trend: {
-        ...DOSSIER.trend,
-        card: CARD,
-        presentation: {
-          title: "Once autores hablan de computación cuántica",
-          summary: {
-            whatHappened: "En los últimos 7 días el motor registró 11 elementos.",
-            whyItMatters: "Importa.",
-            videoAngle: "Un video.",
-          },
-          citedItemIds: [],
-          provider: "claudeAgent",
-          model: "claude-haiku-5-5",
-          promptVersion: "trend-presentation.v3",
-          generatedAt: "2026-10-31T12:00:00.000Z",
-          status: "outdated",
-        },
-      },
-    };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
-        dossier={outdated}
+        dossier={outdatedDossier({ title: "Once autores hablan de computación cuántica" })}
         onEvidencePage={() => {}}
         presentationActions={{ busy: null, error: null, onDraft: vi.fn(), onRegenerate }}
       />,
@@ -953,22 +964,62 @@ describe("TrendDossierView", () => {
     await expect
       .element(
         screen.getByText(
-          "El resumen anterior se redactó con una versión antigua; vuelve a redactarlo.",
+          "El resumen guardado no cumple las reglas actuales de redacción; vuelve a redactarlo.",
         ),
       )
       .toBeVisible();
-    await expect
-      .element(screen.getByRole("heading", { level: 1 }))
-      .toHaveTextContent("quantum computing ibm open");
+    await expect.element(screen.getByText("Resumen desactualizado")).toBeVisible();
     await expect.element(screen.getByText("Titulares recientes")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
     const text = screen.container.textContent ?? "";
     expect(text).not.toMatch(/motor/i);
-    expect(text).not.toContain("Once autores");
     expect(text).not.toContain("trend-presentation.v3");
     await userEvent.click(screen.getByRole("button", { name: "Redactar con el asistente" }));
     expect(onRegenerate).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    // A title that passes today's voice rules names the trend everywhere, marked outdated.
+    ["IBM abre su pila de computación cuántica", false, "IBM abre su pila de computación cuántica"],
+    // A rejected one shows nowhere: every surface uses the engine's terms.
+    ["El motor registró once titulares", true, "quantum computing ibm open"],
+  ])(
+    "names an outdated story «%s» the same in the row, header, breadcrumb and dismiss dialog",
+    async (stored, titleRejected, expected) => {
+      setup();
+      const dossier = outdatedDossier({ title: stored, titleRejected });
+      {
+        await using inbox = await render(
+          <SidebarProvider defaultOpen>
+            <SidebarMenu>
+              <TrendInboxRow environmentId={ENVIRONMENT_ID} trend={dossier.trend} isActive />
+            </SidebarMenu>
+          </SidebarProvider>,
+        );
+        const row = inbox.getByRole("link", { name: /Redacción desactualizada/ });
+        expect(row.element().textContent).toContain(expected);
+        if (titleRejected) expect(row.element().textContent).not.toContain(stored);
+      }
+      await using screen = await render(
+        <SidebarProvider defaultOpen>
+          <TrendDossierScreen
+            environmentId={ENVIRONMENT_ID}
+            dossier={dossier}
+            onEvidencePage={() => {}}
+          />
+        </SidebarProvider>,
+      );
+      await expect.element(screen.getByRole("heading", { level: 1 })).toHaveTextContent(expected);
+      await expect
+        .element(screen.getByRole("navigation", { name: "Ruta en Tendencias" }))
+        .toHaveTextContent(`Tendencias/${expected}`);
+      await userEvent.click(screen.getByRole("button", { name: "Descartar…" }));
+      const dialog = page.getByRole("dialog", { name: "Descartar tendencia" });
+      await expect.element(dialog).toBeVisible();
+      expect(dialog.element().textContent).toContain(`${expected} pasa a Descartadas`);
+      if (titleRejected) expect(document.body.textContent).not.toContain(stored);
+    },
+  );
 
   it("explains the partial history and the recurring topic from the keyboard", async () => {
     setup();

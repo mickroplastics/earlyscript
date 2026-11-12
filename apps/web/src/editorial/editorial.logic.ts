@@ -188,6 +188,25 @@ export function snoozePresetLabel(label: string): string {
   return ownValue(SNOOZE_LABELS_ES, label) ?? label;
 }
 
+const TIME_ES = new Intl.DateTimeFormat("es", { hour: "numeric", minute: "2-digit" });
+const WEEKDAY_ES = new Intl.DateTimeFormat("es", { weekday: "short" });
+
+/**
+ * The wake time of a snooze choice in Spanish, "17:04" or "lun 9:00", whatever the browser's
+ * locale. The day shows only where the shared label shows one.
+ */
+export function snoozeWhenLabel(preset: {
+  readonly whenLabel: string;
+  readonly snoozedUntil: string;
+}): string {
+  const wake = new Date(preset.snoozedUntil);
+  if (Number.isNaN(wake.getTime())) return preset.whenLabel;
+  const time = TIME_ES.format(wake);
+  return /^\p{L}+\.?\s/u.test(preset.whenLabel)
+    ? `${WEEKDAY_ES.format(wake).replace(/\.$/, "")} ${time}`
+    : time;
+}
+
 /** A table's own entry: `constructor` or `toString` are not labels. */
 function ownValue<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined;
@@ -213,6 +232,7 @@ export function trendMenuItems(
     readonly id: string;
     readonly label: string;
     readonly whenLabel: string;
+    readonly snoozedUntil: string;
   }>,
 ): ReadonlyArray<ContextMenuItem<TrendMenuAction>> {
   const items: Array<ContextMenuItem<TrendMenuAction>> = [
@@ -231,7 +251,7 @@ export function trendMenuItems(
         { id: "keep-watching", label: "Hasta que crezca" },
         ...snoozePresets.map((preset, index) => ({
           id: `snooze:${preset.id}` as const,
-          label: `${snoozePresetLabel(preset.label)} (${preset.whenLabel})`,
+          label: `${snoozePresetLabel(preset.label)} (${snoozeWhenLabel(preset)})`,
           separatorBefore: index === 0,
         })),
         { id: "snooze:custom", label: "Personalizado…", separatorBefore: true },

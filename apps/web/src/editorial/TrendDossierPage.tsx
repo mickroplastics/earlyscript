@@ -10,11 +10,13 @@ import {
   type EditorialTrendPresentation,
   type EditorialTrendSummary,
   type EnvironmentId,
+  trendTitle,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   ExternalLinkIcon,
+  HistoryIcon,
   PanelLeftIcon,
   RefreshCwIcon,
   SparklesIcon,
@@ -161,7 +163,7 @@ function DraftPresentationPrompt({
   outdated,
 }: {
   readonly actions: TrendPresentationActions;
-  /** A stored story the dossier does not draw: written with an older prompt. */
+  /** A stored story the dossier does not draw: older prompt or failing the voice rules. */
   readonly outdated: boolean;
 }) {
   // An outdated story may be the one stored for this input: only regenerating replaces it.
@@ -171,7 +173,7 @@ function DraftPresentationPrompt({
       <div className="flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-sm text-muted-foreground">
           {outdated
-            ? "El resumen anterior se redactó con una versión antigua; vuelve a redactarlo."
+            ? "El resumen guardado no cumple las reglas actuales de redacción; vuelve a redactarlo."
             : "El asistente puede escribir un título y un resumen que citan la evidencia. Usa el modelo de redacción de Ajustes."}
         </p>
         <Button
@@ -342,10 +344,18 @@ function TrendDossierHeader({
   const card = trend.card;
   const movement = card ? movementBadge(card) : null;
   const status = decisionPanelState(trend).badge;
+  // Marked like the inbox row: the title may come from a summary the dossier no longer draws.
+  const outdated = trend.presentation?.status === "outdated";
   return (
     <header className="flex min-w-0 flex-col gap-2">
-      {movement || card?.since || card?.perennial || status ? (
+      {movement || card?.since || card?.perennial || status || outdated ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {outdated ? (
+            <span className="inline-flex items-center gap-1 text-warning-foreground">
+              <HistoryIcon aria-hidden className="size-3.5" />
+              Resumen desactualizado
+            </span>
+          ) : null}
           {movement ? <Badge variant={movement.variant}>{movement.label}</Badge> : null}
           {card?.since ? <span>desde {agoText(card.since, cutoffAt)}</span> : null}
           {card?.perennial ? (
@@ -397,11 +407,7 @@ export function TrendDossierView({
   const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   return (
     <div className="@container/dossier flex min-w-0 flex-col gap-6">
-      <TrendDossierHeader
-        trend={trend}
-        title={presentation?.title ?? trend.label}
-        cutoffAt={dossier.run.cutoffAt}
-      />
+      <TrendDossierHeader trend={trend} title={trendTitle(trend)} cutoffAt={dossier.run.cutoffAt} />
       <div
         className={cn(
           "grid gap-8",
@@ -589,19 +595,23 @@ function LoadedTrendDossierPage({
     );
   }
   return (
-    <EditorialPage
-      space={SPACE_LABEL}
-      title={storyPresentation(dossier.trend)?.title ?? dossier.trend.label}
-    >
-      <TrendDossierView
-        environmentId={environmentId}
-        dossier={dossier}
-        allEvidence={allEvidence}
-        onShowAllEvidence={() => setAllEvidenceAsked(true)}
-        onEvidencePage={setEvidenceOffset}
-        presentationActions={presentationActions}
-        {...(citationEvidence === undefined ? {} : { citationEvidence })}
-      />
+    <TrendDossierScreen
+      environmentId={environmentId}
+      dossier={dossier}
+      allEvidence={allEvidence}
+      onShowAllEvidence={() => setAllEvidenceAsked(true)}
+      onEvidencePage={setEvidenceOffset}
+      presentationActions={presentationActions}
+      {...(citationEvidence === undefined ? {} : { citationEvidence })}
+    />
+  );
+}
+
+/** The loaded dossier with its breadcrumb, which names it as the header does. */
+export function TrendDossierScreen(props: Parameters<typeof TrendDossierView>[0]) {
+  return (
+    <EditorialPage space={SPACE_LABEL} title={trendTitle(props.dossier.trend)}>
+      <TrendDossierView {...props} />
     </EditorialPage>
   );
 }

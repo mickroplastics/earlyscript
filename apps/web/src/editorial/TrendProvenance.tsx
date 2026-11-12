@@ -61,14 +61,12 @@ export function TrendProvenance({ dossier }: { readonly dossier: EditorialTrendD
           {classification ? <Entry term="Clasificación">{classification}</Entry> : null}
           <Entry term="Términos detectados">{trend.label}</Entry>
           <Entry term="Corrida">
-            <span>
-              {[
-                cutoffAt === null ? "Sin corte" : `Corte: ${formatDate(cutoffAt)}`,
-                run.configVersion === null ? null : `configuración ${run.configVersion}`,
-              ]
-                .filter((part) => part !== null)
-                .join(" · ")}
-            </span>
+            <span>{cutoffAt === null ? "Sin corte" : `Corte: ${formatDate(cutoffAt)}`}</span>
+            {run.configVersion === null ? null : (
+              <code className="font-mono text-2xs break-all text-muted-foreground">
+                {run.configVersion}
+              </code>
+            )}
             <code className="font-mono text-2xs break-all text-muted-foreground">{run.runId}</code>
             <code className="font-mono text-2xs break-all text-muted-foreground">
               {trend.dossierId}

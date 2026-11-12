@@ -3,7 +3,7 @@ import {
   type EditorialSourceCoverage,
   type EditorialTrendCard,
 } from "@t3tools/contracts";
-import { useId } from "react";
+import { Fragment, useId } from "react";
 
 import {
   Table,
@@ -33,6 +33,9 @@ const PARTIAL_HINT =
   "Esta fuente aún no tiene las 5 semanas de historia que se piden para comparar.";
 
 const PartialMark = () => <HelpMark label="parcial" hint={PARTIAL_HINT} />;
+
+const ACTIVE_CAPTURE_HINT =
+  "Días con la captura diaria completa en la ventana de 28 días. Con días incompletos, sus cifras pueden quedarse cortas.";
 
 function UncapturedCell() {
   return (
@@ -163,7 +166,8 @@ export function TrendMovementPanel({
           {chart.series.length === 0 ? null : (
             <TrendWeeklyBars chart={chart} weekLabels={weekLabels} />
           )}
-          {chart.series.length >= 2 ? (
+          {/* A lone series names itself next to a known total; without one, here. */}
+          {chart.series.length >= 2 || (chart.series.length === 1 && single === undefined) ? (
             <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
               {chart.series.map((series) => (
                 <li key={series.source} className="inline-flex items-center gap-1.5">
@@ -207,17 +211,32 @@ export function TrendMovementPanel({
             </p>
           </div>
           {quiet || activeCapture || incomplete ? (
-            <div className="flex flex-col gap-1 text-xs">
-              {activeCapture ? (
-                <p className="text-warning-foreground">{activeCapture.text}</p>
-              ) : null}
-              {quiet?.text ? <p className="text-muted-foreground">{quiet.text}</p> : null}
-              {quiet?.caveat ? <p className="text-warning-foreground">{quiet.caveat}</p> : null}
-              {quiet?.uncaptured ? (
-                <p className="text-warning-foreground">{quiet.uncaptured}</p>
-              ) : null}
-              {incomplete ? <p className="text-warning-foreground">{incomplete}</p> : null}
-            </div>
+            // One paragraph, so short sentences share lines instead of stacking.
+            <p className="text-xs text-warning-foreground">
+              {[
+                activeCapture ? (
+                  <Fragment key="active">
+                    <HelpMark label="Captura diaria incompleta" hint={ACTIVE_CAPTURE_HINT} />:{" "}
+                    {activeCapture.days}.
+                  </Fragment>
+                ) : null,
+                quiet?.text ? (
+                  <span key="quiet" className="text-muted-foreground">
+                    {quiet.text}
+                  </span>
+                ) : null,
+                quiet?.partial ?? null,
+                quiet?.uncaptured ?? null,
+                incomplete,
+              ]
+                .filter((sentence) => sentence !== null)
+                .map((sentence, index) => (
+                  <Fragment key={typeof sentence === "string" ? sentence : `node-${index}`}>
+                    {index === 0 ? null : " "}
+                    {sentence}
+                  </Fragment>
+                ))}
+            </p>
           ) : null}
           <DossierDisclosure label="Semanas por fuente">
             <WeeksBySource

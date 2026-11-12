@@ -21,6 +21,7 @@ import {
   runGroupLabel,
   runPresentationProgressText,
   snoozePresetLabel,
+  snoozeWhenLabel,
   snoozeStateText,
   sourceLabel,
   sourceName,
@@ -171,10 +172,26 @@ describe("trendMenuItems", () => {
     production: null,
   };
   const ids = (items: ReturnType<typeof trendMenuItems>) => items.map((item) => item.id);
-  const presets = [{ id: "after:60", label: "In 1 hour", whenLabel: "9:00" }];
+  const presets = [
+    {
+      id: "after:60",
+      label: "In 1 hour",
+      whenLabel: "9:00 AM",
+      snoozedUntil: new Date(2026, 10, 9, 9, 0).toISOString(),
+    },
+  ];
+
+  it("says the wake time in Spanish, with the day only where the shared label names one", () => {
+    const at = (hours: number, minutes: number) =>
+      new Date(2026, 10, 9, hours, minutes).toISOString();
+    expect(snoozeWhenLabel({ whenLabel: "5:04 PM", snoozedUntil: at(17, 4) })).toBe("17:04");
+    // 9 November 2026 is a Monday.
+    expect(snoozeWhenLabel({ whenLabel: "Mon 9:00 AM", snoozedUntil: at(9, 0) })).toBe("lun 9:00");
+  });
 
   it("offers the three exits of a trend in the inbox, watching by growth first", () => {
     const items = trendMenuItems(base, presets);
+    expect(items[1]?.children?.[1]?.label).toBe("En 1 hora (9:00)");
     expect(ids(items)).toEqual(["create-video", "keep-watching", "dismiss"]);
     expect(items[1]?.children?.map((child) => child.id)).toEqual([
       "keep-watching",

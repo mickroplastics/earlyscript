@@ -1,4 +1,9 @@
-import { ThreadId, type EditorialTrendSummary, type EnvironmentId } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type EditorialTrendSummary,
+  type EnvironmentId,
+  trendTitle,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { HistoryIcon, type LucideIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
@@ -110,7 +115,9 @@ export function TrendInboxRow({
   const presentation = trend.presentation;
   // An outdated text keeps its title here, marked like a stale one, until drafted again.
   const stale = presentation?.status === "stale" || presentation?.status === "outdated";
-  const title = presentation?.title ?? trend.label;
+  const title = trendTitle(trend);
+  // A rejected title is not shown: the row reads like an undrafted one, still marked outdated.
+  const named = presentation !== undefined && presentation.titleRejected !== true;
   const production = trend.inbox?.production ?? null;
   const dismissed = trend.inbox?.dismissed ?? null;
   // Read, snoozed and dismissed rows recede like a seen thread; new ones keep full weight.
@@ -146,7 +153,7 @@ export function TrendInboxRow({
         {trend.isNew ? (
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : null}
-        {presentation ? (
+        {named ? (
           // The assistant's title replaces the engine label; the engine's words stay one hover away.
           <Tooltip>
             <TooltipTrigger
@@ -166,7 +173,7 @@ export function TrendInboxRow({
                 />
               }
             >
-              {presentation.title}
+              {title}
             </TooltipTrigger>
             <TooltipPopup side="right" className="max-w-72">
               {stale ? "Desactualizado: se redactó sobre otra evidencia, perfil o prompt · " : null}
@@ -184,10 +191,12 @@ export function TrendInboxRow({
             {trend.label}
           </span>
         )}
-        {presentation ? (
+        {named ? (
           <span className="sr-only">
             {stale ? "Redacción desactualizada. " : null}Términos del motor: {trend.label}.
           </span>
+        ) : stale ? (
+          <span className="sr-only">Redacción desactualizada.</span>
         ) : null}
         {stale ? <HistoryIcon aria-hidden className="size-3 shrink-0 text-warning" /> : null}
         {trend.isNew ? <span className="sr-only">Nueva.</span> : null}

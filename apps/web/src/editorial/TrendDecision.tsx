@@ -4,7 +4,7 @@ import type {
   EditorialTrendSummary,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, trendTitle } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
@@ -22,7 +22,7 @@ import {
   MenuTrigger,
 } from "../components/ui/menu";
 import { useClientSettings } from "../hooks/useSettings";
-import { snoozePresetLabel, snoozeStateText } from "./editorial.logic";
+import { snoozePresetLabel, snoozeStateText, snoozeWhenLabel } from "./editorial.logic";
 import { useTrendActions, type TrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 
@@ -75,11 +75,16 @@ export function KeepWatchingControl({
               key={preset.id}
               onClick={() => {
                 const picked = pickSnoozePreset(presets, preset.id, timestampFormat, environmentId);
-                if (picked) void actions.keepWatching(trendKey, picked);
+                if (picked) {
+                  void actions.keepWatching(trendKey, {
+                    ...picked,
+                    whenLabel: snoozeWhenLabel(picked),
+                  });
+                }
               }}
             >
               {snoozePresetLabel(preset.label)}
-              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+              <MenuShortcut>{snoozeWhenLabel(preset)}</MenuShortcut>
             </MenuItem>
           ))}
           <MenuItem
@@ -118,7 +123,7 @@ export function TrendDecision({
   const [dismissing, setDismissing] = useState(false);
   const [creating, setCreating] = useState(false);
   const { trendKey, inbox: state } = trend;
-  const title = trend.presentation?.title ?? trend.label;
+  const title = trendTitle(trend);
   const status = trendStateText(state);
   return (
     <div

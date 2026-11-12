@@ -10,6 +10,7 @@ import {
   type EditorialCardItem,
   type EditorialTrendCard,
   type EditorialTrendSummary,
+  trendTitle,
 } from "@t3tools/contracts";
 
 // Pure half of the brief trend card (engine v3, contract §1): its three lines, its sections and
@@ -18,7 +19,7 @@ import {
 
 type CardTrend = Pick<EditorialTrendSummary, "label" | "presentation" | "card">;
 
-export const cardTitle = (trend: CardTrend): string => trend.presentation?.title ?? trend.label;
+export const cardTitle = (trend: CardTrend): string => trendTitle(trend);
 
 /** Line 1 after the title: movement, since when, perennial mark. */
 export const cardMovementLine = (card: EditorialTrendCard, cutoffAt: string | null) =>

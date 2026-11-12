@@ -1,4 +1,9 @@
-import { ThreadId, type EditorialTrendSummary, type EnvironmentId } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type EditorialTrendSummary,
+  type EnvironmentId,
+  trendTitle,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { Fragment, useState, type ReactNode } from "react";
 
@@ -59,7 +64,7 @@ export function TrendDecisionPanel({
   const [creating, setCreating] = useState(false);
   const panel = decisionPanelState(trend);
   const { trendKey, inbox: state } = trend;
-  const title = trend.presentation?.title ?? trend.label;
+  const title = trendTitle(trend);
 
   const create = async (mode: "assisted" | "manual") => {
     if (trendKey === undefined) return;

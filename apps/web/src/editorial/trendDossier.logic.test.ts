@@ -126,7 +126,7 @@ describe("movementChart", () => {
     });
     expect(quietSourcesText(chart, [], [])).toEqual({
       text: "Sin publicaciones en npm.",
-      caveat: null,
+      partial: null,
       uncaptured: "Sin captura completa en GitHub: no se sabe si tuvo publicaciones.",
       saidSources: ["github"],
     });
@@ -173,30 +173,36 @@ describe("quietSourcesText", () => {
   const chart = { quiet: ["github", "huggingface", "npm"], uncaptured: [] };
 
   it("lists the quiet sources without a caveat when they were captured", () => {
-    expect(
-      quietSourcesText(chart, [coverage("github", 28), coverage("npm", 28)], [])?.caveat,
-    ).toBeNull();
-    expect(quietSourcesText(chart, [], [])?.text).toBe(
-      "Sin publicaciones en GitHub, Hugging Face y npm.",
-    );
+    expect(quietSourcesText(chart, [coverage("github", 28), coverage("npm", 28)], [])).toEqual({
+      text: "Sin publicaciones en GitHub, Hugging Face y npm.",
+      partial: null,
+      uncaptured: null,
+      saidSources: [],
+    });
     expect(quietSourcesText({ quiet: [], uncaptured: [] }, [], [])).toBeNull();
   });
 
-  it("warns that a zero of a partly captured source does not confirm absence", () => {
-    expect(quietSourcesText(chart, [coverage("github", 0, 28)], [])?.caveat).toBe(
-      "Captura parcial en GitHub: un cero no confirma ausencia.",
-    );
-    expect(quietSourcesText(chart, [], ["npm", "github"])?.caveat).toBe(
-      "Captura parcial en GitHub y npm: un cero no confirma ausencia.",
-    );
+  it("says once, per source, that a zero of a partly captured source does not confirm absence", () => {
+    expect(quietSourcesText(chart, [coverage("github", 0, 28)], [])).toMatchObject({
+      text: "Sin publicaciones en Hugging Face y npm.",
+      partial:
+        "Sin publicaciones registradas en GitHub; su captura fue parcial, así que un cero no confirma ausencia.",
+      saidSources: ["github"],
+    });
+    expect(quietSourcesText(chart, [], ["npm", "github"])).toMatchObject({
+      text: "Sin publicaciones en Hugging Face.",
+      partial:
+        "Sin publicaciones registradas en GitHub y npm; su captura fue parcial, así que un cero no confirma ausencia.",
+    });
   });
 
-  it("warns about the daily capture of the sources drawn with bars", () => {
+  it("lists the complete days of the sources drawn with bars and not fully captured", () => {
     const chart = movementChart({
       curve: [
         row("hn", [5, 4, 3, 11]),
         row("huggingface", [0, 2, 14, 3]),
         row("npm", [0, 0, 1, 0]),
+        row("rss", [0, 1, 0, 0]),
       ],
     });
     expect(
@@ -204,10 +210,11 @@ describe("quietSourcesText", () => {
         coverage("hn", 28),
         coverage("huggingface", 0, 28),
         coverage("npm", 20, 3),
+        coverage("rss", 7, 21),
       ]),
     ).toEqual({
-      text: "Captura diaria incompleta en Hugging Face (0 de 28 días completos) y npm (20 de 28 días completos): sus cifras pueden quedarse cortas.",
-      sources: ["huggingface", "npm"],
+      days: "Hugging Face 0 de 28 días, npm 20 de 28, RSS 7 de 28",
+      sources: ["huggingface", "npm", "rss"],
     });
     expect(activeCaptureText(chart, [coverage("hn", 28)])).toBeNull();
   });

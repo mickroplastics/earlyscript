@@ -150,9 +150,10 @@ const partlyCaptured = (
 };
 
 /**
- * "Sin publicaciones en GitHub y npm." for the sources with four captured zeros, with the
- * caveat when one of them was not fully captured: a zero there does not confirm absence. A
- * source with uncaptured weeks and no known item is never said to have had no publications.
+ * One sentence per kind of quiet source: "Sin publicaciones en npm." when captured in full,
+ * "Sin publicaciones registradas en GitHub; su captura fue parcial, así que un cero no
+ * confirma ausencia." when not. A source with uncaptured weeks and no known item is never
+ * said to have had no publications.
  */
 export function quietSourcesText(
   chart: Pick<MovementChart, "quiet" | "uncaptured">,
@@ -160,7 +161,7 @@ export function quietSourcesText(
   incompleteSources: ReadonlyArray<string>,
 ): {
   readonly text: string | null;
-  readonly caveat: string | null;
+  readonly partial: string | null;
   readonly uncaptured: string | null;
   /** Sources these lines already warn about. */
   readonly saidSources: ReadonlyArray<string>;
@@ -169,12 +170,13 @@ export function quietSourcesText(
   const partial = chart.quiet.filter((source) =>
     partlyCaptured(source, coverage, incompleteSources),
   );
+  const complete = chart.quiet.filter((source) => !partial.includes(source));
   return {
-    text: chart.quiet.length === 0 ? null : `Sin publicaciones en ${names(chart.quiet)}.`,
-    caveat:
+    text: complete.length === 0 ? null : `Sin publicaciones en ${names(complete)}.`,
+    partial:
       partial.length === 0
         ? null
-        : `Captura parcial en ${names(partial)}: un cero no confirma ausencia.`,
+        : `Sin publicaciones registradas en ${names(partial)}; su captura fue parcial, así que un cero no confirma ausencia.`,
     uncaptured:
       chart.uncaptured.length === 0
         ? null
@@ -184,28 +186,29 @@ export function quietSourcesText(
 }
 
 /**
- * Sources drawn with bars whose daily capture was not complete in the window: their bars
- * may fall short. Not the five-week history `partial` mark, which is about comparing.
+ * Sources drawn with bars whose daily capture was not complete in the window, with their
+ * complete days: "Hugging Face 0 de 28 días, RSS 7 de 28". Their bars may fall short. Not the
+ * five-week history `partial` mark, which is about comparing.
  */
 export function activeCaptureText(
   chart: Pick<MovementChart, "series">,
   coverage: ReadonlyArray<EditorialSourceCoverage>,
-): { readonly text: string; readonly sources: ReadonlyArray<string> } | null {
+): { readonly days: string; readonly sources: ReadonlyArray<string> } | null {
   const short = chart.series.flatMap((series) => {
     const entry = coverage.find((candidate) => candidate.source === series.source);
     return entry === undefined || coverageStatus(entry) === "complete"
       ? []
-      : [
-          {
-            source: series.source,
-            text: `${series.name} (${entry.daysComplete} de ${entry.windowDays} días completos)`,
-          },
-        ];
+      : [{ source: series.source, name: series.name, entry }];
   });
   if (short.length === 0) return null;
   return {
-    text: `Captura diaria incompleta en ${listFormat.format(short.map((entry) => entry.text))}: sus cifras pueden quedarse cortas.`,
-    sources: short.map((entry) => entry.source),
+    days: short
+      .map(
+        ({ name, entry }, index) =>
+          `${name} ${entry.daysComplete} de ${entry.windowDays}${index === 0 ? " días" : ""}`,
+      )
+      .join(", "),
+    sources: short.map(({ source }) => source),
   };
 }
 
