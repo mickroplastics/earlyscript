@@ -152,7 +152,7 @@ export function ThreadDetailsCard({
         <Row label="Guion">
           <span className="block">
             {decision
-              ? `Versión decidida, guardada el ${dateAndTime(decision.decidedAt)}`
+              ? `La versión que decidiste el ${dateAndTime(decision.decidedAt)}`
               : head
                 ? `Versión ${script.versionCount}, guardada ${formatSavedAt(head.savedAt)}`
                 : "Sin versiones guardadas todavía"}

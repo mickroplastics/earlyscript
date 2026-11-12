@@ -686,7 +686,7 @@ function WorkspaceView({
                         ) : null}
                         <span className="min-w-0 flex-1 truncate">
                           {decided
-                            ? `Versión decidida · guardada el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
+                            ? `Versión decidida el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
                             : model.current === "decide"
                               ? "Esta es la versión que vas a decidir · solo lectura mientras decides"
                               : agentWorking && drafted
