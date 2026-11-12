@@ -469,51 +469,77 @@ export function whyHereReasons(input: {
   return reasons;
 }
 
+export interface CitationRef {
+  readonly itemId: string;
+  /** 1-based position in the dossier's evidence, as the evidence list numbers it. */
+  readonly number: number;
+  readonly item: EditorialEvidenceItem;
+}
+
 export type CitationSegment =
   | { readonly kind: "text"; readonly text: string }
   | {
-      readonly kind: "citation";
-      readonly itemId: string;
-      /** 1-based position in the dossier's evidence, as the evidence list numbers it. */
-      readonly number: number;
-      readonly item: EditorialEvidenceItem;
+      /**
+       * Citations with the word before them and the punctuation after them, drawn as one
+       * unbreakable piece so a line never starts with a citation number or a comma.
+       */
+      readonly kind: "cited";
+      readonly word: string;
+      readonly citations: ReadonlyArray<CitationRef>;
+      readonly after: string;
     };
 
 /** Same marker the server validates: `[itemId]`, without spaces or nested brackets. */
 const INLINE_CITATION = /\[([^[\]\s]+)\]/g;
+const CLOSING_PUNCTUATION = /^[.,;:!?…)\]»”"']*/;
 
 /**
  * Splits an assistant summary into text and `[itemId]` citations of known evidence. A marker
  * for an id the dossier does not list stays as written; the server already warned about it.
- * The space before a citation is dropped so the number sits against its claim.
+ * The space before a citation is dropped so the number sits against its claim, and markers
+ * separated only by spaces form one group.
  */
 export function citationSegments(
   text: string,
   evidence: ReadonlyArray<EditorialEvidenceItem>,
 ): ReadonlyArray<CitationSegment> {
   const known = new Map(evidence.map((item, index) => [item.itemId, { item, number: index + 1 }]));
-  const segments: CitationSegment[] = [];
+  // texts[i] comes before groups[i]; the last text follows the last group.
+  const texts: string[] = [];
+  const groups: CitationRef[][] = [];
   let cursor = 0;
-  const pushText = (value: string) => {
-    if (value.length === 0) return;
-    const last = segments.at(-1);
-    if (last?.kind === "text")
-      segments[segments.length - 1] = { kind: "text", text: last.text + value };
-    else segments.push({ kind: "text", text: value });
-  };
   for (const match of text.matchAll(INLINE_CITATION)) {
     const itemId = match[1] ?? "";
     const entry = known.get(itemId);
-    const start = match.index;
-    if (entry === undefined) {
-      pushText(text.slice(cursor, start + match[0].length));
+    if (entry === undefined) continue;
+    const between = text.slice(cursor, match.index);
+    const citation = { itemId, number: entry.number, item: entry.item };
+    const open = groups.at(-1);
+    if (open !== undefined && between.trim() === "") {
+      open.push(citation);
     } else {
-      pushText(text.slice(cursor, start).replace(/\s+$/, ""));
-      segments.push({ kind: "citation", itemId, number: entry.number, item: entry.item });
+      texts.push(between);
+      groups.push([citation]);
     }
-    cursor = start + match[0].length;
+    cursor = match.index + match[0].length;
   }
-  pushText(text.slice(cursor));
+  texts.push(text.slice(cursor));
+
+  const segments: CitationSegment[] = [];
+  const pushText = (value: string) => {
+    if (value.length > 0) segments.push({ kind: "text", text: value });
+  };
+  let rest = texts[0] ?? "";
+  for (const [index, citations] of groups.entries()) {
+    const before = rest.replace(/\s+$/, "");
+    const word = /\S*$/.exec(before)?.[0] ?? "";
+    const next = texts[index + 1] ?? "";
+    const after = CLOSING_PUNCTUATION.exec(next)?.[0] ?? "";
+    pushText(before.slice(0, before.length - word.length));
+    segments.push({ kind: "cited", word, citations, after });
+    rest = next.slice(after.length);
+  }
+  pushText(rest);
   return segments;
 }
 

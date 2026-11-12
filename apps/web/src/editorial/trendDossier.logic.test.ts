@@ -185,14 +185,12 @@ describe("quietSourcesText", () => {
   it("says once, per source, that a zero of a partly captured source does not confirm absence", () => {
     expect(quietSourcesText(chart, [coverage("github", 0, 28)], [])).toMatchObject({
       text: "Sin publicaciones en Hugging Face y npm.",
-      partial:
-        "Sin publicaciones registradas en GitHub; con captura parcial, un cero no confirma ausencia.",
+      partial: "GitHub sin publicaciones registradas, pero con captura parcial.",
       saidSources: ["github"],
     });
     expect(quietSourcesText(chart, [], ["npm", "github"])).toMatchObject({
       text: "Sin publicaciones en Hugging Face.",
-      partial:
-        "Sin publicaciones registradas en GitHub y npm; con captura parcial, un cero no confirma ausencia.",
+      partial: "GitHub y npm sin publicaciones registradas, pero con captura parcial.",
     });
   });
 

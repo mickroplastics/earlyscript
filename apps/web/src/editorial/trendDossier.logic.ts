@@ -151,8 +151,8 @@ const partlyCaptured = (
 
 /**
  * One sentence per kind of quiet source: "Sin publicaciones en npm." when captured in full,
- * "Sin publicaciones registradas en GitHub; con captura parcial, un cero no confirma
- * ausencia." when not. A source with uncaptured weeks and no known item is never said to
+ * "GitHub sin publicaciones registradas, pero con captura parcial." when not, so a zero is
+ * never read as absence. A source with uncaptured weeks and no known item is never said to
  * have had no publications.
  */
 export function quietSourcesText(
@@ -176,7 +176,7 @@ export function quietSourcesText(
     partial:
       partial.length === 0
         ? null
-        : `Sin publicaciones registradas en ${names(partial)}; con captura parcial, un cero no confirma ausencia.`,
+        : `${names(partial)} sin publicaciones registradas, pero con captura parcial.`,
     uncaptured:
       chart.uncaptured.length === 0
         ? null

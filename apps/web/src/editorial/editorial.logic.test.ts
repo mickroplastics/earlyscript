@@ -443,37 +443,44 @@ describe("citationSegments", () => {
   });
   const evidence = [item("itm_hn_1"), item("itm_hn_2"), item("itm_gh_3")];
 
-  it("turns known [itemId] markers into numbered citations in evidence order", () => {
-    const segments = citationSegments(
-      "IBM opened a quantum stack [itm_hn_2] and a SDK [itm_gh_3][itm_hn_1].",
-      evidence,
+  const shape = (text: string) =>
+    citationSegments(text, evidence).map((segment) =>
+      segment.kind === "text"
+        ? segment.text
+        : `<${segment.word}${segment.citations.map((citation) => `#${citation.number}:${citation.itemId}`).join("")}${segment.after}>`,
     );
-    expect(
-      segments.map((segment) =>
-        segment.kind === "text" ? segment.text : `#${segment.number}:${segment.itemId}`,
-      ),
-    ).toEqual([
-      "IBM opened a quantum stack",
-      "#2:itm_hn_2",
-      " and a SDK",
-      "#3:itm_gh_3",
-      "#1:itm_hn_1",
-      ".",
-    ]);
-  });
 
-  it("keeps unknown markers and other brackets as written", () => {
-    const segments = citationSegments("Claim [itm_x_9] and [a note] stay [itm_hn_1]", evidence);
-    expect(
-      segments.map((segment) => (segment.kind === "text" ? segment.text : `#${segment.number}`)),
-    ).toEqual(["Claim [itm_x_9] and [a note] stay", "#1"]);
-  });
-
-  it("returns the text whole when there is nothing to cite", () => {
-    expect(citationSegments("No citations here.", evidence)).toEqual([
-      { kind: "text", text: "No citations here." },
-    ]);
-    expect(citationSegments("", evidence)).toEqual([]);
+  it.each([
+    [
+      "IBM opened a quantum stack [itm_hn_2] and a SDK [itm_gh_3][itm_hn_1].",
+      ["IBM opened a quantum ", "<stack#2:itm_hn_2>", " and a ", "<SDK#3:itm_gh_3#1:itm_hn_1.>"],
+    ],
+    // Round 3: "Terminal-Bench 4.0", then "9" alone and "." on the next lines; "Linux ⁵" and
+    // ", y otro" starting the next one.
+    [
+      "Claude Code resuelve 51.8 % en Terminal-Bench 4.0 [itm_hn_1].",
+      ["Claude Code resuelve 51.8 % en Terminal-Bench ", "<4.0#1:itm_hn_1.>"],
+    ],
+    [
+      "Afecta a sistemas Linux [itm_gh_3], y otro reporte [itm_hn_1] [itm_hn_2]» lo confirma.",
+      [
+        "Afecta a sistemas ",
+        "<Linux#3:itm_gh_3,>",
+        " y otro ",
+        "<reporte#1:itm_hn_1#2:itm_hn_2»>",
+        " lo confirma.",
+      ],
+    ],
+    ["[itm_hn_1] abre el texto.", ["<#1:itm_hn_1>", " abre el texto."]],
+    // Unknown markers and other brackets stay as written.
+    [
+      "Claim [itm_x_9] and [a note] stay [itm_hn_1]",
+      ["Claim [itm_x_9] and [a note] ", "<stay#1:itm_hn_1>"],
+    ],
+    ["No citations here.", ["No citations here."]],
+    ["", []],
+  ])("keeps each citation with its word and punctuation: %s", (text, segments) => {
+    expect(shape(text)).toEqual(segments);
   });
 });
 

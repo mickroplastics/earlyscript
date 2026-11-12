@@ -129,12 +129,19 @@ function CitedText({
           // oxlint-disable-next-line react/no-array-index-key -- segments are positional
           <span key={index}>{segment.text}</span>
         ) : (
-          <CitationLink
-            // oxlint-disable-next-line react/no-array-index-key -- the same item can be cited twice
-            key={index}
-            number={segment.number}
-            item={segment.item}
-          />
+          // oxlint-disable-next-line react/no-array-index-key -- segments are positional
+          <span key={index} className="whitespace-nowrap">
+            {segment.word}
+            {segment.citations.map((citation, position) => (
+              <CitationLink
+                // oxlint-disable-next-line react/no-array-index-key -- the same item can be cited twice
+                key={position}
+                number={citation.number}
+                item={citation.item}
+              />
+            ))}
+            {segment.after}
+          </span>
         ),
       )}
     </>

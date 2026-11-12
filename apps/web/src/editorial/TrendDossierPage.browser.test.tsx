@@ -259,7 +259,7 @@ describe("TrendDossierView", () => {
     expect(chart.element().textContent).toContain("?sin captura");
     // One sentence for a quiet source whose capture was partial, never two that contradict.
     expect(screen.container.textContent).toContain(
-      "Sin publicaciones registradas en npm; con captura parcial, un cero no confirma ausencia.",
+      "npm sin publicaciones registradas, pero con captura parcial.",
     );
     expect(screen.container.textContent).not.toContain("Sin publicaciones en npm");
     // GitHub has bars, but its daily capture was partial: said next to the figure.
@@ -690,13 +690,12 @@ describe("TrendDossierView", () => {
       .element(screen.getByRole("heading", { level: 1 }))
       .toHaveTextContent("IBM abre su pila de computación cuántica");
     await expect.element(screen.getByText("Redactado por el asistente")).toBeVisible();
-    await expect
-      .element(
-        screen
-          .getByRole("region", { name: "Encaje con el canal" })
-          .getByText("Toca herramientas para desarrolladores"),
-      )
-      .toBeVisible();
+    const fit = screen.getByRole("region", { name: "Encaje con el canal" }).getByRole("paragraph");
+    await expect.element(fit).toHaveTextContent("Toca herramientas para desarrolladores1.");
+    // The last word, the citation and the period wrap as one piece.
+    expect(
+      fit.getByRole("link", { name: /^Evidencia 1:/ }).element().parentElement?.textContent,
+    ).toBe("desarrolladores1.");
     await expect.element(screen.getByText(/^Modelo: claude-haiku-5-5/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
     await expect
