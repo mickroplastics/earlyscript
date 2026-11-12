@@ -95,6 +95,23 @@ describe("EditorialResultsService", () => {
         );
         assert.strictEqual(humanPage.total + trialPage.total, decisions.length);
         assert.strictEqual(humanPage.total, humanPage.decisions.length);
+        // Cohort, mode and page together: the total counts the filtered rows, not the page.
+        const humanAssisted = decisions.filter(
+          (decision) => decision.cohort === "human" && decision.mode === "assisted",
+        );
+        assert.isAtLeast(humanAssisted.length, 2);
+        const secondPage = yield* service.decisions({
+          cohort: "human",
+          mode: "assisted",
+          limit: 1,
+          offset: 1,
+        });
+        assert.strictEqual(secondPage.total, humanAssisted.length);
+        assert.strictEqual(secondPage.offset, 1);
+        assert.deepStrictEqual(
+          secondPage.decisions.map((decision) => decision.decisionId),
+          [humanAssisted[1]!.decisionId],
+        );
         yield* threads.setCohort("thread-assisted-1", "human");
         assert.deepStrictEqual((yield* service.summary).modes, before.modes);
       }),
