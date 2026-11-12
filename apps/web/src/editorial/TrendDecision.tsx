@@ -30,14 +30,17 @@ import { TrendDismissDialog } from "./TrendDismissDialog";
 // each replaced by its way back once taken. Shared by the dossier page and the brief card.
 
 /** "Seguir observando": growth by default, or one of the thread snooze times. */
-function KeepWatchingControl({
+export function KeepWatchingControl({
   environmentId,
   trendKey,
   actions,
+  size = "sm",
 }: {
   readonly environmentId: EnvironmentId;
   readonly trendKey: EditorialTrendKey;
   readonly actions: TrendActions;
+  /** `xs` on the dossier page, where it is a secondary action next to the main button. */
+  readonly size?: "sm" | "xs";
 }) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [open, setOpen] = useState(false);
@@ -45,15 +48,22 @@ function KeepWatchingControl({
     ? // oxlint-disable-next-line react/purity -- Presets are resolved only while the menu is open, so each opening reads a fresh time.
       resolveSnoozePresets(new Date(), timestampFormat, environmentId)
     : [];
+  const variant = size === "xs" ? "ghost-muted" : "outline";
   return (
     <Group aria-label="Seguir observando">
-      <Button size="sm" variant="outline" onClick={() => void actions.keepWatching(trendKey)}>
+      <Button size={size} variant={variant} onClick={() => void actions.keepWatching(trendKey)}>
         Seguir observando
       </Button>
       <GroupSeparator />
       <Menu open={open} onOpenChange={setOpen}>
         <MenuTrigger
-          render={<Button size="icon-sm" variant="outline" aria-label="Observar hasta…" />}
+          render={
+            <Button
+              size={size === "xs" ? "icon-xs" : "icon-sm"}
+              variant={variant}
+              aria-label="Observar hasta…"
+            />
+          }
         >
           <ChevronDownIcon />
         </MenuTrigger>
@@ -175,7 +185,7 @@ export function TrendDecision({
               size="sm"
               variant="outline"
               disabled={creating}
-              title="Mismo tema, sin asistente ni expediente: para comparar por pares"
+              title="Mismo tema, sin asistente ni ficha: para comparar por pares"
               onClick={async () => {
                 setCreating(true);
                 // The button comes back even if the action throws.

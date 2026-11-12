@@ -145,81 +145,105 @@ const DOSSIER: EditorialTrendDossier = {
   evidenceRange: { from: "2026-09-09T08:27:14.000Z", to: "2026-10-16T18:00:18.000Z" },
 };
 
+const CARD: NonNullable<EditorialTrendDossier["trend"]["card"]> = {
+  origin: "v3",
+  section: "moving",
+  position: 1,
+  movement: "weak",
+  since: "2026-10-15",
+  perennial: false,
+  curve: [
+    { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
+    { source: "github", status: "comparable", weeks: [0, 0, null, 2] },
+    { source: "npm", status: "comparable", weeks: [0, 0, 0, 0] },
+    { source: "wikipedia", status: "unused", weeks: [] },
+  ],
+  sourceCount: 2,
+  firstSource: { source: "hn", day: "2026-09-09" },
+  secondSource: { source: "github", day: "2026-10-16" },
+  fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
+  saturated: false,
+  headlines: [
+    {
+      itemId: "itm_hn_1",
+      source: "hn",
+      title: "Quantum item 1",
+      day: "2026-10-15",
+      url: "https://example.com/1",
+    },
+  ],
+  evidence: [
+    {
+      itemId: "itm_hn_1",
+      source: "hn",
+      title: "Quantum item 1",
+      day: "2026-10-15",
+      url: "https://example.com/1",
+      alsoIn: ["rss"],
+    },
+    {
+      itemId: "itm_gh_2",
+      source: "github",
+      title: "ibm/qiskit-next",
+      day: "2026-10-16",
+      url: "https://github.com/ibm/qiskit-next",
+    },
+  ],
+  incompleteSources: ["github"],
+  decision: null,
+  priorDecision: null,
+};
+
 describe("TrendDossierView", () => {
-  it("shows the brief card in place of ranks, scores, growth and the coverage table", async () => {
+  it("shows movement with weekly values and keeps ranks and scores off screen", async () => {
     setup();
     const withCard: EditorialTrendDossier = {
       ...DOSSIER,
-      trend: {
-        ...DOSSIER.trend,
-        card: {
-          origin: "v3",
-          section: "moving",
-          position: 1,
-          movement: "weak",
-          since: "2026-10-15",
-          perennial: false,
-          curve: [
-            { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
-            { source: "github", status: "comparable", weeks: [0, 0, null, 2] },
-            { source: "wikipedia", status: "unused", weeks: [] },
-          ],
-          sourceCount: 2,
-          firstSource: { source: "hn", day: "2026-09-09" },
-          secondSource: { source: "github", day: "2026-10-16" },
-          fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
-          saturated: false,
-          headlines: [
-            {
-              itemId: "itm_hn_1",
-              source: "hn",
-              title: "Quantum item 1",
-              day: "2026-10-15",
-              url: "https://example.com/1",
-            },
-          ],
-          evidence: [
-            {
-              itemId: "itm_hn_1",
-              source: "hn",
-              title: "Quantum item 1",
-              day: "2026-10-15",
-              url: "https://example.com/1",
-            },
-            {
-              itemId: "itm_gh_2",
-              source: "github",
-              title: "ibm/qiskit-next",
-              day: "2026-10-16",
-              url: "https://github.com/ibm/qiskit-next",
-            },
-          ],
-          incompleteSources: ["github"],
-          decision: null,
-          priorDecision: null,
-        },
-      },
+      coverage: [
+        ...DOSSIER.coverage,
+        { source: "npm", windowDays: 28, daysComplete: 7, daysPartial: 21, daysUnavailable: 0 },
+      ],
+      trend: { ...DOSSIER.trend, card: CARD },
     };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={withCard}
-        evidence={withCard}
         onEvidencePage={() => {}}
       />,
     );
-    await expect.element(screen.getByText("· señal débil, desde hace 4 días")).toBeVisible();
+    await expect.element(screen.getByText("Señal débil", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("desde hace 4 días")).toBeVisible();
+    // Without a summary, the latest headlines stand in for it.
+    await expect.element(screen.getByText("Titulares recientes")).toBeVisible();
+    const chart = screen.getByRole("img", { name: /^Publicaciones por semana/ });
+    await expect
+      .element(chart)
+      .toHaveAccessibleName(
+        "Publicaciones por semana. Hacker News: 1, 3, 0 y 5; GitHub: 0, 0, sin captura y 2, de la semana del 21 a 27 sept a la del 12 a 18 oct.",
+      );
+    // An uncaptured week is a "?", never a zero.
+    expect(chart.element().textContent).toContain("?sin captura");
+    await expect.element(screen.getByText("Sin publicaciones en npm.")).toBeVisible();
+    await expect
+      .element(screen.getByText("Captura parcial en npm: un cero no confirma ausencia."))
+      .toBeVisible();
     await expect
       .element(
-        screen.getByText(
-          "hn 1→3→0→5 · github 0→0→?→2 · wikipedia no usada · 2 fuentes · apareció en hn hace 40 días",
-        ),
+        screen.getByText("Cobertura incompleta en GitHub: alguna semana tiene días sin captura."),
       )
       .toBeVisible();
-    await expect.element(screen.getByText("cobertura incompleta en github")).toBeVisible();
-    // The page opens the card's detail: evidence by source with its ids.
-    await expect.element(screen.getByRole("region", { name: "Evidencia de GitHub" })).toBeVisible();
-    expect(screen.container.querySelector('[data-card-evidence="itm_gh_2"]')).not.toBeNull();
+    // The days each source captured stay one click away, with the unused source.
+    await userEvent.click(screen.getByRole("button", { name: "Semanas por fuente" }));
+    await expect.element(screen.getByText("7 de 28 · 21 parciales")).toBeVisible();
+    await expect.element(screen.getByText("se captura pero no se agrupa")).toBeVisible();
+    await expect
+      .element(screen.getByText("Tema del perfil: AI coding agents · términos: agent"))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
+    await expect
+      .element(screen.getByText("Hacker News · 9 sept 2026 (hace 40 días)"))
+      .toBeVisible();
     const text = screen.container.textContent ?? "";
     for (const removed of [
       "Por puntaje",
@@ -231,31 +255,45 @@ describe("TrendDossierView", () => {
     ]) {
       expect(text).not.toContain(removed);
     }
+    expect(text).not.toMatch(/motor/i);
   });
 
-  it("pages the evidence and opens links outside the app", async () => {
+  it("shows three evidence items, then all of them, and opens links outside the app", async () => {
     setup();
-    const onEvidencePage = vi.fn();
+    const onShowAllEvidence = vi.fn();
+    const all: EditorialTrendDossier = {
+      ...DOSSIER,
+      evidence: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(evidence),
+    };
+    const withCard: EditorialTrendDossier = { ...DOSSIER, trend: { ...DOSSIER.trend, card: CARD } };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
-        dossier={DOSSIER}
-        evidence={DOSSIER}
-        onEvidencePage={onEvidencePage}
+        dossier={withCard}
+        allEvidence={all}
+        onShowAllEvidence={onShowAllEvidence}
+        onEvidencePage={() => {}}
       />,
     );
-    // The whole evidence of the dossier is one click away, under the card.
-    await userEvent.click(
-      screen.getByText("Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026"),
-    );
-    await expect.element(screen.getByText("1–6 de 10")).toBeVisible();
+    const evidenceList = screen.getByRole("region", { name: /^Lee la evidencia/ });
+    await expect.element(evidenceList.getByText("9 sept a 16 oct 2026")).toBeVisible();
+    const rows = () => evidenceList.element().querySelectorAll("[data-evidence-number]");
+    expect(rows()).toHaveLength(3);
     await expect
       .element(screen.getByText("IBM opened its quantum stack to outside researchers."))
       .toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Siguientes" }));
-    expect(onEvidencePage).toHaveBeenCalledWith(6);
+    await expect.element(evidenceList.getByText(/también en RSS/)).toBeVisible();
+    // The item id is in the row for hover and focus, without taking room.
+    expect(evidenceList.element().textContent).toContain("itm_hn_1");
 
-    await userEvent.click(screen.getByRole("link", { name: "Quantum item 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ver toda la evidencia (10)" }));
+    expect(onShowAllEvidence).toHaveBeenCalledOnce();
+    await expect.element(screen.getByRole("link", { name: "Quantum item 10" })).toBeVisible();
+    expect(rows()).toHaveLength(10);
+    await userEvent.click(screen.getByRole("button", { name: "Mostrar solo tres" }));
+    expect(rows()).toHaveLength(3);
+
+    await userEvent.click(evidenceList.getByRole("link", { name: "Quantum item 1" }));
     expect(state.opened).toEqual(["https://example.com/1"]);
   });
 
@@ -265,7 +303,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -302,7 +339,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -333,7 +369,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -359,7 +394,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -405,7 +439,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={inProduction}
-        evidence={inProduction}
         onEvidencePage={() => {}}
       />,
     );
@@ -447,7 +480,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={snoozed}
-        evidence={snoozed}
         onEvidencePage={() => {}}
       />,
     );
@@ -461,12 +493,7 @@ describe("TrendDossierView", () => {
 
     const trial = withState({ trial: { threadId: "thread-trial", linkedAt: AT } });
     await screen.rerender(
-      <TrendDossierView
-        environmentId={ENVIRONMENT_ID}
-        dossier={trial}
-        evidence={trial}
-        onEvidencePage={() => {}}
-      />,
+      <TrendDossierView environmentId={ENVIRONMENT_ID} dossier={trial} onEvidencePage={() => {}} />,
     );
     await expect
       .element(screen.getByRole("button", { name: "Crear hilo de video", exact: true }))
@@ -483,11 +510,11 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={dismissed}
-        evidence={dismissed}
         onEvidencePage={() => {}}
       />,
     );
-    await expect.element(screen.getByText("Descartada: Fuera de tema")).toBeVisible();
+    await expect.element(screen.getByText("Descartada el 31 oct 2026")).toBeVisible();
+    await expect.element(screen.getByText("«Fuera de tema»")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Reabrir" }));
     await vi.waitFor(() =>
       expect(state.commands).toEqual([
@@ -495,13 +522,48 @@ describe("TrendDossierView", () => {
         ["environment-data:editorial:reopen", { trendKey: TREND_KEY }],
       ]),
     );
+    // Dismissing does not hide the way to a thread.
+    await expect.element(screen.getByRole("button", { name: "Crear hilo de video" })).toBeVisible();
+
+    const decided: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        card: {
+          ...CARD,
+          decision: {
+            threadId: "thread-decided",
+            action: "edit",
+            utility: 4,
+            reason: "me interesa",
+            decidedAt: AT,
+          },
+        },
+      },
+    };
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={decided}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect.element(screen.getByText("Editado · utilidad 4 de 5")).toBeVisible();
+    await expect.element(screen.getByText("Tu decisión · 31 oct 2026")).toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo de video" }))
+      .toHaveAttribute("href", "/env-1/thread-decided");
+    // The other exits stay reachable once decided.
+    for (const name of ["Seguir observando", "Descartar…", "Crear hilo manual"]) {
+      await expect.element(screen.getByRole("button", { name, exact: true })).toBeVisible();
+    }
   });
 
   it("links only http and https evidence and falls back to a valid permalink", async () => {
     setup();
     const item = (title: string, permalink: string | null, externalUrl: string | null) => ({
       ...evidence(0),
-      itemId: title,
+      itemId: `itm_${title.replaceAll(" ", "_")}`,
       title,
       permalink,
       externalUrl,
@@ -525,11 +587,11 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={unsafe}
-        evidence={unsafe}
+        allEvidence={unsafe}
         onEvidencePage={() => {}}
       />,
     );
-    await userEvent.click(screen.getByText(/^Evidencia seleccionada \(5\)/));
+    await userEvent.click(screen.getByRole("button", { name: "Ver toda la evidencia (5)" }));
     for (const name of ["Javascript external", "Data external", "File external", "Http external"]) {
       await userEvent.click(screen.getByRole("link", { name }));
     }
@@ -580,7 +642,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={drafted}
-        evidence={drafted}
         onEvidencePage={() => {}}
         citationEvidence={[1, 2, 3, 4, 5, 6, 7, 8].map(evidence)}
         presentationActions={actions}
@@ -590,16 +651,24 @@ describe("TrendDossierView", () => {
       .element(screen.getByRole("heading", { level: 1 }))
       .toHaveTextContent("IBM abre su pila de computación cuántica");
     await expect.element(screen.getByText("Redactado por el asistente")).toBeVisible();
-    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).not.toBeVisible();
     await expect
-      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
-      .not.toBeVisible();
-    await userEvent.click(screen.getByText("Detalles técnicos", { exact: true }));
-    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).toBeVisible();
-    await expect
-      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
+      .element(
+        screen
+          .getByRole("region", { name: "Encaje con el canal" })
+          .getByText("Toca herramientas para desarrolladores"),
+      )
       .toBeVisible();
-    await expect.element(screen.getByText("Por qué importa al canal")).toBeVisible();
+    await expect.element(screen.getByText(/^Modelo: claude-haiku-5-5/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
+    await expect
+      .element(screen.getByText(/^Modelo: claude-haiku-5-5 · prompt trend-presentation\.v3/))
+      .toBeVisible();
+    await expect.element(screen.getByText("quantum computing ibm open")).toBeVisible();
+    expect(screen.container.textContent).not.toMatch(/motor/i);
+
+    // The citation's tooltip names its item id.
+    await userEvent.hover(screen.getByRole("link", { name: "Evidencia 8: Quantum item 8" }));
+    await expect.element(page.getByText("itm_hn_8", { exact: true })).toBeVisible();
 
     // A citation past the first evidence page still resolves to its item.
     await userEvent.click(screen.getByRole("link", { name: "Evidencia 8: Quantum item 8" }));
@@ -622,7 +691,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
         presentationActions={{
           busy: null,
@@ -650,7 +718,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
         presentationActions={{
           busy: "draft",
@@ -690,12 +757,10 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={stale}
-        evidence={stale}
         onEvidencePage={() => {}}
         presentationActions={{ busy: null, error: null, onDraft: vi.fn(), onRegenerate }}
       />,
     );
-    await expect.element(screen.getByText("Desactualizado", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("Redacción desactualizada")).toBeVisible();
     // The previous text stays readable until it is regenerated.
     await expect

@@ -291,16 +291,27 @@ export function evidenceLinks(item: Pick<EditorialEvidenceItem, "permalink" | "e
   };
 }
 
-/** "Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026": the selection, not the window. */
-export function evidenceHeading(
-  total: number,
+/** "4 a 10 nov 2026", "28 oct a 3 nov 2026", "10 nov 2026": the selection's dates, in UTC. */
+export function evidenceRangeText(
   range: { readonly from: string; readonly to: string } | null,
-): string {
-  const heading = `Evidencia seleccionada (${total})`;
-  if (range === null) return heading;
-  const from = formatDate(range.from);
-  const to = formatDate(range.to);
-  return `${heading} · ${from === to ? from : `${from} – ${to}`}`;
+): string | null {
+  if (range === null) return null;
+  return dayRangeText(new Date(range.from), new Date(range.to), true);
+}
+
+const dayFormat = new Intl.DateTimeFormat("es", { day: "numeric", timeZone: "UTC" });
+const monthFormat = new Intl.DateTimeFormat("es", { month: "short", timeZone: "UTC" });
+
+/** "4 a 10 nov", "28 oct a 3 nov"; with the year, "4 a 10 nov 2026", "28 dic 2025 a 3 ene 2026". */
+export function dayRangeText(from: Date, to: Date, withYear = false): string {
+  const month = (date: Date) => monthFormat.format(date).replace(".", "");
+  const day = (date: Date) => dayFormat.format(date);
+  const sameYear = from.getUTCFullYear() === to.getUTCFullYear();
+  const end = `${day(to)} ${month(to)}${withYear ? ` ${to.getUTCFullYear()}` : ""}`;
+  if (from.toISOString().slice(0, 10) === to.toISOString().slice(0, 10)) return end;
+  if (sameYear && from.getUTCMonth() === to.getUTCMonth()) return `${day(from)} a ${end}`;
+  const fromYear = withYear && !sameYear ? ` ${from.getUTCFullYear()}` : "";
+  return `${day(from)} ${month(from)}${fromYear} a ${end}`;
 }
 
 function formatDecimal(value: number): string {
@@ -327,10 +338,20 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   npm: "npm",
   stackexchange: "Stack Exchange",
   wikipedia: "Wikipedia",
+  huggingface: "Hugging Face",
+  rss: "RSS",
+  lobsters: "Lobsters",
 };
 
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+  return ownValue(SOURCE_LABELS, source) ?? source;
+}
+
+/** A source's full public name, for prose: "Hacker News" where a chip says "HN". */
+export function sourceName(source: string): string {
+  if (source === "hn") return "Hacker News";
+  if (source === "total") return "Total";
+  return sourceLabel(source);
 }
 
 /**

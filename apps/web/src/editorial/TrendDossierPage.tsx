@@ -1,12 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EditorialDossierId,
-  EditorialEvidenceItem,
-  EditorialRunId,
-  EditorialTrendDossier,
-  EditorialTrendKey,
-  EditorialTrendPresentation,
-  EnvironmentId,
+import {
+  agoText,
+  type EditorialDossierId,
+  type EditorialEvidenceItem,
+  type EditorialRunId,
+  type EditorialTrendCard,
+  type EditorialTrendDossier,
+  type EditorialTrendKey,
+  type EditorialTrendPresentation,
+  type EditorialTrendSummary,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -17,7 +20,7 @@ import {
   SparklesIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useState, type MouseEvent } from "react";
+import { useEffect, useEffectEvent, useId, useState } from "react";
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
@@ -28,127 +31,33 @@ import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { useAtomCommand } from "../state/use-atom-command";
-import {
-  citationSegments,
-  evidenceHeading,
-  evidenceLinks,
-  formatDate,
-  sourceLabel,
-} from "./editorial.logic";
+import { citationSegments, evidenceLinks, formatDate, sourceName } from "./editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "./EditorialPage";
 import {
   CITATION_EVIDENCE_LIMIT,
+  DOSSIER_EVIDENCE_ALL_LIMIT,
   DOSSIER_EVIDENCE_PAGE_SIZE as EVIDENCE_PAGE_SIZE,
   presentationEnvironment,
 } from "./presentationState";
 import { usePairsMode } from "./pairsMode";
 import { editorialEnvironment } from "./state";
 import { useTrendActions } from "./trendActions";
-import { TrendCardView } from "./TrendCard";
+import { ExternalLink } from "./TrendCard";
 import { TrendCardList } from "./TrendCardList";
-import { TrendDecision } from "./TrendDecision";
+import { TrendDecisionPanel } from "./TrendDecisionPanel";
+import {
+  decisionPanelState,
+  evidenceAlsoIn,
+  movementBadge,
+  profileFitText,
+} from "./trendDossier.logic";
+import { TrendEvidenceList } from "./TrendEvidenceList";
 import { useTrendInbox } from "./TrendInbox";
 import { useEditorialJobActivity } from "./TrendJobIndicator";
+import { TrendMovementPanel } from "./TrendMovementPanel";
+import { TrendProvenance } from "./TrendProvenance";
 
 const SPACE_LABEL = "Tendencias";
-
-function EvidenceList({
-  dossier,
-  onPage,
-}: {
-  readonly dossier: EditorialTrendDossier;
-  readonly onPage: (offset: number) => void;
-}) {
-  const openLink = useOpenLink(null);
-  const open = (event: MouseEvent<HTMLAnchorElement>, url: string) => {
-    event.preventDefault();
-    openLink(url, { event }).catch((error: unknown) => {
-      console.error("Could not open the evidence link.", error);
-    });
-  };
-  const from = dossier.evidenceOffset + 1;
-  const to = dossier.evidenceOffset + dossier.evidence.length;
-  return (
-    <div className="flex flex-col gap-3">
-      <ul className="flex flex-col gap-3">
-        {dossier.evidence.map((item, index) => {
-          const links = evidenceLinks(item);
-          const url = links.title;
-          return (
-            <li
-              key={item.itemId}
-              id={evidenceAnchorId(item.itemId)}
-              data-evidence-number={dossier.evidenceOffset + index + 1}
-              className="flex min-w-0 flex-col gap-0.5"
-            >
-              {url ? (
-                <a
-                  href={url}
-                  onClick={(event) => open(event, url)}
-                  className="group/evidence inline-flex min-w-0 items-baseline gap-1 rounded-sm text-sm font-medium text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                >
-                  <span className="min-w-0">{item.title}</span>
-                  <ExternalLinkIcon
-                    aria-hidden
-                    className="size-3 shrink-0 translate-y-0.5 text-muted-foreground"
-                  />
-                </a>
-              ) : (
-                <span className="text-sm font-medium text-foreground">{item.title}</span>
-              )}
-              {item.excerpt ? (
-                <p className="line-clamp-3 text-xs text-foreground/80">{item.excerpt}</p>
-              ) : null}
-              <span className="text-xs text-muted-foreground">
-                <span className="tabular-nums">{dossier.evidenceOffset + index + 1}</span>
-                {" · "}
-                {sourceLabel(item.source)} · {formatDate(item.publishedAt)}
-                {item.author ? ` · ${item.author}` : null}
-                {links.discussion ? (
-                  <>
-                    {" · "}
-                    <a
-                      href={links.discussion}
-                      onClick={(event) => open(event, links.discussion ?? "")}
-                      className="rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    >
-                      discusión
-                    </a>
-                  </>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {dossier.evidenceTotal > EVIDENCE_PAGE_SIZE ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="tabular-nums">
-            {from}–{to} de {dossier.evidenceTotal}
-          </span>
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={dossier.evidenceOffset === 0}
-            onClick={() => onPage(Math.max(0, dossier.evidenceOffset - EVIDENCE_PAGE_SIZE))}
-          >
-            Anteriores
-          </Button>
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={to >= dossier.evidenceTotal}
-            onClick={() => onPage(dossier.evidenceOffset + EVIDENCE_PAGE_SIZE)}
-          >
-            Siguientes
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const evidenceAnchorId = (itemId: string) => `evidence-${itemId}`;
 
 /** A citation number that opens its evidence, like the evidence list's links. */
 function CitationLink({
@@ -195,7 +104,8 @@ function CitationLink({
         {number}
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-80">
-        {sourceLabel(item.source)} · {item.title}
+        {sourceName(item.source)} · {item.title} ·{" "}
+        <code className="font-mono text-2xs">{item.itemId}</code>
       </TooltipPopup>
     </Tooltip>
   );
@@ -227,12 +137,6 @@ function CitedText({
   );
 }
 
-const SUMMARY_PARTS = [
-  { key: "whatHappened", label: "Qué pasó" },
-  { key: "whyItMatters", label: "Por qué importa al canal" },
-  { key: "videoAngle", label: "Ángulo de video" },
-] as const;
-
 /** Drafting is a human action: these come from the page, the view only renders them. */
 export interface TrendPresentationActions {
   readonly busy: "draft" | "regenerate" | null;
@@ -250,66 +154,13 @@ function PresentationError({ message }: { readonly message: string }) {
   );
 }
 
-function TrendPresentationSummary({
-  presentation,
-  evidence,
-  actions,
-}: {
-  readonly presentation: EditorialTrendPresentation;
-  readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
-  readonly actions: TrendPresentationActions | undefined;
-}) {
-  return (
-    <section aria-label="Resumen del asistente" className="flex flex-col gap-3">
-      {presentation.status === "stale" ? (
-        <Alert variant="warning">
-          <TriangleAlertIcon />
-          <AlertTitle>Redacción desactualizada</AlertTitle>
-          <AlertDescription>
-            Se escribió con una evidencia, un perfil del canal o una versión del prompt anteriores.
-            Regenera para leer una redacción sobre la ficha actual.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      <dl className="flex flex-col gap-2.5 text-sm text-foreground">
-        {SUMMARY_PARTS.map((part) => (
-          <div key={part.key} className="flex flex-col gap-0.5">
-            <dt className="text-xs text-muted-foreground">{part.label}</dt>
-            <dd className="leading-relaxed">
-              <CitedText text={presentation.summary[part.key]} evidence={evidence} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{formatDate(presentation.generatedAt)} · no cambia el orden ni el puntaje</span>
-        {actions ? (
-          <Button
-            size="xs"
-            variant={presentation.status === "stale" ? "outline" : "ghost-muted"}
-            disabled={actions.busy !== null}
-            onClick={actions.onRegenerate}
-          >
-            {actions.busy === "regenerate" ? <Spinner /> : <RefreshCwIcon aria-hidden />}
-            {actions.busy === "regenerate" ? "Regenerando…" : "Regenerar"}
-          </Button>
-        ) : null}
-      </div>
-      {actions?.error ? <PresentationError message={actions.error} /> : null}
-    </section>
-  );
-}
-
 function DraftPresentationPrompt({ actions }: { readonly actions: TrendPresentationActions }) {
   return (
-    <section
-      aria-label="Resumen del asistente"
-      className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-3 py-2.5"
-    >
+    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-          El asistente puede escribir un título y un resumen de tres partes que citan la evidencia.
-          Usa el modelo de generación de texto de Ajustes.
+          El asistente puede escribir un título y un resumen que citan la evidencia. Usa el modelo
+          de redacción de Ajustes.
         </p>
         <Button
           size="sm"
@@ -322,22 +173,213 @@ function DraftPresentationPrompt({ actions }: { readonly actions: TrendPresentat
         </Button>
       </div>
       {actions.error ? <PresentationError message={actions.error} /> : null}
+    </div>
+  );
+}
+
+/** Without a summary, the card's two latest headlines stand in for "what happened". */
+function RecentHeadlines({ card }: { readonly card: EditorialTrendCard }) {
+  if (card.headlines.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h3 className="text-xs font-medium text-muted-foreground">Titulares recientes</h3>
+      <ul className="flex flex-col gap-1.5">
+        {card.headlines.map((headline) => (
+          <li key={headline.itemId ?? headline.title} className="flex min-w-0 flex-col text-sm">
+            {headline.url === null ? (
+              <span className="text-foreground">{headline.title}</span>
+            ) : (
+              <ExternalLink
+                url={headline.url}
+                className="inline-flex min-w-0 items-baseline gap-1 self-start text-foreground"
+              >
+                <span className="min-w-0">{headline.title}</span>
+                <ExternalLinkIcon
+                  aria-hidden
+                  className="size-3 shrink-0 translate-y-0.5 text-muted-foreground"
+                />
+              </ExternalLink>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {sourceName(headline.source)}
+              {headline.day === null
+                ? null
+                : ` · ${formatDate(`${headline.day.slice(0, 10)}T00:00:00.000Z`)}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** "Qué pasó", the fit with the channel and the video angle, each with its citations. */
+function TrendStory({
+  presentation,
+  card,
+  evidence,
+  actions,
+}: {
+  readonly presentation: EditorialTrendPresentation | undefined;
+  readonly card: EditorialTrendCard | undefined;
+  readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
+  readonly actions: TrendPresentationActions | undefined;
+}) {
+  // In pairs mode nothing tells that a model drafted the summary.
+  const pairsMode = usePairsMode();
+  const headingId = useId();
+  const fit = card ? (
+    <p className="text-xs text-muted-foreground">
+      {profileFitText(card.fit)}
+      {card.saturated === true ? " · Tema ya muy tratado." : null}
+    </p>
+  ) : null;
+  if (presentation === undefined) {
+    return (
+      <section aria-label="Relato" className="flex min-w-0 flex-col gap-4">
+        {actions ? <DraftPresentationPrompt actions={actions} /> : null}
+        {card ? <RecentHeadlines card={card} /> : null}
+        {fit ? (
+          <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+            <h3 className="text-xs font-medium text-muted-foreground">Encaje con el canal</h3>
+            {fit}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+  const stale = presentation.status === "stale";
+  return (
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-4">
+      {stale ? (
+        <Alert variant="warning">
+          <TriangleAlertIcon />
+          <AlertTitle>Redacción desactualizada</AlertTitle>
+          <AlertDescription>
+            Se escribió con una evidencia, un perfil del canal o una versión del prompt anteriores.
+            Regenera para leer una redacción sobre la ficha actual.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 id={headingId} className="text-sm font-semibold text-foreground">
+            Qué pasó
+          </h2>
+          <div className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+            {pairsMode ? null : (
+              <>
+                <span>Redactado por el asistente</span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span>{formatDate(presentation.generatedAt)}</span>
+            {actions ? (
+              <Button
+                size="xs"
+                variant={stale ? "outline" : "ghost-muted"}
+                disabled={actions.busy !== null}
+                onClick={actions.onRegenerate}
+              >
+                {actions.busy === "regenerate" ? <Spinner /> : <RefreshCwIcon aria-hidden />}
+                {actions.busy === "regenerate" ? "Regenerando…" : "Regenerar"}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+        <p className="text-base leading-relaxed text-foreground">
+          <CitedText text={presentation.summary.whatHappened} evidence={evidence} />
+        </p>
+      </div>
+      <section
+        aria-label="Encaje con el canal"
+        className="flex flex-col gap-1.5 border-t border-border pt-4"
+      >
+        <h3 className="text-xs font-medium text-muted-foreground">Encaje con el canal</h3>
+        <p className="text-sm leading-relaxed text-foreground">
+          <CitedText text={presentation.summary.whyItMatters} evidence={evidence} />
+        </p>
+        {fit}
+      </section>
+      <section
+        aria-label="Ángulo de video"
+        className="flex flex-col gap-1 border-s-2 border-primary/50 ps-3"
+      >
+        <h3 className="text-xs font-medium text-muted-foreground">Ángulo de video</h3>
+        <p className="text-sm leading-relaxed text-foreground">
+          <CitedText text={presentation.summary.videoAngle} evidence={evidence} />
+        </p>
+      </section>
+      {actions?.error ? <PresentationError message={actions.error} /> : null}
     </section>
+  );
+}
+
+/** Movement badge, since when, the recurring mark and the trend's state. */
+function TrendDossierHeader({
+  trend,
+  title,
+  cutoffAt,
+}: {
+  readonly trend: EditorialTrendSummary;
+  readonly title: string;
+  readonly cutoffAt: string | null;
+}) {
+  const card = trend.card;
+  const movement = card ? movementBadge(card) : null;
+  const status = decisionPanelState(trend).badge;
+  return (
+    <header className="flex min-w-0 flex-col gap-2">
+      {movement || card?.since || card?.perennial || status ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {movement ? <Badge variant={movement.variant}>{movement.label}</Badge> : null}
+          {card?.since ? <span>desde {agoText(card.since, cutoffAt)}</span> : null}
+          {card?.perennial ? (
+            <>
+              <span aria-hidden>·</span>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="cursor-default underline decoration-dotted underline-offset-2" />
+                  }
+                >
+                  tema recurrente
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-64">
+                  Tuvo actividad varias semanas antes de este movimiento.
+                </TooltipPopup>
+              </Tooltip>
+            </>
+          ) : null}
+          {status ? (
+            <Badge variant={status.variant} className="ms-auto">
+              {status.label}
+            </Badge>
+          ) : null}
+        </div>
+      ) : null}
+      <h1 className="max-w-3xl text-2xl font-semibold tracking-tight text-balance text-foreground">
+        {title}
+      </h1>
+    </header>
   );
 }
 
 export function TrendDossierView({
   environmentId,
   dossier,
-  evidence,
+  allEvidence = null,
+  onShowAllEvidence,
   onEvidencePage,
   citationEvidence,
   presentationActions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly dossier: EditorialTrendDossier;
-  /** The evidence page shown; the dossier's own first page until another one loads. */
-  readonly evidence: EditorialTrendDossier;
+  /** Every evidence item (or a page of fifty) once asked for; `null` until it loads. */
+  readonly allEvidence?: EditorialTrendDossier | null;
+  /** Asks the page to load every evidence item. */
+  readonly onShowAllEvidence?: () => void;
   readonly onEvidencePage: (offset: number) => void;
   /** Evidence the assistant could cite, in dossier order; the first page until it loads. */
   readonly citationEvidence?: ReadonlyArray<EditorialEvidenceItem>;
@@ -345,67 +387,44 @@ export function TrendDossierView({
 }) {
   const { trend } = dossier;
   const presentation = trend.presentation;
-  // In pairs mode nothing tells which model drafted the title or which engine made the card.
-  const pairsMode = usePairsMode();
+  const card = trend.card;
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   return (
-    <>
-      <header className="flex min-w-0 flex-col gap-2">
-        {presentation && !pairsMode ? (
-          <p className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <SparklesIcon aria-hidden className="size-3.5" />
-            Redactado por el asistente
-            {presentation.status === "stale" ? (
-              <Badge variant="warning" size="sm">
-                Desactualizado
-              </Badge>
-            ) : null}
-          </p>
-        ) : null}
-        <h1 className="text-xl font-semibold text-foreground">
-          {presentation?.title ?? trend.label}
-        </h1>
-        {presentation && !pairsMode ? (
-          <details className="text-xs text-muted-foreground">
-            <summary className="cursor-pointer">Detalles técnicos</summary>
-            <p className="mt-2">Términos del motor: {trend.label}</p>
-            <p>Modelo: {presentation.model}</p>
-          </details>
-        ) : null}
-      </header>
-
-      {trend.card === undefined ? null : (
-        <TrendCardView
-          environmentId={environmentId}
-          trend={trend}
-          cutoffAt={dossier.run.cutoffAt}
-          defaultOpen
-          linkTitle={false}
-        />
-      )}
-
-      {presentation ? (
-        <TrendPresentationSummary
+    <div className="@container/dossier flex min-w-0 flex-col gap-6">
+      <TrendDossierHeader
+        trend={trend}
+        title={presentation?.title ?? trend.label}
+        cutoffAt={dossier.run.cutoffAt}
+      />
+      <div className="grid gap-8 @3xl/dossier:grid-cols-[minmax(0,1fr)_22rem]">
+        <TrendStory
           presentation={presentation}
+          card={card}
           evidence={citationEvidence ?? dossier.evidence}
           actions={presentationActions}
         />
-      ) : presentationActions ? (
-        <DraftPresentationPrompt actions={presentationActions} />
-      ) : null}
-
-      <details className="group/evidence-all">
-        <summary className="cursor-pointer text-sm font-medium text-foreground">
-          {evidenceHeading(dossier.evidenceTotal, dossier.evidenceRange)}
-        </summary>
-        <div className="mt-3">
-          <EvidenceList dossier={evidence} onPage={onEvidencePage} />
-        </div>
-      </details>
-
-      {trend.card === undefined ? (
-        <TrendDecision environmentId={environmentId} trend={trend} />
-      ) : null}
-    </>
+        {card === undefined ? null : (
+          <TrendMovementPanel
+            card={card}
+            cutoffAt={dossier.run.cutoffAt}
+            coverage={dossier.coverage}
+          />
+        )}
+      </div>
+      <TrendDecisionPanel environmentId={environmentId} trend={trend} />
+      <TrendEvidenceList
+        dossier={dossier}
+        allEvidence={allEvidence}
+        expanded={evidenceExpanded}
+        onExpandedChange={(expanded) => {
+          setEvidenceExpanded(expanded);
+          if (expanded) onShowAllEvidence?.();
+        }}
+        onPage={onEvidencePage}
+        alsoIn={evidenceAlsoIn(card)}
+      />
+      <TrendProvenance dossier={dossier} />
+    </div>
   );
 }
 
@@ -506,26 +525,35 @@ function LoadedTrendDossierPage({
   readonly runId: EditorialRunId;
   readonly dossierId: EditorialDossierId;
 }) {
+  const [allEvidenceAsked, setAllEvidenceAsked] = useState(false);
   const [evidenceOffset, setEvidenceOffset] = useState(0);
   const firstPage = { runId, dossierId, evidenceLimit: EVIDENCE_PAGE_SIZE };
   const result = useAtomValue(editorialEnvironment.dossier({ environmentId, input: firstPage }));
-  // The first page is the dossier query itself; later pages only fetch their evidence.
-  const pageResult = useAtomValue(
-    editorialEnvironment.dossier({
-      environmentId,
-      input: evidenceOffset === 0 ? firstPage : { ...firstPage, evidenceOffset },
-    }),
-  );
   const dossier = AsyncResult.getOrElse(result, () => null);
-  const page = AsyncResult.getOrElse(pageResult, () => null);
   // Citations can point past the first evidence page; the assistant read at most twelve.
+  const citationInput = { runId, dossierId, evidenceLimit: CITATION_EVIDENCE_LIMIT };
   const citationResult = useAtomValue(
+    editorialEnvironment.dossier({ environmentId, input: citationInput }),
+  );
+  const citationDossier = AsyncResult.getOrElse(citationResult, () => null);
+  const citationEvidence = citationDossier?.evidence;
+  // "Ver toda la evidencia": the citation query already holds every item of a small dossier;
+  // a larger one asks for pages of fifty. Until asked, this reads the citation query again.
+  const needsAllQuery = allEvidenceAsked && (dossier?.evidenceTotal ?? 0) > CITATION_EVIDENCE_LIMIT;
+  const allResult = useAtomValue(
     editorialEnvironment.dossier({
       environmentId,
-      input: { runId, dossierId, evidenceLimit: CITATION_EVIDENCE_LIMIT },
+      input: needsAllQuery
+        ? {
+            runId,
+            dossierId,
+            evidenceLimit: DOSSIER_EVIDENCE_ALL_LIMIT,
+            ...(evidenceOffset === 0 ? {} : { evidenceOffset }),
+          }
+        : citationInput,
     }),
   );
-  const citationEvidence = AsyncResult.getOrElse(citationResult, () => null)?.evidence;
+  const allEvidence = allEvidenceAsked ? AsyncResult.getOrElse(allResult, () => null) : null;
   const presentationActions = usePresentationActions(environmentId, { runId, dossierId });
   const { markRead } = useTrendActions(environmentId);
   const unreadKey = dossier?.trend.isNew ? dossier.trend.trendKey : undefined;
@@ -555,7 +583,8 @@ function LoadedTrendDossierPage({
       <TrendDossierView
         environmentId={environmentId}
         dossier={dossier}
-        evidence={page ?? dossier}
+        allEvidence={allEvidence}
+        onShowAllEvidence={() => setAllEvidenceAsked(true)}
         onEvidencePage={setEvidenceOffset}
         presentationActions={presentationActions}
         {...(citationEvidence === undefined ? {} : { citationEvidence })}

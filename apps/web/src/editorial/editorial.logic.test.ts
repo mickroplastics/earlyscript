@@ -11,7 +11,7 @@ import {
   compactCount,
   coverageStatus,
   editorialClaimsRoot,
-  evidenceHeading,
+  evidenceRangeText,
   evidenceLinks,
   growthBand,
   growthText,
@@ -22,6 +22,8 @@ import {
   runPresentationProgressText,
   snoozePresetLabel,
   snoozeStateText,
+  sourceLabel,
+  sourceName,
   spaceTabName,
   splitInbox,
   trendMenuItems,
@@ -319,12 +321,35 @@ describe("evidenceLinks", () => {
   });
 });
 
-describe("evidenceHeading", () => {
-  it("counts the selection and dates its items, without the 28-day volume", () => {
+describe("evidenceRangeText", () => {
+  it("dates the selection's items, without the 28-day volume", () => {
     expect(
-      evidenceHeading(10, { from: "2026-09-09T08:27:14.000Z", to: "2026-10-16T18:00:18.000Z" }),
-    ).toBe("Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026");
-    expect(evidenceHeading(0, null)).toBe("Evidencia seleccionada (0)");
+      evidenceRangeText({ from: "2026-11-04T08:27:14.000Z", to: "2026-11-10T18:00:18.000Z" }),
+    ).toBe("4 a 10 nov 2026");
+    expect(
+      evidenceRangeText({ from: "2026-09-09T08:27:14.000Z", to: "2026-10-16T18:00:18.000Z" }),
+    ).toBe("9 sept a 16 oct 2026");
+    expect(
+      evidenceRangeText({ from: "2025-12-28T08:00:00.000Z", to: "2026-01-03T08:00:00.000Z" }),
+    ).toBe("28 dic 2025 a 3 ene 2026");
+    expect(
+      evidenceRangeText({ from: "2026-11-10T08:00:00.000Z", to: "2026-11-10T18:00:00.000Z" }),
+    ).toBe("10 nov 2026");
+    expect(evidenceRangeText(null)).toBeNull();
+  });
+});
+
+describe("sourceLabel and sourceName", () => {
+  it.each([
+    ["hn", "HN", "Hacker News"],
+    ["huggingface", "Hugging Face", "Hugging Face"],
+    ["rss", "RSS", "RSS"],
+    ["lobsters", "Lobsters", "Lobsters"],
+    ["github", "GitHub", "GitHub"],
+    ["constructor", "constructor", "constructor"],
+  ])("names %s", (source, label, name) => {
+    expect(sourceLabel(source)).toBe(label);
+    expect(sourceName(source)).toBe(name);
   });
 });
 

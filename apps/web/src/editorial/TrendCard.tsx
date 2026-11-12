@@ -36,7 +36,7 @@ import {
 // lines and a detail. Ranking, scores, growth, coverage tables, eligibility and novelty are
 // not on screen; they stay in the dossier JSON.
 
-function ExternalLink({
+export function ExternalLink({
   url,
   className,
   children,
@@ -127,9 +127,10 @@ function DetailBlock({
   title,
   children,
 }: {
-  readonly title: string;
+  readonly title: string | null;
   readonly children: ReactNode;
 }) {
+  if (title === null) return <div className="flex flex-col gap-1.5">{children}</div>;
   return (
     <section className="flex flex-col gap-1.5">
       <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</h4>
@@ -180,15 +181,18 @@ function JudgeOpinionView({
   pairsMode,
   decision,
   result,
+  titled,
 }: {
   readonly pairsMode: boolean;
   readonly decision: EditorialCardDecision | null;
   readonly result: EditorialGetJudgeOpinionResult | null;
+  readonly titled: boolean;
 }) {
   if (pairsMode) return null;
+  const title = titled ? "Opinión de los jueces" : null;
   if (decision === null || decision.utility === null) {
     return (
-      <DetailBlock title="Opinión de los jueces">
+      <DetailBlock title={title}>
         <p className="text-xs text-muted-foreground">
           Se muestra después de que registres tu decisión con utilidad.
         </p>
@@ -197,7 +201,7 @@ function JudgeOpinionView({
   }
   if (result === null || result._tag !== "shown") {
     return result?._tag === "none" ? (
-      <DetailBlock title="Opinión de los jueces">
+      <DetailBlock title={title}>
         <p className="text-xs text-muted-foreground">
           Esta tarjeta no tiene opinión de los jueces.
         </p>
@@ -206,7 +210,7 @@ function JudgeOpinionView({
   }
   const { view } = result;
   return (
-    <DetailBlock title="Opinión de los jueces">
+    <DetailBlock title={title}>
       <div data-judge-opinion="" className="flex flex-col gap-1.5 text-sm">
         <p className="text-xs text-warning-foreground">Opinión del modelo, no validada.</p>
         {view.utility === null ? null : (
@@ -231,30 +235,48 @@ function JudgeOpinionView({
   );
 }
 
-/** Fetches the opinion only when the view may show it. */
-function JudgeOpinion({
+/**
+ * Fetches the opinion only when the view may show it. Untitled inside the dossier's own
+ * "Opinión de los jueces" disclosure.
+ */
+export function JudgeOpinion({
   environmentId,
   trend,
   decision,
+  titled = true,
 }: {
   readonly environmentId: EnvironmentId;
   readonly trend: EditorialTrendSummary;
   readonly decision: EditorialCardDecision | null;
+  readonly titled?: boolean;
 }) {
   const pairsMode = usePairsMode();
   const allowed = !pairsMode && decision !== null && decision.utility !== null;
-  if (!allowed) return <JudgeOpinionView pairsMode={pairsMode} decision={decision} result={null} />;
-  return <LoadedJudgeOpinion environmentId={environmentId} trend={trend} decision={decision} />;
+  if (!allowed) {
+    return (
+      <JudgeOpinionView pairsMode={pairsMode} decision={decision} result={null} titled={titled} />
+    );
+  }
+  return (
+    <LoadedJudgeOpinion
+      environmentId={environmentId}
+      trend={trend}
+      decision={decision}
+      titled={titled}
+    />
+  );
 }
 
 function LoadedJudgeOpinion({
   environmentId,
   trend,
   decision,
+  titled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly trend: EditorialTrendSummary;
   readonly decision: EditorialCardDecision;
+  readonly titled: boolean;
 }) {
   const result = AsyncResult.getOrElse(
     useAtomValue(
@@ -265,7 +287,7 @@ function LoadedJudgeOpinion({
     ),
     () => null,
   );
-  return <JudgeOpinionView pairsMode={false} decision={decision} result={result} />;
+  return <JudgeOpinionView pairsMode={false} decision={decision} result={result} titled={titled} />;
 }
 
 export interface TrendCardViewProps {
