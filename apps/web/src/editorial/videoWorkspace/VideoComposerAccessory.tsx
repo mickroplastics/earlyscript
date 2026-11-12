@@ -30,7 +30,7 @@ const WELCOME = [
   },
   {
     title: "¿Qué fuentes son las más sólidas?",
-    hint: "Te responde sin escribir aún. El borrador lo pides después.",
+    hint: "Te responde sin escribir el guion todavía.",
     text: "¿Qué fuentes del expediente son las más sólidas para este video y qué no conviene afirmar con ellas? No escribas aún el guion.",
   },
 ] as const;
@@ -57,42 +57,45 @@ export function VideoComposerAccessory() {
   if (offer === null) return null;
   if (offer.phase === "welcome") {
     return (
-      <div className="flex flex-col gap-3 pb-3" data-thread-map-script data-video-welcome>
-        <section className="rounded-lg border bg-card/60 px-3.5 py-3">
-          <h3 className="mb-1.5 font-medium text-2xs text-muted-foreground uppercase tracking-wider">
-            El asistente ya tiene
-          </h3>
-          <ul className="flex flex-col gap-1 text-sm">
-            {[
-              "El tema y su ficha, la de la izquierda",
-              offer.evidenceTotal === null
-                ? "Las fuentes del expediente, con la misma numeración"
-                : `Las ${offer.evidenceTotal} fuentes del expediente, con la misma numeración`,
-              "El archivo del guion, que escribe y corrige él",
-            ].map((line) => (
-              <li key={line} className="flex items-center gap-2">
-                <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
-                {line}
-              </li>
-            ))}
-          </ul>
-        </section>
+      <div
+        className="flex flex-col gap-3 overflow-y-auto pb-3"
+        // Room for the composer below and the tabs above, on a 800 px high window too.
+        style={{ maxHeight: "calc(100dvh - 22rem)" }}
+        data-thread-map-script
+        data-video-welcome
+      >
+        <ul
+          aria-label="El asistente ya tiene"
+          className="flex flex-wrap gap-x-3 gap-y-1 rounded-lg border bg-card/60 px-3 py-2 text-muted-foreground text-xs"
+        >
+          {[
+            "La ficha del tema",
+            offer.evidenceTotal === null
+              ? "Sus fuentes, numeradas como aquí"
+              : `Sus ${offer.evidenceTotal} fuentes, numeradas como aquí`,
+            "El archivo del guion",
+          ].map((line) => (
+            <li key={line} className="flex items-center gap-1.5">
+              <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
+              {line}
+            </li>
+          ))}
+        </ul>
         <div className="flex flex-col gap-1">
           <h2 className="font-semibold text-lg">¿Cómo quieres comenzar?</h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            El asistente lee el tema y sus fuentes y escribe el guion en inglés, con una cita por
-            dato. Tú lo revisas y lo decides. Tu primer mensaje empieza el paso 2. Al tocar una
-            sugerencia, se envía.
+            El asistente escribe el guion en inglés, con una cita por dato; tú lo revisas y lo
+            decides. Tu primer mensaje empieza el paso 2. Una sugerencia se envía al tocarla.
           </p>
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
           {WELCOME.map((option, index) => (
             <button
               key={option.title}
               type="button"
               onClick={() => offer.send(option.text)}
               className={cn(
-                "group flex items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left transition-colors hover:border-primary/48 hover:bg-primary/6 focus-visible:outline-2 focus-visible:outline-ring",
+                "group flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors hover:border-primary/48 hover:bg-primary/6 focus-visible:outline-2 focus-visible:outline-ring",
                 index === 0 && "border-primary/40 bg-primary/5",
               )}
             >
