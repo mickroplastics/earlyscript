@@ -15,7 +15,13 @@ import { ThreadCell, type ResultsDecisionsState } from "./DecisionsTab";
 import { FigureFrame } from "./FigureFrame";
 import { RESULTS_FIGURE_TEXT, utilityFigure } from "./resultsFigures.logic";
 import { RESULTS_MODES, meanText, modeLabel, modeSummary } from "./results.logic";
-import { ResultsBox, ResultsNote, SERIES_BACKGROUND, SeriesSwatch } from "./resultsMarks";
+import {
+  ResultsBox,
+  ResultsNote,
+  SERIES_BACKGROUND,
+  SeriesSwatch,
+  TRACK_BACKGROUND,
+} from "./resultsMarks";
 import { rowDateText, scriptRows } from "./resultsOverview.logic";
 import { PanelLead, PanelLeadText } from "./ResultsTabs";
 
@@ -46,14 +52,17 @@ function ScriptsTable({
     return <p className="py-2 text-xs text-muted-foreground">Ningún hilo cerrado en este modo.</p>;
   }
   return (
-    <Table aria-label={`Guiones decididos, ${modeLabel(mode).toLowerCase()}`}>
+    <Table
+      aria-label={`Guiones decididos, ${modeLabel(mode).toLowerCase()}`}
+      className="min-w-[26rem] table-fixed"
+    >
       <TableHeader>
         <TableRow>
           <TableHead>Hilo</TableHead>
-          <TableHead>Decidido</TableHead>
-          <TableHead className="w-24">Frases con cita</TableHead>
-          <TableHead className="text-end">Con cita</TableHead>
-          <TableHead className="text-end">Út.</TableHead>
+          <TableHead className="w-[5.5rem]">Decidido</TableHead>
+          <TableHead className="w-28">Frases con cita</TableHead>
+          <TableHead className="w-[4.5rem] text-end">Con cita</TableHead>
+          <TableHead className="w-10 text-end">Út.</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -63,11 +72,7 @@ function ScriptsTable({
           return (
             <TableRow key={decision.decisionId} data-script-row={decision.threadId}>
               <TableCell>
-                <ThreadCell
-                  decision={decision}
-                  title={threadTitles.get(decision.threadId)}
-                  className="max-w-36"
-                />
+                <ThreadCell decision={decision} title={threadTitles.get(decision.threadId)} />
               </TableCell>
               <TableCell>
                 <span className="text-muted-foreground tabular-nums">
@@ -77,7 +82,10 @@ function ScriptsTable({
               <TableCell>
                 <span
                   aria-hidden
-                  className="block h-1.5 w-20 overflow-hidden rounded-full bg-muted"
+                  className={cn(
+                    "block h-1.5 w-full overflow-hidden rounded-full",
+                    TRACK_BACKGROUND,
+                  )}
                 >
                   <span
                     className={cn("block h-full rounded-full", SERIES_BACKGROUND[mode])}

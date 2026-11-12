@@ -32,7 +32,7 @@ import {
   modeLabel,
   pageRangeText,
 } from "./results.logic";
-import { ResultsBox, ResultsNote, SeriesSwatch } from "./resultsMarks";
+import { ResultsBox, ResultsNoteList, SeriesSwatch } from "./resultsMarks";
 import { localTimeZone, rowDateText, timeZoneLabel } from "./resultsOverview.logic";
 
 export const DECISIONS_PAGE_SIZE = 20;
@@ -65,19 +65,19 @@ const DECISION_FILTERS: ReadonlyArray<{
   { value: "manual", label: "Manual" },
 ];
 
-/** A thread's name, linked to it when the thread is known here; the tooltip carries it whole. */
+/**
+ * A thread's name, linked to it when the thread is known here, on up to two lines; the tooltip
+ * carries it whole. Its column takes the table's spare width (`table-fixed`).
+ */
 export function ThreadCell({
   decision,
   title,
-  className = "max-w-44 xl:max-w-72",
 }: {
   readonly decision: EditorialResultsDecision;
   readonly title: string | undefined;
-  /** The truncation width, narrower in a half-width box. */
-  readonly className?: string;
 }) {
   const label = decisionThreadLabel(decision, title);
-  const classes = cn("block truncate text-foreground", className);
+  const classes = "line-clamp-2 whitespace-normal text-foreground [overflow-wrap:anywhere]";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -117,17 +117,17 @@ function DecisionsTable({
 }) {
   const firstTrial = page.decisions.findIndex((decision) => decision.cohort === "trial");
   return (
-    <Table aria-label="Decisiones registradas">
+    <Table aria-label="Decisiones registradas" className="min-w-[44rem] table-fixed">
       <TableHeader>
         <TableRow>
-          <TableHead>Fecha</TableHead>
+          <TableHead className="w-28">Fecha</TableHead>
           <TableHead>Hilo</TableHead>
-          <TableHead>Modo</TableHead>
-          <TableHead>Acción</TableHead>
-          <TableHead className="text-end">Utilidad</TableHead>
-          <TableHead className="text-end">Total</TableHead>
-          <TableHead className="text-end">Con cita</TableHead>
-          <TableHead className="text-end">Vistas</TableHead>
+          <TableHead className="w-32">Modo</TableHead>
+          <TableHead className="w-36">Acción</TableHead>
+          <TableHead className="w-16 text-end">Utilidad</TableHead>
+          <TableHead className="w-24 text-end">Total</TableHead>
+          <TableHead className="w-20 text-end">Con cita</TableHead>
+          <TableHead className="w-20 text-end">Vistas</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -150,7 +150,7 @@ function DecisionsTable({
                 <ThreadCell decision={decision} title={threadTitles.get(decision.threadId)} />
               </TableCell>
               <TableCell>
-                <span className="flex items-center gap-1.5">
+                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                   <SeriesSwatch series={decision.mode} />
                   {modeLabel(decision.mode)}
                   {decision.cohort === "trial" ? (
@@ -161,7 +161,7 @@ function DecisionsTable({
                 </span>
               </TableCell>
               <TableCell>
-                <span className="flex items-center gap-1.5">
+                <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                   {actionLabel(decision.action)}
                   {decision.current ? null : (
                     <Badge size="sm" variant="outline">
@@ -346,12 +346,17 @@ export function DecisionsTab({
           ))}
         </p>
       ) : null}
-      <ResultsNote>
-        Hora de {timeZoneLabel(localTimeZone())}. El título abre su hilo. Utilidad de 1 a 5. Total:
-        tiempo activo del reloj del hilo; «≥» marca un total con un tramo sin resolver: es un
-        mínimo. Las reemplazadas siguen en el registro y no cuentan en los agregados. Vistas: «sin
-        dato» mientras no haya métricas de video.
-      </ResultsNote>
+      <ResultsNoteList>
+        <li>
+          Hora de {timeZoneLabel(localTimeZone())}. El título abre su hilo. Utilidad de 1 a 5.
+        </li>
+        <li>
+          Total: tiempo activo del reloj del hilo; «≥» marca un total con un tramo sin resolver: es
+          un mínimo.
+        </li>
+        <li>Las reemplazadas siguen en el registro y no cuentan en los agregados.</li>
+        <li>Vistas: «sin dato» mientras no haya métricas de video.</li>
+      </ResultsNoteList>
     </>
   );
 }
