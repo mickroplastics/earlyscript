@@ -351,6 +351,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "../earlyscript/terminal";
+import { VideoComposerAccessory } from "../editorial/videoWorkspace/VideoComposerAccessory";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
@@ -3433,6 +3434,7 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  <VideoComposerAccessory />
                   <div
                     ref={draftHeroComposerAnchorRef}
                     className="relative z-10"

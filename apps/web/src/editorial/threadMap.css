@@ -13,3 +13,14 @@
 [data-map-quiet="true"] [aria-label="Explorador de archivos"] {
   display: none;
 }
+
+/* The video workspace has its own header: upstream's thread header stays mounted (its work clock
+   versions the script as the editor saves) but out of sight. */
+[data-map-conversation] [data-chat-header] {
+  display: none;
+}
+
+/* Before the first message the welcome above the composer replaces the empty timeline text. */
+[data-map-welcome="true"] [data-map-conversation] [data-chat-column] .justify-center > p {
+  display: none;
+}

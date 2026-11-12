@@ -532,7 +532,9 @@ export const SHELL_COMMON_TABLE: LocaleTable = { text: SHELL_COMMON_TEXT };
 
 export const VIDEO_COMPOSER_TABLE: LocaleTable = {
   text: {
-    "Ask anything. @ files, $ skills, / commands": "Dile al asistente qué cambiar…",
-    "Pregunta lo que quieras. @ archivos, $ skills, / comandos": "Dile al asistente qué cambiar…",
+    "Ask anything. @ files, $ skills, / commands":
+      "Escribe al asistente: una pregunta o un cambio…",
+    "Pregunta lo que quieras. @ archivos, $ skills, / comandos":
+      "Escribe al asistente: una pregunta o un cambio…",
   },
 };

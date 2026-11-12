@@ -2410,3 +2410,18 @@ Base `42d89b4dc7`. Lo que impedía correr `engine.v3.json` en la corrida nocturn
 | Archivo                     | Líneas  | Cambio                                                | Motivo                          |
 | --------------------------- | ------- | ----------------------------------------------------- | ------------------------------- |
 | `apps/server/src/binCli.ts` | 35, 106 | Import de `profileCommand` y montaje tras `evidence`. | Subcomando `profile` en el CLI. |
+
+## Hilo de video v2 (rama `es/hilo-video-v2`, 12 de noviembre de 2026)
+
+Base `ded88d5a8`. El hilo asistido pasa de cuatro paradas a tres pasos, los mismos que mide el reloj (Leer el tema, Escribir y revisar, Decidir), con su tiempo, su barra y una línea «Ahora». Debajo, a la izquierda, Tema, Guion y Fuentes; a la derecha, Asistente, la fuente abierta en el navegador integrado, Decisión o Resumen, y Detalles del hilo. Todo vive en `apps/web/src/editorial/videoWorkspace/`; `ThreadMapView.tsx`, `ThreadMapScript.tsx` y `threadMap.logic.ts` se retiran. No cambia cómo se registran ni se calculan los tiempos: Leer sigue terminando con el primer pedido al asistente (`AssistedWritingStart.ts`), y los pasos cambian con los comandos `stage`, `pause`, `resume` y `start` que ya existían.
+
+| Archivo                                | Líneas    | Cambio                                                              | Motivo                                                                                                   |
+| -------------------------------------- | --------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/components/ChatView.tsx` | 354, 3437 | Import y montaje de `VideoComposerAccessory` encima del compositor. | Bienvenida y sugerencias del hilo asistido; fuera del espacio de video no hay proveedor y no pinta nada. |
+
+Dependencias de marcado de upstream que revisar al fusionar, porque el espacio las usa desde CSS o el DOM sin tocar los archivos:
+
+- `[data-chat-header]` de `ChatView.tsx`: `threadMap.css` oculta la cabecera de T3 dentro de la conversación; sigue montada, porque su `WorkClock` versiona el guion al guardar.
+- `form[data-chat-composer-form]` de `ChatComposer.tsx`: una sugerencia deja su texto en el borrador del compositor y envía ese formulario con `requestSubmit()`.
+- El texto vacío del timeline de `MessagesTimeline.tsx` (`.justify-center > p`), oculto mientras se ve la bienvenida.
+- `PreviewPanel` en modo `embedded`, como el hilo manual, para abrir las fuentes del expediente.
