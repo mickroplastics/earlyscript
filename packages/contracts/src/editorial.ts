@@ -147,8 +147,12 @@ export const EditorialTrendPresentation = Schema.Struct({
   model: Schema.String,
   promptVersion: Schema.String,
   generatedAt: IsoDateTime,
-  /** `stale`: written for an earlier input (evidence, profile or prompt); kept until regenerated. */
-  status: Schema.optionalKey(Schema.Literals(["current", "stale"])),
+  /**
+   * `stale`: written for an earlier input (evidence or profile); kept until regenerated.
+   * `outdated`: written with an earlier prompt version or failing today's voice check; the
+   * dossier shows no story for it, only a line asking to draft again.
+   */
+  status: Schema.optionalKey(Schema.Literals(["current", "stale", "outdated"])),
 });
 export type EditorialTrendPresentation = typeof EditorialTrendPresentation.Type;
 

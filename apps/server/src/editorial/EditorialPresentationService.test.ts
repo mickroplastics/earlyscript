@@ -62,7 +62,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v4",
+    promptVersion: "trend-presentation.v5",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -197,7 +197,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v4");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v5");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);
@@ -262,7 +262,7 @@ describe("EditorialPresentationService", () => {
           calls.map((call) => call.rejectedBecause),
           [
             undefined,
-            "it described how the data was collected instead of the news (Qué pasó: «motor»; Qué pasó: «autores distintos»; Qué pasó: «11 elementos»)",
+            "it described how the data was collected instead of the news (Qué pasó: «el motor registro»; Qué pasó: «11 elementos»; Qué pasó: «autores distintos»)",
           ],
         );
         assert.deepStrictEqual(
@@ -285,8 +285,10 @@ describe("EditorialPresentationService", () => {
         assert.strictEqual(error.reason, "generation-failed");
         assert.strictEqual(
           error.message,
-          "el texto describía la recogida de datos y no las noticias (Qué pasó: «motor»). Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
+          "«Qué pasó» describía cómo se reunieron los datos y no las noticias. Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
         );
+        // The rejected words stay in the log and the retry, never in what the dossier shows.
+        assert.notMatch(error.message, /motor|elementos|autores/);
         assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
         const rows = yield* presentationRows;
         assert.deepStrictEqual(
@@ -361,7 +363,7 @@ describe("EditorialPresentationService", () => {
     ),
   );
 
-  it.effect("a new prompt version marks stored text stale and ensure writes it again", () =>
+  it.effect("a new prompt version marks stored text outdated and ensure writes it again", () =>
     withDrafting((generator) =>
       Effect.gen(function* () {
         const service = yield* EditorialPresentationService;
@@ -375,9 +377,11 @@ describe("EditorialPresentationService", () => {
               prompt_version = 'trend-presentation.v2'
         `;
 
+        // Kept, but the dossier draws no story for it: no model call, no row removed.
         const before = (yield* shown).get(QUANTUM);
-        assert.strictEqual(before?.status, "stale");
+        assert.strictEqual(before?.status, "outdated");
         assert.strictEqual(before?.title, first.presentation.title);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 1);
 
         const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
         assert.isFalse(again.reused);
@@ -391,6 +395,27 @@ describe("EditorialPresentationService", () => {
             [1, "ready"],
             [2, "ready"],
           ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("a stored text about the collection is outdated, whatever its prompt version", () =>
+    withDrafting(() =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        const sql = yield* EditorialSql;
+        yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+        assert.strictEqual((yield* shown).get(QUANTUM)?.status, "current");
+        // A text stored before the voice check, or under an older version of it.
+        yield* sql`
+          UPDATE editorial_presentations
+          SET what_happened = 'El motor registró 11 elementos de 11 autores distintos.'
+        `;
+        assert.strictEqual((yield* shown).get(QUANTUM)?.status, "outdated");
+        assert.deepStrictEqual(
+          (yield* presentationRows).map((row) => row.status),
+          ["ready"],
         );
       }),
     ),

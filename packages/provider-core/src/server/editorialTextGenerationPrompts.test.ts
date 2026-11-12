@@ -78,6 +78,17 @@ describe("buildTrendPresentationPrompt", () => {
     expect(prompt).toContain("Never describe the collection process");
     expect(prompt).toContain("<coverage_data>");
     expect(prompt).not.toContain("previous answer was rejected");
+    // Round 1 of the dossier v2: a first-person aside, an uncited calculator, a title about
+    // the loudest item and a publication the headline never named.
+    expect(prompt).toContain("Never use the first person, singular or plural.");
+    expect(prompt).toContain("Any tool, product or article it names gets its [itemId]");
+    expect(prompt).toContain("not the most striking single item");
+    expect(prompt).toContain("Name a publication (Bloomberg, BleepingComputer…)");
+    expect(prompt).toContain("do not add that it is open source");
+    expect(prompt).toContain('never "vídeo"');
+    expect(buildTrendPresentationPrompt({ ...input, language: "en" }).prompt).not.toContain(
+      "vídeo",
+    );
   });
 
   it("names the problem of a rejected answer in the one retry", () => {
@@ -168,6 +179,33 @@ describe("finalizeTrendPresentation", () => {
     expect(result.title.length).toBeLessThanOrEqual(MAX_TREND_TITLE_CHARS);
     expect(result.title).toMatch(/^Computación cuántica .*…$/);
     expect(result.warnings).toEqual([`The title was cut to ${MAX_TREND_TITLE_CHARS} characters.`]);
+  });
+
+  it("writes video, never vídeo, in Spanish", () => {
+    const result = finalizeTrendPresentation(input, {
+      ...output,
+      title: "Un vídeo sobre circuitos",
+      summary: {
+        ...output.summary,
+        videoAngle: "Vídeos cortos que comparen dos vídeos [itm_hn_1].",
+      },
+    });
+
+    expect(result.title).toBe("Un video sobre circuitos");
+    expect(result.summary.videoAngle).toBe("Videos cortos que comparen dos videos [itm_hn_1].");
+  });
+
+  it("keeps a part longer than asked, with a warning", () => {
+    const whatHappened = `${"Un titular informa de un avance en circuitos cuánticos. ".repeat(9).trim()} [itm_hn_1]`;
+    const result = finalizeTrendPresentation(input, {
+      ...output,
+      summary: { ...output.summary, whatHappened },
+    });
+
+    expect(result.summary.whatHappened).toBe(whatHappened);
+    expect(result.warnings).toEqual([
+      `whatHappened has ${whatHappened.length} characters; the prompt asks for at most 450.`,
+    ]);
   });
 
   it("falls back to the engine terms when the title is empty", () => {

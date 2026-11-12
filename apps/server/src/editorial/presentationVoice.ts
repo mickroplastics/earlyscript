@@ -3,11 +3,21 @@ import type {
   TrendPresentationGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-// The assistant's summary talks about the news, never about how it was collected. A text that
-// says "el motor registró 11 elementos de 11 autores distintos" is rejected, not stored with a
-// warning nobody reads.
+// The assistant's summary talks about the news, never about how it was collected or about its
+// own writing. A text that says "el motor registró 11 elementos de 11 autores distintos" is
+// rejected, not stored with a warning nobody reads. Rules match collection phrases, not news
+// nouns: "el sistema operativo Alpine" is news, "el sistema agrupó" is not.
 
 type VoicePresentation = Pick<TrendPresentationGenerationResult, "title" | "summary">;
+type VoiceEvidence = Pick<TrendPresentationEvidence, "title" | "excerpt">;
+
+export interface VoiceProblem {
+  /** The part as the dossier page names it: «Qué pasó», «Ángulo de video»… */
+  readonly part: string;
+  /** The matched words, for the log and the retry; never shown to the operator. */
+  readonly words: string;
+  readonly kind: "collection" | "self";
+}
 
 /** Same marker the prompt asks for: `[itemId]`, without spaces or nested brackets. */
 const CITATION_MARKER = /\[[^[\]\s]+\]/g;
@@ -20,20 +30,96 @@ const voiceText = (text: string) =>
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
 
-const VOICE_RULES: ReadonlyArray<{
+const wordsOf = (text: string) => text.match(/[\p{L}\p{N}]+/gu) ?? [];
+
+const NUMBER = "(?:\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)";
+const SOURCES = "(?:hacker news|github|hugging face|npm|rss|reddit|lobsters|wikipedia)";
+
+const PHRASE_RULES: ReadonlyArray<{
   readonly pattern: RegExp;
-  /** Allowed when the evidence itself uses the word: "Unreal Engine", "motor de búsqueda". */
-  readonly unlessEvidence?: RegExp;
+  readonly kind: VoiceProblem["kind"];
 }> = [
-  { pattern: /\bmotor(es)?\b/, unlessEvidence: /\bmotor(es)?\b/ },
-  { pattern: /\bengines?\b/, unlessEvidence: /\bengines?\b/ },
-  { pattern: /\bautores? distintos?\b/ },
-  { pattern: /\b\d+\s+(elementos|items|publicaciones|autores)\b/ },
-  { pattern: /\bel (sistema|algoritmo|corpus|cluster)\b/ },
-  { pattern: /(^|[.!?]\s+)(la|esta) tendencia\b/ },
+  // Something that gathered the items, doing the gathering.
+  {
+    pattern:
+      /\b(?:el|un|este|nuestro) (?:sistema|algoritmo|motor|engine|pipeline|cluster|corpus) (?:registr|agrup|detect|recog|recopil|reun|captur|identific|clasific|junt|seleccion)\w*/,
+    kind: "collection",
+  },
+  {
+    pattern: /\bse (?:recogieron|recopilaron|registraron|capturaron|agruparon|reunieron)\b/,
+    kind: "collection",
+  },
+  { pattern: new RegExp(`\\b${NUMBER} (?:elementos|items|autores)\\b`), kind: "collection" },
+  { pattern: /\b(?:los|estos|varios|algunos|otros) (?:elementos|items)\b/, kind: "collection" },
+  {
+    pattern: new RegExp(
+      `\\b${NUMBER} (?:articulos|publicaciones|titulares|posts|entradas) (?:de|en) ${SOURCES}\\b`,
+    ),
+    kind: "collection",
+  },
+  { pattern: /\b(?:autores? distintos?|distintos autores)\b/, kind: "collection" },
+  { pattern: /(^|[.!?]\s+)(?:la|esta) tendencia\b/, kind: "collection" },
+  {
+    pattern: /\b(?:la|esta) tendencia (?:reune|agrupa|recoge|incluye|junta|suma)\b/,
+    kind: "collection",
+  },
+  // The writer talking about itself or about its instructions.
+  {
+    pattern:
+      /\b(?:lo senalo|sin recomendar|me limito|no he (?:leido|podido)|no puedo (?:leer|acceder|abrir))\b/,
+    kind: "self",
+  },
 ];
 
-// Labels as the dossier page names each part; the message reaches the operator.
+/** Words that name the collection; allowed only inside the evidence's own expression. */
+const JARGON = /^(?:motor(?:es)?|engines?|clusters?|corpus)$/;
+const STOP_WORDS = new Set(
+  "el la los las lo un una unos unas este esta estos estas ese esa su sus al a y o que en con por para se nuestro the a an of and".split(
+    " ",
+  ),
+);
+
+/** Spanish expressions for an English evidence: "motor de búsqueda" for "search engine". */
+const TRANSLATIONS: Readonly<Record<string, string>> = {
+  "motor de busqueda": "search engine",
+  "motores de busqueda": "search engines",
+  "motor de juego": "game engine",
+  "motor de juegos": "game engine",
+  "motor de inferencia": "inference engine",
+  "motor de renderizado": "rendering engine",
+  "motor electrico": "electric motor",
+};
+
+/**
+ * The expressions around a jargon word: "unreal engine", "motor electrico", "motor de
+ * busqueda". The word passes only when one of them is in the evidence, so an evidence about a
+ * search engine does not excuse "el motor agrupó estos titulares".
+ */
+function jargonOutsideEvidence(text: string, evidence: string): string | null {
+  const words = wordsOf(text);
+  for (const [index, word] of words.entries()) {
+    if (!JARGON.test(word)) continue;
+    const before = words[index - 1];
+    const after = words[index + 1];
+    const expressions = [
+      before !== undefined && !STOP_WORDS.has(before) ? `${before} ${word}` : null,
+      after !== undefined && !STOP_WORDS.has(after) && after !== "de" && after !== "del"
+        ? `${word} ${after}`
+        : null,
+      (after === "de" || after === "del") && words[index + 2] !== undefined
+        ? `${word} ${after} ${words[index + 2]}`
+        : null,
+    ].filter((expression) => expression !== null);
+    const inEvidence = (expression: string) =>
+      evidence.includes(` ${expression} `) ||
+      (Object.hasOwn(TRANSLATIONS, expression) &&
+        evidence.includes(` ${TRANSLATIONS[expression]} `));
+    if (!expressions.some(inEvidence)) return word;
+  }
+  return null;
+}
+
+// Labels as the dossier page names each part; the operator reads them in the error.
 const VOICE_PARTS: ReadonlyArray<readonly [string, (presentation: VoicePresentation) => string]> = [
   ["título", (presentation) => presentation.title],
   ["Qué pasó", (presentation) => presentation.summary.whatHappened],
@@ -42,30 +128,78 @@ const VOICE_PARTS: ReadonlyArray<readonly [string, (presentation: VoicePresentat
 ];
 
 /**
- * Phrases that describe the collection process instead of the news. One message per match,
- * naming the part and the words («Qué pasó: «el motor»»); empty when the text is about the news.
+ * Phrases about the collection process or the writer instead of the news, one per match;
+ * empty when the text is about the news.
  */
 export function trendPresentationVoiceProblems(
   presentation: VoicePresentation,
-  evidence: ReadonlyArray<Pick<TrendPresentationEvidence, "title" | "excerpt">>,
-): ReadonlyArray<string> {
-  const evidenceText = voiceText(evidence.map((item) => `${item.title} ${item.excerpt}`).join(" "));
-  const problems: string[] = [];
+  evidence: ReadonlyArray<VoiceEvidence>,
+): ReadonlyArray<VoiceProblem> {
+  const evidenceWords = ` ${wordsOf(
+    voiceText(evidence.map((item) => `${item.title} ${item.excerpt}`).join(" ")),
+  ).join(" ")} `;
+  const problems: VoiceProblem[] = [];
   for (const [part, read] of VOICE_PARTS) {
     const text = voiceText(read(presentation));
-    for (const rule of VOICE_RULES) {
-      if (rule.unlessEvidence?.test(evidenceText)) continue;
+    const found: VoiceProblem[] = [];
+    // One problem per phrase: "la tendencia reune" is the same finding as "la tendencia".
+    const add = (words: string, kind: VoiceProblem["kind"]) => {
+      if (found.some((other) => other.words.includes(words) || words.includes(other.words))) return;
+      found.push({ part, words, kind });
+    };
+    for (const rule of PHRASE_RULES) {
       const match = rule.pattern.exec(text);
-      if (match) problems.push(`${part}: «${match[0].replace(/^[.!?\s]+/, "")}»`);
+      if (match) add(match[0].replace(/^[.!?\s]+/, ""), rule.kind);
     }
+    const jargon = jargonOutsideEvidence(text, evidenceWords);
+    if (jargon !== null) add(jargon, "collection");
+    problems.push(...found);
   }
   return problems;
 }
 
-/** The line the one retry adds to the prompt, in the prompt's language. */
-export const voiceRetryReason = (problems: ReadonlyArray<string>) =>
-  `it described how the data was collected instead of the news (${problems.join("; ")})`;
+/** "Qué pasó: «motor»; Ángulo de video: «lo senalo»", for the log and the retry. */
+export const voiceProblemsText = (problems: ReadonlyArray<VoiceProblem>) =>
+  problems.map((problem) => `${problem.part}: «${problem.words}»`).join("; ");
 
-/** What the operator reads when the retry still described the collection. */
-export const voiceFailureMessage = (problems: ReadonlyArray<string>) =>
-  `el texto describía la recogida de datos y no las noticias (${problems[0] ?? ""}). Regenera o elige otro modelo en Ajustes › Editorial › Redacción.`;
+/** The line the one retry adds to the prompt, in the prompt's language. */
+export function voiceRetryReason(problems: ReadonlyArray<VoiceProblem>): string {
+  const reasons = [
+    problems.some((problem) => problem.kind === "collection")
+      ? "it described how the data was collected instead of the news"
+      : null,
+    problems.some((problem) => problem.kind === "self")
+      ? "it commented on its own writing or instructions instead of the news"
+      : null,
+  ].filter((reason) => reason !== null);
+  return `${reasons.join(", and ")} (${voiceProblemsText(problems)})`;
+}
+
+const partList = new Intl.ListFormat("es", { type: "conjunction" });
+
+/**
+ * What the operator reads when the retry failed too: the parts, never the rejected words,
+ * which would put the collection vocabulary back on the dossier.
+ */
+export function voiceFailureMessage(problems: ReadonlyArray<VoiceProblem>): string {
+  const sentence = (kind: VoiceProblem["kind"], singular: string, plural: string) => {
+    const parts = [
+      ...new Set(
+        problems.filter((problem) => problem.kind === kind).map((problem) => problem.part),
+      ),
+    ];
+    if (parts.length === 0) return null;
+    return `${partList.format(parts.map((part) => `«${part}»`))} ${parts.length === 1 ? singular : plural}.`;
+  };
+  return [
+    sentence(
+      "collection",
+      "describía cómo se reunieron los datos y no las noticias",
+      "describían cómo se reunieron los datos y no las noticias",
+    ),
+    sentence("self", "comentaba su propia redacción", "comentaban su propia redacción"),
+    "Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
+  ]
+    .filter((part) => part !== null)
+    .join(" ");
+}

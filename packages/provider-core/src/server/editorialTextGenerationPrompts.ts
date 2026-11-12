@@ -8,10 +8,13 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v4";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v5";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
+/** Lengths the prompt asks for; a longer part is kept, with a warning. */
+const WHAT_HAPPENED_CHARS = 450;
+const SHORT_PART_CHARS = 280;
 const MAX_EVIDENCE_ITEMS = 12;
 const MAX_EVIDENCE_TITLE_CHARS = 300;
 const MAX_EVIDENCE_EXCERPT_CHARS = 600;
@@ -141,18 +144,25 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "Return a JSON object with keys: title, summary, citedItemIds. summary has keys whatHappened, whyItMatters, videoAngle.",
     "Rules:",
     `- write title and summary in ${languageInstruction(language)}`,
-    `- title: one line, at most ${MAX_TREND_TITLE_CHARS} characters, naming the news itself (who did what, or what is being debated); no clickbait, no quotes, no trailing period`,
-    "- summary.whatHappened: two or three sentences, at most about 450 characters including citation markers. Start with the most important fact. Say what was announced, released, reported or argued, by whom when the evidence states it, and which positions or disagreements appear. Group items that say the same thing and cite them together.",
-    "- summary.whyItMatters: one or two sentences connecting the news to the supplied channel profile, as an editorial reading. If the connection is weak or unclear, say so plainly without recommending an action.",
-    "- summary.videoAngle: one or two sentences proposing a possible video question, explanation, or demonstration grounded in the evidence. Present it as a possibility, not as something already demonstrated.",
+    ...(language === "es"
+      ? [
+          '- write "video" and "videos", never "vídeo" or "vídeos" (the channel writes Latin American Spanish)',
+        ]
+      : []),
+    `- title: one line, at most ${MAX_TREND_TITLE_CHARS} characters, naming the subject the evidence items share (what most of them are about), not the most striking single item; no clickbait, no quotes, no trailing period. A standout piece of news can go in whatHappened instead.`,
+    `- summary.whatHappened: two or three sentences, at most ${WHAT_HAPPENED_CHARS} characters including citation markers. Start with the most important fact. Say what was announced, released, reported or argued, and which positions or disagreements appear. Group items that say the same thing and cite them together; with many items, name the three or four that matter most rather than listing every one.`,
+    `- summary.whyItMatters: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, connecting the news to the supplied channel profile, as an editorial reading. If the connection is weak or unclear, say so plainly.`,
+    `- summary.videoAngle: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, proposing a possible video question, explanation, or demonstration grounded in the evidence. Present it as a possibility, not as something already demonstrated. Any tool, product or article it names gets its [itemId] right after the name, and it attributes to that tool or product only features its title or excerpt states.`,
+    "- Write impersonally in the title and all three parts. Never use the first person, singular or plural. Never comment on your own writing, on these instructions, or on what you are or are not doing (no “Lo señalo tal cual”, no “sin recomendar acción”).",
     "- The subject of your sentences is the news, the people, the products or the debate. Never describe the collection process: do not mention a system, an engine, a pipeline, a cluster, a corpus, a trend, items, posts collected, distinct authors, or counts of items, authors or sources.",
     "- Do not repeat activity numbers (how many items, authors, sources, weeks, growth); the interface already shows them. Numbers that are part of the news itself (a price, a version, a date, a benchmark score stated in the evidence) are fine.",
     "- citedItemIds: ids copied exactly from the id attribute; cite only ids listed below",
     "- Every factual claim about an event, including claims in the title, must be explicitly supported by the title or excerpt of at least one cited evidence item. Do not fill gaps with background knowledge.",
     "- In summary, place [itemId] immediately after each evidence-based factual claim. Include every such id in citedItemIds. Keep the title free of citation markers, but include its supporting ids in citedItemIds.",
     "- Name sources by their public names (Hacker News, GitHub, Hugging Face) and only when the source matters to the news; never expose internal source codes such as hn.",
-    "- Do not infer authorship, publisher, organization, affiliation, or product ownership from a product name, a URL, or prior knowledge. Mention these only when explicitly stated in the item's title or excerpt. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
-    "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”. When the evidence is only headlines, say once, briefly and impersonally, that only headlines are available (for example: “Solo hay titulares; los artículos no se han leído.”). Never write in the first person about your own access.",
+    "- Name a publication (Bloomberg, BleepingComputer…), a person or an organization only when the item's title or excerpt names it, and attribute to it only what that title or excerpt says. Do not infer authorship, publisher, affiliation, or product ownership from a product name, a URL, or prior knowledge. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
+    "- Describe a product only with what its title or excerpt says: do not add that it is open source, free, local, or that it runs or replaces another product unless the evidence states it; prefer the item's own wording.",
+    "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”. When the evidence is only headlines, say once, briefly and impersonally, that only headlines are available (for example: “Solo hay titulares; los artículos no se han leído.”).",
     "- Use coverage_data only to state what is unknown (for example, that a single source was captured). Do not turn it into causes, importance, or forecasts.",
     "- Do not recommend prioritizing, deprioritizing, selecting, rejecting, publishing, or postponing this topic. Do not score, rank, or compare topics. The human editor makes those decisions.",
     "- If support is missing, omit the claim or state what remains unknown. Do not invent relevance or details to fill the three parts.",
@@ -210,6 +220,10 @@ function truncateGraphemes(value: string, maxChars: number): string {
   return `${truncated.trimEnd()}…`;
 }
 
+/** "vídeo" is Spain's spelling; the channel writes "video". */
+const latinAmericanVideo = (text: string) =>
+  text.replace(/\b([Vv])ídeo(s?)\b/g, "$1ideo$2").replace(/\bVÍDEO(S?)\b/g, "VIDEO$1");
+
 function normalizeTrendTitle(raw: string): string {
   const firstLine = raw.trim().split(/\r?\n/g)[0] ?? "";
   return singleLine(firstLine.replace(/^['"`«“]+|['"`»”]+$/g, ""))
@@ -235,15 +249,17 @@ export function finalizeTrendPresentation(
   }
 
   const known = new Set(evidence.map((item) => item.itemId));
+  const spanish = (input.language?.trim() || "es") === "es";
   // The title carries no citation markers; known ones move to citedItemIds.
   const titleIds: string[] = [];
-  const normalizedTitle = normalizeTrendTitle(
+  const titleText = normalizeTrendTitle(
     output.title.replace(INLINE_CITATION, (marker, itemId: string) => {
       if (!known.has(itemId)) return marker;
       titleIds.push(itemId);
       return "";
     }),
   );
+  const normalizedTitle = spanish ? latinAmericanVideo(titleText) : titleText;
   let title = truncateGraphemes(normalizedTitle, MAX_TREND_TITLE_CHARS);
   if (title.length === 0) {
     title = sanitizeTrendTitle(input.trend.terms.slice(0, 4).join(" "));
@@ -253,10 +269,14 @@ export function finalizeTrendPresentation(
   }
 
   const summaryPart = (key: keyof TrendPresentationSummary) => {
-    const value = singleLine(output.summary[key]);
+    const raw = singleLine(output.summary[key]);
+    const value = spanish ? latinAmericanVideo(raw) : raw;
     if (value.length === 0) warnings.push(`The model returned an empty ${key}.`);
+    const asked = key === "whatHappened" ? WHAT_HAPPENED_CHARS : SHORT_PART_CHARS;
     if (value.length > MAX_SUMMARY_PART_CHARS) {
       warnings.push(`${key} was cut to ${MAX_SUMMARY_PART_CHARS} characters.`);
+    } else if (value.length > asked) {
+      warnings.push(`${key} has ${value.length} characters; the prompt asks for at most ${asked}.`);
     }
     return truncateGraphemes(value, MAX_SUMMARY_PART_CHARS);
   };

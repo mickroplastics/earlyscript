@@ -36,6 +36,7 @@ import { loadPresentationDossiers, type PresentationDossier } from "./presentati
 import {
   trendPresentationVoiceProblems,
   voiceFailureMessage,
+  voiceProblemsText,
   voiceRetryReason,
 } from "./presentationVoice.ts";
 import { EditorialRunDirectory } from "./RunDirectory.ts";
@@ -373,7 +374,11 @@ const make = Effect.gen(function* () {
     const rejected = trendPresentationVoiceProblems(generated, input.evidence);
     if (rejected.length > 0) {
       yield* Effect.logInfo("editorial: trend presentation rejected, retrying once").pipe(
-        Effect.annotateLogs({ runId: dossier.runId, dossierId: dossier.dossierId, rejected }),
+        Effect.annotateLogs({
+          runId: dossier.runId,
+          dossierId: dossier.dossierId,
+          rejected: voiceProblemsText(rejected),
+        }),
       );
       [duration, generated] = yield* generateOnce({
         ...input,
@@ -381,6 +386,14 @@ const make = Effect.gen(function* () {
       });
       const problems = trendPresentationVoiceProblems(generated, input.evidence);
       if (problems.length > 0) {
+        // The matched words stay in the log; the operator's message names only the parts.
+        yield* Effect.logWarning("editorial: trend presentation rejected twice").pipe(
+          Effect.annotateLogs({
+            runId: dossier.runId,
+            dossierId: dossier.dossierId,
+            rejected: voiceProblemsText(problems),
+          }),
+        );
         return yield* new EditorialPresentationError({
           reason: "generation-failed",
           message: voiceFailureMessage(problems),
