@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
+import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { durationAxis } from "./figureExport.logic";
 import {
@@ -41,9 +42,13 @@ import {
   type StripDot,
 } from "./resultsOverview.logic";
 
-/** The dots of the time card: loading, unavailable (the medians alone), or one per thread. */
+/**
+ * The dots of the time card: loading, failed (with a retry), unavailable (the medians alone),
+ * or one per thread.
+ */
 export type ProcessPointsState =
   | { readonly _tag: "loading" }
+  | { readonly _tag: "failure"; readonly onRetry: () => void }
   | { readonly _tag: "ready"; readonly points: ProcessPoints | null };
 
 function KpiCard({
@@ -278,6 +283,31 @@ function CitationTracks({ summary }: { readonly summary: EditorialResultsSummary
   );
 }
 
+/** What the strip shows, said under it: never dots that are not drawn. */
+function PointsLegend({ state }: { readonly state: ProcessPointsState }) {
+  switch (state._tag) {
+    case "loading":
+      return <span>Cargando los puntos por ficha · raya: mediana.</span>;
+    case "failure":
+      return (
+        <span className="flex flex-wrap items-center gap-x-2" data-points-failure="">
+          <span>No se pudieron leer los puntos por ficha · raya: mediana.</span>
+          <Button size="micro" variant="link" onClick={state.onRetry}>
+            Reintentar
+          </Button>
+        </span>
+      );
+    case "ready":
+      return (
+        <span>
+          {state.points === null
+            ? "Puntos no disponibles: más de 100 decisiones o alguna fuera de dominio."
+            : "Un punto por ficha · raya: mediana."}
+        </span>
+      );
+  }
+}
+
 function TimeCard({
   summary,
   points,
@@ -287,7 +317,6 @@ function TimeCard({
 }) {
   const total = summary.comparisons.find((comparison) => comparison.key === "total");
   const provisional = provisionalNote(summary);
-  const unavailable = points._tag === "ready" && points.points === null;
   return (
     <KpiCard
       question="Tiempo por ficha · mediana del proceso completo"
@@ -299,11 +328,7 @@ function TimeCard({
               {medianDifferenceText(total.assisted, total.manual)}
             </span>
           ) : null}
-          <span>
-            {unavailable
-              ? "Puntos no disponibles: más de 100 decisiones o alguna fuera de dominio."
-              : "Un punto por ficha · raya: mediana."}
-          </span>
+          <PointsLegend state={points} />
           {provisional ? <span>{provisional}</span> : null}
         </>
       }
@@ -361,7 +386,11 @@ export function ResultsHero({
               value={entry?.utility.mean == null ? null : meanText(entry.utility.mean)}
               unit="de 5"
               empty="sin datos"
-              meta={entry ? [actionsText(entry.actions)] : ["n = 0"]}
+              // The n shares the time card's n line, so both read across.
+              meta={[
+                ...(entry ? [actionsText(entry.actions)] : []),
+                sizeText(entry?.utility.n ?? 0),
+              ]}
             />
           );
         })}

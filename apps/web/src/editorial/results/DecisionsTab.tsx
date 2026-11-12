@@ -31,6 +31,7 @@ import {
   formatInteger,
   modeLabel,
   pageRangeText,
+  trialName,
 } from "./results.logic";
 import { ResultsBox, ResultsNoteList, SeriesSwatch } from "./resultsMarks";
 import { localTimeZone, rowDateText, timeZoneLabel } from "./resultsOverview.logic";
@@ -65,24 +66,36 @@ const DECISION_FILTERS: ReadonlyArray<{
   { value: "manual", label: "Manual" },
 ];
 
+/** An agent trial thread, as the summary lists it. */
+interface TrialLink {
+  readonly threadId: string;
+  readonly environmentId: string;
+}
+
 /**
  * A thread's name, linked to it when the thread is known here, on up to two lines; the tooltip
- * carries it whole. Its column takes the table's spare width (`table-fixed`).
+ * carries it whole. Its column takes the table's spare width (`table-fixed`). An agent trial
+ * always links, under `trialName` when its title is unknown.
  */
 export function ThreadCell({
   decision,
   title,
+  trialName,
 }: {
   readonly decision: EditorialResultsDecision;
   readonly title: string | undefined;
+  readonly trialName?: string | undefined;
 }) {
-  const label = decisionThreadLabel(decision, title);
+  const label =
+    title === undefined && trialName !== undefined
+      ? trialName
+      : decisionThreadLabel(decision, title);
   const classes = "line-clamp-2 whitespace-normal text-foreground [overflow-wrap:anywhere]";
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          title === undefined ? (
+          title === undefined && trialName === undefined ? (
             <span className={classes} />
           ) : (
             <Link
@@ -106,11 +119,13 @@ export function ThreadCell({
 function DecisionsTable({
   page,
   threadTitles,
+  trials,
   reference,
   showTrials,
 }: {
   readonly page: EditorialResultsDecisionPage;
   readonly threadTitles: ReadonlyMap<string, string>;
+  readonly trials: ReadonlyArray<TrialLink>;
   /** The latest decision: dates in its year leave the year out. */
   readonly reference: string | null;
   readonly showTrials: boolean;
@@ -147,7 +162,13 @@ function DecisionsTable({
                 </span>
               </TableCell>
               <TableCell>
-                <ThreadCell decision={decision} title={threadTitles.get(decision.threadId)} />
+                <ThreadCell
+                  decision={decision}
+                  title={threadTitles.get(decision.threadId)}
+                  trialName={
+                    decision.cohort === "trial" ? trialName(trials, decision.threadId) : undefined
+                  }
+                />
               </TableCell>
               <TableCell>
                 <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
@@ -255,16 +276,19 @@ export function DecisionsTab({
   summary,
   decisions,
   threadTitles,
-  undecidedTrials,
+  trialLinks,
 }: {
   readonly summary: EditorialResultsSummary;
   readonly decisions: ResultsDecisionsControls;
   readonly threadTitles: ReadonlyMap<string, string>;
-  /** Trial threads without a decision, once known; the table has no row for them. */
-  readonly undecidedTrials: ReadonlyArray<{
-    readonly threadId: string;
-    readonly environmentId: string;
-  }> | null;
+  /**
+   * Trials to link under the table: the ones without a decision once the whole log is read,
+   * every trial when it could not be (no claim about which lack one), none while it loads.
+   */
+  readonly trialLinks: {
+    readonly undecidedOnly: boolean;
+    readonly trials: ReadonlyArray<TrialLink>;
+  } | null;
 }) {
   const checkboxId = useId();
   const trials = summary.trials ?? [];
@@ -323,6 +347,7 @@ export function DecisionsTab({
             <DecisionsTable
               page={state.page}
               threadTitles={threadTitles}
+              trials={trials}
               reference={summary.lastDecidedAt}
               showTrials={decisions.showTrials}
             />
@@ -330,18 +355,17 @@ export function DecisionsTab({
           <Pagination page={state.page} onPage={decisions.onPage} />
         </>
       )}
-      {decisions.showTrials && undecidedTrials && undecidedTrials.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Ensayos sin decisión:{" "}
-          {undecidedTrials.map((trial) => (
+      {decisions.showTrials && trialLinks && trialLinks.trials.length > 0 ? (
+        <p className="text-xs text-muted-foreground" data-trial-links="">
+          {trialLinks.undecidedOnly ? "Ensayos sin decisión:" : "Ensayos de agente:"}{" "}
+          {trialLinks.trials.map((trial) => (
             <Link
               key={trial.threadId}
               to="/$environmentId/$threadId"
               params={{ environmentId: trial.environmentId, threadId: trial.threadId }}
               className="me-2 text-foreground underline underline-offset-2"
             >
-              {threadTitles.get(trial.threadId) ??
-                `Ensayo ${trials.findIndex((entry) => entry.threadId === trial.threadId) + 1}`}
+              {threadTitles.get(trial.threadId) ?? trialName(trials, trial.threadId)}
             </Link>
           ))}
         </p>

@@ -312,9 +312,9 @@ describe("closingStrip", () => {
         baselineSample: { blocks: 17, firstDay: "2026-10-01", lastDay: "2026-10-14" },
       },
       (iso) => iso.slice(0, 10),
-      (day) => `día ${day.slice(8)}`,
+      (first, last) => `${first.slice(8)}..${last.slice(8)}`,
     );
-    expect(blocks[1]?.text).toContain("17 bloques de línea base entre día 01 y día 14");
+    expect(blocks[1]?.text).toContain("17 bloques de línea base del 01..14");
     expect(blocks[1]?.text).toContain("entre 2026-11-03 y 2026-11-03");
     expect(blocks[1]?.text).toContain("desde 2026-11-09 hasta 2026-11-10");
   });

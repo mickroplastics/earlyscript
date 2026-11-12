@@ -405,6 +405,33 @@ describe("ResultsView", () => {
     await expect.element(screen.getByText(/^Puntos no disponibles/)).toBeVisible();
   });
 
+  it("never promises dots the time card has not drawn", async () => {
+    const onRetry = vi.fn();
+    const view = (overview: ResultsOverviewControls) => (
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={overview}
+        threadTitles={new Map()}
+      />
+    );
+    await using screen = await render(view({ state: { _tag: "loading" }, onRetry }));
+    const foot = () => textOf(screen.container);
+    expect(foot()).toContain("Cargando los puntos por ficha");
+    expect(foot()).not.toContain("Un punto por ficha");
+    expect(screen.container.querySelector("[data-points-failure]")).toBeNull();
+
+    await screen.rerender(
+      view({ state: { _tag: "failure", message: "No se pudo leer." }, onRetry }),
+    );
+    expect(foot()).toContain("No se pudieron leer los puntos por ficha");
+    expect(foot()).not.toContain("Un punto por ficha");
+    expect(screen.container.querySelectorAll("[data-dot]")).toHaveLength(0);
+    // The card retries its own read, without visiting another tab.
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it("switches tabs by click and by arrow keys and keeps the tab in the URL", async () => {
     await using screen = await render(
       <ResultsView
@@ -537,10 +564,37 @@ describe("ResultsView", () => {
       false,
     ]);
     expect(rows[2]?.textContent).toContain("Ensayo");
+    // A decided trial with no known title still links, under its place among the trials.
+    await expect
+      .element(screen.getByRole("table").getByRole("link", { name: "Ensayo 1" }))
+      .toHaveAttribute("href", "/env-1/thread-trial-1");
     // The trial without a decision has no row, so it is linked under the table.
+    const links = () => screen.container.querySelector("[data-trial-links]");
+    expect(textOf(links())).toMatch(/^Ensayos sin decisión: Ensayo 2$/);
     await expect
       .element(screen.getByRole("link", { name: "Ensayo 2" }))
       .toHaveAttribute("href", "/env-1/thread-trial-2");
+
+    // A log read past its page or a failed read cannot tell which trials lack a decision:
+    // every trial is linked, without saying so.
+    for (const state of [
+      {
+        _tag: "ready",
+        page: { offset: 0, total: 101, decisions: [MANUAL_DECISION, TRIAL_DECISION] },
+      },
+      { _tag: "failure", message: "No se pudo leer." },
+    ] satisfies ReadonlyArray<ResultsOverviewControls["state"]>) {
+      await screen.rerender(
+        <ResultsView
+          summary={summary}
+          decisions={controls({ onShowTrials, showTrials: true })}
+          overview={{ ...overview, state }}
+          threadTitles={new Map()}
+        />,
+      );
+      expect(textOf(links())).toBe("Ensayos de agente: Ensayo 1Ensayo 2");
+      expect(links()?.querySelectorAll("a")).toHaveLength(2);
+    }
   });
 
   it("folds the sample and its limits under the caveat", async () => {

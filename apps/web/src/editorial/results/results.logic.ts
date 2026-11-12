@@ -343,6 +343,15 @@ export function decisionThreadLabel(
   return decision.mode === "manual" ? "Hilo manual sin título" : "Hilo sin título";
 }
 
+/** A trial thread named by its place among the trials, as «Ensayo 2», when its title is unknown. */
+export function trialName(
+  trials: ReadonlyArray<{ readonly threadId: string }>,
+  threadId: string,
+): string {
+  const index = trials.findIndex((trial) => trial.threadId === threadId);
+  return index === -1 ? "Ensayo" : `Ensayo ${index + 1}`;
+}
+
 /** "1 h 40 min", "≥ 33 min" when a segment awaited resolution, "sin reloj" if none ran. */
 export function decisionTotalText(decision: {
   readonly clockDefinitive: boolean;
@@ -366,7 +375,8 @@ function localResultsDate(iso: string): string {
 export function closingStrip(
   summary: EditorialResultsSummary,
   formatDate: (iso: string) => string = localResultsDate,
-  formatDay: (day: string) => string = (day) => day,
+  formatDays: (first: string, last: string) => string = (first, last) =>
+    first === last ? first : `${first} al ${last}`,
 ) {
   const human = summary.humanThreads ?? summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
   const closed = summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
@@ -393,7 +403,7 @@ export function closingStrip(
     },
     {
       title: "Muestra",
-      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${formatDay(baseline.firstDay)} y ${formatDay(baseline.lastDay ?? baseline.firstDay)}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${formatDate(firstTrial.createdAt)} y ${formatDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${formatDate(summary.firstDecidedAt)} hasta ${formatDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` del ${formatDays(baseline.firstDay, baseline.lastDay ?? baseline.firstDay)}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${formatDate(firstTrial.createdAt)} y ${formatDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${formatDate(summary.firstDecidedAt)} hasta ${formatDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
     },
     {
       title: "Límites",

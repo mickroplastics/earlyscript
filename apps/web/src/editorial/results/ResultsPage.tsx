@@ -86,10 +86,13 @@ export function ResultsView({
   const page = overview.state._tag === "ready" ? overview.state.page : null;
   const total = summary.comparisons.find((comparison) => comparison.key === "total");
   const points: ProcessPointsState =
-    page === null
-      ? { _tag: "loading" }
-      : { _tag: "ready", points: total ? completeProcessPoints(page, total) : null };
+    page !== null
+      ? { _tag: "ready", points: total ? completeProcessPoints(page, total) : null }
+      : overview.state._tag === "failure"
+        ? { _tag: "failure", onRetry: overview.onRetry }
+        : { _tag: "loading" };
   const complete = page !== null && page.offset === 0 && page.total <= page.decisions.length;
+  const trials = summary.trials ?? [];
 
   return (
     <div className="@container flex min-w-0 flex-col gap-6">
@@ -139,10 +142,12 @@ export function ResultsView({
               summary={summary}
               decisions={decisions}
               threadTitles={threadTitles}
-              undecidedTrials={
-                complete && page
-                  ? trialsWithoutDecision(summary.trials ?? [], page.decisions)
-                  : null
+              trialLinks={
+                page !== null && complete
+                  ? { undecidedOnly: true, trials: trialsWithoutDecision(trials, page.decisions) }
+                  : overview.state._tag === "loading"
+                    ? null
+                    : { undecidedOnly: false, trials }
               }
             />
           ),
