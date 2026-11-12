@@ -259,7 +259,7 @@ describe("TrendDossierView", () => {
     expect(chart.element().textContent).toContain("?sin captura");
     // One sentence for a quiet source whose capture was partial, never two that contradict.
     expect(screen.container.textContent).toContain(
-      "Sin publicaciones registradas en npm; su captura fue parcial, así que un cero no confirma ausencia.",
+      "Sin publicaciones registradas en npm; con captura parcial, un cero no confirma ausencia.",
     );
     expect(screen.container.textContent).not.toContain("Sin publicaciones en npm");
     // GitHub has bars, but its daily capture was partial: said next to the figure.
