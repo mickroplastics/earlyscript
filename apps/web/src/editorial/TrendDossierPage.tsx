@@ -50,8 +50,10 @@ import {
   evidenceAlsoIn,
   movementBadge,
   profileFitText,
+  storyPresentation,
 } from "./trendDossier.logic";
 import { TrendEvidenceList } from "./TrendEvidenceList";
+import { HelpMark } from "./TrendHelpMark";
 import { useTrendInbox } from "./TrendInbox";
 import { useEditorialJobActivity } from "./TrendJobIndicator";
 import { TrendMovementPanel } from "./TrendMovementPanel";
@@ -154,22 +156,32 @@ function PresentationError({ message }: { readonly message: string }) {
   );
 }
 
-function DraftPresentationPrompt({ actions }: { readonly actions: TrendPresentationActions }) {
+function DraftPresentationPrompt({
+  actions,
+  outdated,
+}: {
+  readonly actions: TrendPresentationActions;
+  /** A stored story the dossier does not draw: written with an older prompt. */
+  readonly outdated: boolean;
+}) {
+  // An outdated story may be the one stored for this input: only regenerating replaces it.
+  const kind = outdated ? "regenerate" : "draft";
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-          El asistente puede escribir un título y un resumen que citan la evidencia. Usa el modelo
-          de redacción de Ajustes.
+          {outdated
+            ? "El resumen anterior se redactó con una versión antigua; vuelve a redactarlo."
+            : "El asistente puede escribir un título y un resumen que citan la evidencia. Usa el modelo de redacción de Ajustes."}
         </p>
         <Button
           size="sm"
           variant="outline"
           disabled={actions.busy !== null}
-          onClick={actions.onDraft}
+          onClick={outdated ? actions.onRegenerate : actions.onDraft}
         >
-          {actions.busy === "draft" ? <Spinner /> : <SparklesIcon aria-hidden />}
-          {actions.busy === "draft" ? "Redactando…" : "Redactar con el asistente"}
+          {actions.busy === kind ? <Spinner /> : <SparklesIcon aria-hidden />}
+          {actions.busy === kind ? "Redactando…" : "Redactar con el asistente"}
         </Button>
       </div>
       {actions.error ? <PresentationError message={actions.error} /> : null}
@@ -216,11 +228,13 @@ function RecentHeadlines({ card }: { readonly card: EditorialTrendCard }) {
 /** "Qué pasó", the fit with the channel and the video angle, each with its citations. */
 function TrendStory({
   presentation,
+  outdated,
   card,
   evidence,
   actions,
 }: {
   readonly presentation: EditorialTrendPresentation | undefined;
+  readonly outdated: boolean;
   readonly card: EditorialTrendCard | undefined;
   readonly evidence: ReadonlyArray<EditorialEvidenceItem>;
   readonly actions: TrendPresentationActions | undefined;
@@ -237,7 +251,7 @@ function TrendStory({
   if (presentation === undefined) {
     return (
       <section aria-label="Relato" className="flex min-w-0 flex-col gap-4">
-        {actions ? <DraftPresentationPrompt actions={actions} /> : null}
+        {actions ? <DraftPresentationPrompt actions={actions} outdated={outdated} /> : null}
         {card ? <RecentHeadlines card={card} /> : null}
         {fit ? (
           <div className="flex flex-col gap-1.5 border-t border-border pt-4">
@@ -256,8 +270,8 @@ function TrendStory({
           <TriangleAlertIcon />
           <AlertTitle>Redacción desactualizada</AlertTitle>
           <AlertDescription>
-            Se escribió con una evidencia, un perfil del canal o una versión del prompt anteriores.
-            Regenera para leer una redacción sobre la ficha actual.
+            Se escribió con una evidencia o un perfil del canal anteriores. Regenera para leer una
+            redacción sobre la ficha actual.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -337,18 +351,10 @@ function TrendDossierHeader({
           {card?.perennial ? (
             <>
               <span aria-hidden>·</span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="cursor-default underline decoration-dotted underline-offset-2" />
-                  }
-                >
-                  tema recurrente
-                </TooltipTrigger>
-                <TooltipPopup side="top" className="max-w-64">
-                  Tuvo actividad varias semanas antes de este movimiento.
-                </TooltipPopup>
-              </Tooltip>
+              <HelpMark
+                label="tema recurrente"
+                hint="Tuvo actividad varias semanas antes de este movimiento."
+              />
             </>
           ) : null}
           {status ? (
@@ -386,7 +392,7 @@ export function TrendDossierView({
   readonly presentationActions?: TrendPresentationActions;
 }) {
   const { trend } = dossier;
-  const presentation = trend.presentation;
+  const presentation = storyPresentation(trend);
   const card = trend.card;
   const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   return (
@@ -405,6 +411,7 @@ export function TrendDossierView({
       >
         <TrendStory
           presentation={presentation}
+          outdated={trend.presentation?.status === "outdated"}
           card={card}
           evidence={citationEvidence ?? dossier.evidence}
           actions={presentationActions}
@@ -584,7 +591,7 @@ function LoadedTrendDossierPage({
   return (
     <EditorialPage
       space={SPACE_LABEL}
-      title={dossier.trend.presentation?.title ?? dossier.trend.label}
+      title={storyPresentation(dossier.trend)?.title ?? dossier.trend.label}
     >
       <TrendDossierView
         environmentId={environmentId}

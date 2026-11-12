@@ -9,6 +9,7 @@ import { EditorialTrendKey } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeCaptureText,
   decisionPanelState,
   evidenceAlsoIn,
   incompleteSourcesText,
@@ -69,6 +70,7 @@ describe("movementChart", () => {
     const chart = movementChart({ curve: REBOUND });
     expect(chart.series.map((entry) => entry.name)).toEqual(["Hacker News"]);
     expect(chart.quiet).toEqual(["github", "huggingface", "npm", "rss"]);
+    expect(chart.uncaptured).toEqual([]);
     expect(chart.unused).toEqual(["wikipedia"]);
     expect(chart.totals).toEqual([5, 4, 3, 11]);
     expect(chart.max).toBe(11);
@@ -85,8 +87,60 @@ describe("movementChart", () => {
       [row("hn", [1, 3, 0, 5]), row("github", [0, 0, null, 2])],
       [1, 3, null, 7],
     ],
+    [
+      "a source without items and with uncaptured weeks",
+      [row("hn", [1, 2, 3, 4]), row("github", [0, null, 0, null], "partial")],
+      [1, null, 3, null],
+    ],
+    [
+      "a single source never captured",
+      [row("github", [null, null, null, null], "partial")],
+      [null, null, null, null],
+    ],
+    [
+      "no source with items",
+      [row("github", [0, 0, 0, 0]), row("npm", [0, null, 0, 0])],
+      [0, null, 0, 0],
+    ],
+    ["only the unused source", [row("wikipedia", [], "unused")], [null, null, null, null]],
   ])("adds the weeks of %s", (_, curve, totals) => {
     expect(movementChart({ curve }).totals).toEqual(totals);
+  });
+
+  it("tells captured zeros from weeks nobody captured", () => {
+    const chart = movementChart({
+      curve: [
+        row("hn", [1, 2, 3, 4]),
+        row("github", [0, null, 0, null], "partial"),
+        row("npm", [0, 0, 0, 0]),
+      ],
+    });
+    expect(chart.series.map((entry) => entry.source)).toEqual(["hn"]);
+    expect(chart.quiet).toEqual(["npm"]);
+    expect(chart.uncaptured).toEqual(["github"]);
+    // The figure states no number for a week some source did not capture.
+    expect(movementHeadline(chart)).toEqual({
+      count: null,
+      last: "Última semana sin captura completa",
+      previous: "3 la anterior",
+    });
+    expect(quietSourcesText(chart, [], [])).toEqual({
+      text: "Sin publicaciones en npm.",
+      caveat: null,
+      uncaptured: "Sin captura completa en GitHub: no se sabe si tuvo publicaciones.",
+      saidSources: ["github"],
+    });
+  });
+
+  it("says nothing was captured instead of zero for a source never captured", () => {
+    const chart = movementChart({ curve: [row("github", [null, null, null, null], "partial")] });
+    expect(chart.series).toEqual([]);
+    expect(chart.quiet).toEqual([]);
+    expect(movementHeadline(chart).count).toBeNull();
+    expect(quietSourcesText(chart, [coverage("github", 0)], [])).toMatchObject({
+      text: null,
+      uncaptured: "Sin captura completa en GitHub: no se sabe si tuvo publicaciones.",
+    });
   });
 
   it("shows the total row of a derived dossier as its own series", () => {
@@ -116,7 +170,7 @@ describe("movementHeadline", () => {
 });
 
 describe("quietSourcesText", () => {
-  const chart = { quiet: ["github", "huggingface", "npm"] };
+  const chart = { quiet: ["github", "huggingface", "npm"], uncaptured: [] };
 
   it("lists the quiet sources without a caveat when they were captured", () => {
     expect(
@@ -125,7 +179,7 @@ describe("quietSourcesText", () => {
     expect(quietSourcesText(chart, [], [])?.text).toBe(
       "Sin publicaciones en GitHub, Hugging Face y npm.",
     );
-    expect(quietSourcesText({ quiet: [] }, [], [])).toBeNull();
+    expect(quietSourcesText({ quiet: [], uncaptured: [] }, [], [])).toBeNull();
   });
 
   it("warns that a zero of a partly captured source does not confirm absence", () => {
@@ -135,6 +189,27 @@ describe("quietSourcesText", () => {
     expect(quietSourcesText(chart, [], ["npm", "github"])?.caveat).toBe(
       "Captura parcial en GitHub y npm: un cero no confirma ausencia.",
     );
+  });
+
+  it("warns about the daily capture of the sources drawn with bars", () => {
+    const chart = movementChart({
+      curve: [
+        row("hn", [5, 4, 3, 11]),
+        row("huggingface", [0, 2, 14, 3]),
+        row("npm", [0, 0, 1, 0]),
+      ],
+    });
+    expect(
+      activeCaptureText(chart, [
+        coverage("hn", 28),
+        coverage("huggingface", 0, 28),
+        coverage("npm", 20, 3),
+      ]),
+    ).toEqual({
+      text: "Captura diaria incompleta en Hugging Face (0 de 28 días completos) y npm (20 de 28 días completos): sus cifras pueden quedarse cortas.",
+      sources: ["huggingface", "npm"],
+    });
+    expect(activeCaptureText(chart, [coverage("hn", 28)])).toBeNull();
   });
 
   it("leaves to the incomplete line only the sources the caveat did not name", () => {
@@ -191,6 +266,14 @@ describe("decisionPanelState", () => {
   const card = (patch: Partial<EditorialTrendCard>) =>
     ({ decision: null, priorDecision: null, ...patch }) as EditorialTrendCard;
   const SNOOZED = { at: AT, until: null, returnWhen: null };
+  const PRODUCTION = { threadId: "thread-video", linkedAt: AT };
+  const PRIOR_RECORD = {
+    text: "Antes lo decidiste el 30 sept 2026: aceptado · utilidad 5 de 5",
+    reason: "buen tema",
+    threadId: "thread-prior",
+    linkLabel: "Abrir ese hilo",
+  };
+  const PRIOR_ONLY_RECORD = { ...PRIOR_RECORD, text: "Aceptado · utilidad 5 de 5" };
 
   it.each([
     [
@@ -214,9 +297,9 @@ describe("decisionPanelState", () => {
       { trendKey: KEY, card: card({ priorDecision: PRIOR }) },
       {
         headline: "Ya decidiste este tema el 30 sept 2026",
-        meta: "Aceptado · utilidad 5 de 5 · «buen tema»",
-        prior: PRIOR,
-        priorLine: null,
+        meta: null,
+        records: [PRIOR_ONLY_RECORD],
+        links: [],
         primary: { kind: "create" },
         badge: null,
       },
@@ -224,24 +307,96 @@ describe("decisionPanelState", () => {
     [
       "decided, with the same thread as prior decision",
       { trendKey: KEY, card: card({ decision: DECISION, priorDecision: DECISION }) },
-      { prior: null, priorLine: null, badge: { label: "Decidida", variant: "success" } },
+      { records: [], links: [], badge: { label: "Decidida", variant: "success" } },
     ],
     [
       "decided, with a prior decision of another thread",
       { trendKey: KEY, card: card({ decision: DECISION, priorDecision: PRIOR }) },
       {
         headline: "Editado · utilidad 4 de 5",
-        prior: PRIOR,
-        priorLine: "Antes lo decidiste el 30 sept 2026: aceptado.",
+        reason: "me interesa",
+        meta: "Tu decisión · 9 nov 2026",
+        records: [PRIOR_RECORD],
+        links: [],
+        primary: {
+          kind: "open",
+          threadId: "thread-decided",
+          prepare: false,
+          label: "Abrir hilo de video",
+        },
       },
     ],
     [
       "in production",
-      { trendKey: KEY, inbox: inbox({ production: { threadId: "thread-video", linkedAt: AT } }) },
+      { trendKey: KEY, inbox: inbox({ production: PRODUCTION }) },
       {
         headline: "En producción desde el 10 nov 2026",
-        primary: { kind: "open", threadId: "thread-video", prepare: true },
+        records: [],
+        links: [],
+        primary: {
+          kind: "open",
+          threadId: "thread-video",
+          prepare: true,
+          label: "Abrir hilo de video",
+        },
         badge: { label: "En producción", variant: "info" },
+      },
+    ],
+    [
+      "in production, with a prior decision of another thread",
+      {
+        trendKey: KEY,
+        card: card({ priorDecision: PRIOR }),
+        inbox: inbox({ production: PRODUCTION }),
+      },
+      {
+        headline: "En producción desde el 10 nov 2026",
+        records: [PRIOR_RECORD],
+        links: [],
+        primary: {
+          kind: "open",
+          threadId: "thread-video",
+          prepare: true,
+          label: "Abrir hilo de video",
+        },
+      },
+    ],
+    [
+      "decided, in production in another thread",
+      {
+        trendKey: KEY,
+        card: card({ decision: DECISION }),
+        inbox: inbox({ production: PRODUCTION }),
+      },
+      {
+        headline: "Editado · utilidad 4 de 5",
+        reason: "me interesa",
+        records: [],
+        links: [{ threadId: "thread-video", label: "Abrir hilo en producción", prepare: true }],
+        primary: {
+          kind: "open",
+          threadId: "thread-decided",
+          prepare: false,
+          label: "Abrir hilo decidido",
+        },
+        badge: { label: "Decidida", variant: "success" },
+      },
+    ],
+    [
+      "decided, in production in the same thread",
+      {
+        trendKey: KEY,
+        card: card({ decision: DECISION }),
+        inbox: inbox({ production: { threadId: "thread-decided", linkedAt: AT } }),
+      },
+      {
+        links: [],
+        primary: {
+          kind: "open",
+          threadId: "thread-decided",
+          prepare: true,
+          label: "Abrir hilo de video",
+        },
       },
     ],
     [
@@ -255,7 +410,16 @@ describe("decisionPanelState", () => {
       },
     ],
     [
-      "dismissed",
+      "kept watching, with a prior decision of another thread",
+      { trendKey: KEY, card: card({ priorDecision: PRIOR }), inbox: inbox({ snoozed: SNOOZED }) },
+      {
+        headline: "Ya decidiste este tema el 30 sept 2026",
+        stateLine: "En observación.",
+        records: [PRIOR_ONLY_RECORD],
+      },
+    ],
+    [
+      "dismissed, with its own decision",
       {
         trendKey: KEY,
         card: card({ decision: DECISION }),
@@ -265,8 +429,32 @@ describe("decisionPanelState", () => {
         headline: "Descartada el 10 nov 2026",
         reason: "Fuera de tema",
         stateLine: null,
+        records: [
+          {
+            text: "Tu decisión del 9 nov 2026: editado · utilidad 4 de 5",
+            reason: "me interesa",
+            threadId: "thread-decided",
+            linkLabel: "Abrir hilo decidido",
+          },
+        ],
+        links: [],
         primary: { kind: "reopen" },
         badge: { label: "Descartada", variant: "outline" },
+      },
+    ],
+    [
+      "dismissed, with a prior decision and a production thread",
+      {
+        trendKey: KEY,
+        card: card({ priorDecision: PRIOR }),
+        inbox: inbox({ dismissed: { at: AT, reason: "Repetido" }, production: PRODUCTION }),
+      },
+      {
+        headline: "Descartada el 10 nov 2026",
+        reason: "Repetido",
+        records: [PRIOR_RECORD],
+        links: [{ threadId: "thread-video", label: "Abrir hilo en producción", prepare: true }],
+        primary: { kind: "reopen" },
       },
     ],
     [

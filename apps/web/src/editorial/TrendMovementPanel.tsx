@@ -13,11 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { sourceName } from "./editorial.logic";
 import { DossierDisclosure } from "./TrendDossierDisclosure";
+import { HelpMark } from "./TrendHelpMark";
 import {
+  activeCaptureText,
   coverageDaysText,
   incompleteSourcesText,
   movementChart,
@@ -31,20 +32,7 @@ import { sourceColor, TrendWeeklyBars } from "./TrendWeeklyBars";
 const PARTIAL_HINT =
   "Esta fuente aún no tiene las 5 semanas de historia que se piden para comparar.";
 
-function PartialMark() {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<span className="cursor-default underline decoration-dotted underline-offset-2" />}
-      >
-        parcial
-      </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-64">
-        {PARTIAL_HINT}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
+const PartialMark = () => <HelpMark label="parcial" hint={PARTIAL_HINT} />;
 
 function UncapturedCell() {
   return (
@@ -148,8 +136,13 @@ export function TrendMovementPanel({
   const weekLabels = weekRangeLabels(cutoffAt);
   const headline = movementHeadline(chart);
   const quiet = quietSourcesText(chart, coverage, card.incompleteSources);
-  const incomplete = incompleteSourcesText(card.incompleteSources, quiet?.caveatSources ?? []);
-  const single = chart.series.length === 1 ? chart.series[0] : undefined;
+  const activeCapture = activeCaptureText(chart, coverage);
+  const incomplete = incompleteSourcesText(card.incompleteSources, [
+    ...(quiet?.saidSources ?? []),
+    ...(activeCapture?.sources ?? []),
+  ]);
+  // Only a known total is that source's alone.
+  const single = chart.series.length === 1 && headline.count !== null ? chart.series[0] : undefined;
   return (
     <section
       aria-labelledby={headingId}
@@ -213,10 +206,16 @@ export function TrendMovementPanel({
                 .join(" · ")}
             </p>
           </div>
-          {quiet || incomplete ? (
+          {quiet || activeCapture || incomplete ? (
             <div className="flex flex-col gap-1 text-xs">
-              {quiet ? <p className="text-muted-foreground">{quiet.text}</p> : null}
+              {activeCapture ? (
+                <p className="text-warning-foreground">{activeCapture.text}</p>
+              ) : null}
+              {quiet?.text ? <p className="text-muted-foreground">{quiet.text}</p> : null}
               {quiet?.caveat ? <p className="text-warning-foreground">{quiet.caveat}</p> : null}
+              {quiet?.uncaptured ? (
+                <p className="text-warning-foreground">{quiet.uncaptured}</p>
+              ) : null}
               {incomplete ? <p className="text-warning-foreground">{incomplete}</p> : null}
             </div>
           ) : null}

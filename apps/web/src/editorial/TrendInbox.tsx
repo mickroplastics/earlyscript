@@ -44,6 +44,7 @@ import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
 import { TrendJobIndicator } from "./TrendJobIndicator";
 import { TrendPresentationRunButton } from "./TrendPresentationRunButton";
 import { cardSections, SECTION_TITLES } from "./trendCard.logic";
+import { storyPresentation } from "./trendDossier.logic";
 
 const SORT_OPTIONS: ReadonlyArray<{ readonly value: EditorialInboxSort; readonly label: string }> =
   [
@@ -292,7 +293,9 @@ export function TrendInbox({
           <DraftingNotice
             environmentId={environmentId}
             runId={inbox.run.runId}
-            undrafted={inbox.trends.filter((trend) => trend.presentation === undefined).length}
+            undrafted={
+              inbox.trends.filter((trend) => storyPresentation(trend) === undefined).length
+            }
           />
           <SidebarMenu aria-label={runGroupLabel(inbox.run, nowMinute)}>
             {cards !== null ? (

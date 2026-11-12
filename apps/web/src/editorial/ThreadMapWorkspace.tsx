@@ -20,6 +20,7 @@ import { ScriptEditor } from "./ScriptEditor";
 import { ThreadMapScript } from "./ThreadMapScript";
 import { ThreadMapView } from "./ThreadMapView";
 import { activeMapStop } from "./threadMap.logic";
+import { storyPresentation } from "./trendDossier.logic";
 import { useVideoThread } from "./videoState";
 import {
   useThreadWorkspaceRoot,
@@ -135,7 +136,7 @@ function LoadedDossier({
     <section className="space-y-4">
       <h2 className="font-semibold text-lg">Por qué está aquí</h2>
       <p>
-        {dossier?.trend.presentation?.summary.whyItMatters ??
+        {(dossier ? storyPresentation(dossier.trend) : undefined)?.summary.whyItMatters ??
           (dossier === null
             ? "Cargando el tema…"
             : dossier.trend.card === undefined

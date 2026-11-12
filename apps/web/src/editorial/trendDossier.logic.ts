@@ -36,11 +36,13 @@ export interface MovementSeries {
 export interface MovementChart {
   /** Rows with at least one week above zero. */
   readonly series: ReadonlyArray<MovementSeries>;
-  /** Comparable or partial sources without a single item in the four weeks. */
+  /** Sources whose four weeks are all captured and zero. */
   readonly quiet: ReadonlyArray<string>;
+  /** Sources without a single known item and at least one uncaptured week: not a zero. */
+  readonly uncaptured: ReadonlyArray<string>;
   /** Captured but not clustered (Wikipedia). */
   readonly unused: ReadonlyArray<string>;
-  /** Items per week over the series; `null` when any series misses that week. */
+  /** Items per week over every used row; `null` when any of them misses that week. */
   readonly totals: ReadonlyArray<number | null>;
   /** Highest weekly value of a series, at least 1. */
   readonly max: number;
@@ -50,8 +52,10 @@ const weeksOf = (weeks: ReadonlyArray<number | null>) =>
   Array.from({ length: WEEKS }, (_, index) => weeks[index] ?? null);
 
 export function movementChart(card: Pick<EditorialTrendCard, "curve">): MovementChart {
+  const used: Array<ReadonlyArray<number | null>> = [];
   const series: Array<MovementSeries> = [];
   const quiet: Array<string> = [];
+  const uncaptured: Array<string> = [];
   const unused: Array<string> = [];
   for (const row of card.curve) {
     if (row.status === "unused") {
@@ -59,6 +63,7 @@ export function movementChart(card: Pick<EditorialTrendCard, "curve">): Movement
       continue;
     }
     const weeks = weeksOf(row.weeks);
+    used.push(weeks);
     if (weeks.some((week) => week !== null && week > 0)) {
       series.push({
         source: row.source,
@@ -66,21 +71,25 @@ export function movementChart(card: Pick<EditorialTrendCard, "curve">): Movement
         partial: row.status === "partial",
         weeks,
       });
+    } else if (weeks.includes(null)) {
+      uncaptured.push(row.source);
     } else {
       quiet.push(row.source);
     }
   }
+  // Over every used row, drawn or not: a week some source did not capture has no total.
   const totals = Array.from({ length: WEEKS }, (_, index) => {
+    if (used.length === 0) return null;
     let total = 0;
-    for (const entry of series) {
-      const week = entry.weeks[index] ?? null;
+    for (const weeks of used) {
+      const week = weeks[index] ?? null;
       if (week === null) return null;
       total += week;
     }
     return total;
   });
   const max = Math.max(1, ...series.flatMap((entry) => entry.weeks.map((week) => week ?? 0)));
-  return { series, quiet, unused, totals, max };
+  return { series, quiet, uncaptured, unused, totals, max };
 }
 
 /** Start and end of W3..W0, the UTC days; `null` without a cutoff. */
@@ -130,36 +139,77 @@ export function movementHeadline(chart: Pick<MovementChart, "totals">): {
 const listFormat = new Intl.ListFormat("es", { type: "conjunction" });
 const names = (sources: ReadonlyArray<string>) => listFormat.format(sources.map(sourceName));
 
+const partlyCaptured = (
+  source: string,
+  coverage: ReadonlyArray<EditorialSourceCoverage>,
+  incompleteSources: ReadonlyArray<string>,
+) => {
+  if (incompleteSources.includes(source)) return true;
+  const entry = coverage.find((candidate) => candidate.source === source);
+  return entry !== undefined && coverageStatus(entry) !== "complete";
+};
+
 /**
- * "Sin publicaciones en GitHub y npm." for the quiet sources, with the caveat when one of them
- * was not fully captured: a zero there does not confirm absence.
+ * "Sin publicaciones en GitHub y npm." for the sources with four captured zeros, with the
+ * caveat when one of them was not fully captured: a zero there does not confirm absence. A
+ * source with uncaptured weeks and no known item is never said to have had no publications.
  */
 export function quietSourcesText(
-  chart: Pick<MovementChart, "quiet">,
+  chart: Pick<MovementChart, "quiet" | "uncaptured">,
   coverage: ReadonlyArray<EditorialSourceCoverage>,
   incompleteSources: ReadonlyArray<string>,
 ): {
-  readonly text: string;
+  readonly text: string | null;
   readonly caveat: string | null;
-  readonly caveatSources: ReadonlyArray<string>;
+  readonly uncaptured: string | null;
+  /** Sources these lines already warn about. */
+  readonly saidSources: ReadonlyArray<string>;
 } | null {
-  if (chart.quiet.length === 0) return null;
-  const partial = chart.quiet.filter((source) => {
-    if (incompleteSources.includes(source)) return true;
-    const entry = coverage.find((candidate) => candidate.source === source);
-    return entry !== undefined && coverageStatus(entry) !== "complete";
-  });
+  if (chart.quiet.length === 0 && chart.uncaptured.length === 0) return null;
+  const partial = chart.quiet.filter((source) =>
+    partlyCaptured(source, coverage, incompleteSources),
+  );
   return {
-    text: `Sin publicaciones en ${names(chart.quiet)}.`,
+    text: chart.quiet.length === 0 ? null : `Sin publicaciones en ${names(chart.quiet)}.`,
     caveat:
       partial.length === 0
         ? null
         : `Captura parcial en ${names(partial)}: un cero no confirma ausencia.`,
-    caveatSources: partial,
+    uncaptured:
+      chart.uncaptured.length === 0
+        ? null
+        : `Sin captura completa en ${names(chart.uncaptured)}: no se sabe si ${chart.uncaptured.length === 1 ? "tuvo" : "tuvieron"} publicaciones.`,
+    saidSources: [...partial, ...chart.uncaptured],
   };
 }
 
-/** `incompleteSources` the quiet-sources caveat did not already name. */
+/**
+ * Sources drawn with bars whose daily capture was not complete in the window: their bars
+ * may fall short. Not the five-week history `partial` mark, which is about comparing.
+ */
+export function activeCaptureText(
+  chart: Pick<MovementChart, "series">,
+  coverage: ReadonlyArray<EditorialSourceCoverage>,
+): { readonly text: string; readonly sources: ReadonlyArray<string> } | null {
+  const short = chart.series.flatMap((series) => {
+    const entry = coverage.find((candidate) => candidate.source === series.source);
+    return entry === undefined || coverageStatus(entry) === "complete"
+      ? []
+      : [
+          {
+            source: series.source,
+            text: `${series.name} (${entry.daysComplete} de ${entry.windowDays} días completos)`,
+          },
+        ];
+  });
+  if (short.length === 0) return null;
+  return {
+    text: `Captura diaria incompleta en ${listFormat.format(short.map((entry) => entry.text))}: sus cifras pueden quedarse cortas.`,
+    sources: short.map((entry) => entry.source),
+  };
+}
+
+/** `incompleteSources` the lines above did not already name. */
 export function incompleteSourcesText(
   incompleteSources: ReadonlyArray<string>,
   alreadySaid: ReadonlyArray<string>,
@@ -200,16 +250,41 @@ export function movementBadge(
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/** "Editado · utilidad 4 de 5", "Aceptado". */
-function decisionHeadline(decision: Pick<EditorialCardDecision, "action" | "utility">) {
-  const action = capitalize(decisionActionText(decision.action));
+/** "editado · utilidad 4 de 5", "aceptado". */
+function decisionText(decision: Pick<EditorialCardDecision, "action" | "utility">) {
+  const action = decisionActionText(decision.action);
   return decision.utility === null ? action : `${action} · utilidad ${decision.utility} de 5`;
 }
 
+/** "Editado · utilidad 4 de 5", "Aceptado". */
+const decisionHeadline = (decision: Pick<EditorialCardDecision, "action" | "utility">) =>
+  capitalize(decisionText(decision));
+
 export type DecisionPrimary =
-  | { readonly kind: "open"; readonly threadId: string; readonly prepare: boolean }
+  | {
+      readonly kind: "open";
+      readonly threadId: string;
+      readonly prepare: boolean;
+      readonly label: string;
+    }
   | { readonly kind: "create" }
   | { readonly kind: "reopen" };
+
+/** A decision kept on screen whatever the main state, with its reason and its thread. */
+export interface DecisionRecord {
+  readonly text: string;
+  readonly reason: string | null;
+  readonly threadId: string;
+  readonly linkLabel: string;
+}
+
+/** A thread to open besides the main button's. */
+export interface DecisionThreadLink {
+  readonly threadId: string;
+  readonly label: string;
+  /** Opening it prepares the video thread's folder, as the production thread does. */
+  readonly prepare: boolean;
+}
 
 export interface DecisionPanelState {
   readonly headline: string;
@@ -218,10 +293,10 @@ export interface DecisionPanelState {
   readonly meta: string | null;
   /** Snooze state, below the decision. */
   readonly stateLine: string | null;
-  /** A decision on the same topic from another thread than `card.decision`. */
-  readonly prior: EditorialCardDecision | null;
-  /** "Antes lo decidiste el …" when the trend has its own decision too. */
-  readonly priorLine: string | null;
+  /** The dismissed trend's own decision and the topic's decision from another thread. */
+  readonly records: ReadonlyArray<DecisionRecord>;
+  /** The production thread when it is not the decided one. */
+  readonly links: ReadonlyArray<DecisionThreadLink>;
   /** `null`: a server without trend keys, nothing to decide with. */
   readonly primary: DecisionPrimary | null;
   readonly badge: {
@@ -233,8 +308,16 @@ export interface DecisionPanelState {
 type PanelTrend = Pick<EditorialTrendSummary, "trendKey" | "inbox" | "card">;
 
 const UNDECIDED_META = "Lee la evidencia y decide si merece un video.";
+const OPEN_VIDEO = "Abrir hilo de video";
+const OPEN_DECIDED = "Abrir hilo decidido";
+const OPEN_PRODUCTION = "Abrir hilo en producción";
+const OPEN_PRIOR = "Abrir ese hilo";
 
-/** What the decision panel says and offers for a trend's state (spec §3.2). */
+/**
+ * What the decision panel says and offers for a trend's state (spec §3.2). The main state
+ * picks the headline and the main button; the decisions and the production thread stay
+ * reachable in every state, each with its own link.
+ */
 export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
   if (trend.trendKey === undefined) {
     return {
@@ -243,8 +326,8 @@ export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
       reason: null,
       meta: null,
       stateLine: null,
-      prior: null,
-      priorLine: null,
+      records: [],
+      links: [],
       primary: null,
       badge: null,
     };
@@ -257,6 +340,11 @@ export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
   const production = state?.production ?? null;
   const snoozed = state?.snoozed ?? null;
   const dismissed = state?.dismissed ?? null;
+  // A video thread other than the decided one: both stay reachable, each by its name.
+  const otherProduction =
+    production !== null && decision !== null && production.threadId !== decision.threadId
+      ? production
+      : null;
 
   const badge: DecisionPanelState["badge"] = dismissed
     ? { label: "Descartada", variant: "outline" }
@@ -275,17 +363,43 @@ export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
           kind: "open",
           threadId: decision.threadId,
           prepare: production?.threadId === decision.threadId,
+          label: otherProduction === null ? OPEN_VIDEO : OPEN_DECIDED,
         }
       : production
-        ? { kind: "open", threadId: production.threadId, prepare: true }
+        ? { kind: "open", threadId: production.threadId, prepare: true, label: OPEN_VIDEO }
         : { kind: "create" };
 
-  const priorLine =
-    prior !== null && (decision !== null || dismissed !== null)
-      ? `Antes lo decidiste el ${formatDate(prior.decidedAt)}: ${decisionActionText(prior.action)}.`
-      : null;
+  const records: Array<DecisionRecord> = [];
+  if (dismissed && decision) {
+    records.push({
+      text: `Tu decisión del ${formatDate(decision.decidedAt)}: ${decisionText(decision)}`,
+      reason: decision.reason,
+      threadId: decision.threadId,
+      linkLabel: OPEN_DECIDED,
+    });
+  }
+  if (prior) {
+    const priorOnly = !dismissed && decision === null && production === null;
+    records.push({
+      // Without a state of its own the headline already says when.
+      text: priorOnly
+        ? decisionHeadline(prior)
+        : `Antes lo decidiste el ${formatDate(prior.decidedAt)}: ${decisionText(prior)}`,
+      reason: prior.reason,
+      threadId: prior.threadId,
+      linkLabel: OPEN_PRIOR,
+    });
+  }
+
+  const reachable = new Set(records.map((record) => record.threadId));
+  if (primary.kind === "open") reachable.add(primary.threadId);
+  const links: Array<DecisionThreadLink> =
+    production !== null && !reachable.has(production.threadId)
+      ? [{ threadId: production.threadId, label: OPEN_PRODUCTION, prepare: true }]
+      : [];
+
   const stateLine = snoozed && !dismissed ? snoozeStateText(snoozed) : null;
-  const base = { stateLine, prior, priorLine, primary, badge };
+  const base = { stateLine, records, links, primary, badge };
 
   if (dismissed) {
     return {
@@ -316,9 +430,7 @@ export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
       ...base,
       headline: `Ya decidiste este tema el ${formatDate(prior.decidedAt)}`,
       reason: null,
-      meta: [decisionHeadline(prior), prior.reason === null ? null : `«${prior.reason}»`]
-        .filter((part) => part !== null)
-        .join(" · "),
+      meta: null,
     };
   }
   return { ...base, headline: "Sin decidir", reason: null, meta: UNDECIDED_META };
@@ -355,3 +467,12 @@ export function profileFitText(fit: EditorialTrendCard["fit"]): string {
   const terms = fit.terms.slice(0, 3);
   return `Tema del perfil: ${shortTopic(fit.topic)}${terms.length === 0 ? "" : ` · términos: ${terms.join(", ")}`}`;
 }
+
+/**
+ * The presentation the dossier draws as its story. One written with an older prompt or
+ * failing today's voice check (`outdated`) is not drawn: the dossier reads as undrafted.
+ */
+export const storyPresentation = (
+  trend: Pick<EditorialTrendSummary, "presentation">,
+): EditorialTrendSummary["presentation"] =>
+  trend.presentation?.status === "outdated" ? undefined : trend.presentation;

@@ -5,7 +5,7 @@ import { formatDate, sourceName } from "./editorial.logic";
 import { usePairsMode } from "./pairsMode";
 import { SECTION_TITLES } from "./trendCard.logic";
 import { DossierDisclosure } from "./TrendDossierDisclosure";
-import { movementBadge } from "./trendDossier.logic";
+import { movementBadge, storyPresentation } from "./trendDossier.logic";
 
 function Entry({ term, children }: { readonly term: string; readonly children: ReactNode }) {
   return (
@@ -24,7 +24,7 @@ export function TrendProvenance({ dossier }: { readonly dossier: EditorialTrendD
   const pairsMode = usePairsMode();
   const { trend, run } = dossier;
   const card = trend.card;
-  const presentation = trend.presentation;
+  const presentation = storyPresentation(trend);
   const cutoffAt = run.cutoffAt;
   const sourceDay = (entry: { readonly source: string; readonly day: string }) =>
     `${sourceName(entry.source)} · ${formatDate(`${entry.day.slice(0, 10)}T00:00:00.000Z`)} (${agoText(entry.day, cutoffAt)})`;

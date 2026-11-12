@@ -17,10 +17,12 @@ const MANUAL_HINT = "Mismo tema, sin asistente ni ficha: para comparar por pares
 function ThreadLink({
   environmentId,
   threadId,
+  onOpen,
   children,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: string;
+  readonly onOpen?: () => void;
   readonly children: ReactNode;
 }) {
   return (
@@ -31,6 +33,7 @@ function ThreadLink({
         <Link
           to="/$environmentId/$threadId"
           params={{ environmentId, threadId: ThreadId.make(threadId) }}
+          onClick={onOpen}
         />
       }
     >
@@ -79,7 +82,7 @@ export function TrendDecisionPanel({
           />
         }
       >
-        Abrir hilo de video
+        {primary.label}
       </Button>
     ) : primary.kind === "reopen" ? (
       <Button onClick={() => trendKey !== undefined && void actions.reopen(trendKey)}>
@@ -163,6 +166,22 @@ export function TrendDecisionPanel({
         </Tooltip>
       ),
     });
+    for (const link of panel.links) {
+      secondary.push({
+        key: `link-${link.threadId}`,
+        node: (
+          <ThreadLink
+            environmentId={environmentId}
+            threadId={link.threadId}
+            {...(link.prepare
+              ? { onOpen: () => actions.prepareVideo(ThreadId.make(link.threadId)) }
+              : {})}
+          >
+            {link.label}
+          </ThreadLink>
+        ),
+      });
+    }
     if (state?.trial) {
       secondary.push({
         key: "trial",
@@ -175,13 +194,6 @@ export function TrendDecisionPanel({
     }
   }
 
-  const priorLink =
-    panel.prior === null ? null : (
-      <ThreadLink environmentId={environmentId} threadId={panel.prior.threadId}>
-        Abrir ese hilo
-      </ThreadLink>
-    );
-
   return (
     <section
       aria-label="Decisión"
@@ -190,21 +202,22 @@ export function TrendDecisionPanel({
       <div className="flex min-w-0 flex-col gap-1">
         <p className="text-sm font-semibold text-foreground">{panel.headline}</p>
         {panel.reason ? <p className="text-sm text-foreground/90">«{panel.reason}»</p> : null}
-        {panel.meta ? (
-          <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-            <span>{panel.meta}</span>
-            {panel.priorLine === null ? priorLink : null}
-          </p>
-        ) : null}
+        {panel.meta ? <p className="text-xs text-muted-foreground">{panel.meta}</p> : null}
         {panel.stateLine ? (
           <p className="text-xs text-muted-foreground">{panel.stateLine}</p>
         ) : null}
-        {panel.priorLine ? (
-          <p className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-            <span>{panel.priorLine}</span>
-            {priorLink}
+        {panel.records.map((record) => (
+          <p
+            key={record.threadId}
+            className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground"
+          >
+            <span>{record.text}</span>
+            {record.reason ? <span>· «{record.reason}»</span> : null}
+            <ThreadLink environmentId={environmentId} threadId={record.threadId}>
+              {record.linkLabel}
+            </ThreadLink>
           </p>
-        ) : null}
+        ))}
       </div>
       <div className="justify-self-end">{primaryButton}</div>
       {secondary.length > 0 ? (

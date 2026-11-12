@@ -108,7 +108,8 @@ export function TrendInboxRow({
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
   const presentation = trend.presentation;
-  const stale = presentation?.status === "stale";
+  // An outdated text keeps its title here, marked like a stale one, until drafted again.
+  const stale = presentation?.status === "stale" || presentation?.status === "outdated";
   const title = presentation?.title ?? trend.label;
   const production = trend.inbox?.production ?? null;
   const dismissed = trend.inbox?.dismissed ?? null;
