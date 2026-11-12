@@ -22,11 +22,13 @@ import {
 } from "../../components/ui/menu";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
-import { formatClock, isoToLocalInput, resolvedEndIso, stageClockMs } from "../videoThread.logic";
+import { formatClock, stageClockMs } from "../videoThread.logic";
 import {
   ASSISTED_STEPS,
   STEP_TITLE,
   type DraftParts,
+  openStageTime,
+  stopTimeIso,
   type StepView,
   type StepperModel,
 } from "./videoWorkspace.logic";
@@ -53,8 +55,7 @@ function StageTime({
   const ms = stageClockMs(clock, stage, receivedAtMs, Math.max(nowMs, receivedAtMs));
   return (
     <span role="timer" className={cn("tabular-nums", className)}>
-      {floor ? "≥ " : ""}
-      {formatClock(ms)}
+      {floor ? openStageTime(ms) : formatClock(ms)}
     </span>
   );
 }
@@ -103,7 +104,9 @@ function WriteBar({
   const drafted = parts.done > 0;
   const draftShare = step.status === "done" ? 1 : parts.total === 0 ? 0 : parts.done / parts.total;
   const tone = BAR_TONE[step.status];
-  const reviewing = step.status !== "pending" && drafted && !(agentWorking && parts.done === 0);
+  const reviewing =
+    step.status === "done" ||
+    (step.status !== "pending" && drafted && !(agentWorking && parts.done === 0));
   return (
     <div className="grid grid-cols-2 gap-1.5">
       {[
@@ -285,7 +288,9 @@ export function ResolveIntervalForm({
   readonly onResolve: (intervalId: string, endedAt: string) => void;
 }) {
   const [value, setValue] = useState("");
-  const endedAt = value === "" ? null : resolvedEndIso(value, interval);
+  const endedAt = value.trim() === "" ? null : stopTimeIso(value, interval);
+  const invalid = value.trim() !== "" && endedAt === null;
+  const inputId = `video-resolve-${interval.intervalId}`;
   return (
     <form
       className="flex items-center gap-2"
@@ -294,21 +299,26 @@ export function ResolveIntervalForm({
         if (endedAt !== null) onResolve(interval.intervalId, endedAt);
       }}
     >
-      <label className="sr-only" htmlFor={`video-resolve-${interval.intervalId}`}>
+      <label className="whitespace-nowrap text-sm" htmlFor={inputId}>
         Dejé de trabajar a las
       </label>
       <Input
-        id={`video-resolve-${interval.intervalId}`}
+        id={inputId}
         size="compact"
-        type="datetime-local"
-        className="w-52"
-        min={isoToLocalInput(interval.startedAt)}
-        {...(interval.recoveredAt ? { max: isoToLocalInput(interval.recoveredAt) } : {})}
+        className="w-20"
+        inputMode="numeric"
+        autoComplete="off"
+        placeholder="hh:mm"
+        aria-invalid={invalid || undefined}
+        aria-describedby={`${inputId}-hint`}
         value={value}
         onChange={(event) => setValue(event.currentTarget.value)}
       />
+      <span id={`${inputId}-hint`} className="sr-only">
+        Una hora entre el inicio del tramo y el cierre de la app.
+      </span>
       <Button type="submit" size="sm" disabled={endedAt === null || busy}>
-        Guardar la hora
+        Guardar
       </Button>
     </form>
   );

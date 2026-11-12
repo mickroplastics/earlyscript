@@ -47,25 +47,30 @@ import {
   stepperModel,
   uncitedSentences,
   type ScriptNotice,
+  scriptSource,
 } from "./videoWorkspace.logic";
 import "../threadMap.css";
 
 type LeftTab = "topic" | "script" | "sources";
 type RightTab = "assistant" | "source" | "decision" | "details";
 
-/** The script on screen: the decided version once decided, else the working file. */
+/**
+ * The script on screen: the working file before the decision, the version it names after it,
+ * nothing when the decision was recorded without a version.
+ */
 function useScriptContents(
   threadRef: ScopedThreadRef,
   video: EditorialVideoState,
   workspaceRoot: string | null,
   completedAt: string | null,
 ) {
-  const decidedHash = video.decision?.scriptVersionHash ?? null;
+  const source = scriptSource(video);
+  const decidedHash = source.kind === "decided" ? source.hash : null;
   const live = useProjectFileQuery(
     threadRef.environmentId,
     workspaceRoot ?? "",
     video.script.path,
-    workspaceRoot !== null && decidedHash === null,
+    workspaceRoot !== null && source.kind === "live",
   );
   const [snapshot, setSnapshot] = useState<{ hash: string; path: string | null } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves the immutable version path through the existing server RPC, ignoring a response after navigation
@@ -92,6 +97,7 @@ function useScriptContents(
   useEffect(() => {
     if (completedAt !== null || contentHash !== null) refresh();
   }, [completedAt, contentHash]);
+  if (source.kind === "none") return { status: "unsaved" as const, contents: "" };
   if (decidedHash !== null) {
     if (decided.data) return { status: "ready" as const, contents: decided.data.contents };
     const failed = decided.error || (snapshot?.hash === decidedHash && decidedPath === null);
@@ -183,7 +189,7 @@ function TabButton({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md text-sm",
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-md text-sm",
         selected ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >
@@ -282,7 +288,14 @@ function WorkspaceView({
   const [openSource, setOpenSource] = useState<string | null>(null);
   const [occurrence, setOccurrence] = useState<number | null>(null);
   const [noticeIndex, setNoticeIndex] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
+  // Editing by hand belongs to Escribir: entering Decidir or deciding closes the editor, whose
+  // save session writes what is pending as it unmounts.
+  const [editingPhase, setEditingPhase] = useState<string | null>(null);
+  const editable = phase === "work";
+  // Leaving Escribir ends the edit for good: back from Decidir, the script shows rendered.
+  if (!editable && editingPhase !== null) setEditingPhase(null);
+  const editing = editable && editingPhase === phase;
+  const setEditing = (on: boolean) => setEditingPhase(on ? phase : null);
   const source = sources.find((entry) => entry.id === openSource) ?? null;
   const readingPane = useRef<HTMLDivElement>(null);
 
@@ -293,18 +306,33 @@ function WorkspaceView({
         ?.querySelector<HTMLElement>(`[data-line="${line}"]`)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     }, 0);
-  const openSourceTab = (id: string) => {
+  const scrollToCitation = (key: string, line: number) =>
+    window.setTimeout(() => {
+      const pane = readingPane.current;
+      (
+        pane?.querySelector<HTMLElement>(`[data-cite-key="${CSS.escape(key)}"]`) ??
+        pane?.querySelector<HTMLElement>(`[data-line="${line}"]`)
+      )?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 0);
+  /** Opens a source; from a number in the script, the walk starts at that citation. */
+  const openSourceTab = (id: string, key?: string) => {
+    const index =
+      key === undefined
+        ? -1
+        : (sources
+            .find((entry) => entry.id === id)
+            ?.occurrences.findIndex((occurrence) => occurrence.key === key) ?? -1);
     setOpenSource(id);
-    setOccurrence(null);
+    setOccurrence(index >= 0 ? index : null);
     showRight("source");
   };
   const goToOccurrence = (index: number) => {
-    const line = source?.occurrences[index];
-    if (line === undefined) return;
+    const target = source?.occurrences[index];
+    if (target === undefined) return;
     setOccurrence(index);
     setEditing(false);
     showLeft("script");
-    scrollToLine(line);
+    scrollToCitation(target.key, target.line);
   };
   const goToNotice = (index: number) => {
     const notice: ScriptNotice | undefined = notices[index];
@@ -420,7 +448,7 @@ function WorkspaceView({
         onClick={() =>
           void run(() =>
             commands.clock(
-              { _tag: "start", stage: restartStage("assisted", video.clock) },
+              { _tag: "start", stage: model.current ?? restartStage("assisted", video.clock) },
               "No se reanudó",
             ),
           )
@@ -465,7 +493,7 @@ function WorkspaceView({
   const trial = video.thread.cohort === "trial";
 
   const scriptPane = (() => {
-    if (editing && !decided && workspaceRoot && video.script.path) {
+    if (editing && workspaceRoot && video.script.path) {
       return (
         <ScriptEditor
           threadRef={threadRef}
@@ -482,13 +510,20 @@ function WorkspaceView({
         </p>
       );
     }
+    if (script.status === "unsaved") {
+      return (
+        <p className="rounded-lg border bg-card/40 p-4 text-muted-foreground text-sm">
+          Esta decisión se registró sin una versión guardada del guion, así que no hay texto
+          decidido que mostrar. El archivo de trabajo puede haber cambiado después.
+        </p>
+      );
+    }
     if (script.status === "loading") {
       return <p className="text-muted-foreground text-sm">Cargando el guion…</p>;
     }
     if (!drafted) {
       return (
         <ScriptEmpty
-          contents={contents}
           writing={agentWorking}
           onStart={
             decided || video.clock.state._tag === "paused"
@@ -509,8 +544,8 @@ function WorkspaceView({
         uncited={uncited}
         activeNoticeLine={noticeIndex === null ? null : (notices[noticeIndex]?.line ?? null)}
         highlightSource={sourceWide ? openSource : null}
-        activeOccurrenceLine={
-          sourceWide && occurrence !== null ? (source?.occurrences[occurrence] ?? null) : null
+        activeCitationKey={
+          sourceWide && occurrence !== null ? (source?.occurrences[occurrence]?.key ?? null) : null
         }
         onOpenSource={openSourceTab}
       />
@@ -559,7 +594,10 @@ function WorkspaceView({
                 void run(() =>
                   video.clock.state._tag === "idle"
                     ? commands.clock(
-                        { _tag: "start", stage: restartStage("assisted", video.clock) },
+                        {
+                          _tag: "start",
+                          stage: model.current ?? restartStage("assisted", video.clock),
+                        },
                         "No se reanudó",
                       )
                     : commands.clock({ _tag: "resume" }, "No se reanudó"),
@@ -679,48 +717,56 @@ function WorkspaceView({
                   )
                 ) : (
                   <>
-                    <div className="sticky top-0 z-10 -mx-7 -mt-5 flex flex-col gap-2 bg-background/95 px-7 pt-4 pb-3 backdrop-blur-sm">
-                      <div className="flex min-h-7 items-center gap-2 text-muted-foreground text-xs">
-                        {decided || model.current === "decide" ? (
-                          <LockIcon aria-hidden className="size-3.5" />
-                        ) : null}
-                        <span className="min-w-0 flex-1 truncate">
-                          {decided
-                            ? `Versión decidida el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
-                            : model.current === "decide"
-                              ? "Esta es la versión que vas a decidir · solo lectura mientras decides"
-                              : agentWorking && drafted
-                                ? "El asistente trabaja en tu pedido · el guion se actualiza cuando termine"
-                                : video.script.head
-                                  ? `Versión ${video.script.versionCount} · guardada ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
-                                  : drafted
-                                    ? "Sin versión guardada todavía"
-                                    : ""}
-                        </span>
-                        {!decided &&
-                        model.current !== "decide" &&
-                        drafted &&
-                        workspaceRoot &&
-                        video.script.path ? (
-                          <Button size="xs" variant="outline" onClick={() => setEditing(!editing)}>
-                            {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
-                            {editing ? "Ver el guion" : "Editar a mano"}
-                          </Button>
+                    {drafted || decided ? (
+                      <div className="sticky top-0 z-10 -mx-7 -mt-5 flex flex-col gap-2 bg-background/95 px-7 pt-4 pb-3 backdrop-blur-sm">
+                        <div className="flex min-h-7 items-center gap-2 text-muted-foreground text-xs">
+                          {decided || model.current === "decide" ? (
+                            <LockIcon aria-hidden className="size-3.5" />
+                          ) : null}
+                          <span className="min-w-0 flex-1 truncate">
+                            {decided && script.status === "unsaved"
+                              ? `Decidido el ${dateAndTime(video.decision!.decidedAt)} · sin versión guardada`
+                              : decided
+                                ? `Versión decidida el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
+                                : model.current === "decide"
+                                  ? "Esta es la versión que vas a decidir · solo lectura mientras decides"
+                                  : agentWorking && drafted
+                                    ? "El asistente trabaja en tu pedido · el guion se actualiza cuando termine"
+                                    : video.script.head
+                                      ? `Versión ${video.script.versionCount} · guardada ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
+                                      : drafted
+                                        ? "Sin versión guardada todavía"
+                                        : ""}
+                          </span>
+                          {!decided &&
+                          model.current !== "decide" &&
+                          drafted &&
+                          workspaceRoot &&
+                          video.script.path ? (
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => setEditing(!editing)}
+                            >
+                              {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
+                              {editing ? "Ver el guion" : "Editar a mano"}
+                            </Button>
+                          ) : null}
+                        </div>
+                        {drafted && !editing ? (
+                          <NoticeBar
+                            notices={notices}
+                            activeIndex={noticeIndex}
+                            onGo={goToNotice}
+                            verifier={
+                              verifier
+                                ? { claims: verifier.claims, uncited: verifier.uncited.length }
+                                : null
+                            }
+                          />
                         ) : null}
                       </div>
-                      {drafted && !editing ? (
-                        <NoticeBar
-                          notices={notices}
-                          activeIndex={noticeIndex}
-                          onGo={goToNotice}
-                          verifier={
-                            verifier
-                              ? { claims: verifier.claims, uncited: verifier.uncited.length }
-                              : null
-                          }
-                        />
-                      ) : null}
-                    </div>
+                    ) : null}
                     {scriptPane}
                   </>
                 )}
@@ -765,7 +811,7 @@ function WorkspaceView({
                 Detalles del hilo
               </TabButton>
               <span className="ms-auto truncate ps-2 text-muted-foreground text-xs">
-                {rightTab === "assistant" && modelLabel ? modelLabel : ""}
+                {rightTab === "assistant" && modelLabel && source === null ? modelLabel : ""}
               </span>
             </div>
 
@@ -782,7 +828,7 @@ function WorkspaceView({
                   data-thread-map-script
                 >
                   <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
-                  El asistente ya tiene la ficha y{" "}
+                  Ya tiene la ficha y{" "}
                   {dossier ? `sus ${dossier.evidenceTotal} fuentes` : "sus fuentes"}, numeradas como
                   aquí.
                 </p>
