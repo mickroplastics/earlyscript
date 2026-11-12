@@ -8,7 +8,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v5";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v6";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
@@ -162,6 +162,9 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- Name sources by their public names (Hacker News, GitHub, Hugging Face) and only when the source matters to the news; never expose internal source codes such as hn.",
     "- Name a publication (Bloomberg, BleepingComputer…), a person or an organization only when the item's title or excerpt names it, and attribute to it only what that title or excerpt says. Do not infer authorship, publisher, affiliation, or product ownership from a product name, a URL, or prior knowledge. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
     "- Describe a product only with what its title or excerpt says: do not add that it is open source, free, local, or that it runs or replaces another product unless the evidence states it; prefer the item's own wording.",
+    "- Each product or tool named carries only what its own item says, with that item's [itemId] next to its name. Never merge the capabilities of two products in one sentence or one shared purpose. A product that offers the features of another is not that other product and does not run it.",
+    "- Do not extend to several items what only one of them says.",
+    "- When an excerpt gives a figure with a contrast or a limit (another figure it is compared with, “still falls short”), keep the contrast next to the figure.",
     "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”. When the evidence is only headlines, say once, briefly and impersonally, that only headlines are available (for example: “Solo hay titulares; los artículos no se han leído.”).",
     "- Use coverage_data only to state what is unknown (for example, that a single source was captured). Do not turn it into causes, importance, or forecasts.",
     "- Do not recommend prioritizing, deprioritizing, selecting, rejecting, publishing, or postponing this topic. Do not score, rank, or compare topics. The human editor makes those decisions.",
@@ -169,7 +172,7 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- Before returning JSON, check grammar and agreement in the requested language.",
     ...(input.rejectedBecause
       ? [
-          `- Your previous answer was rejected because: ${singleLine(input.rejectedBecause)}. Rewrite it about the news.`,
+          `- Your previous answer was rejected because: ${singleLine(input.rejectedBecause)}. Rewrite it, keeping every claim cited.`,
         ]
       : []),
     "",
@@ -199,6 +202,20 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
   });
 
   return { prompt, outputSchema };
+}
+
+/**
+ * Parts longer than the prompt asks, as the one retry names them: "whatHappened has 487
+ * characters and must have at most 450". Empty when every part fits.
+ */
+export function trendPresentationLengthProblems(
+  summary: TrendPresentationSummary,
+): ReadonlyArray<string> {
+  return (Object.keys(summary) as Array<keyof TrendPresentationSummary>).flatMap((key) => {
+    const asked = key === "whatHappened" ? WHAT_HAPPENED_CHARS : SHORT_PART_CHARS;
+    const length = summary[key].length;
+    return length > asked ? [`${key} has ${length} characters and must have at most ${asked}`] : [];
+  });
 }
 
 export type TrendPresentationOutput = ReturnType<

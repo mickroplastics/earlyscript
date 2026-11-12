@@ -7,7 +7,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 
 import type { EditorialReadServiceShape } from "./EditorialReadService.ts";
 import { loadPresentationDossiers, type PresentationDossier } from "./presentationDossierSource.ts";
-import { trendPresentationVoiceProblems } from "./presentationVoice.ts";
+import { trendPresentationVoiceProblems, VOICE_TITLE_PART } from "./presentationVoice.ts";
 import type { EditorialRunDirectoryShape } from "./RunDirectory.ts";
 
 /** A row of `editorial_presentations` (migration 005). */
@@ -75,14 +75,29 @@ export function presentationOfRow(row: PresentationRow): EditorialTrendPresentat
 
 const NO_PRESENTATIONS: ReadonlyMap<string, EditorialTrendPresentation> = new Map();
 
+type VoiceChecked = Pick<EditorialTrendPresentation, "title" | "summary">;
+
 /**
- * A text the dossier must not show: written with another prompt version, or failing today's
- * voice check. Hashing the current input with the row's version gives the current hash only
- * when that version is the current one.
+ * A stored text that `ensure` may reuse and the run's progress counts as drafted: it passes
+ * today's voice check. The read side marks the others `outdated`, so all three agree.
  */
-const isOutdated = (presentation: EditorialTrendPresentation, dossier: PresentationDossier) =>
-  hashTrendPresentationInput(dossier.input, presentation.promptVersion) !== dossier.inputHash ||
-  trendPresentationVoiceProblems(presentation, dossier.input.evidence).length > 0;
+export const passesVoice = (presentation: VoiceChecked, dossier: PresentationDossier) =>
+  trendPresentationVoiceProblems(presentation, dossier.input.evidence).length === 0;
+
+/**
+ * `outdated`: written with another prompt version, or failing today's voice check. Hashing
+ * the current input with the row's version gives the current hash only when that version is
+ * the current one. `titleRejected`: the title itself fails, so no surface shows it.
+ */
+function review(presentation: EditorialTrendPresentation, dossier: PresentationDossier) {
+  const problems = trendPresentationVoiceProblems(presentation, dossier.input.evidence);
+  return {
+    outdated:
+      problems.length > 0 ||
+      hashTrendPresentationInput(dossier.input, presentation.promptVersion) !== dossier.inputHash,
+    titleRejected: problems.some((problem) => problem.part === VOICE_TITLE_PART),
+  };
+}
 
 /**
  * Each dossier's latest ready presentation: `current` when written for its current input,
@@ -113,14 +128,11 @@ export const presentationsForRun = Effect.fn("EditorialPresentationRead.presenta
       const own = current.get(dossierId);
       const dossier = byId.get(dossierId);
       const candidate = own ?? presentation;
+      const checked = dossier === undefined ? null : review(candidate, dossier);
       shown.set(dossierId, {
         ...candidate,
-        status:
-          dossier !== undefined && isOutdated(candidate, dossier)
-            ? "outdated"
-            : own === undefined
-              ? "stale"
-              : "current",
+        status: checked?.outdated ? "outdated" : own === undefined ? "stale" : "current",
+        ...(checked?.titleRejected ? { titleRejected: true } : {}),
       });
     }
     return shown as ReadonlyMap<string, EditorialTrendPresentation>;

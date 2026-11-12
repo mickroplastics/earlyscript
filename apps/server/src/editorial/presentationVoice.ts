@@ -32,8 +32,13 @@ const voiceText = (text: string) =>
 
 const wordsOf = (text: string) => text.match(/[\p{L}\p{N}]+/gu) ?? [];
 
-const NUMBER = "(?:\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)";
+// Digits or a written count from two up ("trece", "veintiuno", "treinta y dos"); "un" and
+// "una" stay out, since "una publicación de Hacker News pregunta…" is news.
+const NUMBER =
+  "(?:\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\\w+|veinte|veinti\\w+|(?:treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa)(?: y \\w+)?|cien|ciento \\w+)";
 const SOURCES = "(?:hacker news|github|hugging face|npm|rss|reddit|lobsters|wikipedia)";
+const PIECES = "(?:articulos|publicaciones|titulares|posts|entradas|elementos|items|menciones)";
+const GATHERED = "(?:recogid|recopilad|registrad|capturad|agrupad|reunid)";
 
 const PHRASE_RULES: ReadonlyArray<{
   readonly pattern: RegExp;
@@ -49,6 +54,28 @@ const PHRASE_RULES: ReadonlyArray<{
     pattern: /\bse (?:recogieron|recopilaron|registraron|capturaron|agruparon|reunieron)\b/,
     kind: "collection",
   },
+  // Compound tenses and the passive: "se han recopilado", "han sido recogidas".
+  {
+    pattern: new RegExp(`\\bse (?:ha|han|habia|habian) ${GATHERED}o\\b`),
+    kind: "collection",
+  },
+  {
+    pattern: new RegExp(`\\b(?:ha|han|habia|habian|fue|fueron) sido ${GATHERED}[oa]s?\\b`),
+    kind: "collection",
+  },
+  {
+    pattern:
+      /\b(?:la|esta) (?:recopilacion|recogida|captura|seleccion|muestra) (?:registr|reun|incluy|agrup|contien|sum|junt)\w*/,
+    kind: "collection",
+  },
+  // A source or anything else counting pieces: "Hacker News registró 11 publicaciones".
+  { pattern: new RegExp(`\\bregistr\\w* ${NUMBER} ${PIECES}\\b`), kind: "collection" },
+  {
+    pattern: new RegExp(
+      `\\b${NUMBER} ${PIECES} en (?:(?:una|la|esta|las|los|${NUMBER}) )?(?:ultim\\w+ )?(?:semanas?|dias?|meses?)\\b`,
+    ),
+    kind: "collection",
+  },
   { pattern: new RegExp(`\\b${NUMBER} (?:elementos|items|autores)\\b`), kind: "collection" },
   { pattern: /\b(?:los|estos|varios|algunos|otros) (?:elementos|items)\b/, kind: "collection" },
   {
@@ -58,7 +85,11 @@ const PHRASE_RULES: ReadonlyArray<{
     kind: "collection",
   },
   { pattern: /\b(?:autores? distintos?|distintos autores)\b/, kind: "collection" },
-  { pattern: /(^|[.!?]\s+)(?:la|esta) tendencia\b/, kind: "collection" },
+  // "La tendencia" as the subject naming the group; "la tendencia del mercado…" is news.
+  {
+    pattern: /(^|[.!?]\s+)(?:la|esta) tendencia\b(?! (?:de|del|a|hacia)\b)/,
+    kind: "collection",
+  },
   {
     pattern: /\b(?:la|esta) tendencia (?:reune|agrupa|recoge|incluye|junta|suma)\b/,
     kind: "collection",
@@ -67,6 +98,11 @@ const PHRASE_RULES: ReadonlyArray<{
   {
     pattern:
       /\b(?:lo senalo|sin recomendar|me limito|no he (?:leido|podido)|no puedo (?:leer|acceder|abrir))\b/,
+    kind: "self",
+  },
+  // First person; not "veo", which is also a video model's name.
+  {
+    pattern: /\b(?:creo|creemos|pienso|pensamos|hemos|nosotros|nosotras|vemos|consideramos)\b/,
     kind: "self",
   },
 ];
@@ -120,8 +156,10 @@ function jargonOutsideEvidence(text: string, evidence: string): string | null {
 }
 
 // Labels as the dossier page names each part; the operator reads them in the error.
+export const VOICE_TITLE_PART = "título";
+
 const VOICE_PARTS: ReadonlyArray<readonly [string, (presentation: VoicePresentation) => string]> = [
-  ["título", (presentation) => presentation.title],
+  [VOICE_TITLE_PART, (presentation) => presentation.title],
   ["Qué pasó", (presentation) => presentation.summary.whatHappened],
   ["Encaje con el canal", (presentation) => presentation.summary.whyItMatters],
   ["Ángulo de video", (presentation) => presentation.summary.videoAngle],
@@ -142,17 +180,22 @@ export function trendPresentationVoiceProblems(
   for (const [part, read] of VOICE_PARTS) {
     const text = voiceText(read(presentation));
     const found: VoiceProblem[] = [];
-    // One problem per phrase: "la tendencia reune" is the same finding as "la tendencia".
-    const add = (words: string, kind: VoiceProblem["kind"]) => {
-      if (found.some((other) => other.words.includes(words) || words.includes(other.words))) return;
-      found.push({ part, words, kind });
-    };
+    const spans: Array<readonly [number, number]> = [];
+    // One problem per phrase: "el motor registro 11" is not also "registro 11 elementos".
     for (const rule of PHRASE_RULES) {
       const match = rule.pattern.exec(text);
-      if (match) add(match[0].replace(/^[.!?\s]+/, ""), rule.kind);
+      if (match === null) continue;
+      const words = match[0].replace(/^[.!?\s]+/, "");
+      const end = match.index + match[0].length;
+      const start = end - words.length;
+      if (spans.some(([from, to]) => start < to && from < end)) continue;
+      spans.push([start, end]);
+      found.push({ part, words, kind: rule.kind });
     }
     const jargon = jargonOutsideEvidence(text, evidenceWords);
-    if (jargon !== null) add(jargon, "collection");
+    if (jargon !== null && !found.some((other) => other.words.includes(jargon))) {
+      found.push({ part, words: jargon, kind: "collection" });
+    }
     problems.push(...found);
   }
   return problems;

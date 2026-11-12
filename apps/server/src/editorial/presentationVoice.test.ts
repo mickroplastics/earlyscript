@@ -51,6 +51,31 @@ describe("trendPresentationVoiceProblems", () => {
     ["Un motor de recomendaciones ordena los textos.", "Qué pasó: «motor»"],
     ["Lo señalo tal cual, sin recomendar acción.", "Qué pasó: «lo senalo»"],
     ["No he leído los artículos [itm_hn_1].", "Qué pasó: «no he leido»"],
+    // Round 2: compound tenses, the passive, written counts and the first person.
+    [
+      "Se han recopilado titulares de Hacker News durante la última semana [itm_hn_1].",
+      "Qué pasó: «se han recopilado»",
+    ],
+    ["Las publicaciones han sido recopiladas de varios foros.", "Qué pasó: «han sido recopiladas»"],
+    ["Hay trece elementos sobre slop.", "Qué pasó: «trece elementos»"],
+    ["Veintiún elementos tratan el slop.", "Qué pasó: «veintiun elementos»"],
+    [
+      "La recopilación registró trece publicaciones de Hacker News.",
+      "Qué pasó: «la recopilacion registro»; Qué pasó: «trece publicaciones de hacker news»",
+    ],
+    [
+      "Hacker News registró 11 publicaciones sobre el tema.",
+      "Qué pasó: «registro 11 publicaciones»",
+    ],
+    [
+      "Once publicaciones en una semana muestran interés por el slop.",
+      "Qué pasó: «once publicaciones en una semana»",
+    ],
+    ["Creo que el debate sobre slop encaja con el canal.", "Qué pasó: «creo»"],
+    ["Hemos reunido noticias de Hacker News para esta ficha [itm_hn_1].", "Qué pasó: «hemos»"],
+    ["Hemos visto varias publicaciones sobre slop.", "Qué pasó: «hemos»"],
+    ["Vemos un debate sobre slop en la ciencia.", "Qué pasó: «vemos»"],
+    ["Nosotros seguimos el debate sobre slop.", "Qué pasó: «nosotros»"],
   ])("rejects %s", (whatHappened, problems) => {
     expect(problemsText(whatHappened)).toBe(problems);
   });
@@ -88,6 +113,9 @@ describe("trendPresentationVoiceProblems", () => {
     "Anthropic fija un rango de 70 a 78 dólares por acción [itm_rss_1].",
     "El texto cita una prueba [itm_motor_1].",
     "OpenAI publica 3 artículos de investigación sobre seguridad [itm_rss_1].",
+    "La tendencia del mercado de GPUs sube según el titular [itm_rss_1].",
+    "Una publicación de Hacker News pregunta por qué el slop cansa [itm_hn_1].",
+    "Google presenta Veo 4 para generar video [itm_rss_1].",
   ])("accepts %s", (whatHappened) => {
     expect(problemsText(whatHappened)).toBe("");
   });

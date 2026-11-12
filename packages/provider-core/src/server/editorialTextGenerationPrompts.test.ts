@@ -8,6 +8,7 @@ import {
   hashTrendPresentationInput,
   TREND_PRESENTATION_PROMPT_VERSION,
   MAX_TREND_TITLE_CHARS,
+  trendPresentationLengthProblems,
   type TrendPresentationPromptInput,
 } from "./editorialTextGenerationPrompts.ts";
 import { toJsonSchemaObject } from "./textGenerationUtils.ts";
@@ -86,6 +87,11 @@ describe("buildTrendPresentationPrompt", () => {
     expect(prompt).toContain("Name a publication (Bloomberg, BleepingComputer…)");
     expect(prompt).toContain("do not add that it is open source");
     expect(prompt).toContain('never "vídeo"');
+    // Round 2: Type and One Code merged into one purpose; a figure without its contrast.
+    expect(prompt).toContain("Never merge the capabilities of two products");
+    expect(prompt).toContain("does not run it");
+    expect(prompt).toContain("Do not extend to several items what only one of them says.");
+    expect(prompt).toContain("keep the contrast next to the figure");
     expect(buildTrendPresentationPrompt({ ...input, language: "en" }).prompt).not.toContain(
       "vídeo",
     );
@@ -98,7 +104,7 @@ describe("buildTrendPresentationPrompt", () => {
     });
 
     expect(prompt).toContain(
-      "- Your previous answer was rejected because: it described how the data was collected (Qué pasó: «motor»). Rewrite it about the news.",
+      "- Your previous answer was rejected because: it described how the data was collected (Qué pasó: «motor»). Rewrite it, keeping every claim cited.",
     );
     // The retry answers the same input: the stored row keeps its key.
     expect(hashTrendPresentationInput({ ...input, rejectedBecause: "x" })).toBe(
@@ -206,6 +212,10 @@ describe("finalizeTrendPresentation", () => {
     expect(result.warnings).toEqual([
       `whatHappened has ${whatHappened.length} characters; the prompt asks for at most 450.`,
     ]);
+    expect(trendPresentationLengthProblems(result.summary)).toEqual([
+      `whatHappened has ${whatHappened.length} characters and must have at most 450`,
+    ]);
+    expect(trendPresentationLengthProblems(output.summary)).toEqual([]);
   });
 
   it("falls back to the engine terms when the title is empty", () => {

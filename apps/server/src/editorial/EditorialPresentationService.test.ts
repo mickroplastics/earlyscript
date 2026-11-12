@@ -44,7 +44,11 @@ interface Generator {
   readonly gate: Ref.Ref<Deferred.Deferred<void> | null>;
   /** How many of the next answers describe the data collection instead of the news. */
   readonly offTopic: Ref.Ref<number>;
+  /** How many of the next answers are longer than the prompt asks. */
+  readonly long: Ref.Ref<number>;
 }
+
+const LONG_WHAT_HAPPENED = `${"Un titular informa de un avance en circuitos cuánticos. ".repeat(9).trim()}`;
 
 const answer = (
   input: TrendPresentationGenerationInput,
@@ -62,7 +66,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v5",
+    promptVersion: "trend-presentation.v6",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -91,7 +95,11 @@ const textGenerationLayer = (generator: Generator) =>
           const offTopic = yield* Ref.getAndUpdate(generator.offTopic, (left) =>
             Math.max(0, left - 1),
           );
+          const long = yield* Ref.getAndUpdate(generator.long, (left) => Math.max(0, left - 1));
           const reply = answer(input, calls.length);
+          if (long > 0) {
+            return { ...reply, summary: { ...reply.summary, whatHappened: LONG_WHAT_HAPPENED } };
+          }
           return offTopic === 0
             ? reply
             : {
@@ -112,6 +120,7 @@ const makeGenerator = Effect.gen(function* () {
     failing: yield* Ref.make<ReadonlySet<string>>(new Set()),
     gate: yield* Ref.make<Deferred.Deferred<void> | null>(null),
     offTopic: yield* Ref.make(0),
+    long: yield* Ref.make(0),
   } satisfies Generator;
 });
 
@@ -197,7 +206,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v5");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v6");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);
@@ -296,6 +305,55 @@ describe("EditorialPresentationService", () => {
           [["failed", null, error.message]],
         );
         assert.isUndefined((yield* shown).get(QUANTUM));
+      }),
+    ),
+  );
+
+  it.effect("retries once a text longer than asked and keeps the shorter one", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.long, 1);
+        const result = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.match(result.presentation.summary.whatHappened, /^Pasó algo \[itm_\w+\]\.$/);
+        assert.deepStrictEqual(
+          (yield* Ref.get(generator.calls)).map((call) => call.rejectedBecause),
+          [
+            undefined,
+            `it was too long: whatHappened has ${LONG_WHAT_HAPPENED.length} characters and must have at most 450`,
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("keeps the long text when the shorter retry fails the voice check", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.long, 1);
+        // The first answer is long, the retry talks about the collection.
+        yield* Ref.set(generator.offTopic, 2);
+        const result = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.strictEqual(result.presentation.summary.whatHappened, LONG_WHAT_HAPPENED);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
+        assert.strictEqual((yield* shown).get(QUANTUM)?.status, "current");
+      }),
+    ),
+  );
+
+  it.effect("stores a retry that is still long, and never retries twice", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.long, 2);
+        const result = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.strictEqual(result.presentation.summary.whatHappened, LONG_WHAT_HAPPENED);
+        assert.deepStrictEqual(result.warnings, ["regenerated"]);
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
       }),
     ),
   );
@@ -412,11 +470,25 @@ describe("EditorialPresentationService", () => {
           UPDATE editorial_presentations
           SET what_happened = 'El motor registró 11 elementos de 11 autores distintos.'
         `;
-        assert.strictEqual((yield* shown).get(QUANTUM)?.status, "outdated");
+        const outdated = (yield* shown).get(QUANTUM);
+        assert.strictEqual(outdated?.status, "outdated");
+        // Its title passes the voice check, so the inbox and the dossier keep naming it.
+        assert.isUndefined(outdated?.titleRejected);
         assert.deepStrictEqual(
           (yield* presentationRows).map((row) => row.status),
           ["ready"],
         );
+
+        yield* sql`UPDATE editorial_presentations SET title = 'El motor registró actividad'`;
+        assert.isTrue((yield* shown).get(QUANTUM)?.titleRejected);
+        // "Redactar todas" and the progress read it as the dossier does: not drafted.
+        assert.strictEqual((yield* service.runProgress(RUN_ID)).ready, 0);
+        const progress = yield* service.ensureAll(RUN_ID);
+        assert.deepStrictEqual([progress.ready, progress.failed], [3, 0]);
+        const after = (yield* shown).get(QUANTUM);
+        assert.strictEqual(after?.status, "current");
+        assert.isUndefined(after?.titleRejected);
+        assert.isTrue((yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM })).reused);
       }),
     ),
   );

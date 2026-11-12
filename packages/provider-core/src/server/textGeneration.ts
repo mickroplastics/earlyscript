@@ -22,7 +22,10 @@ export type {
   TrendPresentationSummary,
   TrendPresentationTrend,
 } from "./editorialTextGenerationPrompts.ts";
-export { hashTrendPresentationInput } from "./editorialTextGenerationPrompts.ts";
+export {
+  hashTrendPresentationInput,
+  trendPresentationLengthProblems,
+} from "./editorialTextGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;

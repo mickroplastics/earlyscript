@@ -10,7 +10,10 @@ import {
   type EditorialPresentationTarget,
   type EditorialTrendPresentation,
 } from "@t3tools/contracts";
-import type { TrendPresentationGenerationInput } from "@t3tools/provider-core/server/textGeneration";
+import {
+  trendPresentationLengthProblems,
+  type TrendPresentationGenerationInput,
+} from "@t3tools/provider-core/server/textGeneration";
 import { isModelSelectionProviderEnabled } from "@t3tools/shared/serverSettings";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
@@ -43,6 +46,7 @@ import { EditorialRunDirectory } from "./RunDirectory.ts";
 import {
   encodeStrings,
   parseStrings,
+  passesVoice,
   PRESENTATION_COLUMNS,
   presentationOfRow,
   type PresentationRow,
@@ -369,23 +373,39 @@ const make = Effect.gen(function* () {
         ),
       );
     let [duration, generated] = yield* generateOnce(input);
-    // A text about the collection instead of the news gets one retry that names the problem;
-    // a second one fails the row and nothing is stored.
+    // One retry at most. A text about the collection instead of the news names the problem and
+    // fails the row if the retry repeats it. A text that is only too long asks to shorten it
+    // and keeps the first answer if the shorter one fails the voice check.
     const rejected = trendPresentationVoiceProblems(generated, input.evidence);
-    if (rejected.length > 0) {
+    const tooLong = trendPresentationLengthProblems(generated.summary);
+    if (rejected.length > 0 || tooLong.length > 0) {
+      const reasons = [
+        rejected.length > 0 ? voiceRetryReason(rejected) : null,
+        tooLong.length > 0 ? `it was too long: ${tooLong.join("; ")}` : null,
+      ].filter((reason) => reason !== null);
       yield* Effect.logInfo("editorial: trend presentation rejected, retrying once").pipe(
         Effect.annotateLogs({
           runId: dossier.runId,
           dossierId: dossier.dossierId,
-          rejected: voiceProblemsText(rejected),
+          rejected: rejected.length > 0 ? voiceProblemsText(rejected) : tooLong.join("; "),
         }),
       );
+      const first = [duration, generated] as const;
       [duration, generated] = yield* generateOnce({
         ...input,
-        rejectedBecause: voiceRetryReason(rejected),
+        rejectedBecause: reasons.join(", and "),
       });
       const problems = trendPresentationVoiceProblems(generated, input.evidence);
-      if (problems.length > 0) {
+      if (problems.length > 0 && rejected.length === 0) {
+        yield* Effect.logInfo("editorial: the shorter retry failed the voice check").pipe(
+          Effect.annotateLogs({
+            runId: dossier.runId,
+            dossierId: dossier.dossierId,
+            rejected: voiceProblemsText(problems),
+          }),
+        );
+        [duration, generated] = first;
+      } else if (problems.length > 0) {
         // The matched words stay in the log; the operator's message names only the parts.
         yield* Effect.logWarning("editorial: trend presentation rejected twice").pipe(
           Effect.annotateLogs({
@@ -443,12 +463,16 @@ const make = Effect.gen(function* () {
     dossier: PresentationDossier,
   ) {
     const { input, inputHash } = yield* generationInput(dossier);
+    // A stored text that fails today's voice check is written again, as the dossier reads it.
     const stored = latestReadyForHash(sql, dossier.runId, dossier.dossierId, inputHash).pipe(
       Effect.mapError(storageFailed("latestReady")),
       Effect.map(
         Option.flatMap((row) =>
-          Option.map(Option.fromNullishOr(presentationOfRow(row)), (presentation) =>
-            toResult(row, presentation, true),
+          Option.map(
+            Option.filter(Option.fromNullishOr(presentationOfRow(row)), (presentation) =>
+              passesVoice(presentation, dossier),
+            ),
+            (presentation) => toResult(row, presentation, true),
           ),
         ),
       ),
@@ -485,33 +509,33 @@ const make = Effect.gen(function* () {
     "EditorialPresentationService.runProgress",
   )(function* (runId) {
     const run = yield* loadRun(runId);
-    const hashes = new Map(run.map((dossier) => [dossier.dossierId, dossier.inputHash]));
-    const rows = yield* sql<{
-      readonly dossier_id: string;
-      readonly input_hash: string;
-      readonly status: PresentationStatus;
-      readonly revision: number;
-    }>`
-      SELECT dossier_id, input_hash, status, revision FROM editorial_presentations
+    const dossiers = new Map(run.map((dossier) => [dossier.dossierId, dossier]));
+    const rows = yield* sql<PresentationRow>`
+      SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
       WHERE run_id = ${runId}
       ORDER BY revision ASC
     `.pipe(Effect.mapError(storageFailed("runProgress")));
-    const ready = new Set<string>();
+    // Drafted: the latest ready text for the current input passes the voice check, as `ensure`
+    // and the dossier read it. Failed: the latest attempt failed and nothing usable is stored.
+    const usable = new Map<string, boolean>();
     const latest = new Map<string, PresentationStatus>();
     for (const row of rows) {
-      if (hashes.get(row.dossier_id) !== row.input_hash) continue;
-      if (row.status === "ready") ready.add(row.dossier_id);
+      const dossier = dossiers.get(row.dossier_id);
+      if (dossier === undefined || dossier.inputHash !== row.input_hash) continue;
       latest.set(row.dossier_id, row.status);
+      const presentation = presentationOfRow(row);
+      if (presentation !== null) usable.set(row.dossier_id, passesVoice(presentation, dossier));
     }
+    const ready = [...usable.values()].filter(Boolean).length;
     const failed = [...latest].filter(
-      ([dossierId, status]) => status === "failed" && !ready.has(dossierId),
+      ([dossierId, status]) => status === "failed" && usable.get(dossierId) !== true,
     ).length;
     const job = jobs.get(runId);
     return {
       runId: EditorialRunId.make(runId),
       status: job?.running ? ("running" as const) : ("idle" as const),
       total: run.length,
-      ready: ready.size,
+      ready,
       failed,
       startedAt: job?.startedAt ?? null,
       finishedAt: job?.finishedAt ?? null,
