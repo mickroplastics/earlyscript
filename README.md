@@ -1,6 +1,18 @@
 # Earlyscript
 
-Earlyscript es un estudio editorial para una persona que decide, cada día, sobre qué tema grabar un video. Cada noche guarda lo que se publicó en varias comunidades técnicas públicas y un motor de tendencias propone los temas que se mueven y que encajan con el canal. El operador elige un tema y escribe el guion en un hilo de conversación, con un agente de código o a mano. Al final registra su decisión con una nota de utilidad, un motivo y el tiempo que le llevó. Earlyscript es un fork de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783` del 30 de octubre de 2026. El README original de T3 Code se conserva en [`docs/README-t3code.md`](docs/README-t3code.md).
+Earlyscript es un estudio editorial para una persona que decide, cada día, sobre qué tema grabar un video. Propone cada mañana los temas que se mueven en comunidades técnicas públicas y acompaña la escritura del guion, con la decisión final en manos del operador. Earlyscript es un fork de [T3 Code](https://github.com/pingdotgg/t3code) (licencia MIT), tomado del commit `aa11ef6783` del 30 de octubre de 2026. El README original de T3 Code se conserva en [`docs/README-t3code.md`](docs/README-t3code.md).
+
+## Problema
+
+Quien publica videos sobre tecnología tiene que decidir cada semana de qué hablar. Sin una herramienta, eso significa recorrer foros, repositorios y blogs, juntar enlaces y comparar temas a mano. Ese trabajo lleva varias horas a la semana. Al final, además, no queda rastro de qué se revisó ni de por qué se eligió un tema y no otro.
+
+## Cómo funciona
+
+![Flujo de Earlyscript en cinco pasos: captura, motor de tendencias, tendencias, hilo de video y decisión, con un registro de todo el proceso](docs/assets/flujo-earlyscript.png)
+
+Earlyscript hace de noche la parte mecánica de esa búsqueda. Por la mañana, el operador encuentra una lista corta de temas que se mueven, cada uno con sus publicaciones enlazadas. Elige uno y escribe el guion con un asistente que cita esas publicaciones, o lo escribe solo. El tiempo se dedica a decidir y a escribir, no a buscar.
+
+La decisión final es siempre del operador. Queda guardada con su nota, su motivo y el tiempo de cada etapa, y cada guion se puede seguir hasta las publicaciones que lo originaron. En el diagrama, el azul es cálculo en la computadora sin IA generativa, el naranja es el asistente y el verde son las decisiones del operador.
 
 ## Propósito académico
 

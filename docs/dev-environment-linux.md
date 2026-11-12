@@ -1,6 +1,6 @@
 # Entorno de desarrollo en Linux
 
-Qué hace falta para que la batería de T3 Code pase en el LXC `agents` (Debian 13.7, x86_64, 8 núcleos, 128 GiB) y cómo se reparte entre la batería completa y la rápida de Earlyscript. Medido el 30 de octubre de 2026 sobre la base de upstream `aa11ef6783`.
+Qué hace falta para que la batería de T3 Code pase en un contenedor Linux (Debian 13.7, x86_64, 8 núcleos, 128 GiB) y cómo se reparte entre la batería completa y la rápida de Earlyscript. Medido el 30 de octubre de 2026 sobre la base de upstream `aa11ef6783`.
 
 ## Preparación desde un checkout nuevo
 
@@ -17,9 +17,9 @@ pnpm es:check-scope
 
 El CI de upstream instala con `vp install`, que respeta el lockfile, y ejecuta `ensure:electron` con `vp run --filter @t3tools/desktop ensure:electron`. Si `ldd` sobre el Chromium descargado muestra bibliotecas ausentes, ejecutar `node apps/web/node_modules/playwright/cli.js install-deps chromium`.
 
-## Requisitos en el LXC `agents`
+## Requisitos en el contenedor de prueba
 
-Ya presentes en el LXC antes de este trabajo: Node `26.12.1` en `~/.local/opt/node-26.12.1/bin`, pnpm `12.14.0`, `build-essential` 12.12 (`gcc` 14.2.0), `xvfb` 21.1.16 y la caché de Electron en `~/.cache/electron`.
+Ya presentes en el contenedor antes de este trabajo: Node `26.12.1` en `~/.local/opt/node-26.12.1/bin`, pnpm `12.14.0`, `build-essential` 12.12 (`gcc` 14.2.0), `xvfb` 21.1.16 y la caché de Electron en `~/.cache/electron`.
 
 Instalado para la batería (son los mismos pasos que hace el CI de upstream en `.github/workflows/ci.yml`):
 
@@ -51,7 +51,7 @@ La lista no es el cierre completo por dependencias. `apps/server` y `packages/cl
 
 ## Resultados por paquete
 
-Cada paquete se ejecutó por separado (`pnpm test` dentro de su carpeta), para que un fallo no oculte los demás. «Antes» es el LXC sin los requisitos; «después», con ellos. Evidencia en `~/earlyscript-data/build-scope/{baseline,after}/`.
+Cada paquete se ejecutó por separado (`pnpm test` dentro de su carpeta), para que un fallo no oculte los demás. «Antes» es el contenedor sin los requisitos; «después», con ellos. Evidencia en `~/earlyscript-data/build-scope/{baseline,after}/`.
 
 | Paquete                                | Antes                                | Después                          | Nota                                                                                                                                                                                                     |
 | -------------------------------------- | ------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -94,15 +94,15 @@ No tienen script `test`: `apps/marketing`, `packages/provider-testing`, `package
 
 - `pnpm test` como orden única. `vp run -r test` ordena por dependencias y detiene la ejecución en el primer fallo. `apps/server` depende de `apps/web` y es lo último, así que cualquier fallo anterior deja el servidor sin ejecutar y el resumen cuenta 31 tareas en lugar de 32. El CI de upstream no usa `pnpm test`: separa el resto de paquetes, `web` y `server` en trabajos distintos, y el servidor corre con `test:cached` en ocho fragmentos y verificación de caché (`vp run test:cached -- --shard N/8 --verify-hits 1 --report <archivo> apps/server`). `es:test` y la medición de tiempos adaptan en local esa separación en tres pasadas, sin fragmentos ni caché de pruebas.
 - `infra/task-cache/src/runHook.test.ts` es intermitente cuando corre junto a otras suites. Falló en tres ejecuciones registradas: `pnpm test` antes y después de instalar los requisitos (`baseline/test.log`, `after/test.log`) y la primera pasada «resto» de la medición de tiempos (`timing/ci-rest.log`), que se cortó por ello. Pasó en las dos ejecuciones aisladas del paquete de la batería (`baseline/pkg-infra_task-cache.log`, `after/pkg-infra_task-cache.log`), en la repetición de «resto» (`timing/ci-rest2.log`) y en las repeticiones de `repeats/`: 6 de 6 con el paquete entero y 5 de 5 con el archivo solo, con carga media de un minuto entre 8,1 y 9,2. Afecta a la telemetría de la caché remota de upstream, que Earlyscript no usa. No se modificó la prueba.
-- `apps/web` falla en algunas pruebas cuando corre junto a otras suites con el LXC cargado. En `timing/full1-test.log`, `timing/full2-test.log` y las corridas de `timing-aborted/` se observaron dos tipos de fallo:
+- `apps/web` falla en algunas pruebas cuando corre junto a otras suites con el contenedor cargado. En `timing/full1-test.log`, `timing/full2-test.log` y las corridas de `timing-aborted/` se observaron dos tipos de fallo:
   - Tiempos agotados: el límite de 15 s de la prueba en `src/localApi.test.ts`, `src/lib/runtime.test.ts`, `MessagesTimeline.browser.test.tsx` y `TelemetryExportSettings.browser.test.tsx`, y el de `locator.click` en `TelemetryExportSettings` y `AttachmentFilePreview` (`*.browser.test.tsx`).
   - Aserciones: un `vi.fn()` llamado más veces o con otros argumentos de lo esperado en `src/lib/runtime.test.ts`, `TelemetryExportSettings.browser.test.tsx` y `ThemeImportDialog.browser.test.tsx`.
 - Con `web` sola, `apps/web` pasó en las dos pasadas de `es:test` (`timing/fast1-es:test.log`, `timing/fast2-es:test.log`) y en la medición de tiempos (`timing/ci-web.log`, 434 archivos). En la corrida «después» (`after/pkg-apps_web.log`) falló una prueba de `OpenInPicker.browser.test.tsx` por aserción, no por tiempo: esperaba que no se anunciara nada y recibió «Opened in VS Code». Al repetir el archivo solo pasó 3 de 3 (`repeats/web-OpenInPicker-{1,2,3}.log`). Hipótesis no comprobada: los fallos dependen de la carga de la máquina, porque desaparecen al ejecutar con menos suites a la vez; no se descartó un fallo de orden o de estado compartido en esas pruebas.
-- Pruebas condicionadas: en Linux se omiten 4 de `apps/server` y 2 de `packages/shared`. En esos paquetes las condiciones `skipIf`/`runIf` dependen de la plataforma (Windows o macOS), del soporte de enlaces simbólicos o de la versión de undici. Las que dependen de la plataforma se verifican solo en ella: macOS en Gertrudis; Windows no está disponible en este entorno.
+- Pruebas condicionadas: en Linux se omiten 4 de `apps/server` y 2 de `packages/shared`. En esos paquetes las condiciones `skipIf`/`runIf` dependen de la plataforma (Windows o macOS), del soporte de enlaces simbólicos o de la versión de undici. Las que dependen de la plataforma se verifican solo en ella: macOS en un Mac con Apple Silicon; Windows no está disponible en este entorno.
 
 ## Tiempos
 
-Tiempos de pared en segundos, medidos con `date` alrededor de cada orden. Durante las mediciones otros tres agentes ejecutaban sus propias baterías en el mismo LXC de 8 núcleos: la carga media de un minuto osciló entre 1,4 y 34,6, casi siempre entre 6 y 17. Los tiempos están inflados y sirven para comparar órdenes entre sí, no como referencia absoluta. Registro completo en `~/earlyscript-data/build-scope/timing/`. Las órdenes de cada medición están en `~/earlyscript-data/build-scope/bin/`.
+Tiempos de pared en segundos, medidos con `date` alrededor de cada orden. Durante las mediciones otros tres agentes ejecutaban sus propias baterías en el mismo contenedor de 8 núcleos: la carga media de un minuto osciló entre 1,4 y 34,6, casi siempre entre 6 y 17. Los tiempos están inflados y sirven para comparar órdenes entre sí, no como referencia absoluta. Registro completo en `~/earlyscript-data/build-scope/timing/`. Las órdenes de cada medición están en `~/earlyscript-data/build-scope/bin/`.
 
 Las tres pasadas adaptan en local la separación del CI y se ejecutaron desde la raíz con `node_modules/.bin` en el `PATH` (`bin/timing-ci.sh`):
 

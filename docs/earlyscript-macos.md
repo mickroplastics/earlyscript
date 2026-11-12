@@ -1,6 +1,6 @@
 # Earlyscript en macOS (uso diario)
 
-Cómo compilar, instalar y abrir Earlyscript como app nativa en un Mac con Apple Silicon, con los datos en local. Probado en Gertrudis (M4, macOS 27) el 31 de octubre de 2026.
+Cómo compilar, instalar y abrir Earlyscript como app nativa en un Mac con Apple Silicon, con los datos en local. Probado en un Mac mini M4 con macOS 27 el 31 de octubre de 2026.
 
 ## Compilar
 
@@ -51,7 +51,7 @@ Las terminales de T3 Code exportan `T3CODE_HOME=~/.t3` y `open` pasa ese entorno
 
 El CLI `earlyscript` usa siempre `~/.earlyscript`, también desde una terminal de T3 Code: el lanzador fija `T3CODE_HOME` al home de la instalación. Para otro directorio, pasa `--base-dir`.
 
-T3 Code real usa `~/.t3` y el puerto 3773 (en Gertrudis corre como servicio `t3`). Las dos apps pueden estar abiertas a la vez sin compartir estado.
+T3 Code real usa `~/.t3` y el puerto 3773 (en el Mac de prueba corre como servicio `t3`). Las dos apps pueden estar abiertas a la vez sin compartir estado.
 
 ## Motor
 
@@ -65,7 +65,7 @@ ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Earlyscript (Beta)" \
   "$app/Contents/Resources/trend-engine/dist/cli.mjs" check --run ~/earlyscript-data/runs/<run_id>
 ```
 
-En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tardan unos 15 minutos con 4 procesos y como mucho 2,2 GB de RSS por proceso. Con la caché llena, una corrida diaria tarda unos 25 segundos en el motor. La primera corrida descarga el modelo (unos 600 MB) desde Hugging Face una sola vez, antes de lanzar los procesos; en Gertrudis tardó unos 20 segundos.
+En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tardan unos 15 minutos con 4 procesos y como mucho 2,2 GB de RSS por proceso. Con la caché llena, una corrida diaria tarda unos 25 segundos en el motor. La primera corrida descarga el modelo (unos 600 MB) desde Hugging Face una sola vez, antes de lanzar los procesos; en el Mac de prueba tardó unos 20 segundos.
 
 ## Títulos con el asistente
 
@@ -73,7 +73,7 @@ En un M4 con la caché vacía, 28 días de HN y GitHub (unos 26 000 textos) tard
 
 ## Abrir al iniciar sesión (opcional)
 
-Este agente de `launchd` solo abre la app al iniciar sesión y la reabre si se cierra por un fallo. Si se sale con ⌘Q, no la reabre. No ejecuta el motor. No está instalado. Para usarlo, guárdalo como `~/Library/LaunchAgents/cc.biste.earlyscript.open.plist` y ejecuta `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/cc.biste.earlyscript.open.plist`. Para quitarlo, ejecuta `launchctl bootout gui/$(id -u)/cc.biste.earlyscript.open` y borra el archivo.
+Este agente de `launchd` solo abre la app al iniciar sesión y la reabre si se cierra por un fallo. Si se sale con ⌘Q, no la reabre. No ejecuta el motor. No está instalado. Para usarlo, sustituye `USUARIO` por tu nombre de usuario de macOS (`launchd` no expande `~`), guárdalo como `~/Library/LaunchAgents/cc.biste.earlyscript.open.plist` y ejecuta `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/cc.biste.earlyscript.open.plist`. Para quitarlo, ejecuta `launchctl bootout gui/$(id -u)/cc.biste.earlyscript.open` y borra el archivo.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -84,7 +84,7 @@ Este agente de `launchd` solo abre la app al iniciar sesión y la reabre si se c
   <string>cc.biste.earlyscript.open</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/miguel/Applications/Earlyscript (Beta).app/Contents/MacOS/Earlyscript (Beta)</string>
+    <string>/Users/USUARIO/Applications/Earlyscript (Beta).app/Contents/MacOS/Earlyscript (Beta)</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

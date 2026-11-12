@@ -5,7 +5,7 @@ Fork privado de T3 Code (MIT, `github.com/pingdotgg/t3code`) iniciado el 30 de o
 Reglas propias, que prevalecen sobre el texto de upstream que sigue:
 
 - Idioma de trabajo: español. El código y los comentarios de upstream siguen en inglés; el código nuevo también, para facilitar fusiones.
-- Remotos: `origin` es Forgejo (`git.r.biste.cc/miguel/earlyscript`); `upstream` es GitHub, solo lectura (push deshabilitado). Traer cambios de upstream con `git fetch upstream` y fusión explícita; nunca `push` a GitHub.
+- Remotos: `origin` es el remoto Forgejo privado; `upstream` es GitHub, solo lectura (push deshabilitado). Traer cambios de upstream con `git fetch upstream` y fusión explícita; nunca `push` a GitHub.
 - Rutas: código en `~/tesis/earlyscript`; worktrees de agentes en `~/earlyscript-wt/<nombre>`; datos y evidencia en `~/earlyscript-data/`. El repo de la tesis ignora esta carpeta.
 - Relación con upstream (decidido el 30 de octubre de 2026): fork con fusión regular, no parches ni rebase de `main`. Rama `upstream-main` que solo avanza con `git fetch upstream`; fusión a `main` cada semana con la batería como compuerta; congelar la semana de la defensa (13 de noviembre). Cuando lo editorial pese más que lo heredado, pasar por decisión a `cherry-pick` de arreglos puntuales.
 - Código aditivo: todo lo nuestro vive en carpetas propias (`packages/earlywindow-engine`, `packages/editorial-*`, `apps/web/src/editorial/`). En archivos de upstream solo puntos de enganche de una línea (import y montaje), nunca ediciones dentro de sus componentes.
@@ -14,8 +14,8 @@ Reglas propias, que prevalecen sobre el texto de upstream que sigue:
 - Esconder, no borrar: las funciones que no usamos (terminal, PRs, mobile, marketing, relay) se apagan con banderas en un archivo nuestro, `packages/shared/src/earlyscriptFlags.ts` (camelCase, como el resto del paquete), hasta que se decida dejar de fusionar upstream.
 - Registro de divergencia obligatorio: `docs/upstream-divergence.md` lista cada archivo de upstream modificado y el motivo; es la lista de revisión de cada fusión.
 - Orden de trabajo: capa de marca, banderas, motor de Earlywindow como paquete del workspace (`packages/earlywindow-engine`, vía `git subtree`), después la experiencia de guiones. Una unidad por worktree.
-- Verificación: cada cambio con capturas antes y después (Linux con Xvfb aquí; macOS en Gertrudis), Sol 6.1 verifica de forma independiente, Opus corrige.
-- Objetivo de plataformas: Linux, Windows y macOS. Windows se compila en Linux como hace upstream; macOS solo en Gertrudis.
+- Verificación: cada cambio con capturas antes y después (Linux con Xvfb aquí; macOS en un Mac con Apple Silicon), Sol 6.1 verifica de forma independiente, Opus corrige.
+- Objetivo de plataformas: Linux, Windows y macOS. Windows se compila en Linux como hace upstream; macOS solo en un Mac con Apple Silicon.
 - Herramientas: Node `26.12.1` y pnpm `12.14.0` según `package.json`; instalador `vp` de Vite+ opcional.
 - Nada de credenciales, sesiones ni datos de usuarios en el repo.
 
