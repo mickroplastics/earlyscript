@@ -42,6 +42,8 @@ interface Generator {
   readonly failing: Ref.Ref<ReadonlySet<string>>;
   /** When set, every generation waits for it before answering. */
   readonly gate: Ref.Ref<Deferred.Deferred<void> | null>;
+  /** How many of the next answers describe the data collection instead of the news. */
+  readonly offTopic: Ref.Ref<number>;
 }
 
 const answer = (
@@ -60,7 +62,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v3",
+    promptVersion: "trend-presentation.v4",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -86,7 +88,20 @@ const textGenerationLayer = (generator: Generator) =>
               detail: "simulated failure",
             });
           }
-          return answer(input, calls.length);
+          const offTopic = yield* Ref.getAndUpdate(generator.offTopic, (left) =>
+            Math.max(0, left - 1),
+          );
+          const reply = answer(input, calls.length);
+          return offTopic === 0
+            ? reply
+            : {
+                ...reply,
+                summary: {
+                  ...reply.summary,
+                  whatHappened:
+                    "En los últimos 7 días el motor registró 11 elementos de 11 autores distintos.",
+                },
+              };
         }),
     }),
   );
@@ -96,6 +111,7 @@ const makeGenerator = Effect.gen(function* () {
     calls: yield* Ref.make<ReadonlyArray<TrendPresentationGenerationInput>>([]),
     failing: yield* Ref.make<ReadonlySet<string>>(new Set()),
     gate: yield* Ref.make<Deferred.Deferred<void> | null>(null),
+    offTopic: yield* Ref.make(0),
   } satisfies Generator;
 });
 
@@ -181,7 +197,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v3");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v4");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);
@@ -229,6 +245,55 @@ describe("EditorialPresentationService", () => {
         const again = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
         assert.isTrue(again.reused);
         assert.strictEqual(again.presentation.title, regenerated.presentation.title);
+      }),
+    ),
+  );
+
+  it.effect("retries once a text about the data collection, naming the problem to the model", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.offTopic, 1);
+        const result = yield* service.ensure({ runId: RUN_ID, dossierId: QUANTUM });
+
+        assert.notInclude(result.presentation.summary.whatHappened, "motor");
+        const calls = yield* Ref.get(generator.calls);
+        assert.deepStrictEqual(
+          calls.map((call) => call.rejectedBecause),
+          [
+            undefined,
+            "it described how the data was collected instead of the news (Qué pasó: «motor»; Qué pasó: «autores distintos»; Qué pasó: «11 elementos»)",
+          ],
+        );
+        assert.deepStrictEqual(
+          (yield* presentationRows).map((row) => [row.revision, row.status]),
+          [[1, "ready"]],
+        );
+      }),
+    ),
+  );
+
+  it.effect("fails the row and stores nothing when the retry also describes the collection", () =>
+    withDrafting((generator) =>
+      Effect.gen(function* () {
+        const service = yield* EditorialPresentationService;
+        yield* Ref.set(generator.offTopic, 2);
+        const error = yield* service
+          .ensure({ runId: RUN_ID, dossierId: QUANTUM })
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error.reason, "generation-failed");
+        assert.strictEqual(
+          error.message,
+          "el texto describía la recogida de datos y no las noticias (Qué pasó: «motor»). Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
+        );
+        assert.strictEqual((yield* Ref.get(generator.calls)).length, 2);
+        const rows = yield* presentationRows;
+        assert.deepStrictEqual(
+          rows.map((row) => [row.status, row.title, row.error]),
+          [["failed", null, error.message]],
+        );
+        assert.isUndefined((yield* shown).get(QUANTUM));
       }),
     ),
   );

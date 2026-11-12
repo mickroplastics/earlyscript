@@ -73,7 +73,26 @@ describe("buildTrendPresentationPrompt", () => {
     expect(prompt).toContain('<item id="itm_hn_2" source="hn"');
     expect(prompt).toContain("Excerpt: Circuit search with a language model.");
     expect(prompt).toContain("- github: 0 complete days, 28 partial");
-    expect(prompt).toContain("Position by score: 2");
+    expect(prompt).not.toContain("Position by score");
+    expect(prompt).not.toContain("Items in the last 7 days");
+    expect(prompt).toContain("Never describe the collection process");
+    expect(prompt).toContain("<coverage_data>");
+    expect(prompt).not.toContain("previous answer was rejected");
+  });
+
+  it("names the problem of a rejected answer in the one retry", () => {
+    const { prompt } = buildTrendPresentationPrompt({
+      ...input,
+      rejectedBecause: "it described how the data was collected (Qué pasó: «motor»)",
+    });
+
+    expect(prompt).toContain(
+      "- Your previous answer was rejected because: it described how the data was collected (Qué pasó: «motor»). Rewrite it about the news.",
+    );
+    // The retry answers the same input: the stored row keeps its key.
+    expect(hashTrendPresentationInput({ ...input, rejectedBecause: "x" })).toBe(
+      hashTrendPresentationInput(input),
+    );
   });
 
   it.effect("produces a strict JSON schema for the structured reply", () =>

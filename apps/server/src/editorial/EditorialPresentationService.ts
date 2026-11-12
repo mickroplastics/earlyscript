@@ -33,6 +33,11 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { EditorialSql } from "./persistence/EditorialDatabase.ts";
 import { nowIso } from "./persistence/support.ts";
 import { loadPresentationDossiers, type PresentationDossier } from "./presentationDossierSource.ts";
+import {
+  trendPresentationVoiceProblems,
+  voiceFailureMessage,
+  voiceRetryReason,
+} from "./presentationVoice.ts";
 import { EditorialRunDirectory } from "./RunDirectory.ts";
 import {
   encodeStrings,
@@ -354,13 +359,34 @@ const make = Effect.gen(function* () {
     input: TrendPresentationGenerationInput,
     presentationId: string,
   ) {
-    const [duration, generated] = yield* textGeneration.generateTrendPresentation(input).pipe(
-      Effect.timed,
-      Effect.mapError(
-        (cause) =>
-          new EditorialPresentationError({ reason: "generation-failed", message: cause.message }),
-      ),
-    );
+    const generateOnce = (attempt: TrendPresentationGenerationInput) =>
+      textGeneration.generateTrendPresentation(attempt).pipe(
+        Effect.timed,
+        Effect.mapError(
+          (cause) =>
+            new EditorialPresentationError({ reason: "generation-failed", message: cause.message }),
+        ),
+      );
+    let [duration, generated] = yield* generateOnce(input);
+    // A text about the collection instead of the news gets one retry that names the problem;
+    // a second one fails the row and nothing is stored.
+    const rejected = trendPresentationVoiceProblems(generated, input.evidence);
+    if (rejected.length > 0) {
+      yield* Effect.logInfo("editorial: trend presentation rejected, retrying once").pipe(
+        Effect.annotateLogs({ runId: dossier.runId, dossierId: dossier.dossierId, rejected }),
+      );
+      [duration, generated] = yield* generateOnce({
+        ...input,
+        rejectedBecause: voiceRetryReason(rejected),
+      });
+      const problems = trendPresentationVoiceProblems(generated, input.evidence);
+      if (problems.length > 0) {
+        return yield* new EditorialPresentationError({
+          reason: "generation-failed",
+          message: voiceFailureMessage(problems),
+        });
+      }
+    }
     yield* Effect.logInfo("editorial: trend presentation generated").pipe(
       Effect.annotateLogs({
         runId: dossier.runId,

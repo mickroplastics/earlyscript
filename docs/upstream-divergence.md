@@ -2410,3 +2410,15 @@ Base `42d89b4dc7`. Lo que impedía correr `engine.v3.json` en la corrida nocturn
 | Archivo                     | Líneas  | Cambio                                                | Motivo                          |
 | --------------------------- | ------- | ----------------------------------------------------- | ------------------------------- |
 | `apps/server/src/binCli.ts` | 35, 106 | Import de `profileCommand` y montaje tras `evidence`. | Subcomando `profile` en el CLI. |
+
+## Ficha de tendencia v2 (rama `es/ficha-tendencia-v2`, 12 de noviembre de 2026)
+
+Base `ded88d5a8b`. Especificación en `~/earlyscript-data/ficha-v2/spec-diseno.md` (maqueta Sol). La ficha deja de montar la tarjeta breve y compone sus propios bloques en `apps/web/src/editorial/`: relato (`TrendDossierPage.tsx`), movimiento por semana (`TrendMovementPanel.tsx`, `TrendWeeklyBars.tsx`), panel de decisión (`TrendDecisionPanel.tsx`), evidencia (`TrendEvidenceList.tsx`) y procedencia (`TrendProvenance.tsx`), con la lógica pura en `trendDossier.logic.ts`. `packages/contracts/src/editorialCard.ts` exporta `shortTopic`.
+
+El relato pasa a `trend-presentation.v4`: el prompt ya no envía volumen, autores, crecimiento, afinidad ni posiciones, y pide hablar de la noticia y no de la recogida. `apps/server/src/editorial/presentationVoice.ts` rechaza los textos que describen la recogida («motor», «autores distintos», «11 elementos», «la tendencia» como sujeto); el servicio reintenta una vez con el problema en el prompt (`rejectedBecause`, fuera del hash) y, si vuelve a fallar, la fila queda `failed` con el motivo en español. El validador vive en el servidor y no en `provider-core` para no tocar la reexportación de `textGeneration.ts`.
+
+### Archivos de upstream modificados
+
+| Archivo                                                       | Línea | Motivo                                                                                     |
+| ------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------ |
+| `apps/server/src/textGeneration/ClaudeTextGeneration.test.ts` | 352   | Versión del prompt esperada `trend-presentation.v4` (dentro del rango 292-358 ya listado). |
