@@ -129,6 +129,7 @@ const selectDecisions = (
   options: {
     readonly currentOnly: boolean;
     readonly mode?: EditorialResultsMode | undefined;
+    readonly cohort?: "human" | "trial" | undefined;
     readonly limit: number;
     readonly offset: number;
   },
@@ -160,6 +161,7 @@ const selectDecisions = (
     ORDER BY latest.observed_at DESC, latest.recorded_at DESC LIMIT 1
   )
   WHERE (${options.mode ?? null} IS NULL OR t.mode = ${options.mode ?? null})
+    AND (${options.cohort ?? null} IS NULL OR t.cohort = ${options.cohort ?? null})
   ${options.currentOnly ? sql`AND is_current = 1` : sql``}
   ORDER BY t.cohort = 'trial', d.decided_at DESC, d.rowid DESC
   LIMIT ${options.limit} OFFSET ${options.offset}
@@ -313,6 +315,7 @@ const make = Effect.gen(function* () {
       const rows = yield* selectDecisions(sql, {
         currentOnly: false,
         mode: input.mode,
+        cohort: input.cohort,
         limit: input.limit ?? DEFAULT_DECISIONS_LIMIT,
         offset,
       });
@@ -320,6 +323,7 @@ const make = Effect.gen(function* () {
         SELECT COUNT(*) AS total FROM editorial_decisions d
         JOIN editorial_video_threads t ON t.thread_id = d.thread_id
         WHERE (${input.mode ?? null} IS NULL OR t.mode = ${input.mode ?? null})
+          AND (${input.cohort ?? null} IS NULL OR t.cohort = ${input.cohort ?? null})
       `;
       return { decisions: rows.map(toDecision), total: total[0]?.total ?? 0, offset };
     },

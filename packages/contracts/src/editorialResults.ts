@@ -239,6 +239,8 @@ export const EditorialResultsSummaryInput = Schema.Struct({});
 
 export const EditorialResultsDecisionsInput = Schema.Struct({
   mode: Schema.optionalKey(EditorialResultsMode),
+  /** Only human threads or only agent trials; both when absent. `total` counts the same set. */
+  cohort: Schema.optionalKey(EditorialVideoCohort),
   offset: Schema.optionalKey(NonNegativeInt),
   limit: Schema.optionalKey(
     PositiveInt.check(Schema.isLessThanOrEqualTo(EDITORIAL_RESULTS_DECISIONS_PAGE_LIMIT)),

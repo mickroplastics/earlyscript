@@ -85,6 +85,16 @@ describe("EditorialResultsService", () => {
         assert.strictEqual(after.inbox.read, before.inbox.read - 1);
         const decisions = yield* service.allDecisions;
         assert.strictEqual(decisions.at(-1)?.cohort, "trial");
+        // The table hides trials on the server, so its page count never includes hidden rows.
+        const humanPage = yield* service.decisions({ cohort: "human" });
+        const trialPage = yield* service.decisions({ cohort: "trial" });
+        assert.isTrue(humanPage.decisions.every((decision) => decision.cohort === "human"));
+        assert.deepStrictEqual(
+          trialPage.decisions.map((decision) => decision.threadId),
+          ["thread-assisted-1"],
+        );
+        assert.strictEqual(humanPage.total + trialPage.total, decisions.length);
+        assert.strictEqual(humanPage.total, humanPage.decisions.length);
         yield* threads.setCohort("thread-assisted-1", "human");
         assert.deepStrictEqual((yield* service.summary).modes, before.modes);
       }),
