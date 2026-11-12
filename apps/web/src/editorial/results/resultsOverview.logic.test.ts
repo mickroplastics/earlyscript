@@ -17,6 +17,7 @@ import {
   scriptRows,
   shortResultsDate,
   shortResultsDay,
+  shortResultsDayRange,
   splitValueUnit,
   stripLayout,
   timeStripText,
@@ -207,6 +208,11 @@ describe("dates", () => {
       "10 nov 2026, 0:11",
     );
     expect(shortResultsDay("2026-10-01")).toBe("1 oct 2026");
+    // Calendar days, never instants: no zone moves them to the day before.
+    expect(shortResultsDayRange("2026-10-01", "2026-10-14")).toBe("1 al 14 oct 2026");
+    expect(shortResultsDayRange("2026-09-28", "2026-10-03")).toBe("28 sept al 3 oct 2026");
+    expect(shortResultsDayRange("2025-12-30", "2026-01-02")).toBe("30 dic 2025 al 2 ene 2026");
+    expect(shortResultsDayRange("2026-10-01", "2026-10-01")).toBe("1 oct 2026");
     const last = "2026-11-10T05:11:00.000Z";
     expect(rowDateText("2026-11-03T20:00:00.000Z", last, ZONE)).toBe("3 nov, 15:00");
     expect(rowDateText("2025-12-03T20:00:00.000Z", last, ZONE)).toBe("3 dic 2025, 15:00");

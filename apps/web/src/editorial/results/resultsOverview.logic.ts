@@ -89,6 +89,22 @@ export function shortResultsDay(day: string): string {
   }).format(new Date(`${day}T00:00:00Z`));
 }
 
+/** A span of calendar days, each part said once: "1 al 14 oct 2026", "28 sept al 3 oct 2026". */
+export function shortResultsDayRange(first: string, last: string): string {
+  const end = shortResultsDay(last);
+  if (first === last) return end;
+  if (first.slice(0, 4) !== last.slice(0, 4)) return `${shortResultsDay(first)} al ${end}`;
+  if (first.slice(0, 7) !== last.slice(0, 7)) {
+    const start = new Intl.DateTimeFormat("es", {
+      day: "numeric",
+      month: "short",
+      timeZone: "UTC",
+    }).format(new Date(`${first}T00:00:00Z`));
+    return `${start} al ${end}`;
+  }
+  return `${Number(first.slice(8, 10))} al ${end}`;
+}
+
 function calendarYear(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("es", { year: "numeric", timeZone }).format(new Date(iso));
 }

@@ -65,7 +65,7 @@ export function ResultsNoteList({ children }: { readonly children: ReactNode }) 
 const BAR_HEIGHT = 10;
 const ROW_HEIGHT = 14;
 /** A median far below the scale still shows as a mark; its value is written beside it. */
-const MIN_BAR_PX = 4;
+const MIN_BAR_PX = 2;
 
 /** Four columns shared by the stage and baseline charts: group, series, bar, value. */
 export const STAGE_BAR_COLUMNS = "grid-cols-[7rem_5.5rem_minmax(0,1fr)_9rem]";

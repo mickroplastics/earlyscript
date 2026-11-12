@@ -7,7 +7,7 @@ import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { closingStrip, domainNote } from "./results.logic";
 import { ResultsBox } from "./resultsMarks";
-import { shortResultsDate, shortResultsDay } from "./resultsOverview.logic";
+import { shortResultsDate, shortResultsDayRange } from "./resultsOverview.logic";
 
 const yearDate = (iso: string) => shortResultsDate(iso, { year: true });
 
@@ -44,7 +44,7 @@ export function ResultsCaveat({ summary }: { readonly summary: EditorialResultsS
         </Alert>
         <CollapsiblePanel>
           <ResultsBox className="mt-2 grid gap-4 @3xl:grid-cols-3">
-            {closingStrip(summary, yearDate, shortResultsDay).map((block) => (
+            {closingStrip(summary, yearDate, shortResultsDayRange).map((block) => (
               <div key={block.title} className="flex min-w-0 flex-col gap-1">
                 <h3 className="text-xs font-medium text-foreground">{block.title}</h3>
                 <p className="text-xs text-muted-foreground tabular-nums">{block.text}</p>
