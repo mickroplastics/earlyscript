@@ -3,9 +3,10 @@ import type {
   EditorialResultsMode,
   EditorialResultsSummary,
 } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { durationAxis } from "./figureExport.logic";
 import {
@@ -51,22 +52,31 @@ export type ProcessPointsState =
   | { readonly _tag: "failure"; readonly onRetry: () => void }
   | { readonly _tag: "ready"; readonly points: ProcessPoints | null };
 
+/**
+ * `chart` opens the shared chart row; `under` sits right under the figures instead, for a chart
+ * short enough to leave the shared rows as they are.
+ */
 function KpiCard({
   question,
   children,
   chart,
+  under,
   foot,
 }: {
   readonly question: string;
   readonly children: ReactNode;
-  readonly chart: ReactNode;
+  readonly chart?: ReactNode;
+  readonly under?: ReactNode;
   readonly foot: ReactNode;
 }) {
   return (
     <ResultsBox className="flex flex-col gap-3 @3xl:row-span-4 @3xl:grid @3xl:grid-rows-subgrid">
       <h2 className="text-xs text-balance text-muted-foreground">{question}</h2>
-      <div className="grid grid-cols-2 gap-2">{children}</div>
-      <div className="flex min-w-0 flex-col justify-end">{chart}</div>
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="grid grid-cols-2 gap-2">{children}</div>
+        {under}
+      </div>
+      <div className="flex min-w-0 flex-col">{chart}</div>
       <div className="mt-auto flex flex-col gap-0.5 border-t border-border pt-2 text-xs text-muted-foreground">
         {foot}
       </div>
@@ -87,7 +97,8 @@ function KpiSide({
   readonly unit: string;
   /** Said small in place of the figure when there is none. */
   readonly empty: string;
-  readonly meta: ReadonlyArray<string>;
+  /** One line each, in a fixed order. */
+  readonly meta: ReadonlyArray<ReactNode>;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5" data-kpi-side={mode}>
@@ -105,12 +116,51 @@ function KpiSide({
           {unit ? <span className="text-sm font-medium text-muted-foreground">{unit}</span> : null}
         </span>
       )}
-      {meta.map((line) => (
-        <span key={line} className="text-xs text-muted-foreground tabular-nums">
+      {meta.map((line, index) => (
+        // oxlint-disable-next-line react/no-array-index-key -- a fixed list of lines, never reordered
+        <span key={index} className="text-xs text-muted-foreground tabular-nums">
           {line}
         </span>
       ))}
     </div>
+  );
+}
+
+/** A list like "6 aceptadas, 0 editadas" breaks only after a comma, never inside an item. */
+function ListLine({ text }: { readonly text: string }) {
+  return text.split(", ").map((item, index) => (
+    <Fragment key={item}>
+      {index > 0 ? ", " : null}
+      <span className="whitespace-nowrap">{item}</span>
+    </Fragment>
+  ));
+}
+
+const IQR_PREFIX = "RIC ";
+const IQR_MEANING = "rango intercuartílico: la mitad central de las fichas";
+
+/** "RIC 9 a 12,5 min" with the acronym explained on hover and focus, and to screen readers. */
+function IqrLine({ text }: { readonly text: string }) {
+  if (!text.startsWith(IQR_PREFIX)) return text;
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            // Focusable so the keyboard reaches the meaning too.
+            <abbr
+              tabIndex={0}
+              className="cursor-help rounded-xs underline decoration-muted-foreground/50 decoration-dotted underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            />
+          }
+        >
+          RIC
+          <span className="sr-only"> ({IQR_MEANING})</span>
+        </TooltipTrigger>
+        <TooltipPopup side="top">{IQR_MEANING}</TooltipPopup>
+      </Tooltip>
+      {text.slice(IQR_PREFIX.length - 1)}
+    </>
   );
 }
 
@@ -270,7 +320,7 @@ function UtilityHistogram({ summary }: { readonly summary: EditorialResultsSumma
 /** The share of claims with a marker, assisted on top; the counts are written beside. */
 function CitationTracks({ summary }: { readonly summary: EditorialResultsSummary }) {
   return (
-    <div aria-hidden className="my-auto flex flex-col gap-3">
+    <div aria-hidden className="flex flex-col gap-3">
       {RESULTS_MODES.map((mode) => (
         <span key={mode} className={cn("block h-3 overflow-hidden rounded-full", TRACK_BACKGROUND)}>
           <span
@@ -346,7 +396,7 @@ function TimeCard({
             unit={unit}
             empty="Consulta la línea base manual"
             meta={[
-              ...(iqr ? [iqr] : []),
+              ...(iqr ? [<IqrLine key="iqr" text={iqr} />] : []),
               stats
                 ? emptySideText(stats, modeSummary(summary, mode)?.provisionalClock ?? 0)
                 : "n = 0",
@@ -388,7 +438,7 @@ export function ResultsHero({
               empty="sin datos"
               // The n shares the time card's n line, so both read across.
               meta={[
-                ...(entry ? [actionsText(entry.actions)] : []),
+                ...(entry ? [<ListLine key="actions" text={actionsText(entry.actions)} />] : []),
                 sizeText(entry?.utility.n ?? 0),
               ]}
             />
@@ -397,7 +447,7 @@ export function ResultsHero({
       </KpiCard>
       <KpiCard
         question="Frases del guion con marcador de fuente"
-        chart={<CitationTracks summary={summary} />}
+        under={<CitationTracks summary={summary} />}
         foot={<span>Conteo mecánico: no mide si la fuente respalda la frase.</span>}
       >
         {RESULTS_MODES.map((mode) => {
