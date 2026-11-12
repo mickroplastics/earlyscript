@@ -10,8 +10,33 @@ import {
 } from "./resultsOverview.logic";
 
 /** The id of a tab's panel, for the sidebar to move focus into it. */
-export function resultsPanelId(tab: ResultsTabId): string {
+function resultsPanelId(tab: ResultsTabId): string {
   return `resultados-${tab}`;
+}
+
+/**
+ * Scrolls a panel to just under the fixed tab bar and focuses it, once it is visible: the
+ * sidebar link changes the tab through the URL, so the panel shows on a later render.
+ */
+export function focusResultsPanel(tab: ResultsTabId) {
+  const panel = document.getElementById(resultsPanelId(tab));
+  if (panel === null) return;
+  const land = () => {
+    const bar = document.querySelector<HTMLElement>("[data-results-tabbar]");
+    panel.style.scrollMarginTop = `${bar?.offsetHeight ?? 0}px`;
+    panel.scrollIntoView({ block: "start" });
+    panel.focus({ preventScroll: true });
+  };
+  if (!panel.hasAttribute("hidden")) {
+    land();
+    return;
+  }
+  const observer = new MutationObserver(() => {
+    if (panel.hasAttribute("hidden")) return;
+    observer.disconnect();
+    land();
+  });
+  observer.observe(panel, { attributes: true, attributeFilter: ["hidden"] });
 }
 
 /**
@@ -89,32 +114,35 @@ export function ResultsTabs({
       onValueChange={(next: ResultsTabId) => onValueChange(next)}
       className="flex min-w-0 flex-col"
     >
-      <Tabs.List
-        activateOnFocus
-        loopFocus
-        aria-label="Detalle de Resultados"
-        className="sticky top-0 z-10 -mx-1 flex gap-0.5 overflow-x-auto border-b border-border bg-background px-1"
-      >
-        {tabs.map((tab) => (
-          <Tabs.Tab
-            key={tab.id}
-            value={tab.id}
-            className="-mb-px flex shrink-0 cursor-pointer items-baseline gap-1.5 border-b-2 border-transparent px-3 py-2.5 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[active]:border-foreground data-[active]:text-foreground"
-          >
-            {tab.label}
-            {counts?.[tab.id] ? (
-              <span className="text-xs text-muted-foreground tabular-nums">{counts[tab.id]}</span>
-            ) : null}
-          </Tabs.Tab>
-        ))}
-      </Tabs.List>
+      {/* The opaque band under the line keeps scrolled content off it while the bar is fixed. */}
+      <div data-results-tabbar="" className="sticky top-0 z-10 bg-background pb-3">
+        <Tabs.List
+          activateOnFocus
+          loopFocus
+          aria-label="Detalle de Resultados"
+          className="flex gap-0.5 overflow-x-auto border-b border-border"
+        >
+          {tabs.map((tab) => (
+            <Tabs.Tab
+              key={tab.id}
+              value={tab.id}
+              className="-mb-px flex shrink-0 cursor-pointer items-baseline gap-1.5 border-b-2 border-transparent px-3 py-2.5 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[active]:border-foreground data-[active]:text-foreground"
+            >
+              {tab.label}
+              {counts?.[tab.id] ? (
+                <span className="text-xs text-muted-foreground tabular-nums">{counts[tab.id]}</span>
+              ) : null}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </div>
       {tabs.map((tab) => (
         <Tabs.Panel
           key={tab.id}
           value={tab.id}
           keepMounted
           id={resultsPanelId(tab.id)}
-          className="flex min-w-0 scroll-mt-12 flex-col gap-4 rounded-sm pt-5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[hidden]:hidden"
+          className="flex min-w-0 flex-col gap-4 rounded-sm pt-2 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-[hidden]:hidden"
         >
           {panels[tab.id]}
         </Tabs.Panel>

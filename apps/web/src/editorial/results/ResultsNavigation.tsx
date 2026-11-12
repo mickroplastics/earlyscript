@@ -15,7 +15,7 @@ import {
 import { editorialResultsEnvironment } from "../resultsState";
 import { formatCount, withoutRouteActive } from "./results.logic";
 import { visibleTabs, type ResultsTabId } from "./resultsOverview.logic";
-import { resultsPanelId, useResultsTab } from "./ResultsTabs";
+import { focusResultsPanel, useResultsTab } from "./ResultsTabs";
 
 function NavigationNotice({ children }: { readonly children: string }) {
   return <div className="px-2 py-6 text-center text-xs text-muted-foreground/60">{children}</div>;
@@ -54,16 +54,6 @@ function TabLink({
       }}
     />
   );
-}
-
-/** Keyboard and screen reader users land on the panel, with the tab bar in view above it. */
-function focusPanel(tab: ResultsTabId) {
-  // The panel turns visible on the render after the navigation.
-  window.setTimeout(() => {
-    const panel = document.getElementById(resultsPanelId(tab));
-    panel?.scrollIntoView({ block: "start" });
-    panel?.focus({ preventScroll: true });
-  }, 0);
 }
 
 /** The Results sidebar: the page's tabs as links, not a list of items. */
@@ -112,7 +102,8 @@ export function ResultsNavigation({ environmentId }: { readonly environmentId: E
                         tab={tab.id}
                         onNavigate={() => {
                           if (isMobile) setOpenMobile(false);
-                          focusPanel(tab.id);
+                          // Keyboard and screen reader users land on the panel, under the tab bar.
+                          focusResultsPanel(tab.id);
                         }}
                       />
                     }

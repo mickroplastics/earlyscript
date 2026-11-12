@@ -267,7 +267,8 @@ export function FigureFrame({
         {state._tag === "saving" ? "Guardando…" : "Guardar imagen"}
         <ChevronDownIcon />
       </MenuTrigger>
-      <MenuPopup align="end">
+      {/* Opens beside the button and upwards, clear of the chart and its values below. */}
+      <MenuPopup side="left" align="end">
         <MenuItem onClick={() => void save("png")}>PNG para el informe</MenuItem>
         <MenuItem onClick={() => void save("svg")}>SVG vectorial</MenuItem>
       </MenuPopup>
