@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useQuietThreadShells } from "../../state/entities";
 import { EditorialEmptyPage, EditorialPage } from "../EditorialPage";
@@ -53,16 +53,22 @@ export interface ResultsOverviewControls {
 }
 
 /**
- * The header line breaks only between its parts, never inside one; a separator opens the next
- * line, never closes one.
+ * The header line breaks between its parts. Each part opens with its separator and the row sits
+ * one separator to the left of a clipping box, so no line starts with "·".
  */
 function HeaderLine({ text }: { readonly text: string }) {
-  return text.split(" · ").map((part, index) => (
-    <Fragment key={part}>
-      {index > 0 ? " ·\u00a0" : null}
-      <span className="whitespace-nowrap">{part}</span>
-    </Fragment>
-  ));
+  return (
+    <span className="block overflow-hidden">
+      <span className="-ms-4 flex flex-wrap">
+        {text.split(" · ").map((part) => (
+          <span key={part}>
+            <span className="inline-block w-4 text-center">·</span>
+            {part}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
 }
 
 /** The Results space with its data; the page fetches, this renders. */
