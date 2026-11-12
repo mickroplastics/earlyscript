@@ -24,6 +24,7 @@ import {
   movementHeadline,
   quietSourcesText,
   weekRangeLabels,
+  weekStartLabels,
 } from "./trendDossier.logic";
 import { sourceColor, TrendWeeklyBars } from "./TrendWeeklyBars";
 
@@ -59,11 +60,14 @@ function WeeksBySource({
   card,
   weekLabels,
   coverage,
+  cutoffAt,
 }: {
   readonly card: EditorialTrendCard;
   readonly weekLabels: ReadonlyArray<string>;
   readonly coverage: ReadonlyArray<EditorialSourceCoverage>;
+  readonly cutoffAt: string | null;
 }) {
+  const weekStarts = weekStartLabels(cutoffAt);
   const days = (source: string) => {
     const entry = coverage.find((candidate) => candidate.source === source);
     return entry === undefined ? "" : coverageDaysText(entry);
@@ -72,21 +76,20 @@ function WeeksBySource({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Fuente</TableHead>
-          {weekLabels.map((label) => (
-            <TableHead key={label}>
-              <span className="block text-end font-normal whitespace-normal text-muted-foreground">
-                {label}
+          <TableHead>
+            <span className="block">Fuente</span>
+            {coverage.length === 0 ? null : (
+              <span className="block font-normal text-muted-foreground">días capturados</span>
+            )}
+          </TableHead>
+          {weekStarts.map((start, index) => (
+            <TableHead key={start}>
+              <span className="block text-end font-normal text-muted-foreground">
+                <span aria-hidden>{start}</span>
+                <span className="sr-only">{weekLabels[index]}</span>
               </span>
             </TableHead>
           ))}
-          {coverage.length === 0 ? null : (
-            <TableHead>
-              <span className="block font-normal whitespace-normal text-muted-foreground">
-                Días capturados
-              </span>
-            </TableHead>
-          )}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -99,6 +102,11 @@ function WeeksBySource({
                   <span className="text-muted-foreground"> · parcial</span>
                 ) : null}
               </span>
+              {days(row.source) === "" ? null : (
+                <span className="block whitespace-normal text-muted-foreground tabular-nums">
+                  {days(row.source)}
+                </span>
+              )}
             </TableCell>
             {row.status === "unused" ? (
               <TableCell colSpan={weekLabels.length}>
@@ -117,13 +125,6 @@ function WeeksBySource({
                   </TableCell>
                 );
               })
-            )}
-            {coverage.length === 0 ? null : (
-              <TableCell>
-                <span className="block whitespace-normal text-muted-foreground tabular-nums">
-                  {days(row.source)}
-                </span>
-              </TableCell>
             )}
           </TableRow>
         ))}
@@ -188,26 +189,29 @@ export function TrendMovementPanel({
               ))}
             </ul>
           ) : null}
-          <div className="flex items-baseline gap-2">
-            {headline.count === null ? null : (
-              <span className="text-2xl font-semibold text-foreground tabular-nums">
-                {headline.count}
+          <div className="flex flex-col gap-0.5">
+            <p className="flex items-baseline gap-2">
+              {headline.count === null ? null : (
+                <span className="text-2xl font-semibold text-foreground tabular-nums">
+                  {headline.count}
+                </span>
+              )}
+              <span className="min-w-0 text-xs text-muted-foreground">
+                {headline.last}
+                {single ? `, en ${single.name}` : null}
+                {single?.partial ? (
+                  <>
+                    {" ("}
+                    <PartialMark />)
+                  </>
+                ) : null}
               </span>
-            )}
-            <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-              {headline.last}
-              {single ? `, en ${single.name}` : null}
-              {single?.partial ? (
-                <>
-                  {" ("}
-                  <PartialMark />)
-                </>
-              ) : null}
-              {headline.previous === null ? null : ` · ${headline.previous}`}
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {sourceCountText(card.sourceCount)}
-            </span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {[headline.previous, sourceCountText(card.sourceCount)]
+                .filter((part) => part !== null)
+                .join(" · ")}
+            </p>
           </div>
           {quiet || incomplete ? (
             <div className="flex flex-col gap-1 text-xs">
@@ -217,7 +221,12 @@ export function TrendMovementPanel({
             </div>
           ) : null}
           <DossierDisclosure label="Semanas por fuente">
-            <WeeksBySource card={card} weekLabels={weekLabels} coverage={coverage} />
+            <WeeksBySource
+              card={card}
+              weekLabels={weekLabels}
+              coverage={coverage}
+              cutoffAt={cutoffAt}
+            />
           </DossierDisclosure>
         </>
       )}

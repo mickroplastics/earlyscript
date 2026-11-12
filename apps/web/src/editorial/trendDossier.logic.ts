@@ -13,6 +13,7 @@ import {
   coverageStatus,
   dayRangeText,
   formatDate,
+  formatDay,
   snoozeStateText,
   sourceName,
 } from "./editorial.logic";
@@ -82,21 +83,33 @@ export function movementChart(card: Pick<EditorialTrendCard, "curve">): Movement
   return { series, quiet, unused, totals, max };
 }
 
+/** Start and end of W3..W0, the UTC days; `null` without a cutoff. */
+function weekBounds(cutoffAt: string | null): ReadonlyArray<readonly [Date, Date]> | null {
+  const cutoffDay =
+    cutoffAt === null ? Number.NaN : Date.parse(`${cutoffAt.slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(cutoffDay)) return null;
+  return Array.from({ length: WEEKS }, (_, index) => {
+    const k = WEEKS - 1 - index;
+    const end = cutoffDay - (7 * k + 1) * DAY_MS;
+    return [new Date(end - 6 * DAY_MS), new Date(end)] as const;
+  });
+}
+
 /**
  * W3..W0 as day ranges. W0 is the seven days ending the day before the cutoff's UTC day, as
  * `packages/trend-engine/src/comparable.ts` counts them.
  */
 export function weekRangeLabels(cutoffAt: string | null): ReadonlyArray<string> {
-  const cutoffDay =
-    cutoffAt === null ? Number.NaN : Date.parse(`${cutoffAt.slice(0, 10)}T00:00:00.000Z`);
-  if (Number.isNaN(cutoffDay)) {
-    return ["Hace 3 sem.", "Hace 2 sem.", "Semana anterior", "Última semana"];
-  }
-  return Array.from({ length: WEEKS }, (_, index) => {
-    const k = WEEKS - 1 - index;
-    const end = cutoffDay - (7 * k + 1) * DAY_MS;
-    return dayRangeText(new Date(end - 6 * DAY_MS), new Date(end));
-  });
+  const bounds = weekBounds(cutoffAt);
+  if (bounds === null) return ["Hace 3 sem.", "Hace 2 sem.", "Semana anterior", "Última semana"];
+  return bounds.map(([from, to]) => dayRangeText(from, to));
+}
+
+/** "14 oct": the first day of each week, for the narrow columns of the weeks table. */
+export function weekStartLabels(cutoffAt: string | null): ReadonlyArray<string> {
+  const bounds = weekBounds(cutoffAt);
+  if (bounds === null) return ["S-3", "S-2", "S-1", "Última"];
+  return bounds.map(([from]) => formatDay(from.toISOString()));
 }
 
 /** The figure next to the chart: W0's items and how W1 compares in words. */

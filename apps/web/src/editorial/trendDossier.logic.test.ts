@@ -18,6 +18,7 @@ import {
   quietSourcesText,
   shownEvidence,
   weekRangeLabels,
+  weekStartLabels,
 } from "./trendDossier.logic";
 
 const row = (
@@ -51,6 +52,15 @@ describe("weekRangeLabels", () => {
     [null, ["Hace 3 sem.", "Hace 2 sem.", "Semana anterior", "Última semana"]],
   ])("labels the weeks before the cutoff %s", (cutoffAt, labels) => {
     expect(weekRangeLabels(cutoffAt)).toEqual(labels);
+  });
+
+  it("names each week by its first day for the weeks table", () => {
+    expect(weekStartLabels("2026-11-11T00:00:00.000Z")).toEqual([
+      "14 oct",
+      "21 oct",
+      "28 oct",
+      "4 nov",
+    ]);
   });
 });
 
