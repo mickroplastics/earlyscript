@@ -689,11 +689,13 @@ function WorkspaceView({
                             ? `Versión decidida · guardada el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
                             : model.current === "decide"
                               ? "Esta es la versión que vas a decidir · solo lectura mientras decides"
-                              : video.script.head
-                                ? `Versión ${video.script.versionCount} · guardada ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
-                                : drafted
-                                  ? "Sin versión guardada todavía"
-                                  : ""}
+                              : agentWorking && drafted
+                                ? "El asistente trabaja en tu pedido · el guion se actualiza cuando termine"
+                                : video.script.head
+                                  ? `Versión ${video.script.versionCount} · guardada ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
+                                  : drafted
+                                    ? "Sin versión guardada todavía"
+                                    : ""}
                         </span>
                         {!decided &&
                         model.current !== "decide" &&
