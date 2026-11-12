@@ -453,7 +453,7 @@ Estados: **controlado** (una bandera lo apaga), **pendiente** (envío a terceros
 | `scripts/earlyscript/packages.json` | Clasificación de cada paquete del workspace para la batería rápida, con su motivo.                                |
 | `scripts/earlyscript/scope.ts`      | Comprobación de alcance y ejecución filtrada de `test` y `build`.                                                 |
 | `scripts/earlyscript/scope.test.ts` | Pruebas de la comprobación. Corren al inicio de `es:test` y con las de `@t3tools/scripts` en la batería completa. |
-| `docs/dev-environment-linux.md`     | Requisitos del contenedor de prueba, resultados por paquete y tiempos de ambas baterías.                                           |
+| `docs/dev-environment-linux.md`     | Requisitos del contenedor de prueba, resultados por paquete y tiempos de ambas baterías.                          |
 | `docs/upstream-divergence.md`       | Este registro.                                                                                                    |
 
 `scripts/earlyscript/` está dentro del paquete de upstream `@t3tools/scripts`, cuyo `tsconfig.json` incluye `**/*.ts` y cuya prueba usa `--dir .`. Por eso el typecheck y las pruebas de la batería completa cubren estos archivos sin tocar configuración de upstream. Al fusionar, comprobar que siguen pasando `pnpm --filter @t3tools/scripts typecheck` y `pnpm run knip:check`.
