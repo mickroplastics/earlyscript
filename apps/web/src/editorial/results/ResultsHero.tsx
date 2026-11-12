@@ -167,10 +167,12 @@ function IqrLine({ text }: { readonly text: string }) {
 const DOT_RADIUS = 4;
 /** One dot's height and a hair: stacked dots touch without overlapping. */
 const STACK_STEP = 9;
-/** From the axis to the centre of the first dot of each mode. */
-const ROW_OFFSET = 7;
-/** Room above and below the outer dots for the median rule. */
-const STRIP_EDGE = 7;
+/** From the axis to the centre of the first dot of each mode: room for the median rule. */
+const ROW_OFFSET = 13;
+/** The median rule rises from the axis and stops short of the first dot (round cap included). */
+const MEDIAN_REACH = 6;
+/** Room above and below the outer dots. */
+const STRIP_EDGE = DOT_RADIUS + 1;
 /**
  * Closest two dots may sit on one row, as a share of the scale: a dot and a hair on the
  * narrowest card (about 220 px of strip).
@@ -182,8 +184,9 @@ const outerStack = (dots: ReadonlyArray<StripDot>) =>
 
 /**
  * One dot per thread on a shared duration scale, assisted above the axis and manual below; dots
- * too close to tell apart stack outwards, never sideways. A rule at each median. Without dots,
- * the median and the interquartile range alone.
+ * too close to tell apart stack outwards, never sideways. A rule at each median, between the axis
+ * and the dots, so it never crosses one. Without dots, the median and the interquartile range
+ * alone, the rule running through the range.
  */
 function TimeStrip({
   comparison,
@@ -244,8 +247,8 @@ function TimeStrip({
                 <line
                   x1={x(stats.medianMs)}
                   x2={x(stats.medianMs)}
-                  y1={row - 6.5}
-                  y2={row + 6.5}
+                  y1={axisY}
+                  y2={points === null ? row + away * 4.5 : axisY + away * MEDIAN_REACH}
                   strokeWidth={2}
                   strokeLinecap="round"
                   className="stroke-foreground"
