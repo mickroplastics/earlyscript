@@ -483,7 +483,9 @@ function WorkspaceView({
     ) : null;
 
   const scriptHint = decided
-    ? "Versión decidida"
+    ? script.status === "unsaved"
+      ? "Sin versión decidida"
+      : "Versión decidida"
     : model.current === "decide"
       ? "Solo lectura mientras decides"
       : drafted

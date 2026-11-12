@@ -2425,3 +2425,6 @@ Dependencias de marcado de upstream que revisar al fusionar, porque el espacio l
 - `form[data-chat-composer-form]` de `ChatComposer.tsx`: una sugerencia deja su texto en el borrador del compositor y envía ese formulario con `requestSubmit()`.
 - El texto vacío del timeline de `MessagesTimeline.tsx` (`.justify-center > p`), oculto mientras se ve la bienvenida.
 - `PreviewPanel` en modo `embedded`, como el hilo manual, para abrir las fuentes del expediente.
+- Los textos visibles del navegador embebido se traducen con la tabla del navegador manual (`MANUAL_BROWSER_TABLE`), también en el hilo asistido («Tienes el control», «Soltar el control»).
+
+`@earlyscript/editorial-script` exporta `citationsIn` (paquete propio): la vista lee las citas con las reglas del validador, así `[hn:1]` y `[itm_hn_1]` nombran la misma fuente.
