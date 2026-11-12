@@ -6,9 +6,7 @@ import {
   coverageNote,
   decisionsFailureText,
   recordedTotalText,
-  sectionAriaCurrent,
   withoutRouteActive,
-  decisionRangeText,
   decisionThreadLabel,
   decisionTotalText,
   emptySideText,
@@ -20,7 +18,6 @@ import {
   provisionalNote,
   stageChartMaxMs,
   statsText,
-  visibleSections,
   domainNote,
 } from "./results.logic";
 
@@ -209,35 +206,9 @@ describe("decision cells", () => {
     );
   });
 
-  it("states one day once", () => {
-    const dated = (first: string, last: string) => ({
-      ...summary([]),
-      decisionCount: 2,
-      firstDecidedAt: first,
-      lastDecidedAt: last,
-    });
-    const day = (iso: string) => iso.slice(0, 10);
-    expect(decisionRangeText(dated("2026-11-03T10:00:00Z", "2026-11-03T12:00:00Z"), day)).toBe(
-      "2 decisiones el 2026-11-03",
-    );
-    expect(decisionRangeText(dated("2026-10-20T10:00:00Z", "2026-11-03T12:00:00Z"), day)).toBe(
-      "2 decisiones entre el 2026-10-20 y el 2026-11-03",
-    );
-  });
-
   it("states the page range", () => {
     expect(pageRangeText(20, 6, 26)).toBe("21–26 de 26");
     expect(pageRangeText(0, 0, 0)).toBe("0 de 0");
-  });
-});
-
-describe("visibleSections", () => {
-  it("keeps the manual baseline and the inbox, once it moved, before the first decision", () => {
-    const quiet = summary([]);
-    expect(visibleSections(quiet).map((section) => section.id)).toEqual(["linea-base"]);
-    const read = { ...quiet, inbox: { ...quiet.inbox, read: 2 } };
-    expect(visibleSections(read).map((section) => section.id)).toEqual(["linea-base", "bandeja"]);
-    expect(visibleSections({ ...read, decisionCount: 1 })).toHaveLength(7);
   });
 });
 
@@ -280,22 +251,15 @@ describe("coverage", () => {
   });
 });
 
-describe("section anchors", () => {
-  it("marks only the section the hash selects", () => {
-    expect(sectionAriaCurrent("utilidad", "utilidad")).toBe("location");
-    expect(sectionAriaCurrent("#utilidad", "utilidad")).toBe("location");
-    expect(sectionAriaCurrent("utilidad", "tiempos")).toBeUndefined();
-    expect(sectionAriaCurrent("", "tiempos")).toBeUndefined();
-  });
-
+describe("tab links", () => {
   it("drops the route-active marks of a link", () => {
     const props = withoutRouteActive({
-      href: "/editorial/env/results#tiempos",
+      href: "/editorial/env/results?tab=etapas",
       "aria-current": "page",
       "data-status": "active",
       className: "active",
     });
-    expect(props).toEqual({ href: "/editorial/env/results#tiempos" });
+    expect(props).toEqual({ href: "/editorial/env/results?tab=etapas" });
   });
 });
 
@@ -336,5 +300,19 @@ describe("closingStrip", () => {
     expect(blocks[0]?.text).toContain("Todavía sin hilos manuales");
     expect(blocks[1]?.text).toContain("0 bloques de línea base, todavía sin registro importado");
     expect(blocks[2]?.text).toContain("no mide un efecto");
+  });
+
+  it("writes the sample dates with the formatter it is given", () => {
+    const blocks = closingStrip(
+      {
+        ...summary([]),
+        trials: [{ threadId: "t", environmentId: "e", createdAt: "2026-11-03T20:00:00.000Z" }],
+        firstDecidedAt: "2026-11-09T20:30:00.000Z",
+        lastDecidedAt: "2026-11-10T05:11:00.000Z",
+      },
+      (iso) => iso.slice(0, 10),
+    );
+    expect(blocks[1]?.text).toContain("entre 2026-11-03 y 2026-11-03");
+    expect(blocks[1]?.text).toContain("desde 2026-11-09 hasta 2026-11-10");
   });
 });

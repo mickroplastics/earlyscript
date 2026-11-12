@@ -5,11 +5,21 @@ import type {
   EditorialResultsModeSummary,
   EditorialResultsSummary,
 } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { ResultsView, type ResultsDecisionsControls } from "./ResultsPage";
+import { FiguresProvider, useFigures } from "./FigureFrame";
+import { ManualBaselineView } from "./ManualBaselineSection";
+import { BASELINE_RECORD } from "./manualBaseline.fixture";
+import { RESULTS_FIGURE_ORDER } from "./resultsFigures.logic";
+import {
+  ResultsView,
+  type ResultsDecisionsControls,
+  type ResultsOverviewControls,
+} from "./ResultsPage";
 
 const MINUTE = 60_000;
 
@@ -137,43 +147,71 @@ const decision = (overrides: Partial<EditorialResultsDecision>): EditorialResult
   ...overrides,
 });
 
+const MANUAL_DECISION = decision({
+  decisionId: "decision-2",
+  threadId: "thread-manual-1",
+  mode: "manual",
+  trendKey: null,
+  action: "edit",
+  utility: 3,
+  decidedAt: "2026-10-28T14:00:00.000Z",
+  clockDefinitive: false,
+  stages: ["explore", "write", "decide"],
+  durations: {
+    exploreMs: 45 * MINUTE,
+    readMs: null,
+    writeMs: 50 * MINUTE,
+    decideMs: 5 * MINUTE,
+    totalMs: 100 * MINUTE,
+  },
+  script: null,
+  video: null,
+});
+
+const TRIAL_DECISION = decision({
+  decisionId: "decision-trial",
+  threadId: "thread-trial-1",
+  cohort: "trial",
+  decidedAt: "2026-10-18T14:00:00.000Z",
+});
+
 const controls = (overrides: Partial<ResultsDecisionsControls> = {}): ResultsDecisionsControls => ({
   state: {
     _tag: "ready",
-    page: {
-      offset: 0,
-      total: 2,
-      decisions: [
-        decision({
-          decisionId: "decision-2",
-          threadId: "thread-manual-1",
-          mode: "manual",
-          trendKey: null,
-          action: "edit",
-          utility: 3,
-          decidedAt: "2026-10-28T14:00:00.000Z",
-          clockDefinitive: false,
-          stages: ["explore", "write", "decide"],
-          durations: {
-            exploreMs: 45 * MINUTE,
-            readMs: null,
-            writeMs: 50 * MINUTE,
-            decideMs: 5 * MINUTE,
-            totalMs: 100 * MINUTE,
-          },
-          script: null,
-          video: null,
-        }),
-        decision({ current: false }),
-      ],
-    },
+    page: { offset: 0, total: 2, decisions: [MANUAL_DECISION, decision({ current: false })] },
   },
   onRetry: () => {},
   filter: "all",
   onFilter: () => {},
+  showTrials: false,
+  onShowTrials: () => {},
   onPage: () => {},
   ...overrides,
 });
+
+const OVERVIEW: ResultsOverviewControls = {
+  state: {
+    _tag: "ready",
+    page: { offset: 0, total: 2, decisions: [MANUAL_DECISION, decision({})] },
+  },
+  onRetry: () => {},
+};
+
+const TRIALS = [
+  { threadId: "thread-trial-1", environmentId: "env-1", createdAt: "2026-10-18T13:00:00.000Z" },
+  { threadId: "thread-trial-2", environmentId: "env-1", createdAt: "2026-10-19T13:00:00.000Z" },
+];
+
+/** The figures the provider would save, read on click. */
+function FigureIds() {
+  const figures = useFigures();
+  const [ids, setIds] = useState<ReadonlyArray<string>>([]);
+  return (
+    <button type="button" onClick={() => setIds(figures.figures().map((figure) => figure.id))}>
+      {ids.length === 0 ? "Leer figuras" : ids.join(",")}
+    </button>
+  );
+}
 
 describe("ResultsView", () => {
   it("shows an empty comparison as a baseline note instead of a headline number", async () => {
@@ -188,12 +226,13 @@ describe("ResultsView", () => {
           })),
         }}
         decisions={controls()}
+        overview={OVERVIEW}
         threadTitles={new Map()}
       />,
     );
     const baselineNote = screen.getByText("Consulta la línea base manual").first();
     await expect.element(baselineNote).toHaveClass("text-xs");
-    await expect.element(baselineNote).not.toHaveClass("text-base");
+    await expect.element(baselineNote).not.toHaveClass("text-3xl");
   });
 
   it("says plainly that nothing was decided yet", async () => {
@@ -211,6 +250,7 @@ describe("ResultsView", () => {
         decisions={controls({
           state: { _tag: "ready", page: { offset: 0, total: 0, decisions: [] } },
         })}
+        overview={OVERVIEW}
         threadTitles={new Map()}
       />,
     );
@@ -218,19 +258,30 @@ describe("ResultsView", () => {
     await expect
       .element(screen.getByText(/Al registrar la decisión de un hilo de video/))
       .toBeVisible();
-    // The export stays reachable: runs and inbox events are evidence before any decision.
     await expect.element(screen.getByText("Ninguna decisión registrada todavía.")).toBeVisible();
-    // The inbox counters stay: reading and dismissing happen before any decision.
+    // Only the baseline and, once it moved, the inbox: reading happens before any decision.
+    const tabs = screen.getByRole("tab");
+    expect(tabs.elements().map((tab) => tab.textContent)).toEqual([
+      "Línea base manual",
+      "Bandeja y video",
+    ]);
+    await userEvent.click(screen.getByRole("tab", { name: "Bandeja y video" }));
     await expect
       .element(screen.getByRole("heading", { name: "Bandeja de tendencias" }))
       .toBeVisible();
-    expect(screen.container.querySelector("#tiempos")).toBeNull();
+    expect(screen.container.querySelector("[data-kpi-side]")).toBeNull();
+    expect(screen.container.querySelector('[data-figure="video"]')).toBeNull();
     expect(screen.container.querySelector("table")).toBeNull();
   });
 
   it("compares the two modes by medians with n, without a saving", async () => {
     await using screen = await render(
-      <ResultsView summary={SUMMARY} decisions={controls()} threadTitles={new Map()} />,
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
     );
     const total = screen.container.querySelector('[data-comparison="total"]');
     expect(textOf(total)).toContain("40 min");
@@ -243,7 +294,6 @@ describe("ResultsView", () => {
     expect(textOf(recorded)).toContain("asistido 37 min (n = 4)");
     expect(textOf(recorded)).toContain("Cobertura parcial: incluye 1 hilo");
     expect(recorded?.closest("[data-comparison=total]")).toBeNull();
-    expect(screen.container.querySelector("#tiempos")?.textContent).not.toMatch(/%|ahorr/i);
     expect(screen.container.textContent).not.toMatch(/ahorr/i);
     // A stage that never ran in a mode is a dashed line, not a zero-length bar.
     const missing = screen.container.querySelector('[data-stage-bar="manual:read"]');
@@ -254,19 +304,99 @@ describe("ResultsView", () => {
     expect(writing?.querySelector("[data-iqr]")).not.toBeNull();
   });
 
+  it("draws one dot per whole-process thread only when they match the printed n", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={{
+          ...SUMMARY,
+          comparisons: SUMMARY.comparisons.map((comparison) =>
+            comparison.key === "total"
+              ? { ...comparison, assisted: stats(1, 33), manual: stats(0, null) }
+              : comparison,
+          ),
+        }}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+    );
+    // The manual decision awaits resolution and the other is replaced: one assisted dot.
+    const strip = screen.container.querySelector("[data-time-strip]");
+    expect(strip?.getAttribute("data-time-strip")).toBe("dots");
+    expect(strip?.querySelectorAll('[data-dot="assisted"]')).toHaveLength(1);
+    expect(strip?.querySelectorAll('[data-dot="manual"]')).toHaveLength(0);
+
+    await screen.rerender(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+    );
+    expect(
+      screen.container.querySelector("[data-time-strip]")?.getAttribute("data-time-strip"),
+    ).toBe("medians");
+    await expect.element(screen.getByText(/^Puntos no disponibles/)).toBeVisible();
+  });
+
+  it("switches tabs by click and by arrow keys and keeps the tab in the URL", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("tab", { name: "Tiempo por etapa" }))
+      .toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "Utilidad y citas" }));
+    await expect.element(screen.getByRole("heading", { name: /útiles y citados/ })).toBeVisible();
+    expect(screen.router?.state.location.search).toEqual({ tab: "utilidad" });
+    await userEvent.keyboard("{ArrowRight}");
+    await expect
+      .element(screen.getByRole("tab", { name: "Línea base manual" }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.router?.state.location.search).toEqual({ tab: "linea-base" });
+    // The panel left stays mounted, hidden: its figure keeps its place.
+    await expect.element(screen.getByText(/útiles y citados/)).not.toBeVisible();
+  });
+
+  it("opens on the tab the URL names", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+      { router: "/?tab=decisiones" },
+    );
+    await expect
+      .element(screen.getByRole("tab", { name: /^Decisiones/ }))
+      .toHaveAttribute("aria-selected", "true");
+    await expect
+      .element(screen.getByRole("table", { name: "Decisiones registradas" }))
+      .toBeVisible();
+  });
+
   it("lists decisions newest first, links known threads and marks replaced ones", async () => {
     await using screen = await render(
       <ResultsView
         summary={SUMMARY}
         decisions={controls()}
+        overview={OVERVIEW}
         threadTitles={new Map([["thread-manual-1", "Guion sobre evaluaciones de agentes"]])}
       />,
+      { router: "/?tab=decisiones" },
     );
     const table = screen.getByRole("table", { name: "Decisiones registradas" });
     await expect.element(table).toBeVisible();
-    const link = screen.getByRole("link", { name: "Guion sobre evaluaciones de agentes" });
+    const link = table.getByRole("link", { name: "Guion sobre evaluaciones de agentes" });
     await expect.element(link).toHaveAttribute("href", "/env-1/thread-manual-1");
-    const rows = screen.container.querySelectorAll("[data-decision]");
+    const rows = table.element().querySelectorAll("[data-decision]");
     expect(rows).toHaveLength(2);
     expect(textOf(rows[0])).toContain("≥ 1 h 40 min");
     expect(textOf(rows[0])).toContain("sin guion");
@@ -281,10 +411,120 @@ describe("ResultsView", () => {
   it("filters decisions by mode", async () => {
     const onFilter = vi.fn();
     await using screen = await render(
-      <ResultsView summary={SUMMARY} decisions={controls({ onFilter })} threadTitles={new Map()} />,
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls({ onFilter })}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+      { router: "/?tab=decisiones" },
     );
     await userEvent.click(screen.getByRole("button", { name: "Manual" }));
     expect(onFilter).toHaveBeenCalledWith("manual");
+  });
+
+  it("shows the agent trials on request, apart from the human decisions", async () => {
+    const onShowTrials = vi.fn();
+    const summary = { ...SUMMARY, trials: TRIALS };
+    const overview: ResultsOverviewControls = {
+      ...OVERVIEW,
+      state: {
+        _tag: "ready",
+        page: { offset: 0, total: 3, decisions: [MANUAL_DECISION, decision({}), TRIAL_DECISION] },
+      },
+    };
+    await using screen = await render(
+      <ResultsView
+        summary={summary}
+        decisions={controls({ onShowTrials })}
+        overview={overview}
+        threadTitles={new Map()}
+      />,
+      { router: "/?tab=decisiones" },
+    );
+    expect(screen.container.querySelector("[data-trials-separator]")).toBeNull();
+    await expect
+      .element(screen.getByRole("checkbox", { name: /Mostrar los 2 ensayos/ }))
+      .not.toBeChecked();
+    await userEvent.click(screen.getByText(/Mostrar los 2 ensayos/));
+    expect(onShowTrials).toHaveBeenCalledWith(true);
+
+    await screen.rerender(
+      <ResultsView
+        summary={summary}
+        decisions={controls({
+          onShowTrials,
+          showTrials: true,
+          state: {
+            _tag: "ready",
+            page: { offset: 0, total: 2, decisions: [MANUAL_DECISION, TRIAL_DECISION] },
+          },
+        })}
+        overview={overview}
+        threadTitles={new Map()}
+      />,
+    );
+    const table = screen.getByRole("table", { name: "Decisiones registradas" }).element();
+    const rows = [...table.querySelectorAll("tbody tr")];
+    expect(rows.map((row) => row.hasAttribute("data-trials-separator"))).toEqual([
+      false,
+      true,
+      false,
+    ]);
+    expect(rows[2]?.textContent).toContain("Ensayo");
+    // The trial without a decision has no row, so it is linked under the table.
+    await expect
+      .element(screen.getByRole("link", { name: "Ensayo 2" }))
+      .toHaveAttribute("href", "/env-1/thread-trial-2");
+  });
+
+  it("folds the sample and its limits under the caveat", async () => {
+    await using screen = await render(
+      <ResultsView
+        summary={SUMMARY}
+        decisions={controls()}
+        overview={OVERVIEW}
+        threadTitles={new Map()}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Muestra y límites" });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await expect.element(screen.getByRole("heading", { name: "Límites" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Ocultar" }));
+    await expect.element(screen.getByRole("heading", { name: "Límites" })).not.toBeInTheDocument();
+  });
+
+  it("saves every figure, in the fixed order, while another tab is on screen", async () => {
+    await using screen = await render(
+      <FiguresProvider
+        environmentId={"env-1" as EnvironmentId}
+        threads={6}
+        order={RESULTS_FIGURE_ORDER}
+      >
+        <ResultsView
+          summary={SUMMARY}
+          decisions={controls()}
+          overview={OVERVIEW}
+          threadTitles={new Map()}
+          exportAction={<FigureIds />}
+          baseline={
+            <ManualBaselineView
+              record={BASELINE_RECORD}
+              failure={null}
+              summary={SUMMARY}
+              importState={{ _tag: "idle" }}
+              onImport={() => {}}
+            />
+          }
+        />
+      </FiguresProvider>,
+      { router: "/?tab=decisiones" },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Leer figuras" }));
+    await expect
+      .element(screen.getByRole("button", { name: RESULTS_FIGURE_ORDER.join(",") }))
+      .toBeVisible();
   });
 
   it("says the decisions are loading", async () => {
@@ -292,8 +532,10 @@ describe("ResultsView", () => {
       <ResultsView
         summary={SUMMARY}
         decisions={controls({ state: { _tag: "loading" } })}
+        overview={OVERVIEW}
         threadTitles={new Map()}
       />,
+      { router: "/?tab=decisiones" },
     );
     await expect.element(screen.getByRole("status")).toHaveTextContent("Cargando decisiones…");
     expect(screen.container.querySelector("[data-decision]")).toBeNull();
@@ -311,8 +553,10 @@ describe("ResultsView", () => {
           },
           onRetry,
         })}
+        overview={OVERVIEW}
         threadTitles={new Map()}
       />,
+      { router: "/?tab=decisiones" },
     );
     await expect.element(screen.getByText("No se pudieron leer las decisiones")).toBeVisible();
     await expect

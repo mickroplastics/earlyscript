@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useLinkProps, useLocation } from "@tanstack/react-router";
+import { useLinkProps } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
 
@@ -13,38 +13,34 @@ import {
   useSidebar,
 } from "../../components/ui/sidebar";
 import { editorialResultsEnvironment } from "../resultsState";
-import {
-  formatCount,
-  sectionAriaCurrent,
-  visibleSections,
-  withoutRouteActive,
-  type ResultsSectionId,
-} from "./results.logic";
+import { formatCount, withoutRouteActive } from "./results.logic";
+import { visibleTabs, type ResultsTabId } from "./resultsOverview.logic";
+import { resultsPanelId, useResultsTab } from "./ResultsTabs";
 
 function NavigationNotice({ children }: { readonly children: string }) {
   return <div className="px-2 py-6 text-center text-xs text-muted-foreground/60">{children}</div>;
 }
 
 /**
- * An anchor to a section of the page. Every anchor points at the same route, so a `Link`
- * would mark all of them `aria-current="page"` (its active props always win over ours);
- * the route-active attributes are dropped and the menu button sets `location` by hash.
+ * A link to a tab of the page. Every link points at the same route, so a `Link` would mark all
+ * of them `aria-current="page"` (its active props always win over ours); the route-active
+ * attributes are dropped and the menu button marks the tab on screen.
  */
-function SectionAnchor({
+function TabLink({
   environmentId,
-  sectionId,
+  tab,
   onNavigate,
   ...props
 }: ComponentProps<"a"> & {
   readonly environmentId: EnvironmentId;
-  readonly sectionId: ResultsSectionId;
+  readonly tab: ResultsTabId;
   readonly onNavigate: () => void;
 }) {
   const linkProps = useLinkProps({
     to: "/editorial/$environmentId/results",
     params: { environmentId },
-    hash: sectionId,
-    hashScrollIntoView: { block: "start", behavior: "smooth" },
+    search: { tab },
+    replace: true,
     onClick: onNavigate,
   });
   const { onClick, ...rest } = withoutRouteActive(linkProps);
@@ -60,13 +56,23 @@ function SectionAnchor({
   );
 }
 
-/** The Results sidebar: the page's sections as anchors, not a list of items. */
+/** Keyboard and screen reader users land on the panel, with the tab bar in view above it. */
+function focusPanel(tab: ResultsTabId) {
+  // The panel turns visible on the render after the navigation.
+  window.setTimeout(() => {
+    const panel = document.getElementById(resultsPanelId(tab));
+    panel?.scrollIntoView({ block: "start" });
+    panel?.focus({ preventScroll: true });
+  }, 0);
+}
+
+/** The Results sidebar: the page's tabs as links, not a list of items. */
 export function ResultsNavigation({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { isMobile, setOpenMobile } = useSidebar();
-  const hash = useLocation({ select: (location) => location.hash });
   const result = useAtomValue(editorialResultsEnvironment.summary({ environmentId, input: {} }));
   const summary = AsyncResult.getOrElse(result, () => null);
-  const sections = visibleSections(summary);
+  const tabs = visibleTabs(summary);
+  const [active] = useResultsTab(tabs);
 
   return (
     <SidebarContent
@@ -86,33 +92,32 @@ export function ResultsNavigation({ environmentId }: { readonly environmentId: E
       <SidebarGroup>
         {summary === null && result._tag === "Failure" ? (
           <NavigationNotice>No se pudieron leer los resultados de este entorno.</NavigationNotice>
-        ) : sections.length === 0 ? (
+        ) : tabs.length === 0 ? (
           <NavigationNotice>
             Aquí verás tiempos, utilidad y citas cuando cierres el primer hilo de video.
           </NavigationNotice>
         ) : (
-          <SidebarMenu aria-label="Secciones de Resultados">
-            {sections.map((section) => {
-              const ariaCurrent = sectionAriaCurrent(hash, section.id);
+          <SidebarMenu aria-label="Pestañas de Resultados">
+            {tabs.map((tab) => {
+              const current = tab.id === active;
               return (
-                <SidebarMenuItem key={section.id}>
+                <SidebarMenuItem key={tab.id}>
                   <SidebarMenuButton
-                    isActive={ariaCurrent !== undefined}
-                    aria-current={ariaCurrent}
+                    isActive={current}
+                    aria-current={current ? "true" : undefined}
                     className="text-sidebar-foreground data-[active=true]:bg-sidebar-row-active"
                     render={
-                      <SectionAnchor
+                      <TabLink
                         environmentId={environmentId}
-                        sectionId={section.id}
+                        tab={tab.id}
                         onNavigate={() => {
                           if (isMobile) setOpenMobile(false);
-                          // Keyboard and screen reader users land on the section, not the menu.
-                          document.getElementById(section.id)?.focus({ preventScroll: true });
+                          focusPanel(tab.id);
                         }}
                       />
                     }
                   >
-                    <span className="min-w-0 truncate">{section.label}</span>
+                    <span className="min-w-0 truncate">{tab.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               );
