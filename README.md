@@ -34,6 +34,18 @@ Ningún modelo de lenguaje participa en capturar, agrupar ni ordenar. Con la mis
 
 `main` contiene además `engine.v2.json` y un laboratorio del motor (`packages/engine-lab/`), apagados. No forman parte de la versión evaluada.
 
+## Versión entregada
+
+La versión entregada con la tesis es la etiqueta `entrega-final`, sobre `main`. Usa el mismo motor v3 que la versión evaluada: no cambia la captura, el agrupamiento, el movimiento, el encaje ni la tarjeta breve. Después de la evaluación mejoramos la interfaz que rodea al motor:
+
+- **Resultados.** Pasa a un botón de la barra lateral. Abre con tres tarjetas que responden primero (tiempo por guion, utilidad y afirmaciones con cita), con una línea que resume la muestra y sus límites, y deja filtrar las decisiones por cohorte, modo y página.
+- **Ficha de tendencia.** Una página por tema con el relato de la noticia, el movimiento por semana y fuente, el panel de decisión, la evidencia enlazada y la procedencia de la corrida.
+- **Hilo de video.** Los tres pasos del reloj quedan arriba; Tema, Guion y Fuentes a la izquierda, con una sola numeración de fuentes; el asistente abre cada fuente en el navegador integrado; la decisión, con sus opciones explicadas y la escala de utilidad con sus anclas, y los detalles del tiempo por paso quedan a la derecha.
+- **Primer arranque.** Un recorrido que explica cada paso, descarga el modelo local, permite seguir más tarde y lanza la primera revisión nocturna sin intervención.
+- **Ajustes.** Editorial se reparte en cinco páginas por tarea: Mi canal, Fuentes, Revisión nocturna, Redacción y Mis datos. Sin una elección previa, la revisión nocturna usa el método evaluado, `engine.v3-sel.json`, y registra esa elección.
+
+Para reproducir los resultados de la tesis, usar `motor-v3-pares`. Para usar la herramienta, usar `entrega-final` o `main`.
+
 ## Requisitos
 
 - macOS arm64 (macOS 27 probado) o Linux x86_64 (Debian 13 probado).
@@ -138,7 +150,7 @@ La aplicación captura las fuentes, corre el motor, comprueba la corrida y la im
    ```
 
 3. Abrir la app. En Ajustes › Editorial › Fuentes, activar la captura de Hacker News, GitHub, Hugging Face, npm, Wikipedia y RSS.
-4. En Ajustes › Editorial › Corrida nocturna › Configuración del motor, elegir `engine.v3-sel.json`. Sin una elección explícita, la app corre `engine.v1.json`. El cambio queda registrado con su hora.
+4. Comprobar en Ajustes › Editorial › Revisión nocturna › Avanzado que el método elegido es `engine.v3-sel.json`. En `entrega-final`, sin una elección previa, la app lo elige sola. En `motor-v3-pares` hay que elegirlo en Ajustes › Editorial › Corrida nocturna › Configuración del motor; sin una elección explícita, esa versión corre `engine.v1.json`. Cada cambio queda registrado con su hora.
 5. Pulsar "Ejecutar ahora". Las fases son captura, corrida, comprobación con repetición e importación. Las tarjetas aparecen en el espacio Tendencias.
 
 Si el corpus de la app tiene menos de 35 días, los temas salen con filas parciales o no comparables. `engine corpus import --from <corpus> --to ~/earlyscript-data/live (--backup <carpeta nueva> | --dry-run) --sources <ids>` copia días históricos de otro corpus, por fuente y día, con respaldo previo.
