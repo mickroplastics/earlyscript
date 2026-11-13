@@ -5,15 +5,13 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { Dialog } from "../../components/ui/dialog";
-import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
+import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
 import { useProfileForm, type ProfileSaveDraft } from "../profile/useProfileEditor";
 import {
   StudioProfileSettingsView,
   type StudioProfileSettingsViewProps,
 } from "../settings/StudioProfileSettings";
 import { StudioStepView, type StudioAcceptance } from "./StudioStep";
-import { ONBOARDING_STAGES } from "./steps";
 
 const V1: EditorialProfileVersion = {
   version: 1,
@@ -100,53 +98,24 @@ function StepHarness({
     formId: FORM_ID,
     canEdit,
   });
-  // The wizard's own dialog, as `EarlyscriptWizardView` mounts the steps.
+  // A dialog of the wizard's size, as `EarlyscriptWizardView` mounts the steps.
   return (
     <Dialog open disablePointerDismissal>
-      <WizardPopup size="wide" bottomStickOnMobile={false}>
-        <WizardHeader title="Configurar Earlyscript">
-          <WizardSteps
-            steps={ONBOARDING_STAGES.map((stage) => stage.label)}
-            currentStep={ONBOARDING_STAGES.findIndex((stage) => stage.id === "estudio")}
-          />
-        </WizardHeader>
-        <WizardPanel>
-          <StudioStepView
-            editor={editor}
-            formId={FORM_ID}
-            onBack={() => {}}
-            onContinue={onContinue}
-          />
-        </WizardPanel>
-      </WizardPopup>
+      <DialogPopup
+        showCloseButton={false}
+        bottomStickOnMobile={false}
+        className="h-[min(48.25rem,calc(100dvh-2rem))] w-[min(62.5rem,calc(100vw-2rem))] max-w-none overflow-hidden"
+      >
+        <DialogTitle className="sr-only">Configurar Earlyscript</DialogTitle>
+        <StudioStepView
+          editor={editor}
+          formId={FORM_ID}
+          onBack={() => {}}
+          onContinue={onContinue}
+        />
+      </DialogPopup>
     </Dialog>
   );
-}
-
-/** Every scrollable ancestor of `element`, by its `data-slot`. */
-const scrollableAncestors = (element: Element): ReadonlyArray<string> => {
-  const found: Array<string> = [];
-  for (let node = element.parentElement; node; node = node.parentElement) {
-    const overflow = getComputedStyle(node).overflowY;
-    if (overflow === "auto" || overflow === "scroll") found.push(node.dataset.slot ?? node.tagName);
-  }
-  return found;
-};
-
-/** Scrolls the dialog's single scroll to its end and checks the step's buttons are in view. */
-async function scrollDialogToBottom() {
-  const viewport = document.querySelector<HTMLElement>(
-    "[role=dialog] [data-slot=scroll-area-viewport]",
-  );
-  if (!viewport) throw new Error("wizard scroll area not found");
-  const button = page.getByRole("button", { name: /Continuar/ }).element();
-  // WizardPanel animates its height, so this retries until the last control is inside.
-  await vi.waitFor(() => {
-    viewport.scrollTop = viewport.scrollHeight;
-    expect(button.getBoundingClientRect().bottom).toBeLessThanOrEqual(
-      viewport.getBoundingClientRect().bottom,
-    );
-  });
 }
 
 const renderStep = async (
@@ -178,45 +147,35 @@ describe.each([
   ["desktop", 1280, 800],
   ["mobile", 390, 844],
 ] as const)("StudioStep at %s", (size, width, height) => {
-  it("saves the selected channel language from Studio", async () => {
+  it("saves the selected channel language", async () => {
     await page.viewport(width, height);
     const { screen, saveDraft } = await renderStep();
     await using _screen = screen;
-    await page.getByRole("combobox", { name: "Idioma del canal" }).click();
+    await page.getByRole("combobox", { name: "Idioma" }).click();
     await page.getByRole("option", { name: "Español", exact: true }).click();
     await page.getByRole("button", { name: "Guardar y continuar" }).click();
     expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ language: "es" }));
   });
 
-  it("starts from Earlywindow's version and continues without saving when unchanged", async () => {
+  it("starts from the active version and continues without saving when unchanged", async () => {
     await page.viewport(width, height);
     const { screen, onContinue, saveDraft } = await renderStep();
     await using _screen = screen;
-    await expect
-      .element(page.getByTestId("profile-version"))
-      .toHaveTextContent("Versión 1, de Earlywindow");
+    await expect.element(field("Nombre")).toHaveValue(V1.name);
     await expect.element(field("Temas que cubre: tema 1")).toHaveValue(V1.include[0]!);
     await expect.element(field("Temas que cubre: tema 5")).toHaveValue(V1.include[4]!);
     await expect.element(field("Temas que cubre: tema nuevo")).toHaveValue("");
-    await expect.element(page.getByText("5 temas")).toBeVisible();
+    await expect.element(page.getByText("· 5, en inglés")).toBeVisible();
+    // The excluded topics are folded, with their count.
+    expect(page.getByRole("list", { name: "Temas que no te interesan" }).elements()).toHaveLength(
+      0,
+    );
+    await userEvent.click(page.getByRole("button", { name: "Temas que no te interesan · 4" }));
+    await expect.element(field("Temas que no te interesan: tema 4")).toHaveValue(V1.exclude[3]!);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
-    // One scroll for the whole dialog: neither the step nor the topic list scrolls on its own.
-    const topics = page.getByRole("list", { name: "Temas que cubre" }).element();
-    expect(scrollableAncestors(topics)).toEqual(["scroll-area-viewport"]);
-    expect(
-      page
-        .getByTestId("studio-step")
-        .element()
-        .querySelectorAll("[data-slot=scroll-area-viewport]"),
-    ).toHaveLength(0);
+    // The engine's weights stay in Settings.
+    expect(page.getByText(/Pesos de la puntuación/).elements()).toHaveLength(0);
     await capture(`step-ready-${size}`);
-    await userEvent.click(page.getByRole("button", { name: /Pesos de la puntuación/ }));
-    await expect.element(page.getByText("Afinidad mínima con los temas")).toBeVisible();
-    await expect
-      .element(page.getByText(/Se ajustan en Ajustes › Editorial tras el análisis/))
-      .toBeVisible();
-    await scrollDialogToBottom();
-    await capture(`step-scoring-${size}`);
     await userEvent.click(page.getByRole("button", { name: "Continuar" }));
     expect(saveDraft).not.toHaveBeenCalled();
     expect(onContinue).toHaveBeenCalledWith({ profileVersion: 1, profileHash: V1.hash });
@@ -226,26 +185,25 @@ describe.each([
     await page.viewport(width, height);
     const { screen, onContinue, saveDraft } = await renderStep();
     await using _screen = screen;
-    await userEvent.clear(field("Nombre del canal"));
-    await userEvent.clear(field("Audiencia"));
+    await userEvent.clear(field("Nombre"));
+    await userEvent.clear(field("Para quién es"));
     for (const topic of V1.include) {
       await userEvent.click(page.getByRole("button", { name: `Quitar «${topic}»` }));
     }
-    await expect.element(page.getByText("0 temas")).toBeVisible();
+    await expect.element(page.getByText("· 0, en inglés")).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Guardar y continuar" }));
     await expect.element(page.getByText("Escribe el nombre del canal.")).toBeVisible();
     await expect.element(page.getByText("Describe la audiencia en una frase.")).toBeVisible();
     await expect
       .element(page.getByText("Escribe al menos un tema que cubre el canal."))
       .toBeInTheDocument();
-    await expect.element(field("Nombre del canal")).toHaveFocus();
-    await expect.element(field("Nombre del canal")).toHaveAttribute("aria-invalid", "true");
+    await expect.element(field("Nombre")).toHaveFocus();
+    await expect.element(field("Nombre")).toHaveAttribute("aria-invalid", "true");
     expect(saveDraft).not.toHaveBeenCalled();
     expect(onContinue).not.toHaveBeenCalled();
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
     await capture(`step-error-${size}`);
     // Fixing a field clears its message as the operator types.
-    await userEvent.type(field("Nombre del canal"), "SingulariDev");
+    await userEvent.type(field("Nombre"), "SingulariDev");
     await expect.element(page.getByText("Escribe el nombre del canal.")).not.toBeInTheDocument();
   });
 });
@@ -255,20 +213,15 @@ describe("StudioStep", () => {
     await page.viewport(1280, 800);
     const { screen, onContinue, saveDraft } = await renderStep();
     await using _screen = screen;
+    // Enter adds the topic and leaves the row ready for the next; pasted lines are one each.
     await userEvent.type(field("Temas que cubre: tema nuevo"), "  evaluation of LLM apps  ");
-    await expect.element(page.getByText("6 temas")).toBeVisible();
-    // Enter opens the next row with the cursor in it; pasted lines become one topic each.
     await userEvent.keyboard("{Enter}");
-    await expect.element(field("Temas que cubre: tema nuevo")).toHaveFocus();
+    await expect.element(field("Temas que cubre: tema 6")).toHaveValue("evaluation of LLM apps");
+    await expect.element(field("Temas que cubre: tema nuevo")).toHaveValue("");
     await userEvent.fill(field("Temas que cubre: tema nuevo"), "AI evals\n\nprompt caching\n");
-    await expect.element(page.getByText("8 temas")).toBeVisible();
-    await expect.element(field("Temas que cubre: tema 8")).toHaveValue("prompt caching");
-    // Backspace on an emptied topic removes it and returns to the one above.
-    await userEvent.clear(field("Temas que cubre: tema 8"));
-    await userEvent.keyboard("{Backspace}");
-    await expect.element(field("Temas que cubre: tema 7")).toHaveFocus();
-    await expect.element(page.getByText("7 temas")).toBeVisible();
-    await expect.element(page.getByText("· con cambios sin guardar")).toBeVisible();
+    await expect.element(page.getByText("· 8, en inglés")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Quitar «prompt caching»" }));
+    await expect.element(page.getByText("· 7, en inglés")).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Guardar y continuar" }));
     await vi.waitFor(() => expect(onContinue).toHaveBeenCalled());
     expect(saveDraft).toHaveBeenCalledWith({
@@ -281,7 +234,7 @@ describe("StudioStep", () => {
     expect(onContinue).toHaveBeenCalledWith({ profileVersion: 2, profileHash: V2.hash });
   });
 
-  it("shows the server's validation under its field and a storage failure above the buttons", async () => {
+  it("shows the server's validation under its field and a storage failure beside the button", async () => {
     await page.viewport(1280, 800);
     const saveDraft = vi
       .fn<ProfileSaveDraft>()
@@ -299,7 +252,8 @@ describe("StudioStep", () => {
       });
     const { screen, onContinue } = await renderStep({ saveDraft });
     await using _screen = screen;
-    await userEvent.type(field("Temas que deja fuera: tema nuevo"), "sports");
+    await userEvent.click(page.getByRole("button", { name: "Temas que no te interesan · 4" }));
+    await userEvent.type(field("Temas que no te interesan: tema nuevo"), "sports{Enter}");
     await userEvent.click(page.getByRole("button", { name: "Guardar y continuar" }));
     await expect.element(page.getByText("Caben hasta 30 temas.")).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Guardar y continuar" }));
@@ -310,36 +264,26 @@ describe("StudioStep", () => {
   });
 
   it("shows a read-only session the profile without letting it edit, and still continues", async () => {
-    await page.viewport(390, 844);
+    await page.viewport(1280, 800);
     const { screen, onContinue, saveDraft } = await renderStep({ canEdit: false });
     await using _screen = screen;
-    await expect
-      .element(page.getByText("Solo lectura: tu sesión no puede cambiar el perfil."))
-      .toBeVisible();
-    await expect.element(field("Nombre del canal")).toBeDisabled();
-    await expect.element(field("Audiencia")).toBeDisabled();
+    await expect.element(field("Nombre")).toBeDisabled();
+    await expect.element(field("Para quién es")).toBeDisabled();
     await expect.element(field("Temas que cubre: tema nuevo")).toBeDisabled();
     await expect
       .element(page.getByRole("button", { name: `Quitar «${V1.include[0]}»` }))
       .toBeDisabled();
-    await capture("step-readonly-mobile");
     await userEvent.click(page.getByRole("button", { name: "Continuar" }));
     expect(saveDraft).not.toHaveBeenCalled();
     expect(onContinue).toHaveBeenCalledWith({ profileVersion: 1, profileHash: V1.hash });
   });
 
   it("waits for the profile before offering to continue", async () => {
-    for (const [size, width, height] of [
-      ["desktop", 1280, 800],
-      ["mobile", 390, 844],
-    ] as const) {
-      await page.viewport(width, height);
-      const { screen } = await renderStep({ view: null });
-      await using _screen = screen;
-      await expect.element(page.getByText("Leyendo el perfil del estudio…")).toBeVisible();
-      await expect.element(page.getByRole("button", { name: "Continuar" })).toBeDisabled();
-      await capture(`step-loading-${size}`);
-    }
+    await page.viewport(1280, 800);
+    const { screen } = await renderStep({ view: null });
+    await using _screen = screen;
+    await expect.element(page.getByText("Leyendo el perfil del canal…")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Continuar" })).toBeDisabled();
   });
 });
 

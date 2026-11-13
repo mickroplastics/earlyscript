@@ -1924,7 +1924,7 @@ Archivos nuevos:
 
 Decisiones reversibles:
 
-- Sin X en el primer arranque, con X al reabrir desde Ajustes (`onboardingCompletedAt` ya fijado al montar). En el primer arranque la X de upstream daba el asistente por terminado y saltaba el consentimiento de datos; nadie queda encerrado porque la compuerta solo lleva a `/welcome` desde `/`. La X y «Entrar sin configurar» llaman `completeOnboarding()` del cliente, sin registrar un completado en el servidor; si no, la compuerta volvería a abrir `/welcome`.
+- Salir sin terminar: desde el primer arranque con «Seguir más tarde» (ver «Primer arranque v2»), al reabrir desde Ajustes con «Cerrar». Ambos y «Entrar sin configurar» llaman `completeOnboarding()` del cliente, sin registrar un completado en el servidor; si no, la compuerta volvería a abrir `/welcome`.
 - Salida (H2 de la verificación de la integración): terminar, la X y «Entrar sin configurar» llevan a `/editorial/<entorno>/trends` y guardan `trends` como espacio del entorno en `spaceStore`, así la siguiente sesión aterriza ahí (`EditorialLanding`). La landing de esta sesión ya se decidió antes de abrir el asistente, así que volver a `/` mostraba los Hilos de upstream. Sin servidor local se usa el `onDone` de `welcome.tsx` (`/`). Lógica en `onboarding/wizardExit.ts`, con prueba.
 - Cada cambio de paso, también el regreso al primero, deja el popup arriba y el foco en el título del paso (H3).
 - Un paso solo avanza cuando el servidor guardó su aceptación; si falla, el paso queda en pantalla con el motivo en español. Terminar registra el completado en el servidor y después marca el cliente.
@@ -2410,3 +2410,13 @@ Base `42d89b4dc7`. Lo que impedía correr `engine.v3.json` en la corrida nocturn
 | Archivo                     | Líneas  | Cambio                                                | Motivo                          |
 | --------------------------- | ------- | ----------------------------------------------------- | ------------------------------- |
 | `apps/server/src/binCli.ts` | 35, 106 | Import de `profileCommand` y montaje tras `evidence`. | Subcomando `profile` en el CLI. |
+
+## Primer arranque v2 (rama `es/arranque-ajustes-v2`, 13 de noviembre de 2026)
+
+Base `bc61917b37`. Maqueta onb-b, «el recorrido que explica»: bienvenida y cuatro pasos en dos columnas (lo que eliges, un ejemplo fijo de lo que produce), la misma lista de cinco fases para explicar la revisión nocturna y seguir la primera, y la bandeja vacía con esa lista. Cero archivos de upstream modificados; en archivos editoriales compartidos, enganches: `EditorialSidebar.tsx` (montaje de `FinishSetupEntry`), `TrendInbox.tsx` (etiqueta de cabecera y estado vacío), `TrendDossierPage.tsx` (estado vacío a `FirstRunPage`, introducción del primer encuentro, se quita «Abrir la bandeja»).
+
+Cambios de comportamiento aprobados por Miguel:
+
+1. «Tus datos» se acepta viendo un resumen de tres líneas; el texto aceptado (`DATA_CONSENT_POLICY`, `DATA_OUTBOUND`, lo que guarda y conserva cada fuente) queda entero en cada fila y en «Ver cada conexión, conservación y borrado». `policyHash` no cambia (prueba fijada en `dataConsent.logic.test.ts`) y abrir el detalle no marca la casilla. Ese texto conserva palabras como «corpus» y «motor»: cambiarlas cambiaría la huella.
+2. «Seguir más tarde» desde el primer arranque. El servidor sigue viendo el asistente sin terminar (`completedAt` nulo): la barra lateral muestra «Terminar de configurar · Paso N de 4» y la bandeja dice qué falta; el asistente reabre en el primer paso sin aceptar con «Seguimos donde lo dejaste» (`onboarding/setupProgress.ts`). Al terminar, desaparecen.
+3. La primera revisión arranca sola cuando el modelo local está en disco: dentro del paso nocturno, y fuera de él si el paso se aceptó con el modelo aún sin bajar y sin revisión (`firstReviewWaitsForModel`, montado en `FinishSetupEntry`). Lo hace el cliente con `editorial.jobs.runNow`, que es idempotente; con la app cerrada empieza al volver a abrirla.

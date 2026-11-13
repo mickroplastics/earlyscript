@@ -282,7 +282,7 @@ describe("TrendInbox", () => {
     expect(state.refetches).toEqual([ENVIRONMENT_ID]);
   });
 
-  it("offers the first run when the environment has no run, then follows its phases", async () => {
+  it("names the first review in the header while it runs, and leaves its phases to the page", async () => {
     setup();
     const registry = AtomRegistry.make();
     const none: EditorialInbox = { ...inboxOf("19", []), run: null };
@@ -296,46 +296,14 @@ describe("TrendInbox", () => {
         </SidebarProvider>
       </RegistryContext.Provider>,
     );
-    await expect.element(screen.getByText("Todavía no hay tendencias")).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "Ejecutar la primera corrida" }))
-      .toBeEnabled();
-    await expect
-      .element(screen.getByRole("link", { name: "Ajustes › Editorial" }))
-      .toHaveAttribute("href", "/settings/editorial#editorial-nightly");
+    await expect.element(screen.getByText("Tendencias", { exact: true })).toBeVisible();
+    expect(screen.getByRole("button").elements()).toHaveLength(0);
 
     await act(() => registry.set(activityAtom, AsyncResult.success({ active: embeddingJob() })));
-    await expect.element(screen.getByText("Corrida en curso")).toBeVisible();
-    await expect
-      .element(screen.getByRole("listitem", { name: "Motor: en curso, 3072 de 11.913 textos" }))
-      .toBeVisible();
-    expect(screen.container.querySelector('[data-testid="first-run"] button')).toBeNull();
-  });
-
-  it("says a finished run brought no trend, and why", async () => {
-    setup();
-    const registry = AtomRegistry.make();
-    const empty = inboxOf("02", []);
-    registry.set(readAtom, AsyncResult.success(empty));
-    registry.set(liveAtom, AsyncResult.success({ seq: 1, inbox: empty }));
+    await expect.element(screen.getByText("Primera revisión")).toBeVisible();
+    await expect.element(screen.getByText("Buscando tendencias…")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Fases de la revisión" }).elements()).toHaveLength(0);
     registry.set(activityAtom, AsyncResult.success({ active: null }));
-    registry.set(listAtom, AsyncResult.success({ jobs: [EMPTY_JOB] }));
-    await using screen = await render(
-      <RegistryContext.Provider value={registry}>
-        <SidebarProvider defaultOpen>
-          <TrendInbox environmentId={ENVIRONMENT_ID} activeDossierId={null} />
-        </SidebarProvider>
-      </RegistryContext.Provider>,
-    );
-    await expect
-      .element(screen.getByText("La corrida terminó sin tendencias nuevas"))
-      .toBeVisible();
-    await expect
-      .element(
-        screen.getByText("El motor no formó ninguna tendencia con 1284 publicaciones capturadas."),
-      )
-      .toBeVisible();
-    registry.set(listAtom, AsyncResult.success({ jobs: [] }));
   });
 
   it.each([

@@ -1,7 +1,6 @@
 import {
   EDITORIAL_DRAFT_BUDGET_DEFAULT,
   isDraftBudgetReached,
-  ProviderDriverKind,
   type EditorialDraftBudget,
   type ExecutionEnvironmentPlatformOs,
   type ModelSelection,
@@ -9,10 +8,9 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, CopyIcon, TerminalIcon, TriangleAlertIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowLeftIcon, CheckIcon, CopyIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
@@ -34,10 +32,8 @@ import {
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DraftingModelSelect, useDraftingSettings } from "../settings/DraftingSettings";
+import { EXAMPLE_TREND, NIGHTLY_DRAFTS } from "./onboardingExamples";
 import {
-  DRAFT_BUDGET_EXPLANATION,
-  DRAFT_USAGE_NO_TOKENS,
-  DRAFTING_MODEL_EXPLANATION,
   draftUsageText,
   draftingProviderRows,
   disabledDraftingModelText,
@@ -48,16 +44,16 @@ import {
   type DraftingProviderRow,
   type ProviderReadiness,
 } from "./providersStep.logic";
-import { StepFooter } from "./StepFooter";
 import type { OnboardingStepProps } from "./steps";
+import { SectionLabel, StepLayout } from "./wizardLayout";
 
 const STATE_TEXT: Readonly<Record<ProviderReadiness, string>> = {
-  ready: "Listo, con sesión iniciada.",
-  signIn: "Instalado, sin sesión.",
-  install: "No está instalado en esta máquina.",
+  ready: "Con sesión iniciada",
+  signIn: "Instalado, sin sesión",
+  install: "No instalado",
   checking: "Comprobando…",
-  disabled: "Desactivado en Ajustes › Proveedores.",
-  attention: "Instalado, pero no responde. Revísalo en Ajustes › Proveedores.",
+  disabled: "Desactivado en Ajustes",
+  attention: "Instalado, pero no responde",
 };
 
 /** What the operator runs in a terminal to install or sign in, or null when nothing applies. */
@@ -165,35 +161,53 @@ function ProviderRow({
   readonly onSetup: () => void;
 }) {
   return (
-    <li
-      className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5"
-      data-provider-state={row.state}
-    >
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(row.driver)}
-        displayName={row.displayName}
-        iconClassName="size-5"
-      />
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-foreground text-sm">{row.displayName}</p>
-        <p className="text-muted-foreground text-xs">{STATE_TEXT[row.state]}</p>
-      </div>
-      <div className="shrink-0">
+    <li className="flex min-h-12 items-center gap-3 px-3.5 py-2" data-provider-state={row.state}>
+      <span className="w-28 shrink-0 truncate text-sm text-foreground">{row.displayName}</span>
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        {STATE_TEXT[row.state]}
+      </span>
+      <span className="shrink-0">
         {row.state === "ready" ? (
-          <span className="inline-flex items-center gap-1 font-medium text-success-foreground text-xs">
-            <CheckIcon className="size-3.5" />
+          <span className="inline-flex items-center gap-1.5 text-xs text-success-foreground">
+            <span aria-hidden className="size-1.5 rounded-full bg-success" />
             Listo
           </span>
         ) : row.state === "checking" ? (
           <Spinner size="sm" />
         ) : hasCommand ? (
-          <Button size="xs" variant="outline" onClick={onSetup}>
-            <TerminalIcon />
+          <Button size="sm" variant="outline" onClick={onSetup}>
             {row.state === "install" ? "Instalar" : "Iniciar sesión"}
           </Button>
         ) : null}
-      </div>
+      </span>
     </li>
+  );
+}
+
+/** What the assistant does, on the right: the same trend before and after it drafts. */
+function DraftingExample({ anyReady }: { readonly anyReady: boolean }) {
+  return (
+    <div className="flex flex-col" data-testid="providers-example">
+      <SectionLabel tone="accent">Qué hace por ti</SectionLabel>
+      <div className="mt-3 rounded-lg border bg-background px-4 py-3">
+        <p className="text-xs text-muted-foreground">Sin asistente</p>
+        <p className="mt-1.5 font-mono text-xs text-foreground">{EXAMPLE_TREND.rawLabel}</p>
+      </div>
+      <ArrowDownIcon aria-hidden className="mx-auto my-1.5 size-3.5 text-muted-foreground" />
+      <div className="rounded-lg border border-primary/40 bg-primary/5 px-4 py-3">
+        <p className="text-xs text-primary">Con asistente</p>
+        <p className="mt-1.5 text-sm font-semibold leading-snug text-foreground">
+          {EXAMPLE_TREND.title}
+        </p>
+      </div>
+      <p
+        className={`mt-5 text-xs leading-relaxed ${anyReady ? "text-muted-foreground" : "text-warning-foreground"}`}
+      >
+        {anyReady
+          ? "Si llegas al tope, las tendencias siguen llegando, sin título."
+          : "Puedes seguir sin asistente: las tendencias llegarán como la de arriba, sin título."}
+      </p>
+    </div>
   );
 }
 
@@ -256,28 +270,57 @@ export function ProvidersStepView({
   const limit = limitText === null ? savedLimit : parseMonthlyLimit(limitText);
   const setupRow = rows.find((row) => row.key === setupKey);
   const setupCommand = setupRow === undefined ? null : providerSetupCommand(setupRow, settings, os);
+  const invalidLimit = anyReady && capKnown && limit === null;
 
   return (
-    <div className="flex flex-col gap-6" data-testid="providers-step">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Proveedores</h1>
-        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-          Earlyscript redacta las tendencias con tu suscripción de Claude o Codex, desde esta
-          máquina. Basta con uno.
-        </p>
-      </div>
-
-      <section aria-labelledby={`${id}-providers`} className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 id={`${id}-providers`} className="text-sm font-semibold text-foreground">
-            En esta máquina
-          </h2>
-          <Button size="xs" variant="ghost-muted" disabled={checking} onClick={onRecheck}>
-            {checking ? <Spinner size="sm" /> : null}
-            Volver a comprobar
+    <StepLayout
+      testId="providers-step"
+      title="Asistente de IA"
+      description="Pone un título claro a cada tendencia y luego te ayuda con el guion."
+      aside={<DraftingExample anyReady={anyReady || providers === null} />}
+      footer={
+        <>
+          {onBack ? (
+            <Button variant="ghost" onClick={onBack} disabled={saving}>
+              <ArrowLeftIcon className="size-3.5" />
+              Atrás
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Button
+            autoFocus
+            variant={anyReady || loading ? "default" : "outline"}
+            disabled={loading || saving || invalidLimit}
+            onClick={() => {
+              if (invalidLimit) return;
+              onContinue({
+                rows,
+                draftingModel: anyReady ? model : null,
+                // Hidden without an assistant, the cap is then the saved one, written back as before.
+                monthlyDraftLimit: capKnown ? limit : null,
+              });
+            }}
+          >
+            {saving ? (
+              <>
+                <span aria-hidden className="flex">
+                  <Spinner size="sm" />
+                </span>
+                Guardando…
+              </>
+            ) : anyReady || loading ? (
+              "Continuar"
+            ) : (
+              "Continuar sin asistente"
+            )}
           </Button>
-        </div>
-        <ul className="flex flex-col gap-1.5">
+        </>
+      }
+    >
+      <section aria-labelledby={`${id}-providers`} className="flex flex-col gap-2.5">
+        <SectionLabel id={`${id}-providers`}>Con qué cuenta</SectionLabel>
+        <ul className="divide-y overflow-hidden rounded-lg border bg-background">
           {rows.map((row) => (
             <ProviderRow
               key={row.key}
@@ -288,89 +331,98 @@ export function ProvidersStepView({
           ))}
         </ul>
         {providers !== null && !anyReady ? (
-          <Alert variant="warning">
-            <TriangleAlertIcon />
-            <AlertTitle>Ningún proveedor tiene sesión iniciada</AlertTitle>
-            <AlertDescription>
-              Puedes continuar igual: las tendencias se verán con sus términos, sin título ni
-              resumen redactados, y el hilo manual funciona sin modelo. Conecta uno cuando quieras
-              desde Ajustes › Proveedores.
-            </AlertDescription>
-          </Alert>
+          <>
+            <p className="text-xs text-muted-foreground">
+              ¿Ya iniciaste sesión?{" "}
+              <button
+                type="button"
+                disabled={checking}
+                onClick={onRecheck}
+                className="text-foreground underline underline-offset-2 hover:text-primary disabled:opacity-64"
+              >
+                {checking ? "Comprobando…" : "Volver a comprobar"}
+              </button>
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              El modelo que redacta y el tope al mes aparecen al iniciar sesión.
+            </p>
+          </>
         ) : null}
       </section>
 
-      <section className="flex flex-col gap-2" aria-labelledby={`${id}-model`}>
-        <h2 id={`${id}-model`} className="text-sm font-semibold text-foreground">
-          Modelo de redacción
-        </h2>
-        <p className="text-muted-foreground text-sm">{DRAFTING_MODEL_EXPLANATION}</p>
-        {savedDisabledText === null ? null : (
-          <Alert variant="warning">
-            <TriangleAlertIcon />
-            <AlertDescription>{savedDisabledText}</AlertDescription>
-          </Alert>
-        )}
-        <DraftingModelSelect
-          providers={providers}
-          value={model}
-          onChange={setChoice}
-          disabled={saving}
-        />
-      </section>
+      {anyReady ? (
+        <>
+          <section className="flex flex-col gap-2" aria-labelledby={`${id}-model`}>
+            <SectionLabel id={`${id}-model`}>Modelo que redacta</SectionLabel>
+            {savedDisabledText === null ? null : (
+              <Alert variant="warning">
+                <TriangleAlertIcon />
+                <AlertDescription>{savedDisabledText}</AlertDescription>
+              </Alert>
+            )}
+            <DraftingModelSelect
+              providers={providers}
+              value={model}
+              onChange={setChoice}
+              disabled={saving}
+            />
+            <p className="text-xs text-muted-foreground">Uno barato basta para títulos.</p>
+          </section>
 
-      <section className="flex flex-col gap-2" aria-labelledby={`${id}-limit`}>
-        <h2 id={`${id}-limit`} className="text-sm font-semibold text-foreground">
-          Tope mensual de redacciones
-        </h2>
-        <p className="text-muted-foreground text-sm">{DRAFT_BUDGET_EXPLANATION}</p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Input
-            aria-labelledby={`${id}-limit`}
-            nativeInput
-            size="sm"
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1}
-            className="w-28"
-            disabled={saving || !capKnown}
-            aria-invalid={capKnown && limit === null}
-            value={capKnown ? (limitText ?? String(savedLimit)) : ""}
-            onChange={(event) => setLimitText(event.target.value)}
-          />
-          {loadingBudget ? (
-            <span className="text-muted-foreground text-sm">Cargando el tope…</span>
-          ) : capKnown && limit === null ? (
-            <span className="text-destructive-foreground text-sm">
-              Escribe un número entero; 0 quita el tope.
-            </span>
-          ) : null}
-        </div>
-        <div className="flex flex-col gap-0.5 text-muted-foreground text-sm">
-          {budget === null ? null : (
-            <span className={isDraftBudgetReached(budget) ? "text-warning-foreground" : ""}>
-              {draftUsageText(budget)}
-            </span>
-          )}
-          <span>{DRAFT_USAGE_NO_TOKENS}</span>
-        </div>
-        {budgetError === null ? null : (
-          <Alert variant="error">
-            <TriangleAlertIcon />
-            <AlertTitle>No se pudo leer el tope mensual</AlertTitle>
-            <AlertDescription>
-              <p>
-                {budgetError} Al continuar se conserva el tope guardado; puedes cambiarlo después en
-                Ajustes › Editorial.
+          <section className="flex flex-col gap-2" aria-labelledby={`${id}-limit`}>
+            <SectionLabel id={`${id}-limit`}>Tope al mes</SectionLabel>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Input
+                aria-labelledby={`${id}-limit`}
+                nativeInput
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                className="w-24 text-end"
+                disabled={saving || !capKnown}
+                aria-invalid={capKnown && limit === null}
+                value={capKnown ? (limitText ?? String(savedLimit)) : ""}
+                onChange={(event) => setLimitText(event.target.value)}
+              />
+              <span className="text-sm text-foreground">tendencias redactadas</span>
+            </div>
+            {loadingBudget ? (
+              <span className="text-xs text-muted-foreground">Cargando el tope…</span>
+            ) : capKnown && limit === null ? (
+              <span className="text-xs text-destructive-foreground">
+                Escribe un número entero; 0 quita el tope.
+              </span>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Cada noche redacta hasta {NIGHTLY_DRAFTS}. 0 quita el tope.
+                {budget !== null && budget.usedThisMonth > 0 ? (
+                  <span
+                    className={`block ${isDraftBudgetReached(budget) ? "text-warning-foreground" : ""}`}
+                  >
+                    {draftUsageText(budget)}
+                  </span>
+                ) : null}
               </p>
-              <Button size="xs" variant="outline" className="mt-2" onClick={onRetryBudget}>
-                Reintentar
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
+            )}
+            {budgetError === null ? null : (
+              <Alert variant="error">
+                <TriangleAlertIcon />
+                <AlertTitle>No se pudo leer el tope mensual</AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {budgetError} Al continuar se conserva el tope guardado; puedes cambiarlo
+                    después en Ajustes.
+                  </p>
+                  <Button size="xs" variant="outline" className="mt-2" onClick={onRetryBudget}>
+                    Reintentar
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+          </section>
+        </>
+      ) : null}
 
       {error === null ? null : (
         <Alert variant="error">
@@ -378,22 +430,6 @@ export function ProvidersStepView({
           <AlertDescription>{error} Vuelve a intentarlo.</AlertDescription>
         </Alert>
       )}
-
-      <StepFooter
-        onBack={onBack}
-        autoFocus
-        saving={saving}
-        disabled={loading || (capKnown && limit === null)}
-        label={anyReady || loading ? "Continuar" : "Continuar sin proveedor"}
-        onContinue={() => {
-          if (capKnown && limit === null) return;
-          onContinue({
-            rows,
-            draftingModel: anyReady ? model : null,
-            monthlyDraftLimit: capKnown ? limit : null,
-          });
-        }}
-      />
 
       {setupRow !== undefined && setupCommand !== null ? (
         <ProviderSetupDialog
@@ -404,7 +440,7 @@ export function ProvidersStepView({
           onClose={() => setSetupKey(null)}
         />
       ) : null}
-    </div>
+    </StepLayout>
   );
 }
 

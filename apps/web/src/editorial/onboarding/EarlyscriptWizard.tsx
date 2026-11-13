@@ -5,21 +5,21 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
-import { useClientSettings } from "../../hooks/useSettings";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSpaceStore } from "../spaceStore";
-import { EarlyscriptWizardView } from "./EarlyscriptWizardView";
+import { EarlyscriptWizardView, type WizardEntry } from "./EarlyscriptWizardView";
 import { leaveWizard } from "./wizardExit";
 import {
   contractStep,
   editorialOnboardingEnvironment,
   onboardingErrorText,
 } from "./onboardingState";
+import { setupProgress } from "./setupProgress";
 
 function failureText(result: AtomCommandResult<unknown, unknown>): string {
   if (result._tag === "Success") return "";
@@ -28,9 +28,9 @@ function failureText(result: AtomCommandResult<unknown, unknown>): string {
 }
 
 /**
- * Earlyscript's first-run wizard, mounted by the `/welcome` route in place of T3 Code's.
- * Every accepted step is recorded on the server as a dated decision; finishing records the
- * completion there and marks onboarding complete in the client settings, as upstream does.
+ * The first-run wizard of the `/welcome` route; each accepted step is a dated decision on the
+ * server. «Seguir más tarde» marks only the client, so the app opens while the server still
+ * reads the wizard as unfinished: the sidebar offers to finish it at the first step not accepted.
  */
 export function EarlyscriptWizard({
   localAvailable,
@@ -43,9 +43,11 @@ export function EarlyscriptWizard({
 }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = localAvailable ? primaryEnvironmentId : null;
-  const completedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
-  // Decided once: finishing the first run must not turn the close button on mid-wizard.
-  const [dismissible] = useState(() => completedAt !== null);
+  const status = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : editorialOnboardingEnvironment.status({ environmentId, input: {} }),
+  );
   const quiet = { reportFailure: false } as const;
   const record = useAtomCommand(editorialOnboardingEnvironment.record, quiet);
   const complete = useAtomCommand(editorialOnboardingEnvironment.complete, quiet);
@@ -77,10 +79,19 @@ export function EarlyscriptWizard({
     return left;
   };
 
+  // The entry is decided once the status is read; an unreadable status opens the welcome.
+  if (environmentId !== null && status.data === null && status.error === null) return null;
+  const progress = status.data === null ? null : setupProgress(status.data);
+  const entry: WizardEntry =
+    progress !== null && progress.pending && progress.reached > 0
+      ? { _tag: "resume", position: { index: progress.reached, reached: progress.reached } }
+      : { _tag: "welcome" };
+
   return (
     <EarlyscriptWizardView
       environmentId={environmentId}
-      dismissible={dismissible}
+      entry={entry}
+      finishedBefore={progress !== null && !progress.pending}
       onRecord={async (step, acceptance) => {
         if (environmentId === null) return { ok: false, error: "No hay servidor local." };
         const result = await record({

@@ -193,6 +193,36 @@ function requestErrorText(result: AtomCommandResult<unknown, unknown>): string {
   return "el servidor no respondió.";
 }
 
+/** The model's pushed state and the request that downloads it, for a card or a row. */
+export function useModelDownload(environmentId: EnvironmentId) {
+  const result = useAtomValue(editorialEngineEnvironment.model({ environmentId, input: {} }));
+  const prepare = useAtomCommand(editorialEngineEnvironment.prepareModel, {
+    reportFailure: false,
+  });
+  const [starting, setStarting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const state = AsyncResult.getOrElse(result, () => null);
+  const subscriptionError =
+    state === null && AsyncResult.isFailure(result)
+      ? "no se pudo leer el estado del modelo en el servidor."
+      : null;
+  const onDownload = () => {
+    setStarting(true);
+    setRequestError(null);
+    void prepare({ environmentId, input: {} }).then((answer) => {
+      setStarting(false);
+      if (answer._tag === "Failure") setRequestError(requestErrorText(answer));
+    });
+  };
+  return {
+    state,
+    ready: modelIsReady(state),
+    starting,
+    requestError: requestError ?? subscriptionError,
+    onDownload,
+  };
+}
+
 /**
  * The local embedding model: missing (with «Descargar»), downloading with progress, failed
  * (with «Reintentar») or ready. `onReady` follows whether the model is on disk.
@@ -206,37 +236,111 @@ export function ModelDownloadCard({
   readonly onReady: (ready: boolean) => void;
   readonly bare?: boolean;
 }) {
-  const result = useAtomValue(editorialEngineEnvironment.model({ environmentId, input: {} }));
-  const prepare = useAtomCommand(editorialEngineEnvironment.prepareModel, {
-    reportFailure: false,
-  });
-  const [starting, setStarting] = useState(false);
-  const [requestError, setRequestError] = useState<string | null>(null);
-  const state = AsyncResult.getOrElse(result, () => null);
-  const subscriptionError =
-    state === null && AsyncResult.isFailure(result)
-      ? "no se pudo leer el estado del modelo en el servidor."
-      : null;
-  const ready = modelIsReady(state);
+  const model = useModelDownload(environmentId);
+  const ready = model.ready;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the wizard learns from the pushed model state whether it may continue.
   useEffect(() => {
     onReady(ready);
   }, [onReady, ready]);
-  const onDownload = () => {
-    setStarting(true);
-    setRequestError(null);
-    void prepare({ environmentId, input: {} }).then((answer) => {
-      setStarting(false);
-      if (answer._tag === "Failure") setRequestError(requestErrorText(answer));
-    });
-  };
   return (
     <ModelDownloadCardView
-      state={state}
-      starting={starting}
-      requestError={requestError ?? subscriptionError}
-      onDownload={onDownload}
+      state={model.state}
+      starting={model.starting}
+      requestError={model.requestError}
+      onDownload={model.onDownload}
       {...(bare === undefined ? {} : { bare })}
     />
+  );
+}
+
+/**
+ * The model as one row: «Modelo local», what it is doing, and its action or «Listo»; the
+ * progress bar under it while it downloads. The wizard's last step and the empty inbox use it.
+ */
+export function ModelRowView({
+  state,
+  starting,
+  requestError,
+  onDownload,
+}: ModelDownloadCardViewProps) {
+  const phase = modelCardPhase(state);
+  const failed =
+    requestError !== null
+      ? { text: requestError, hint: null }
+      : phase._tag === "failed"
+        ? { text: phase.text, hint: phase.hint }
+        : null;
+  const status = (() => {
+    if (failed !== null) return `Error: ${failed.text}`;
+    switch (phase._tag) {
+      case "checking":
+        return "Comprobando…";
+      case "verifying":
+        return "Comprobando los archivos descargados…";
+      case "missing":
+        return phase.bytesPresent > 0
+          ? `Descarga a medias: ${formatMiB(phase.bytesPresent)} de ${formatMiB(phase.bytesExpected)} MiB`
+          : `Falta descargarlo: ${formatMiB(phase.bytesExpected)} MiB`;
+      case "downloading":
+        return [
+          `Descargando… ${formatMiB(phase.bytesDone)} de ${formatMiB(phase.bytesTotal)} MiB`,
+          remainingText(phase.bytesTotal - phase.bytesDone, phase.bytesPerSecond),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      case "ready":
+        return `${formatMiB(phase.bytes)} MiB, descargado`;
+      case "failed":
+        return "";
+    }
+  })();
+  const action =
+    failed !== null ? (
+      <Button size="sm" variant="outline" disabled={starting} onClick={onDownload}>
+        {starting ? <Spinner size="sm" /> : null}
+        Reintentar
+      </Button>
+    ) : phase._tag === "missing" ? (
+      <Button size="sm" disabled={starting} onClick={onDownload}>
+        {starting ? <Spinner size="sm" /> : null}
+        {phase.bytesPresent > 0 ? "Continuar descarga" : "Descargar"}
+      </Button>
+    ) : phase._tag === "ready" ? (
+      <span className="inline-flex items-center gap-1.5 text-xs text-success-foreground">
+        <span aria-hidden className="size-1.5 rounded-full bg-success" />
+        Listo
+      </span>
+    ) : phase._tag === "checking" || phase._tag === "verifying" ? (
+      <Spinner size="sm" />
+    ) : null;
+  return (
+    <div className="flex flex-col gap-2" data-testid="model-row" data-phase={phase._tag}>
+      <div className="flex flex-col gap-2 rounded-lg border bg-background px-3.5 py-2.5">
+        <div className="flex min-h-7 items-center gap-3">
+          <span className="w-28 shrink-0 text-sm text-foreground">Modelo local</span>
+          <span
+            role="status"
+            className={`min-w-0 flex-1 text-xs tabular-nums ${failed !== null ? "text-destructive-foreground" : "text-muted-foreground"}`}
+          >
+            {status}
+          </span>
+          {action === null ? null : <span className="shrink-0">{action}</span>}
+        </div>
+        {phase._tag === "downloading" || phase._tag === "verifying" ? (
+          <progress
+            aria-label="Descarga del modelo"
+            className={PROGRESS_CLASS}
+            value={phase._tag === "downloading" ? phase.bytesDone : 1}
+            max={phase._tag === "downloading" ? Math.max(phase.bytesTotal, 1) : 1}
+          />
+        ) : null}
+      </div>
+      {failed?.hint ? <p className="text-xs text-muted-foreground">{failed.hint}</p> : null}
+      {phase._tag === "ready" ? null : (
+        <p className="text-xs text-muted-foreground">
+          Agrupa las publicaciones en tu equipo. Se descarga una sola vez.
+        </p>
+      )}
+    </div>
   );
 }

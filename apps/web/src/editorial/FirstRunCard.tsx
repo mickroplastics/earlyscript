@@ -1,281 +1,43 @@
-import type { EditorialJob, EditorialNightlySettings, EnvironmentId } from "@t3tools/contracts";
+import type { EditorialInbox, EditorialJob, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
-import {
-  CheckIcon,
-  CircleIcon,
-  MinusIcon,
-  PlayIcon,
-  RotateCwIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, RotateCwIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
+import { Empty } from "../components/ui/empty";
+import { SidebarInset } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
+import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { isElectron } from "../env";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { cn } from "../lib/utils";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
+import { ReviewPhaseList, usePhaseNotes, type PhaseNotes } from "./FirstReviewPhases";
 import {
   draftingProblem,
-  firstRunPhaseRows,
   firstRunView,
   minuteClockMs,
-  phaseRowName,
-  type FirstRunPhaseRow,
+  nextReviewText,
+  reviewFailure,
   type FirstRunView,
 } from "./firstRun.logic";
 import { editorialJobsEnvironment } from "./jobsState";
-import { failureText, nextRunText } from "./settings/NightlyRunSettings";
-import { EDITORIAL_NIGHTLY_SECTION_ID, EDITORIAL_SETTINGS_PATH } from "./settings/settingsEntry";
+import { editorialOnboardingEnvironment } from "./onboarding/onboardingState";
+import { ModelRowView, useModelDownload } from "./onboarding/ModelDownloadCard";
+import {
+  firstReviewWaitsForModel,
+  missingStepsText,
+  setupProgress,
+  type SetupProgress,
+} from "./onboarding/setupProgress";
+import { failureText } from "./settings/NightlyRunSettings";
 import { useEditorialJobActivity } from "./TrendJobIndicator";
 
-type Density = "sidebar" | "page";
-
-function PhaseIcon({ status }: { readonly status: FirstRunPhaseRow["status"] }) {
-  switch (status) {
-    case "pending":
-      return <CircleIcon className="size-3 text-muted-foreground/40" />;
-    case "running":
-      return (
-        <span className="flex text-info">
-          <Spinner size="sm" />
-        </span>
-      );
-    case "done":
-      return <CheckIcon className="size-3.5 text-success" />;
-    case "skipped":
-      return <MinusIcon className="size-3.5 text-muted-foreground" />;
-    case "failed":
-      return <XIcon className="size-3.5 text-error" />;
-  }
-}
-
-/** The five phases of a job as a fixed list: rows keep their height while the job advances. */
-function FirstRunPhases({
-  job,
-  density = "page",
-}: {
-  readonly job: EditorialJob | null;
-  readonly density?: Density;
-}) {
-  const now = useNowMinute();
-  return (
-    <ol
-      aria-label="Fases de la corrida"
-      className={cn("flex flex-col", density === "sidebar" ? "text-xs" : "text-sm")}
-    >
-      {firstRunPhaseRows(job, minuteClockMs(now)).map((row) => (
-        <li
-          key={row.phase}
-          aria-label={phaseRowName(row)}
-          data-phase={row.phase}
-          data-status={row.status}
-          className={cn(
-            "flex min-w-0 items-center gap-2",
-            density === "sidebar" ? "h-6" : "h-7",
-            row.status === "pending" ? "text-muted-foreground" : "text-foreground",
-          )}
-        >
-          <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
-            {row.warning ? (
-              <TriangleAlertIcon className="size-3.5 text-warning" />
-            ) : (
-              <PhaseIcon status={row.status} />
-            )}
-          </span>
-          <span className="shrink-0">{row.label}</span>
-          <span className="min-w-0 flex-1 truncate text-end text-xs text-muted-foreground tabular-nums">
-            {(density === "sidebar" ? row.compactDetail : row.detail) ??
-              (row.status === "skipped" ? "omitida" : "")}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-const TITLE: Readonly<Record<FirstRunView["kind"], string>> = {
-  idle: "Todavía no hay tendencias",
-  running: "Corrida en curso",
-  failed: "La corrida falló",
-  empty: "La corrida terminó sin tendencias nuevas",
-  done: "La corrida terminó",
-};
-
-const IDLE_TEXT =
-  "Una corrida captura las fuentes activas, agrupa sus publicaciones en tendencias, las importa y las redacta. Cada corrida queda registrada.";
-
-const RUNNING_TEXT =
-  "La primera corrida procesa todo el corpus y tarda más que las siguientes. Las tendencias aparecen aquí cuando termina la importación.";
-
-/** What the nightly run will do next, with a way to turn it on when it is off. */
-export function NightlyNote({
-  settings,
-  density = "page",
-}: {
-  readonly settings: EditorialNightlySettings | null;
-  readonly density?: Density;
-}) {
-  if (settings === null) return null;
-  const className = cn(
-    "text-muted-foreground",
-    density === "sidebar" ? "text-2xs leading-4" : "text-xs",
-  );
-  if (settings.enabled) return <p className={className}>{nextRunText(settings)}</p>;
-  return (
-    <p className={className}>
-      La corrida nocturna está desactivada. Puedes activarla en{" "}
-      <Link
-        to={EDITORIAL_SETTINGS_PATH}
-        hash={EDITORIAL_NIGHTLY_SECTION_ID}
-        className="whitespace-nowrap text-foreground underline underline-offset-2 hover:text-primary"
-      >
-        Ajustes › Editorial
-      </Link>
-      .
-    </p>
-  );
-}
-
-export interface FirstRunPanelProps {
-  readonly view: FirstRunView;
-  readonly starting: boolean;
-  /** Why the last «Ejecutar» click did not start a job, in Spanish. */
-  readonly error: string | null;
-  readonly onRun: () => void;
-  /** Label of the button that starts a job from the idle state. */
-  readonly runLabel: string;
-  /** When set, the run button is disabled and this says why (the model is missing). */
-  readonly blockedReason?: string | null;
-  readonly density?: Density;
-  /** Shown under the actions: the nightly note, a link. */
-  readonly footer?: ReactNode;
-  /** Hide the title and explanation, for a host that has its own (the wizard step). */
-  readonly bare?: boolean;
-  /** What a finished job with trends says; null shows the inbox refetching them. */
-  readonly doneNote?: string | null;
-}
-
-/** The first run of the engine as a card: offer, live phases, failure, an empty result. */
-export function FirstRunPanel({
-  view,
-  starting,
-  error,
-  onRun,
-  runLabel,
-  blockedReason = null,
-  density = "page",
-  footer,
-  bare = false,
-  doneNote = null,
-}: FirstRunPanelProps) {
-  const job = view.kind === "idle" ? null : view.job;
-  const messages = view.kind === "idle" || view.kind === "running" ? [] : view.messages;
-  const canRun =
-    view.kind === "idle" || view.kind === "failed" || (view.kind === "empty" && view.canRun);
-  const sidebar = density === "sidebar";
-  return (
-    <div
-      data-testid="first-run"
-      data-kind={view.kind}
-      className={cn("flex w-full min-w-0 flex-col", sidebar ? "gap-2.5" : "gap-3")}
-    >
-      {bare ? null : (
-        <div className="flex flex-col gap-1">
-          <p
-            role={view.kind === "failed" ? "alert" : undefined}
-            className={cn(
-              "font-medium text-foreground",
-              sidebar ? "text-xs" : "text-sm",
-              view.kind === "failed" && "text-error-foreground",
-            )}
-          >
-            {TITLE[view.kind]}
-          </p>
-          {view.kind === "idle" || view.kind === "running" ? (
-            <p
-              className={cn(
-                "text-muted-foreground",
-                sidebar ? "text-2xs leading-4" : "text-xs leading-relaxed",
-              )}
-            >
-              {view.kind === "idle" ? IDLE_TEXT : RUNNING_TEXT}
-            </p>
-          ) : null}
-        </div>
-      )}
-      {job !== null ? <FirstRunPhases job={job} density={density} /> : null}
-      {view.kind === "done" ? (
-        doneNote === null ? (
-          <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span aria-hidden className="flex">
-              <Spinner size="xs" tone="muted" />
-            </span>
-            Cargando sus tendencias…
-          </p>
-        ) : (
-          <p role="status" className="text-xs text-foreground">
-            {doneNote}
-          </p>
-        )
-      ) : null}
-      {messages.length > 0 ? (
-        <ul
-          className={cn(
-            "flex flex-col gap-1 rounded-md border px-2.5 py-2",
-            sidebar ? "text-2xs leading-4" : "text-xs leading-relaxed",
-            view.kind === "failed"
-              ? "border-error/32 bg-error-surface text-error-foreground"
-              : "border-border text-muted-foreground",
-          )}
-        >
-          {messages.map((message) => (
-            <li key={message}>{message}</li>
-          ))}
-        </ul>
-      ) : null}
-      {canRun ? (
-        <div className="flex flex-col gap-1.5">
-          <Button
-            size={sidebar ? "sm" : "default"}
-            variant={view.kind === "failed" ? "outline" : "default"}
-            className={sidebar ? "w-full" : "self-start"}
-            disabled={starting || blockedReason !== null}
-            onClick={onRun}
-          >
-            {starting ? (
-              <span aria-hidden className="flex">
-                <Spinner size="sm" />
-              </span>
-            ) : view.kind === "failed" ? (
-              <RotateCwIcon aria-hidden />
-            ) : (
-              <PlayIcon aria-hidden />
-            )}
-            {view.kind === "failed"
-              ? "Reintentar"
-              : view.kind === "empty"
-                ? "Ejecutar una corrida"
-                : runLabel}
-          </Button>
-          {blockedReason !== null ? (
-            <p className="text-xs text-muted-foreground">{blockedReason}</p>
-          ) : null}
-        </div>
-      ) : null}
-      {error !== null ? (
-        <p role="alert" className="text-xs text-error-foreground">
-          {error}
-        </p>
-      ) : null}
-      {footer}
-    </div>
-  );
-}
+const SPACE_LABEL = "Tendencias";
 
 /**
  * The job the first-run surfaces follow: the one in flight, else the one `runNow` answered
@@ -308,7 +70,25 @@ export function useFirstRun(environmentId: EnvironmentId) {
     setAnswered(result.value);
     return true;
   };
-  return { settings, active, latest, jobsKnown: list.data !== null, starting, error, start };
+  return {
+    settings,
+    active,
+    latest,
+    jobsKnown: list.data !== null,
+    /** Jobs this server ran, the one `runNow` just answered included. */
+    jobCount: jobs.length + (latest !== null && latest === answered ? 1 : 0),
+    starting,
+    error,
+    start,
+  };
+}
+
+/** The wizard's record on this server, for the empty inbox: unfinished, and where. */
+function useSetupProgress(environmentId: EnvironmentId) {
+  const status = useEnvironmentQuery(
+    editorialOnboardingEnvironment.status({ environmentId, input: {} }),
+  );
+  return status.data === null ? null : setupProgress(status.data);
 }
 
 /**
@@ -356,30 +136,378 @@ export function DraftingNotice({
   );
 }
 
-/** The empty Tendencias inbox: the first run from the sidebar, then its live phases. */
+/**
+ * The inbox header while it has no run: «Primera revisión» once one started, with a red dot
+ * when it stopped; the message itself is on the page.
+ */
+export function FirstRunInboxLabel({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const run = useFirstRun(environmentId);
+  const view = firstRunView({
+    active: run.active,
+    latest: run.latest,
+    emptyRun: false,
+    jobsKnown: run.jobsKnown,
+  });
+  if (view.kind === "idle") return <>{SPACE_LABEL}</>;
+  return (
+    <span className="inline-flex items-center gap-1.5 uppercase tracking-wider">
+      Primera revisión
+      {view.kind === "failed" ? (
+        <span role="img" aria-label="no terminó" className="size-1.5 rounded-full bg-error" />
+      ) : null}
+    </span>
+  );
+}
+
+/** The empty inbox in the sidebar: one line while the review runs, the rest on the page. */
 export function FirstRunCard({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly emptyRun?: boolean;
+}) {
+  const active = useEditorialJobActivity(environmentId);
+  if (active === null) return null;
+  return (
+    <p role="status" className="px-2 py-1.5 text-xs text-muted-foreground">
+      Buscando tendencias…
+    </p>
+  );
+}
+
+/** The main area of Tendencias with its title bar, the content centred. */
+function TrendsPageShell({ children }: { readonly children: ReactNode }) {
+  return (
+    <SidebarInset
+      {...workspaceAreaProps("editorial", 1, SPACE_LABEL)}
+      role="main"
+      className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
+    >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+        <WorkspacePageHeader electron={isElectron} className="border-b border-border">
+          <span className="text-sm font-medium text-muted-foreground/60">{SPACE_LABEL}</span>
+        </WorkspacePageHeader>
+        <Empty className="flex-1 overflow-y-auto">
+          <div className="w-full max-w-xl px-6 py-10">{children}</div>
+        </Empty>
+      </div>
+    </SidebarInset>
+  );
+}
+
+function CenteredMessage({
+  title,
+  description,
+  children,
+}: {
+  readonly title: string;
+  readonly description: string | null;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2 text-center" data-testid="trends-empty">
+      <h1 className="text-lg font-semibold text-foreground">{title}</h1>
+      {description === null ? null : (
+        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">{description}</p>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function TechnicalDetail({ lines }: { readonly lines: ReadonlyArray<string> }) {
+  const [open, setOpen] = useState(false);
+  if (lines.length === 0) return null;
+  return (
+    <>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("size-3.5 transition-transform", open && "rotate-90")}
+        />
+        Detalle técnico
+      </button>
+      {open ? (
+        <ul className="order-last basis-full font-mono text-2xs leading-relaxed break-words text-muted-foreground">
+          {lines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
+/** The review as a card: the five phases, live, with what failed and how to retry. */
+function ReviewCard({
+  view,
+  first,
+  starting,
+  error,
+  nightly,
+  notes,
+  onRun,
+}: {
+  readonly view: Exclude<FirstRunView, { kind: "idle" }>;
+  readonly first: boolean;
+  readonly starting: boolean;
+  readonly error: string | null;
+  readonly nightly: string | null;
+  readonly notes: PhaseNotes;
+  readonly onRun: () => void;
+}) {
+  const failure = view.kind === "failed" ? reviewFailure(view.job) : null;
+  const title =
+    view.kind === "running"
+      ? first
+        ? "Buscando tus primeras tendencias"
+        : "Buscando tendencias"
+      : view.kind === "failed"
+        ? first
+          ? "La primera revisión no terminó"
+          : "La revisión no terminó"
+        : view.kind === "empty"
+          ? "La revisión terminó sin tendencias nuevas"
+          : "La revisión terminó";
+  const description =
+    view.kind === "running"
+      ? "Aparecerán aquí al terminar. Puedes seguir usando la app."
+      : failure !== null
+        ? [failure.headline, failure.kept === null ? null : "Lo leído quedó guardado."]
+            .filter(Boolean)
+            .join(" ")
+        : view.kind === "empty"
+          ? view.messages.join(" ")
+          : "Cargando sus tendencias…";
+  const canRun = view.kind === "failed" || (view.kind === "empty" && view.canRun);
+  return (
+    <section
+      data-testid="first-run"
+      data-kind={view.kind}
+      aria-labelledby="first-review-title"
+      className="rounded-xl border bg-card px-6 py-5 text-left"
+    >
+      <h1 id="first-review-title" className="text-base font-semibold text-foreground">
+        {title}
+      </h1>
+      <p
+        role={view.kind === "failed" ? "alert" : "status"}
+        className="mt-1.5 text-sm leading-relaxed text-muted-foreground"
+      >
+        {description}
+      </p>
+      <div className="mt-3">
+        <ReviewPhaseList job={view.job} notes={notes} />
+      </div>
+      {canRun || error !== null ? (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          {canRun ? (
+            <Button disabled={starting} onClick={onRun}>
+              {starting ? <Spinner size="sm" /> : <RotateCwIcon aria-hidden />}
+              {view.kind === "failed" ? "Reintentar" : "Buscar de nuevo"}
+            </Button>
+          ) : null}
+          {failure !== null ? <TechnicalDetail lines={failure.technical} /> : null}
+          {view.kind === "failed" && nightly !== null ? (
+            <span className="ms-auto text-xs text-muted-foreground">
+              Si no, se reintenta {nightly}.
+            </span>
+          ) : null}
+          {error !== null ? (
+            <p role="alert" className="basis-full text-xs text-error-foreground">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export interface FirstRunPageViewProps {
+  /** Null until the wizard's record is read. */
+  readonly setup: SetupProgress | null;
+  readonly view: FirstRunView;
+  /** No review ran before this one. */
+  readonly first: boolean;
+  /** «esta noche a las 03:00»; null while the nightly review is off. */
+  readonly nightly: string | null;
+  readonly starting: boolean;
+  readonly error: string | null;
+  readonly jobsKnown: boolean;
+  readonly modelReady: boolean;
+  /** The first review starts by itself once the model is on disk (FinishSetupEntry). */
+  readonly waitsForModel: boolean;
+  /** The model's row, shown while it is missing. */
+  readonly model: ReactNode;
+  readonly notes: PhaseNotes;
+  readonly onRun: () => void;
+  readonly onContinueSetup: () => void;
+}
+
+/**
+ * Tendencias before the inbox has trends: what is missing from the setup, the first review
+ * as it runs or where it stopped, or the way to start one.
+ */
+export function FirstRunPageView({
+  setup,
+  view,
+  first,
+  nightly,
+  starting,
+  error,
+  jobsKnown,
+  modelReady,
+  waitsForModel,
+  model,
+  notes,
+  onRun,
+  onContinueSetup,
+}: FirstRunPageViewProps) {
+  if (setup !== null && setup.pending && view.kind === "idle") {
+    return (
+      <CenteredMessage
+        title="Aquí llegarán tus tendencias"
+        description={missingStepsText(setup.reached)}
+      >
+        <Button className="mt-3" onClick={onContinueSetup}>
+          Continuar
+        </Button>
+      </CenteredMessage>
+    );
+  }
+  if (view.kind !== "idle") {
+    return (
+      <ReviewCard
+        view={view}
+        first={first}
+        starting={starting}
+        error={error}
+        nightly={nightly}
+        notes={notes}
+        onRun={onRun}
+      />
+    );
+  }
+  const description = !modelReady
+    ? waitsForModel
+      ? "La primera revisión empieza sola al terminar de descargar el modelo local."
+      : "Para buscarlas falta el modelo local."
+    : nightly === null
+      ? "Busca las primeras ahora. La revisión nocturna está apagada; se enciende en Ajustes."
+      : `Busca las primeras ahora o espera a la revisión de ${nightly}.`;
+  return (
+    <CenteredMessage title="Aquí llegarán tus tendencias" description={description}>
+      {modelReady ? (
+        <Button className="mt-3" disabled={!jobsKnown || starting} onClick={onRun}>
+          {starting ? <Spinner size="sm" /> : null}
+          Buscar ahora
+        </Button>
+      ) : (
+        <div className="mt-4 w-full text-left">{model}</div>
+      )}
+      {error !== null ? (
+        <p role="alert" className="text-xs text-error-foreground">
+          {error}
+        </p>
+      ) : null}
+    </CenteredMessage>
+  );
+}
+
+/** `FirstRunPageView` over this environment's wizard record, jobs and model. */
+export function FirstRunPage({
   environmentId,
   emptyRun,
 }: {
   readonly environmentId: EnvironmentId;
   readonly emptyRun: boolean;
 }) {
+  const navigate = useNavigate();
+  const setup = useSetupProgress(environmentId);
   const run = useFirstRun(environmentId);
+  const model = useModelDownload(environmentId);
+  const decisions = useEnvironmentQuery(
+    editorialOnboardingEnvironment.list({ environmentId, input: {} }),
+  );
+  const nowMs = minuteClockMs(useNowMinute());
   const view = firstRunView({
     active: run.active,
     latest: run.latest,
     emptyRun,
     jobsKnown: run.jobsKnown,
   });
+  const notes = usePhaseNotes(environmentId, view.kind === "idle" ? null : view.job);
   return (
-    <FirstRunPanel
-      view={view}
-      starting={run.starting}
-      error={run.error}
-      onRun={() => void run.start()}
-      runLabel="Ejecutar la primera corrida"
-      density="sidebar"
-      footer={<NightlyNote settings={run.settings.data} density="sidebar" />}
-    />
+    <TrendsPageShell>
+      <FirstRunPageView
+        setup={setup}
+        view={view}
+        first={run.jobCount <= 1}
+        nightly={run.settings.data === null ? null : nextReviewText(run.settings.data, nowMs)}
+        starting={run.starting}
+        error={run.error}
+        jobsKnown={run.jobsKnown}
+        modelReady={model.ready}
+        waitsForModel={firstReviewWaitsForModel(decisions.data?.acceptances ?? [])}
+        model={
+          <ModelRowView
+            state={model.state}
+            starting={model.starting}
+            requestError={model.requestError}
+            onDownload={model.onDownload}
+          />
+        }
+        notes={notes}
+        onRun={() => void run.start()}
+        onContinueSetup={() => void navigate({ to: "/welcome" })}
+      />
+    </TrendsPageShell>
+  );
+}
+
+/**
+ * Over the brief cards the first time the inbox has trends: how many, what to do with them
+ * and when the next review comes. Gone with the second review.
+ */
+export function FirstTrendsIntro({
+  environmentId,
+  inbox,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly inbox: EditorialInbox;
+}) {
+  const target = { environmentId, input: {} };
+  const list = useEnvironmentQuery(editorialJobsEnvironment.list(target));
+  const settings = useEnvironmentQuery(editorialJobsEnvironment.settings(target));
+  const nowMs = minuteClockMs(useNowMinute());
+  const finished = (list.data?.jobs ?? []).filter((job) => job.artifacts.runId !== null);
+  const runId = inbox.run?.runId ?? null;
+  if (runId === null || finished.length !== 1 || finished[0]!.artifacts.runId !== runId) {
+    return null;
+  }
+  const count = inbox.trends.filter(
+    (trend) => trend.inbox?.dismissed == null && trend.inbox?.snoozed == null,
+  ).length;
+  const next = settings.data === null ? null : nextReviewText(settings.data, nowMs);
+  return (
+    <div
+      data-testid="first-trends-intro"
+      className="mb-8 flex flex-col items-center gap-2 py-6 text-center"
+    >
+      <ArrowLeftIcon aria-hidden className="size-5 text-primary" />
+      <h2 className="text-lg font-semibold text-foreground">
+        Tus primeras {count} {count === 1 ? "tendencia" : "tendencias"}
+      </h2>
+      <p className="max-w-md text-sm text-muted-foreground">
+        Abre una para ver por qué está aquí.
+        {next === null ? null : ` Próxima revisión: ${next}.`}
+      </p>
+    </div>
   );
 }

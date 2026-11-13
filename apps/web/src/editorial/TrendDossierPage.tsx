@@ -10,20 +10,13 @@ import type {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import {
-  ExternalLinkIcon,
-  PanelLeftIcon,
-  RefreshCwIcon,
-  SparklesIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { ExternalLinkIcon, RefreshCwIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState, type MouseEvent } from "react";
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { useSidebar, useSidebarVisibility } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
@@ -36,6 +29,7 @@ import {
   sourceLabel,
 } from "./editorial.logic";
 import { EditorialEmptyPage, EditorialPage } from "./EditorialPage";
+import { FirstRunPage, FirstTrendsIntro } from "./FirstRunCard";
 import {
   CITATION_EVIDENCE_LIMIT,
   DOSSIER_EVIDENCE_PAGE_SIZE as EVIDENCE_PAGE_SIZE,
@@ -48,7 +42,6 @@ import { TrendCardView } from "./TrendCard";
 import { TrendCardList } from "./TrendCardList";
 import { TrendDecision } from "./TrendDecision";
 import { useTrendInbox } from "./TrendInbox";
-import { useEditorialJobActivity } from "./TrendJobIndicator";
 
 const SPACE_LABEL = "Tendencias";
 
@@ -409,60 +402,19 @@ export function TrendDossierView({
   );
 }
 
-/** Opens the inbox in the sidebar, which is a sheet on a narrow window. */
-function OpenInboxButton() {
-  const { isMobile, setOpen, setOpenMobile } = useSidebar();
-  if (useSidebarVisibility()) return null;
-  return (
-    <Button
-      variant="outline"
-      className="mt-5"
-      onClick={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
-    >
-      <PanelLeftIcon aria-hidden />
-      Abrir la bandeja
-    </Button>
-  );
-}
-
 /**
- * Tendencias with no dossier open: the run's brief cards once it has trends; before that, a
- * pointer to the first-run card at the top of the inbox.
+ * Tendencias with no dossier open: the run's brief cards once it has trends; before that, the
+ * setup still missing or the first review (FirstRunCard.tsx).
  */
 export function TrendsEmptyPage({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
-  const active = useEditorialJobActivity(environmentId);
-  if (inbox !== null && (inbox.run === null || inbox.trends.length === 0) && active !== null) {
-    return (
-      <EditorialEmptyPage
-        space={SPACE_LABEL}
-        title="Corrida en curso"
-        description="Sigue sus fases en la bandeja de Tendencias. Sus tendencias aparecen allí cuando termina la importación."
-      >
-        <OpenInboxButton />
-      </EditorialEmptyPage>
-    );
-  }
   if (inbox !== null && (inbox.run === null || inbox.trends.length === 0)) {
-    return (
-      <EditorialEmptyPage
-        space={SPACE_LABEL}
-        title={
-          inbox.run === null ? "Todavía no hay corridas" : "La última corrida no trajo tendencias"
-        }
-        description={
-          inbox.run === null
-            ? "Lanza la primera corrida desde la bandeja de Tendencias, en la barra lateral. Allí verás sus fases mientras corre y, al terminar, sus tendencias."
-            : "La bandeja de Tendencias explica por qué y muestra la próxima corrida."
-        }
-      >
-        <OpenInboxButton />
-      </EditorialEmptyPage>
-    );
+    return <FirstRunPage environmentId={environmentId} emptyRun={inbox.run !== null} />;
   }
   if (inbox === null) return <EditorialPage space={SPACE_LABEL}>{null}</EditorialPage>;
   return (
     <EditorialPage space={SPACE_LABEL}>
+      <FirstTrendsIntro environmentId={environmentId} inbox={inbox} />
       <TrendCardList environmentId={environmentId} inbox={inbox} />
     </EditorialPage>
   );

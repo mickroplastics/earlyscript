@@ -1,17 +1,22 @@
-# Asistente de primer arranque (2 de noviembre de 2026)
+# Asistente de primer arranque
 
-Cuatro pasos en español que reemplazan al asistente de T3 Code (Connect / Agents / Projects).
-Cada archivo tiene un dueño; nadie edita un archivo ajeno. La integración la hace Fable al fusionar.
+Bienvenida y cuatro pasos en español que reemplazan al asistente de T3 Code (Connect / Agents /
+Projects). Diseño onb-b del 13 de noviembre de 2026: cada paso en dos columnas, a la izquierda lo
+que se elige y a la derecha un ejemplo fijo de lo que produce (`wizardLayout.tsx`,
+`onboardingExamples.ts`).
 
-| Archivo                                                            | Dueño (rama)                 | Contenido                                                                                       |
-| ------------------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------- |
-| `steps.ts`                                                         | base (congelado)             | Ids, orden y `OnboardingStepProps`.                                                             |
-| `WelcomeWizard.tsx` de upstream, carcasa, registro de aceptaciones | `es/onboarding-shell`        | Navegación, cabecera, texto de privacidad, reabrir desde Ajustes, RPC `editorial.onboarding.*`. |
-| `DataConsentStep.tsx`                                              | `es/onboarding-data`         | Fuentes, términos, retención, borrado, qué viaja a proveedores; aceptación.                     |
-| `ProvidersStep.tsx`                                                | `es/onboarding-providers`    | Proveedor conectado, modelo de redacción, tope mensual.                                         |
-| `StudioStep.tsx`                                                   | `es/onboarding-studio`       | Perfil editorial editable y persistido.                                                         |
-| `ModelDownloadCard.tsx`                                            | `es/onboarding-engine-model` | Estado y descarga del modelo local, con progreso.                                               |
-| `EngineStep.tsx`, estado vacío de Tendencias                       | `es/onboarding-engine-run`   | Nocturna (hora, zona) y primera corrida «Ejecutar ahora».                                       |
+| Archivo                                              | Contenido                                                                                       |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `steps.ts`                                           | Ids (los del contrato), orden, etiquetas y `OnboardingStepProps`.                               |
+| `EarlyscriptWizard.tsx`, `EarlyscriptWizardView.tsx` | Carcasa: bienvenida, cabecera, «Seguir más tarde», reanudación, registro de aceptaciones.       |
+| `setupProgress.ts`                                   | Asistente sin terminar y paso alcanzado, según el servidor; espera del modelo.                  |
+| `DataConsentStep.tsx`, `dataConsent.logic.ts`        | «Tus datos»: fuentes, términos, qué sale; el texto aceptado y su `policyHash`, sin cambios.     |
+| `ProvidersStep.tsx`                                  | «Asistente de IA»: proveedor con sesión, modelo de redacción, tope mensual.                     |
+| `StudioStep.tsx`                                     | «Tu canal»: perfil editable; cada cambio guardado crea una versión.                             |
+| `EngineStep.tsx`, `ModelDownloadCard.tsx`            | «Revisión nocturna»: modelo local, hora, y la primera revisión, que arranca sola con el modelo. |
 
-Reglas: texto visible en español; código y comentarios en inglés; nada en archivos de upstream
-salvo enganches de una línea anotados en `docs/upstream-divergence.md`.
+Fuera de esta carpeta: `../FirstRunCard.tsx` (bandeja vacía y primera revisión),
+`../FirstReviewPhases.tsx` (las cinco fases) y `../FinishSetupEntry.tsx` («Terminar de
+configurar» en la barra lateral). Reglas: texto visible en español; código y comentarios en
+inglés; nada en archivos de upstream salvo enganches de una línea anotados en
+`docs/upstream-divergence.md`.

@@ -246,6 +246,13 @@ describe("buildAcceptance", () => {
     expect(await policyHash()).toBe(policy);
   });
 
+  it("keeps the accepted wording of the first wizard: a shorter step shows the same policy", async () => {
+    // The hash recorded since the step of 2 November 2026; the redesign only folds the text.
+    expect(await policyHash()).toBe(
+      "sha256:4d230180f1bc7c706efd38feef65c2175d9a70a59c6e64a0504800eb43808521",
+    );
+  });
+
   it("hashes key order away", () => {
     expect(canonicalJson({ b: 1, a: [{ d: 2, c: null }] })).toBe('{"a":[{"c":null,"d":2}],"b":1}');
   });

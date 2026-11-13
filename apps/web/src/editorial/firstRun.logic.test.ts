@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  NIGHTLY_OFF,
+  NIGHTLY_ON,
   DONE_JOB,
   EMPTY_JOB,
   FAILED_JOB,
@@ -14,7 +16,9 @@ import {
   firstRunPhaseRows,
   firstRunView,
   minuteClockMs,
+  nextReviewText,
   phaseRowName,
+  reviewFailure,
 } from "./firstRun.logic";
 
 describe("firstRunView", () => {
@@ -71,7 +75,7 @@ describe("firstRunView", () => {
     const view = firstRunView({ active: null, latest: EMPTY_JOB, emptyRun: true });
     expect(view).toMatchObject({
       kind: "empty",
-      messages: ["El motor no formó ninguna tendencia con 1284 publicaciones capturadas."],
+      messages: ["La revisión no encontró ninguna tendencia en 1284 publicaciones leídas."],
     });
     const nothingCaptured = makeJob({
       status: "done",
@@ -127,11 +131,11 @@ describe("firstRunPhaseRows", () => {
   it("lists the five phases in order before the job records any", () => {
     const rows = firstRunPhaseRows(null);
     expect(rows.map((row) => [row.label, row.status])).toEqual([
-      ["Captura", "pending"],
-      ["Motor", "pending"],
-      ["Comprobación", "pending"],
-      ["Importación", "pending"],
-      ["Redacción", "pending"],
+      ["Lee las fuentes", "pending"],
+      ["Encuentra tendencias", "pending"],
+      ["Comprueba el resultado", "pending"],
+      ["Las guarda en tu bandeja", "pending"],
+      ["Redacta los títulos", "pending"],
     ]);
   });
 
@@ -139,8 +143,8 @@ describe("firstRunPhaseRows", () => {
     const rows = firstRunPhaseRows(RUNNING_JOB);
     expect(rows[0]).toMatchObject({ status: "done", detail: "1284 publicaciones · 40 s" });
     expect(rows[1]).toMatchObject({ status: "running", detail: "3072 de 11.913 textos" });
-    expect(phaseRowName(rows[1]!)).toBe("Motor: en curso, 3072 de 11.913 textos");
-    expect(phaseRowName(rows[2]!)).toBe("Comprobación: pendiente");
+    expect(phaseRowName(rows[1]!)).toBe("Encuentra tendencias: en curso, 3072 de 11.913 textos");
+    expect(phaseRowName(rows[2]!)).toBe("Comprueba el resultado: pendiente");
   });
 
   it("gives the running phase its elapsed time until the engine reports a count", () => {
@@ -283,5 +287,42 @@ describe("draftingProblem", () => {
     );
     expect(draftingProblem(DONE_JOB_DRAFTED)).toBeNull();
     expect(firstRunPhaseRows(DONE_JOB_DRAFTED)[4]?.warning).toBe(false);
+  });
+});
+
+describe("reviewFailure", () => {
+  it("names the phase that stopped, keeps what was read and folds the technical detail", () => {
+    expect(reviewFailure(FAILED_JOB)).toEqual({
+      headline: "No se pudieron agrupar las publicaciones.",
+      kept: "Lo leído quedó guardado; al reintentar no se vuelve a leer.",
+      technical: ["engine run exited with 1", ...FAILED_JOB.artifacts.notes],
+    });
+  });
+
+  it("says nothing was kept when the reading itself failed, and prefers a known cause", () => {
+    const unread = makeJob({
+      status: "failed",
+      artifacts: {
+        phases: phasesWith((index) => (index === 0 ? "failed" : "pending")),
+        failure: { code: "no_sources", phase: "collect" },
+      },
+    });
+    expect(reviewFailure(unread)).toMatchObject({
+      headline: "No hay ninguna fuente activada. Actívalas en Ajustes › Editorial › Fuentes.",
+      kept: null,
+    });
+  });
+});
+
+describe("nextReviewText", () => {
+  it("says tonight within a day, the date beyond it, and nothing while the review is off", () => {
+    // NIGHTLY_ON runs at 08:00 UTC, 03:00 in Guayaquil.
+    expect(nextReviewText(NIGHTLY_ON, Date.parse("2026-11-02T23:00:00.000Z"))).toBe(
+      "esta noche a las 03:00",
+    );
+    expect(nextReviewText(NIGHTLY_ON, Date.parse("2026-11-01T23:00:00.000Z"))).toBe(
+      "el mar, 3 nov a las 03:00",
+    );
+    expect(nextReviewText(NIGHTLY_OFF, 0)).toBeNull();
   });
 });

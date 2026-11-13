@@ -1,120 +1,134 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../test/render";
-import { FirstRunPanel, NightlyNote, type FirstRunPanelProps } from "./FirstRunCard";
-import { EMPTY_JOB, FAILED_JOB, NIGHTLY_OFF, NIGHTLY_ON, RUNNING_JOB } from "./firstRun.fixture";
+import { FirstRunPageView, type FirstRunPageViewProps } from "./FirstRunCard";
+import { EMPTY_JOB, FAILED_JOB, RUNNING_JOB } from "./firstRun.fixture";
 import { firstRunView } from "./firstRun.logic";
 
-const renderPanel = async (props: Partial<FirstRunPanelProps>) => {
+/** Screenshots only when asked: `VITE_EARLYSCRIPT_CAPTURE=1`. Ignored by Git. */
+const capture = async (name: string) => {
+  if ((import.meta.env as Record<string, unknown>)["VITE_EARLYSCRIPT_CAPTURE"] !== "1") return;
+  document.documentElement.classList.add("dark");
+  await page.screenshot({ path: `__screenshots__/${name}.png` });
+  document.documentElement.classList.remove("dark");
+};
+
+const renderPage = async (props: Partial<FirstRunPageViewProps>) => {
   const onRun = vi.fn();
+  const onContinueSetup = vi.fn();
   const screen = await render(
-    <div style={{ width: 260 }}>
-      <FirstRunPanel
+    <div className="mx-auto max-w-xl bg-background p-6">
+      <FirstRunPageView
+        setup={{ pending: false, reached: 3 }}
         view={{ kind: "idle" }}
+        first
+        nightly="esta noche a las 03:00"
         starting={false}
         error={null}
+        jobsKnown
+        modelReady
+        waitsForModel={false}
+        model={<p>Fila del modelo</p>}
+        notes={{ collect: "Hacker News, GitHub", run: "Agrupa en tu equipo, sin enviar nada" }}
         onRun={onRun}
-        runLabel="Ejecutar la primera corrida"
-        density="sidebar"
+        onContinueSetup={onContinueSetup}
         {...props}
       />
     </div>,
   );
-  return { screen, onRun };
+  return { screen, onRun, onContinueSetup };
 };
 
-describe("FirstRunPanel", () => {
-  it("starts the first run and shows why one did not start", async () => {
-    const { screen, onRun } = await renderPanel({});
+describe("FirstRunPageView", () => {
+  it("names what the setup still misses and takes the operator back to it", async () => {
+    const { screen, onContinueSetup } = await renderPage({ setup: { pending: true, reached: 2 } });
     await using _screen = screen;
-    await userEvent.click(screen.getByRole("button", { name: "Ejecutar la primera corrida" }));
-    expect(onRun).toHaveBeenCalledOnce();
-    expect(screen.container.querySelector("ol")).toBeNull();
+    await expect.element(page.getByText("Faltan tu canal y la revisión nocturna.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Continuar" }));
+    expect(onContinueSetup).toHaveBeenCalledOnce();
   });
 
-  it("reports a start that failed", async () => {
-    const { screen } = await renderPanel({
-      error: "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).",
-    });
+  it("waits for the model when the wizard left the first review to its download", async () => {
+    const { screen, onRun } = await renderPage({ modelReady: false, waitsForModel: true });
     await using _screen = screen;
     await expect
-      .element(screen.getByRole("alert"))
-      .toHaveTextContent(
-        "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).",
-      );
-  });
-
-  it("holds the button while the model is missing and says why", async () => {
-    const { screen, onRun } = await renderPanel({
-      blockedReason: "Primero descarga el modelo local de arriba.",
-    });
-    await using _screen = screen;
-    await expect
-      .element(screen.getByRole("button", { name: "Ejecutar la primera corrida" }))
-      .toBeDisabled();
-    await expect
-      .element(screen.getByText("Primero descarga el modelo local de arriba."))
+      .element(
+        page.getByText(
+          "La primera revisión empieza sola al terminar de descargar el modelo local.",
+        ),
+      )
       .toBeVisible();
+    await expect.element(page.getByText("Fila del modelo")).toBeVisible();
+    expect(page.getByRole("button", { name: "Buscar ahora" }).elements()).toHaveLength(0);
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("lists the phases of a running job without a run button", async () => {
-    const { screen } = await renderPanel({
-      view: firstRunView({ active: RUNNING_JOB, latest: null, emptyRun: false }),
-    });
+  it("offers the first review once the model is there", async () => {
+    const { screen, onRun } = await renderPage({});
     await using _screen = screen;
-    const rows = screen.container.querySelectorAll("li[data-phase]");
-    expect(Array.from(rows, (row) => row.getAttribute("data-status"))).toEqual([
-      "done",
-      "running",
-      "pending",
-      "pending",
-      "pending",
-    ]);
-    await expect
-      .element(screen.getByRole("listitem", { name: "Captura: hecha, 1284 publicaciones · 40 s" }))
-      .toBeVisible();
-    expect(screen.container.querySelector("button")).toBeNull();
-  });
-
-  it("offers a retry for a failed job, with its reason in Spanish", async () => {
-    const { screen, onRun } = await renderPanel({
-      view: firstRunView({ active: null, latest: FAILED_JOB, emptyRun: false }),
-    });
-    await using _screen = screen;
-    await expect.element(screen.getByRole("alert")).toHaveTextContent("La corrida falló");
     await expect
       .element(
-        screen.getByText("El motor de tendencias terminó con error al agrupar las publicaciones."),
+        page.getByText(
+          "Busca las primeras ahora o espera a la revisión de esta noche a las 03:00.",
+        ),
       )
       .toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await userEvent.click(page.getByRole("button", { name: "Buscar ahora" }));
     expect(onRun).toHaveBeenCalledOnce();
   });
 
-  it("explains a run that ended without trends and offers nothing to run again", async () => {
-    const { screen } = await renderPanel({
+  it("follows the first review with the same five phases", async () => {
+    const { screen } = await renderPage({
+      view: firstRunView({ active: RUNNING_JOB, latest: null, emptyRun: false }),
+    });
+    await using _screen = screen;
+    await expect
+      .element(page.getByRole("heading", { name: "Buscando tus primeras tendencias" }))
+      .toBeVisible();
+    await expect.element(page.getByText("Hacker News, GitHub")).toBeVisible();
+    await expect
+      .element(page.getByRole("listitem", { name: /^Encuentra tendencias: en curso/ }))
+      .toBeVisible();
+    expect(page.getByRole("button").elements()).toHaveLength(0);
+    await capture("bandeja-en-curso");
+  });
+
+  it("says where a failed first review stopped, retries it and folds the technical detail", async () => {
+    const { screen, onRun } = await renderPage({
+      view: firstRunView({ active: null, latest: FAILED_JOB, emptyRun: false }),
+    });
+    await using _screen = screen;
+    await expect
+      .element(page.getByRole("heading", { name: "La primera revisión no terminó" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("No se pudieron agrupar las publicaciones. Lo leído quedó guardado."))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Si no, se reintenta esta noche a las 03:00."))
+      .toBeVisible();
+    expect(page.getByText("engine run exited with 1").elements()).toHaveLength(0);
+    await userEvent.click(page.getByRole("button", { name: "Detalle técnico" }));
+    await expect.element(page.getByText("engine run exited with 1")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Reintentar" }));
+    expect(onRun).toHaveBeenCalledOnce();
+    await capture("bandeja-fallida");
+  });
+
+  it("explains a review that ended without trends", async () => {
+    const { screen } = await renderPage({
+      first: false,
       view: firstRunView({ active: null, latest: EMPTY_JOB, emptyRun: true }),
     });
     await using _screen = screen;
     await expect
-      .element(screen.getByText("La corrida terminó sin tendencias nuevas"))
+      .element(page.getByRole("heading", { name: "La revisión terminó sin tendencias nuevas" }))
       .toBeVisible();
-    expect(screen.container.querySelector("button")).toBeNull();
-  });
-});
-
-describe("NightlyNote", () => {
-  it("links to the settings while the nightly run is off, and names the next run when on", async () => {
-    await using off = await render(<NightlyNote settings={NIGHTLY_OFF} />);
     await expect
-      .element(off.getByRole("link", { name: "Ajustes › Editorial" }))
-      .toHaveAttribute("href", "/settings/editorial#editorial-nightly");
-    await using on = await render(<NightlyNote settings={NIGHTLY_ON} />);
-    await expect
-      .element(on.getByText("Próxima: mar, 3 nov, 03:00 (America/Guayaquil)."))
+      .element(page.getByText(/La revisión no encontró ninguna tendencia en 1284 publicaciones/))
       .toBeVisible();
+    expect(page.getByRole("button", { name: "Buscar de nuevo" }).elements()).toHaveLength(0);
   });
 });
