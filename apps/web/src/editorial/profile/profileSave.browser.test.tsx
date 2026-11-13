@@ -11,7 +11,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { useEnvironmentQuery } from "../../state/query";
-import { StudioProfileSettings } from "../settings/StudioProfileSettings";
+import { ChannelProfileSettings } from "../settings/ChannelSettings";
 import { editorialEnvironment } from "../state";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-profile-save");
@@ -164,7 +164,7 @@ function App() {
       <button type="button" onClick={() => setSpace(space === "dossier" ? "settings" : "dossier")}>
         {space === "dossier" ? "Abrir Ajustes" : "Volver al expediente"}
       </button>
-      {space === "dossier" ? <DossierProbe /> : <StudioProfileSettings />}
+      {space === "dossier" ? <DossierProbe /> : <ChannelProfileSettings />}
     </div>
   );
 }
@@ -187,7 +187,11 @@ describe("saving the studio profile", () => {
     await userEvent.click(page.getByRole("button", { name: "Abrir Ajustes" }));
     await userEvent.fill(page.getByLabelText("Nombre del canal"), "SingulariDev prueba caché");
     await userEvent.click(page.getByRole("button", { name: "Guardar versión 2" }));
-    await expect.element(page.getByRole("button", { name: "Guardar versión 3" })).toBeVisible();
+    // Saved: the bar goes away and the page shows the new version.
+    await expect
+      .element(page.getByRole("region", { name: "Cambios sin guardar" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Versión 2", { exact: true })).toBeVisible();
 
     await userEvent.click(page.getByRole("button", { name: "Volver al expediente" }));
     await expect.element(page.getByTestId("dossier-status")).toHaveTextContent("Desactualizado");
@@ -205,7 +209,10 @@ describe("saving the studio profile", () => {
       .toBeVisible();
     await expect.element(page.getByLabelText("Nombre del canal")).toBeDisabled();
     await expect.element(page.getByLabelText("Temas que cubre: tema nuevo")).toBeDisabled();
-    await expect.element(page.getByRole("button", { name: "Guardar versión 2" })).toBeDisabled();
+    // Nothing to save from a read-only session: the save bar never shows.
+    await expect
+      .element(page.getByRole("button", { name: "Guardar versión 2" }))
+      .not.toBeInTheDocument();
     expect(server.calls).not.toContain("editorial.profile.update");
   });
 });

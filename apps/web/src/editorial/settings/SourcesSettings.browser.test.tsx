@@ -5,7 +5,7 @@ import type {
   EditorialSourcesView,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -69,12 +69,26 @@ const VIEW: EditorialSourcesView = {
       },
       recentGaps: [{ day: "2026-10-27", reason: "not_collected" }],
     }),
-    entry({ source: "arxiv" }),
+    entry({
+      source: "arxiv",
+      collect: true,
+      lastCapture: {
+        day: "2026-10-30",
+        status: "unavailable",
+        items: 0,
+        retrievedAt: "2026-10-31T00:34:34.066Z",
+        note: null,
+      },
+      recentGaps: [
+        { day: "2026-10-28", reason: "fetch_failed" },
+        { day: "2026-10-30", reason: "fetch_failed" },
+      ],
+    }),
     entry({
       source: "npm",
       rankBlocked: null,
       backtestRunId: BACKTEST.backtestId,
-      backtest: BACKTEST,
+      backtest: { ...BACKTEST, status: "final" },
     }),
     entry({
       source: "huggingface",
@@ -90,7 +104,7 @@ const VIEW: EditorialSourcesView = {
     entry({ source: "stackexchange", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
     entry({ source: "bluesky", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
     entry({ source: "lobsters", rankBlocked: "not-ready", collectBlocked: "blocked" }),
-    entry({ source: "rss", rankBlocked: "not-ready", collectBlocked: "pending-review" }),
+    entry({ source: "rss", collect: true }),
   ],
   rssFeeds: [
     feed({ id: "openai", name: "OpenAI News", feedUrl: "https://openai.com/news/rss.xml" }),
@@ -134,140 +148,152 @@ const controls = (overrides: Partial<RssFeedControls> = {}): RssFeedControls => 
   ...overrides,
 });
 
+const renderView = (feeds = controls()) => {
+  const onChange = vi.fn();
+  return render(
+    <SourcesSettingsView view={VIEW} pending={new Set()} onChange={onChange} feeds={feeds} />,
+  ).then((screen) => ({ screen, onChange, feeds }));
+};
+
+const openLater = () => userEvent.click(page.getByRole("button", { name: /Todavía no cuentan/ }));
+const row = (source: string): Locator => page.getByTestId(`source-${source}`);
+const openRow = async (source: string, name: string | RegExp) =>
+  userEvent.click(row(source).getByRole("button", { name }).first());
+const openRss = async () => {
+  await openLater();
+  await openRow("rss", /Blogs y newsletters/);
+};
+
 describe("SourcesSettingsView", () => {
-  it("writes the capture switch of a source", async () => {
-    const onChange = vi.fn();
-    await using _screen = await render(
-      <SourcesSettingsView
-        view={VIEW}
-        pending={new Set()}
-        onChange={onChange}
-        feeds={controls()}
-      />,
-    );
+  it("locks the sources that count and folds the ones that do not, with their count", async () => {
+    const { screen } = await renderView();
+    await using _screen = screen;
+    await expect.element(page.getByText("Tus tendencias salen de Hacker News.")).toBeVisible();
     await expect
-      .element(page.getByText("Última captura: 30 oct 2026, completa", { exact: false }))
-      .toBeVisible();
-    await expect.element(page.getByText("27 oct (sin capturar)", { exact: false })).toBeVisible();
-    await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
-    expect(onChange).toHaveBeenCalledWith("arxiv", { collect: true });
+      .element(page.getByText("Hacker News cuenta para tus tendencias; se cambia en su ficha"))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole("switch", { name: "Capturar Hacker News" }))
+      .not.toBeInTheDocument();
+    const later = page.getByRole("button", { name: /Todavía no cuentan/ });
+    await expect.element(later).toMatchTextContent("· 7");
+    await expect.element(later).toHaveAttribute("aria-expanded", "false");
+    await expect.element(row("arxiv")).not.toBeInTheDocument();
+    await openLater();
+    await expect.element(row("arxiv")).toMatchTextContent("No responde · 2 fallos esta semana");
+    await expect.element(row("npm")).toMatchTextContent("lista para contar");
+    await expect.element(row("lobsters")).toMatchTextContent("Bloqueada");
+    await expect.element(page.getByRole("switch", { name: "Capturar Lobsters" })).toBeDisabled();
   });
 
-  it("shows the recorded backtest: date, cutoffs, P@5, lead, verdict and provisional state", async () => {
-    const onChange = vi.fn();
-    await using _screen = await render(
-      <SourcesSettingsView
-        view={VIEW}
-        pending={new Set()}
-        onChange={onChange}
-        feeds={controls()}
-      />,
-    );
-    const npm = page.getByRole("switch", { name: "Usar npm (registro) en el motor" });
-    await expect.element(npm).toBeEnabled();
-    await expect.element(npm).toHaveAccessibleDescription(/^Puede entrar al motor/);
+  it("asks before a source stops counting, and can stop its capture in the same step", async () => {
+    const { screen, onChange } = await renderView();
+    await using _screen = screen;
+    await openRow("hn", /Hacker News/);
+    await expect.element(row("hn")).toMatchTextContent("Parte del método evaluado");
+    const stop = page.getByRole("button", { name: "Dejar de contar o de capturar…" });
+    await userEvent.click(stop);
     await expect
-      .element(page.getByText("Backtest del 1 nov 2026, cortes del 17 oct al 30 oct: no empeora."))
-      .toBeVisible();
-    await expect
-      .element(
-        page.getByText(
-          "P@5 0,8 sin la fuente y 0,8 con ella; anticipación mediana 1 d y 1 d. Sobre 1 corte completo; aparte, 13 cortes parciales con P@5 0,78 y 0,78.",
-        ),
-      )
-      .toBeVisible();
-    await expect
-      .element(
-        page.getByText(
-          "Resultado provisional: seguimiento incompleto. Registrado a sabiendas por el operador.",
-        ),
-      )
-      .toBeVisible();
-
-    // A worse backtest is shown, and keeps the source out of the engine.
-    const hf = page.getByRole("switch", { name: "Usar Hugging Face Hub en el motor" });
-    await expect.element(hf).toBeDisabled();
-    await expect.element(hf).toHaveAccessibleDescription(/^No entra al motor: su backtest empeora/);
-    await expect
-      .element(page.getByText("Backtest del 29 oct 2026, cortes del 17 oct al 30 oct: empeora."))
-      .toBeVisible();
-    await expect
-      .element(
-        page.getByText("Resultado provisional: seguimiento incompleto. No habilita el motor."),
-      )
-      .toBeVisible();
-    await userEvent.click(npm);
-    expect(onChange).toHaveBeenCalledWith("npm", { rank: true });
-  });
-
-  it("keeps the engine switch off and says why until a backtest is recorded", async () => {
-    const onChange = vi.fn();
-    await using _screen = await render(
-      <SourcesSettingsView
-        view={VIEW}
-        pending={new Set()}
-        onChange={onChange}
-        feeds={controls()}
-      />,
-    );
-    const engine = page.getByRole("switch", { name: "Usar arXiv en el motor" });
-    await expect.element(engine).toBeDisabled();
-    await expect.element(engine).toHaveAccessibleDescription(/Pendiente de backtest/);
-    await expect
-      .element(page.getByRole("switch", { name: "Usar Hacker News en el motor" }))
-      .toBeEnabled();
-    await expect.element(page.getByRole("switch", { name: "Capturar Bluesky" })).toBeDisabled();
-    const unread = page.getByRole("switch", { name: "Capturar Stack Exchange" });
-    await expect.element(unread).toBeDisabled();
-    await expect.element(unread).toHaveAccessibleDescription(/^Pendiente de leer sus términos/);
-    await expect
-      .element(page.getByRole("switch", { name: "Usar Lobsters en el motor" }))
-      .toHaveAccessibleDescription(/Bloqueada por sus condiciones de uso/);
+      .element(page.getByRole("alertdialog"))
+      .toMatchTextContent("Es parte del método evaluado.");
+    await userEvent.click(page.getByRole("button", { name: "Cancelar" }));
     expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(stop);
+    await userEvent.click(page.getByRole("radio", { name: /Dejar de contar y de capturar/ }));
+    await userEvent.click(page.getByRole("button", { name: "Dejar de contar y de capturar" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("hn", { rank: false, collect: false });
   });
 
-  it("unfolds the governance record of a source", async () => {
-    await using screen = await render(
-      <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={controls()} />,
-    );
-    const arxiv = screen.container.querySelector("#editorial-source-arxiv")!;
-    const license = page.getByRole("link", { name: /CC0 1\.0/ });
-    await expect.element(license).not.toBeInTheDocument();
-    await userEvent.click(
-      page.elementLocator(arxiv).getByRole("button", { name: "Ficha de la fuente" }),
-    );
+  it("starts counting only a source whose test allows it, and only after confirming", async () => {
+    const { screen, onChange } = await renderView();
+    await using _screen = screen;
+    await openLater();
+    await openRow("arxiv", /arXiv/);
     await expect
-      .element(license)
+      .element(row("arxiv").getByRole("button", { name: "Contar para tendencias…" }))
+      .toBeDisabled();
+    await expect
+      .element(row("arxiv"))
+      .toMatchTextContent(
+        "Para contar necesita una prueba que no empeore los resultados · pendiente",
+      );
+    await openRow("npm", /npm/);
+    await userEvent.click(row("npm").getByRole("button", { name: "Contar para tendencias…" }));
+    await expect
+      .element(page.getByRole("alertdialog"))
+      .toMatchTextContent("Tus tendencias dejarán de salir del método evaluado.");
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: /^Contar npm/ }));
+    // npm was not being captured: counting it starts its capture too.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("npm", { rank: true, collect: true });
+  });
+
+  it("turns a capture on at once and asks before turning one off", async () => {
+    const { screen, onChange } = await renderView();
+    await using _screen = screen;
+    await openLater();
+    await userEvent.click(page.getByRole("switch", { name: "Capturar npm (registro)" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("npm", { collect: true });
+    await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
+    await expect
+      .element(page.getByRole("alertdialog"))
+      .toMatchTextContent("los días sin captura no se recuperan");
+    await userEvent.click(page.getByRole("button", { name: "Dejar de capturar" }));
+    expect(onChange).toHaveBeenLastCalledWith("arxiv", { collect: false });
+  });
+
+  it("names each of the last seven days for assistive technology", async () => {
+    const { screen } = await renderView();
+    await using _screen = screen;
+    const days = row("hn").getByRole("img");
+    await expect.element(days).toHaveAttribute("tabindex", "0");
+    await expect
+      .element(days)
+      .toHaveAccessibleName(
+        "Hacker News, últimos 7 días: 24 oct: sin huecos; 25 oct: sin huecos; 26 oct: sin huecos; 27 oct: sin captura; 28 oct: sin huecos; 29 oct: sin huecos; 30 oct: sin huecos",
+      );
+  });
+
+  it("unfolds the record of a source: conditions, access, retention and deletion", async () => {
+    const { screen } = await renderView();
+    await using _screen = screen;
+    await openLater();
+    await openRow("arxiv", /arXiv/);
+    const record = row("arxiv");
+    await expect.element(record).toMatchTextContent(/Ayer no respondió/);
+    await expect
+      .element(record.getByRole("link", { name: /CC0 1\.0/ }))
       .toHaveAttribute("href", "https://creativecommons.org/publicdomain/zero/1.0/");
     await expect
-      .element(page.getByRole("link", { name: "Leer términos" }))
+      .element(record.getByRole("link", { name: "Leer términos" }))
       .toHaveAttribute("href", "https://info.arxiv.org/help/api/tou.html");
-    await expect.element(page.getByText("31 oct 2026", { exact: false })).toBeVisible();
-    // arXiv's documented exception to robots.txt, with the terms it quotes.
+    for (const text of [
+      "Su robots.txt lo prohíbe; los términos de la API lo permiten",
+      "Cuánto se guardaTodo lo capturado, sin plazo fijado",
+      "BorrarPor autor o enlace, con un comando.",
+    ]) {
+      await expect.element(record).toMatchTextContent(text);
+    }
+    await userEvent.click(record.getByRole("button", { name: "Nota completa" }));
     await expect
-      .element(page.getByRole("link", { name: "Términos de la API" }))
-      .toHaveAttribute("href", "https://info.arxiv.org/help/api/tou.html");
-    await expect
-      .element(
-        page.getByText("make no more than one request every three seconds", { exact: false }),
-      )
-      .toBeVisible();
+      .element(record)
+      .toMatchTextContent("make no more than one request every three seconds");
   });
 
-  it("adds a feed by URL and clears the form", async () => {
-    const feeds = controls();
-    await using _screen = await render(
-      <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={feeds} />,
-    );
+  it("adds a feed by URL only with the acceptance, and clears the form", async () => {
+    const { screen, feeds } = await renderView();
+    await using _screen = screen;
+    await openRss();
     await userEvent.fill(page.getByLabelText("URL del feed"), "https://notes.example.org/atom");
+    await userEvent.click(page.getByRole("button", { name: "Nombre, sitio y nota (opcional)" }));
     await userEvent.fill(page.getByLabelText("URL del sitio"), "https://notes.example.org/");
     await userEvent.fill(page.getByLabelText("Nota del feed"), "Notas");
     // The acceptance is required: without it the form cannot be sent.
-    await expect.element(page.getByRole("button", { name: "Agregar feed" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Probar y agregar" })).toBeDisabled();
     await userEvent.click(
-      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
+      page.getByRole("checkbox", { name: /Lo uso para análisis privado, sin republicar/ }),
     );
-    await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
+    await userEvent.click(page.getByRole("button", { name: "Probar y agregar" }));
     expect(feeds.onAdd).toHaveBeenCalledWith({
       feedUrl: "https://notes.example.org/atom",
       siteUrl: "https://notes.example.org/",
@@ -277,83 +303,65 @@ describe("SourcesSettingsView", () => {
     await expect.element(page.getByLabelText("URL del feed")).toHaveValue("");
   });
 
-  it("shows why a feed was refused and keeps what the operator typed", async () => {
-    const feeds = controls({
-      onAdd: vi.fn(async () => ({
-        ok: false as const,
-        message: "El robots.txt del sitio prohíbe esa ruta a Earlyscript.",
-      })),
-    });
-    await using _screen = await render(
-      <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={feeds} />,
+  it("keeps a refused URL with its reason, drops the reason once it changes and explains an invalid one", async () => {
+    const { screen, feeds } = await renderView(
+      controls({
+        onAdd: vi.fn(async () => ({
+          ok: false as const,
+          message: "El robots.txt del sitio prohíbe esa ruta a Earlyscript.",
+        })),
+      }),
     );
-    await userEvent.fill(page.getByLabelText("URL del feed"), "https://lobste.rs/rss");
+    await using _screen = screen;
+    await openRss();
+    const url = page.getByLabelText("URL del feed");
+    await userEvent.fill(url, "https://lobste.rs/rss");
     await userEvent.click(
-      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
+      page.getByRole("checkbox", { name: /Lo uso para análisis privado, sin republicar/ }),
     );
-    await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
+    await userEvent.click(page.getByRole("button", { name: "Probar y agregar" }));
     await expect
       .element(page.getByText("El robots.txt del sitio prohíbe esa ruta a Earlyscript."))
       .toHaveAttribute("role", "alert");
-    await expect.element(page.getByLabelText("URL del feed")).toHaveValue("https://lobste.rs/rss");
+    await expect.element(url).toHaveValue("https://lobste.rs/rss");
+    await userEvent.fill(url, "not-a-url");
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    await userEvent.click(page.getByRole("button", { name: "Probar y agregar" }));
+    await expect
+      .element(page.getByText("«not-a-url» no es una URL válida", { exact: false }))
+      .toHaveAttribute("role", "alert");
+    expect(feeds.onAdd).toHaveBeenCalledTimes(1);
   });
 
-  it("removes and tests the operator's feeds, and excludes a default one", async () => {
-    const feeds = controls({
-      onTest: vi.fn(async () => ({
-        ok: true as const,
-        value: {
-          feedUrl: "https://blog.example.com/feed.xml",
-          format: "rss" as const,
-          title: "Example Engineering",
-          siteUrl: null,
-          entries: 12,
-          latestAt: "2026-10-30T08:30:00.000Z",
-          checkedAt: "2026-10-31T12:00:00.000Z",
-        },
-      })),
-    });
-    await using _screen = await render(
-      <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={feeds} />,
+  it("tests and removes the operator's feeds, and leaves out a default one", async () => {
+    const { screen, feeds } = await renderView(
+      controls({
+        onTest: vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            feedUrl: "https://blog.example.com/feed.xml",
+            title: "Example Engineering",
+            siteUrl: null,
+            entries: 12,
+            latestAt: "2026-10-30T08:30:00.000Z",
+            checkedAt: "2026-10-31T12:00:00.000Z",
+          },
+        })),
+      }),
     );
+    await using _screen = screen;
+    await openRss();
     await userEvent.click(page.getByRole("button", { name: "Probar Example Engineering" }));
     await expect
       .element(page.getByRole("status"))
-      .toHaveTextContent("12 entradas, la más reciente del 30 oct 2026.");
+      .toHaveTextContent("Responde · 12 entradas, la más reciente del 30 oct 2026");
     await userEvent.click(page.getByRole("button", { name: "Quitar Example Engineering" }));
     expect(feeds.onRemove).toHaveBeenCalledWith("https://blog.example.com/feed.xml");
-
-    await userEvent.click(page.getByRole("button", { name: /Feeds por defecto \(1 de 2/ }));
+    await userEvent.click(page.getByRole("button", { name: /2 feeds por defecto/ }));
     await expect
       .element(page.getByRole("switch", { name: "Incluir Google DeepMind Blog" }))
       .not.toBeChecked();
     await userEvent.click(page.getByRole("switch", { name: "Incluir OpenAI News" }));
     expect(feeds.onExcludeDefault).toHaveBeenCalledWith("openai", true);
-  });
-
-  it("drops a refusal once the URL changes and explains an invalid one in Spanish", async () => {
-    const feeds = controls({
-      onAdd: vi.fn(async () => ({
-        ok: false as const,
-        message: "El robots.txt del sitio prohíbe esa ruta a Earlyscript.",
-      })),
-    });
-    await using _screen = await render(
-      <SourcesSettingsView view={VIEW} pending={new Set()} onChange={vi.fn()} feeds={feeds} />,
-    );
-    const url = page.getByLabelText("URL del feed");
-    await userEvent.fill(url, "https://lobste.rs/rss");
-    await userEvent.click(
-      page.getByRole("checkbox", { name: /Uso para análisis privado, sin republicar/ }),
-    );
-    await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
-    await expect.element(page.getByRole("alert")).toBeInTheDocument();
-    await userEvent.fill(url, "not-a-url");
-    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
-    await userEvent.click(page.getByRole("button", { name: "Agregar feed" }));
-    await expect
-      .element(page.getByText("«not-a-url» no es una URL válida", { exact: false }))
-      .toHaveAttribute("role", "alert");
-    expect(feeds.onAdd).toHaveBeenCalledTimes(1);
   });
 });

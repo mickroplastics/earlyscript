@@ -1,6 +1,6 @@
 import type { EditorialFeedCheck, EditorialRssFeed } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -36,8 +36,8 @@ const dateFormat = new Intl.DateTimeFormat("es", {
 function feedCheckText(check: EditorialFeedCheck): string {
   const entries = `${check.entries} ${check.entries === 1 ? "entrada" : "entradas"}`;
   return check.latestAt === null
-    ? `${entries}, sin fecha legible.`
-    : `${entries}, la más reciente del ${dateFormat.format(new Date(check.latestAt))}.`;
+    ? `Responde · ${entries}, sin fecha legible`
+    : `Responde · ${entries}, la más reciente del ${dateFormat.format(new Date(check.latestAt))}`;
 }
 
 function isHttpUrl(value: string): boolean {
@@ -49,68 +49,79 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-function FeedLine({ feed }: { readonly feed: EditorialRssFeed }) {
+/** "answer.ai/index.xml": the feed URL without its scheme. */
+const shortUrl = (url: string) => url.replace(/^https?:\/\//, "");
+
+/** A folded block inside a source's record: a chevron, a title and a quiet summary. */
+export function Fold({
+  title,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  readonly title: string;
+  readonly summary?: string;
+  readonly defaultOpen?: boolean;
+  readonly children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <span className="min-w-0 flex-1">
-      <span className="block truncate text-foreground">
-        {feed.siteUrl ? (
-          <a
-            href={feed.siteUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="underline-offset-2 hover:underline"
-          >
-            {feed.name}
-          </a>
-        ) : (
-          feed.name
-        )}
-      </span>
-      <span className="block truncate">{feed.feedUrl}</span>
-      {feed.origin === "default" && feed.note ? (
-        <span className="block truncate">{feed.note}</span>
-      ) : null}
-    </span>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded-md text-left text-sm text-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+            open && "rotate-90",
+          )}
+        />
+        <span className="shrink-0">{title}</span>
+        {summary ? (
+          <span className="ml-auto min-w-0 truncate pl-4 text-xs text-muted-foreground">
+            {summary}
+          </span>
+        ) : null}
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="pt-1 pb-2 pl-5">{children}</div>
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
 
-function DefaultFeeds({
+/** The engine's curated feeds, folded, each with a switch to leave it out. */
+export function DefaultFeeds({
   feeds,
   onExclude,
 }: {
   readonly feeds: ReadonlyArray<EditorialRssFeed>;
   readonly onExclude: (id: string, excluded: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const included = feeds.filter((feed) => !feed.excluded).length;
+  const included = feeds.filter((feed) => !feed.excluded);
+  const names = included.slice(0, 4).map((feed) => feed.name);
+  const summary = `${included.length === feeds.length ? "todos incluidos" : `${included.length} de ${feeds.length} incluidos`}${names.length > 0 ? ` · ${names.join(", ")}${included.length > names.length ? "…" : ""}` : ""}`;
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex min-h-8 items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-            open && "rotate-90",
-          )}
-        />
-        Feeds por defecto ({included} de {feeds.length} incluidos)
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <ul className="space-y-1.5 pb-2 text-xs text-muted-foreground">
-          {feeds.map((feed) => (
-            <li key={feed.id} className="flex items-center gap-3">
-              <FeedLine feed={feed} />
-              <Switch
-                size="sm"
-                checked={!feed.excluded}
-                onCheckedChange={(checked) => onExclude(feed.id, !checked)}
-                aria-label={`Incluir ${feed.name}`}
-              />
-            </li>
-          ))}
-        </ul>
-      </CollapsiblePanel>
-    </Collapsible>
+    <Fold title={`${feeds.length} feeds por defecto`} summary={summary}>
+      <ul className="space-y-1.5 text-xs text-muted-foreground">
+        {feeds.map((feed) => (
+          <li key={feed.id} className="flex items-center gap-3">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-foreground">{feed.name}</span>
+              <span className="block truncate">
+                {shortUrl(feed.feedUrl)}
+                {feed.note ? ` · ${feed.note}` : ""}
+              </span>
+            </span>
+            <Switch
+              size="sm"
+              checked={!feed.excluded}
+              onCheckedChange={(checked) => onExclude(feed.id, !checked)}
+              aria-label={`Incluir ${feed.name}`}
+            />
+          </li>
+        ))}
+      </ul>
+    </Fold>
   );
 }
 
@@ -129,33 +140,56 @@ function UserFeed({
     setTesting(false);
   };
   return (
-    <li className="space-y-1">
-      <div className="flex items-center gap-2">
-        <FeedLine feed={feed} />
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={testing}
-          onClick={() => void test()}
-          aria-label={`Probar ${feed.name}`}
-        >
-          {testing ? "Probando…" : "Probar"}
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost-destructive"
-          onClick={() => controls.onRemove(feed.feedUrl)}
-          aria-label={`Quitar ${feed.name}`}
-        >
-          Quitar
-        </Button>
-      </div>
-      {feed.note ? <p>{feed.note}</p> : null}
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+      <span className="min-w-0 flex-1">
+        <span className="text-foreground">
+          {feed.siteUrl ? (
+            <a
+              href={feed.siteUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline-offset-2 hover:underline"
+            >
+              {feed.name}
+            </a>
+          ) : (
+            feed.name
+          )}
+        </span>
+        <span className="ml-2 text-xs text-muted-foreground">{shortUrl(feed.feedUrl)}</span>
+        {feed.note ? (
+          <span className="block text-xs text-muted-foreground">{feed.note}</span>
+        ) : null}
+      </span>
       {result ? (
-        <p role="status" className={result.ok ? undefined : "text-destructive-foreground"}>
+        <span
+          role="status"
+          className={cn(
+            "flex items-center gap-1 text-xs",
+            result.ok ? "text-success-foreground" : "text-destructive-foreground",
+          )}
+        >
+          {result.ok ? <CheckIcon aria-hidden className="size-3" /> : null}
           {result.ok ? feedCheckText(result.value) : result.message}
-        </p>
+        </span>
       ) : null}
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={testing}
+        onClick={() => void test()}
+        aria-label={`Probar ${feed.name}`}
+      >
+        {testing ? "Probando…" : "Probar"}
+      </Button>
+      <Button
+        size="xs"
+        variant="ghost-destructive"
+        onClick={() => controls.onRemove(feed.feedUrl)}
+        aria-label={`Quitar ${feed.name}`}
+      >
+        Quitar
+      </Button>
     </li>
   );
 }
@@ -202,8 +236,8 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
     setError(null);
   };
   return (
-    <form className="space-y-1.5" noValidate onSubmit={(event) => void submit(event)}>
-      <div className="grid gap-1.5 @min-[32rem]/settings-row:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+    <form className="space-y-2 pt-2" noValidate onSubmit={(event) => void submit(event)}>
+      <div className="flex gap-2">
         <Input
           size="sm"
           inputMode="url"
@@ -212,44 +246,52 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
           placeholder="https://ejemplo.com/feed.xml"
           aria-label="URL del feed"
           aria-invalid={error !== null}
+          className="min-w-0 flex-1"
         />
-        <Input
+        <Button
           size="sm"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Nombre (opcional)"
-          aria-label="Nombre del feed"
-        />
-      </div>
-      <div className="grid gap-1.5 @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-        <Input
-          size="sm"
-          inputMode="url"
-          value={siteUrl}
-          onChange={edit(setSiteUrl)}
-          placeholder="URL del sitio (opcional, se toma del feed)"
-          aria-label="URL del sitio"
-        />
-        <Input
-          size="sm"
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          placeholder="Nota (opcional)"
-          aria-label="Nota del feed"
-        />
-        <Button size="sm" type="submit" disabled={adding || !feedUrl.trim() || !acknowledged}>
-          {adding ? "Comprobando…" : "Agregar feed"}
+          variant="outline"
+          type="submit"
+          disabled={adding || !feedUrl.trim() || !acknowledged}
+        >
+          {adding ? "Comprobando…" : "Probar y agregar"}
         </Button>
       </div>
-      <label className="flex cursor-pointer items-center gap-2">
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
         <Checkbox
           checked={acknowledged}
           onCheckedChange={(checked) => setAcknowledged(checked === true)}
         />
-        <span>Uso para análisis privado, sin republicar; respeto los términos de este sitio</span>
+        <span>Lo uso para análisis privado, sin republicar, y respeto los términos del sitio</span>
       </label>
+      <Fold title="Nombre, sitio y nota (opcional)">
+        <div className="grid gap-1.5 @min-[32rem]/settings-row:grid-cols-3">
+          <Input
+            size="sm"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Nombre (se toma del feed)"
+            aria-label="Nombre del feed"
+          />
+          <Input
+            size="sm"
+            inputMode="url"
+            value={siteUrl}
+            onChange={edit(setSiteUrl)}
+            placeholder="URL del sitio (se toma del feed)"
+            aria-label="URL del sitio"
+          />
+          <Input
+            size="sm"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Nota"
+            aria-label="Nota del feed"
+          />
+        </div>
+      </Fold>
       {error ? (
-        <p role="alert" className="text-destructive-foreground">
+        <p role="alert" className="text-sm text-destructive-foreground">
           {error}
         </p>
       ) : null}
@@ -257,36 +299,30 @@ function AddFeedForm({ onAdd }: { readonly onAdd: RssFeedControls["onAdd"] }) {
   );
 }
 
-/** Inside the RSS source row: the engine's feeds, the operator's, and the form to add one. */
-export function RssFeedsSettings({
+/** The operator's feeds, each with «Probar» and «Quitar», and the form to add one. */
+export function UserFeeds({
   feeds,
   controls,
 }: {
   readonly feeds: ReadonlyArray<EditorialRssFeed>;
   readonly controls: RssFeedControls;
 }) {
-  const defaults = feeds.filter((feed) => feed.origin === "default");
-  const mine = feeds.filter((feed) => feed.origin === "user");
   return (
-    <div className="space-y-2 pb-1 text-xs text-muted-foreground">
-      <DefaultFeeds feeds={defaults} onExclude={controls.onExcludeDefault} />
-      <div className="space-y-1.5">
-        <p className="font-medium text-foreground">Tus feeds</p>
-        {mine.length === 0 ? (
-          <p>Todavía no agregaste feeds.</p>
-        ) : (
-          <ul className="space-y-2">
-            {mine.map((feed) => (
-              <UserFeed key={feed.feedUrl} feed={feed} controls={controls} />
-            ))}
-          </ul>
-        )}
-        <AddFeedForm onAdd={controls.onAdd} />
-        <p>
-          Al agregar, el servidor comprueba el robots.txt del sitio y descarga el feed una vez con
-          la identidad del motor.
-        </p>
-      </div>
+    <div className="space-y-1">
+      <p className="text-xs text-muted-foreground">Tus feeds</p>
+      {feeds.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Todavía no agregaste feeds.</p>
+      ) : (
+        <ul className="divide-y divide-border/50">
+          {feeds.map((feed) => (
+            <UserFeed key={feed.feedUrl} feed={feed} controls={controls} />
+          ))}
+        </ul>
+      )}
+      <AddFeedForm onAdd={controls.onAdd} />
+      <p className="text-xs text-muted-foreground">
+        Al agregar, se comprueba el robots.txt del sitio y se descarga el feed una vez.
+      </p>
     </div>
   );
 }

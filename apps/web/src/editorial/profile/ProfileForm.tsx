@@ -344,7 +344,7 @@ export function ProfileForm({
           [
             "include",
             "Temas que cubre",
-            "En inglés: el motor los compara con publicaciones en inglés. Enter añade otro.",
+            "En inglés: se comparan con publicaciones en inglés. Enter añade otro.",
           ],
           [
             "exclude",
