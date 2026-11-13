@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 
 import { durationText, jobMessages } from "./jobsState";
-import { EDITORIAL_DRAFTING_SECTION_ID } from "./settings/settingsEntry";
 
 /**
  * What the first-run card shows, from the job in flight, the newest job and the read of the
@@ -147,7 +146,7 @@ export interface DraftingProblem {
   /** Where the operator fixes it. */
   readonly link: {
     readonly label: string;
-    readonly to: "/settings/providers" | "/settings/editorial";
+    readonly to: "/settings/providers" | "/settings/editorial/drafting";
     readonly hash?: string;
   };
 }
@@ -159,8 +158,7 @@ const PROVIDERS_LINK = {
 
 const DRAFTING_LINK = {
   label: "Abrir Ajustes › Editorial › Redacción",
-  to: "/settings/editorial",
-  hash: EDITORIAL_DRAFTING_SECTION_ID,
+  to: "/settings/editorial/drafting",
 } as const satisfies DraftingProblem["link"];
 
 /**

@@ -56,7 +56,7 @@ export const editorialJobsEnvironment = {
   }),
 };
 
-export const PHASE_LABEL: Readonly<Record<EditorialJobPhaseName, string>> = {
+const PHASE_LABEL: Readonly<Record<EditorialJobPhaseName, string>> = {
   collect: "captura",
   run: "motor",
   check: "comprobación",

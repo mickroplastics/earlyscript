@@ -251,8 +251,7 @@ describe("draftingProblem", () => {
         "Tope mensual de redacción alcanzado (600 de 600): 6 tendencias quedaron sin redactar. Sube el tope en Ajustes › Editorial › Redacción o espera al mes siguiente.",
         {
           label: "Abrir Ajustes › Editorial › Redacción",
-          to: "/settings/editorial",
-          hash: "editorial-drafting",
+          to: "/settings/editorial/drafting",
         },
       ],
       [

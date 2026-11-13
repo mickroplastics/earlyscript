@@ -317,7 +317,7 @@ describe("TrendInbox", () => {
       { code: "presentations_budget", ready: 0, total: 2, used: 600, limit: 600 } as const,
       "Tope mensual alcanzado: 2 tendencias sin redactar.",
       "Abrir Ajustes › Editorial › Redacción",
-      "/settings/editorial#editorial-drafting",
+      "/settings/editorial/drafting",
     ],
     [
       { code: "presentations_pending", ready: 0, total: 2 } as const,
