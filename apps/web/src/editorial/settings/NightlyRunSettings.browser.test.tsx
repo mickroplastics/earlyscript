@@ -139,7 +139,7 @@ describe("NightlyRunSettings", () => {
       cutoffAt: "2026-10-31T00:00:00.000Z",
       status: "failed",
       attempt: 3,
-      error: "engine run exited with 1: ENOENT /home/mick/.t3/userdata/run.log",
+      error: "engine run exited with 1: ENOENT /home/operador/.t3/userdata/run.log",
       artifacts: {
         ...job({}).artifacts,
         runId: null,
