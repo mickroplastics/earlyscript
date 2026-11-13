@@ -108,6 +108,11 @@ describe("trendPresentationVoiceProblems", () => {
       "Varios textos discuten el slop [itm_hn_1]. Los artículos no se han leído. Solo hay titulares; los artículos no se han leído.",
       "Qué pasó: «no se han leido»",
     ],
+    [
+      "MergeAtlas propone revisar la intención, según su excerpt [itm_hn_1].",
+      "Qué pasó: «excerpt»",
+    ],
+    ["Según el extracto, Flint pide 48 GB [itm_hn_1].", "Qué pasó: «el extracto»"],
   ])("rejects %s", (whatHappened, problems) => {
     expect(problemsText(whatHappened)).toBe(problems);
   });

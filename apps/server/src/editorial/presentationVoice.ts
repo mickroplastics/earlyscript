@@ -135,6 +135,8 @@ const PHRASE_RULES: ReadonlyArray<{
   { pattern: /\b(?:titulares y extractos|extractos breves)\b/, kind: "note" },
   { pattern: /\bno se (?:ha|han) leido\b/, kind: "note" },
   { pattern: /\bsin leer (?:los |el )?(?:articulos?|textos?)\b/, kind: "note" },
+  // The evidence's own fields are not news: "según su excerpt", "el extracto dice".
+  { pattern: /\b(?:excerpts?|(?:su|sus|el|los) extractos?)\b/, kind: "note" },
 ];
 
 /** Words that name the collection; allowed only inside the evidence's own expression. */
