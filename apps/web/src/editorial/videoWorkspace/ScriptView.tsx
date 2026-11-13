@@ -238,20 +238,47 @@ const NOTICE_KIND: Readonly<Record<ScriptNotice["kind"], string>> = {
 };
 
 /**
- * What needs attention before recording, with previous and next. The verifier's sentences
- * without a source number follow in a quiet line: a count, not a verdict.
+ * The citation verifier's count, quiet, beside the version: a count, not a verdict. Its
+ * sentences are underlined with dots in the script.
  */
+export function VerifierCount({
+  claims,
+  uncited,
+}: {
+  readonly claims: number;
+  readonly uncited: number;
+}) {
+  if (claims === 0) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="shrink-0 underline decoration-dotted underline-offset-4" tabIndex={0} />
+        }
+      >
+        {uncited === 0
+          ? `Las ${claims} frases llevan número de fuente`
+          : `${uncited} de ${claims} frases sin fuente`}
+      </TooltipTrigger>
+      <TooltipPopup className="max-w-72">
+        Revisión de referencias: cuenta las frases sin número de fuente, subrayadas con puntos en el
+        guion. No comprueba que la fuente diga lo mismo que la frase, y no toda frase necesita una.
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** What needs attention before recording, with previous and next. */
 export function NoticeBar({
   notices,
   activeIndex,
   onGo,
-  verifier,
 }: {
   readonly notices: ReadonlyArray<ScriptNotice>;
   readonly activeIndex: number | null;
   readonly onGo: (index: number) => void;
-  readonly verifier: { readonly claims: number; readonly uncited: number } | null;
 }) {
+  if (notices.length === 0) return null;
   const count = notices.length;
   const index = activeIndex ?? -1;
   const current = index >= 0 ? notices[index] : undefined;
@@ -298,20 +325,6 @@ export function NoticeBar({
             </Button>
           </div>
         </div>
-      ) : null}
-      {verifier && verifier.claims > 0 ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={<p className="self-start text-muted-foreground text-xs" tabIndex={0} />}
-          >
-            Revisión de referencias: {verifier.uncited} de {verifier.claims} frases sin número de
-            fuente{verifier.uncited > 0 ? ", subrayadas con puntos" : ""}.
-          </TooltipTrigger>
-          <TooltipPopup className="max-w-72">
-            Cuenta las frases sin número de fuente. No comprueba que la fuente diga lo mismo que la
-            frase, y no toda frase necesita una fuente.
-          </TooltipPopup>
-        </Tooltip>
       ) : null}
     </div>
   );

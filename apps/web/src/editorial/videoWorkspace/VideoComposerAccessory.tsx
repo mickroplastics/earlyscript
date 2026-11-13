@@ -60,32 +60,21 @@ export function VideoComposerAccessory() {
       <div
         className="flex flex-col gap-3 overflow-y-auto pb-3"
         // Room for the composer below and the tabs above, on a 800 px high window too.
-        style={{ maxHeight: "calc(100dvh - 22rem)" }}
+        style={{ maxHeight: "calc(100dvh - 26rem)" }}
         data-thread-map-script
         data-video-welcome
       >
-        <ul
-          aria-label="El asistente ya tiene"
-          className="flex flex-wrap gap-x-3 gap-y-1 rounded-lg border bg-card/60 px-3 py-2 text-muted-foreground text-xs"
-        >
-          {[
-            "La ficha del tema",
-            offer.evidenceTotal === null
-              ? "Sus fuentes, numeradas como aquí"
-              : `Sus ${offer.evidenceTotal} fuentes, numeradas como aquí`,
-            "El archivo del guion",
-          ].map((line) => (
-            <li key={line} className="flex items-center gap-1.5">
-              <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
-              {line}
-            </li>
-          ))}
-        </ul>
         <div className="flex flex-col gap-1">
           <h2 className="font-semibold text-lg">¿Cómo quieres comenzar?</h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
             El asistente escribe el guion en inglés, con una cita por dato; tú lo revisas y lo
             decides. Tu primer mensaje empieza el paso 2. Una sugerencia se envía al tocarla.
+          </p>
+          <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
+            <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
+            Ya tiene la ficha del tema,{" "}
+            {offer.evidenceTotal === null ? "sus fuentes" : `sus ${offer.evidenceTotal} fuentes`} y
+            el archivo del guion.
           </p>
         </div>
         <div className="flex flex-col gap-1.5">

@@ -24,3 +24,11 @@
 [data-map-welcome="true"] [data-map-conversation] [data-chat-column] .justify-center > p {
   display: none;
 }
+
+/* The welcome and the composer sit together in the middle of an empty conversation, as
+   upstream's draft hero does, instead of at the bottom under an empty space. */
+[data-map-welcome="true"] [data-map-conversation] [data-chat-composer-overlay] {
+  top: 0;
+  display: flex;
+  align-items: safe center;
+}
