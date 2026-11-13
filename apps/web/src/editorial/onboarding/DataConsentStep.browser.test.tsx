@@ -5,54 +5,23 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { Dialog } from "../../components/ui/dialog";
-import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
-import { COMMON_STORED_LINE, DATA_CONSENT_POLICY } from "./dataConsent.logic";
-import { DATA_OUTBOUND, otherOutboundLine } from "./dataOutbound";
+import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
+import { COMMON_STORED_LINE, DATA_CONSENT_POLICY, policyHash } from "./dataConsent.logic";
+import {
+  DATA_OUTBOUND,
+  OTHER_OUTBOUND,
+  OTHER_OUTBOUND_PREFIX,
+  otherOutboundItem,
+  otherOutboundLine,
+} from "./dataOutbound";
 import { DataHandlingDialog } from "./DataHandlingDialog";
 import { DataConsentView, type DataConsentViewProps } from "./DataConsentStep";
-import { ONBOARDING_STAGES } from "./steps";
 
 // Screenshots for review: VITE_EARLYSCRIPT_SHOTS=1 writes them to the git-ignored
 // __screenshots__/data-consent/ next to this file; without it the test only asserts.
 const SHOTS = import.meta.env.VITE_EARLYSCRIPT_SHOTS === "1";
 async function shot(name: string) {
   if (SHOTS) await page.screenshot({ path: `__screenshots__/data-consent/${name}.png` });
-}
-
-/** The wizard dialog's only scroll container (WizardPopup's ScrollArea). */
-function dialogScroll(): HTMLElement {
-  const viewport = document.querySelector<HTMLElement>(
-    "[role=dialog] [data-slot=scroll-area-viewport]",
-  );
-  if (!viewport) throw new Error("wizard scroll area not found");
-  return viewport;
-}
-/**
- * Scrolls the dialog. WizardPanel animates its height, so "bottom" retries until the
- * step's last control is inside the dialog.
- */
-async function scrollDialogTo(position: "top" | "middle" | "bottom") {
-  const viewport = dialogScroll();
-  if (position !== "bottom") {
-    const max = viewport.scrollHeight - viewport.clientHeight;
-    viewport.scrollTop = position === "top" ? 0 : max / 2;
-    return;
-  }
-  await vi.waitFor(() => {
-    viewport.scrollTop = viewport.scrollHeight;
-    const last = continueOrSaving().getBoundingClientRect();
-    expect(last.bottom).toBeLessThanOrEqual(viewport.getBoundingClientRect().bottom);
-    expect(viewport.scrollTop + viewport.clientHeight).toBeGreaterThanOrEqual(
-      viewport.scrollHeight - 1,
-    );
-  });
-}
-function continueOrSaving(): HTMLElement {
-  const buttons = [...document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")];
-  const button = buttons.find((candidate) => /Continuar|Guardando/.test(candidate.textContent));
-  if (!button) throw new Error("continue button not found");
-  return button;
 }
 
 /** The viewport for one test; back to the desktop size on dispose. */
@@ -117,16 +86,18 @@ const FIRST_RUN: EditorialSourcesView = {
   asOf: "2026-11-02T12:00:00.000Z",
 };
 
-/** The step inside the wizard's own chrome, as the shell mounts it. */
+/** The step inside a dialog of the wizard's size, as the shell mounts it. */
 function InWizard({ children }: { readonly children: ReactNode }) {
   return (
     <Dialog open disablePointerDismissal>
-      <WizardPopup size="wide" bottomStickOnMobile={false}>
-        <WizardHeader title="Configurar Earlyscript">
-          <WizardSteps steps={ONBOARDING_STAGES.map((stage) => stage.label)} currentStep={0} />
-        </WizardHeader>
-        <WizardPanel>{children}</WizardPanel>
-      </WizardPopup>
+      <DialogPopup
+        showCloseButton={false}
+        bottomStickOnMobile={false}
+        className="h-[min(48.25rem,calc(100dvh-2rem))] w-[min(62.5rem,calc(100vw-2rem))] max-w-none overflow-hidden"
+      >
+        <DialogTitle className="sr-only">Configurar Earlyscript</DialogTitle>
+        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      </DialogPopup>
     </Dialog>
   );
 }
@@ -142,58 +113,83 @@ const props = (overrides: Partial<DataConsentViewProps> = {}): DataConsentViewPr
 });
 
 const acceptBox = () => page.getByRole("checkbox", { name: DATA_CONSENT_POLICY.accept });
-const continueButton = () => page.getByRole("button", { name: "Continuar" });
+const continueButton = () => page.getByRole("button", { name: "Aceptar y continuar" });
+const openDetail = () =>
+  userEvent.click(page.getByRole("button", { name: "Ver cada conexión, conservación y borrado" }));
 
 describe("DataConsentStep", () => {
-  it.each([
-    [1280, 800, "claro"],
-    [390, 844, "claro"],
-    [1280, 800, "oscuro"],
-    [390, 844, "oscuro"],
-  ] as const)(
-    "lists in the step and in the privacy dialog the same outbound entries (%ix%i, %s)",
-    async (width, height, theme) => {
-      using _theme = theme === "oscuro" ? darkTheme() : null;
-      await using _viewport = await viewport(width, height);
-      const ids = (root: ParentNode) =>
-        [...root.querySelectorAll<HTMLElement>("[data-outbound-id]")].map(
-          (node) => node.dataset.outboundId,
-        );
-      const tag = `${width}x${height}-${theme}`;
-      {
-        await using _screen = await render(
-          <InWizard>
-            <DataConsentView {...props()} />
-          </InWizard>,
-        );
-        const block = page.getByRole("region", { name: "Qué sale de esta máquina" });
-        await expect.element(block).toBeVisible();
-        expect(ids(block.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
-        expect(page.getByTestId("consent-other-outbound").element().textContent).toBe(
-          otherOutboundLine(),
-        );
-        block.element().scrollIntoView({ block: "start" });
-        await shot(`40-paso-que-sale-${tag}`);
-      }
-      await using _dialog = await render(<DataHandlingDialog trigger={<button type="button" />} />);
-      await userEvent.click(page.getByRole("button", { name: "Cómo se tratan tus datos" }));
-      const dialog = page.getByRole("dialog", { name: "Cómo se tratan tus datos" });
-      await expect.element(dialog).toBeVisible();
-      expect(ids(dialog.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
-      await shot(`41-dialogo-datos-${tag}`);
-    },
-  );
+  it("summarises what leaves in three lines and folds the accepted wording, the dialog's list included", async () => {
+    await using _viewport = await viewport(1440, 900);
+    const ids = (root: ParentNode) =>
+      [...root.querySelectorAll<HTMLElement>("[data-outbound-id]")].map(
+        (node) => node.dataset.outboundId,
+      );
+    {
+      await using _screen = await render(
+        <InWizard>
+          <DataConsentView {...props()} />
+        </InWizard>,
+      );
+      const summary = page.getByTestId("consent-summary");
+      await expect.element(summary.getByText("A cada fuente activada")).toBeVisible();
+      await expect.element(summary.getByText("Hasta 12 publicaciones")).toBeVisible();
+      await expect.element(summary.getByText("Lo demás, sin tus textos")).toBeVisible();
+      expect(page.getByTestId("consent-detail").elements()).toHaveLength(0);
+      await shot("01-resumen");
 
-  it("lists capturable sources apart from the ones without permission", async () => {
-    await using _viewport = await viewport(1280, 800);
+      await openDetail();
+      const detail = page.getByTestId("consent-detail");
+      await expect.element(detail).toBeVisible();
+      expect(ids(detail.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
+      // The hashed sentence, one row per entry.
+      expect(page.getByTestId("consent-other-outbound").element().textContent).toBe(
+        `${OTHER_OUTBOUND_PREFIX.trim()}${OTHER_OUTBOUND.map(otherOutboundItem).join(";")}.`,
+      );
+      expect(otherOutboundLine()).toBe(
+        `${OTHER_OUTBOUND_PREFIX}${OTHER_OUTBOUND.map(otherOutboundItem).join("; ")}.`,
+      );
+      expect(page.getByTestId("consent-common-stored").element().textContent).toBe(
+        COMMON_STORED_LINE,
+      );
+      for (const text of [
+        DATA_CONSENT_POLICY.intro,
+        ...DATA_CONSENT_POLICY.outbound,
+        ...DATA_CONSENT_POLICY.retention,
+        ...DATA_CONSENT_POLICY.deletion,
+      ]) {
+        expect(detail.element().textContent).toContain(text);
+      }
+      await expect.element(page.getByText(/^Aún no hay capturas\./)).toBeInTheDocument();
+      await userEvent.click(page.getByText("Orden para borrar desde la terminal"));
+      await expect
+        .element(
+          page.getByText(
+            "engine purge --corpus /home/operador/earlyscript-data/live --source <fuente>",
+            { exact: false },
+          ),
+        )
+        .toBeVisible();
+      // Reading the detail is not accepting it.
+      await expect.element(acceptBox()).not.toBeChecked();
+      await expect.element(continueButton()).toBeDisabled();
+      await shot("02-detalle");
+    }
+    await using _dialog = await render(<DataHandlingDialog trigger={<button type="button" />} />);
+    await userEvent.click(page.getByRole("button", { name: "Cómo se tratan tus datos" }));
+    const dialog = page.getByRole("dialog", { name: "Cómo se tratan tus datos" });
+    await expect.element(dialog).toBeVisible();
+    expect(ids(dialog.element())).toEqual(DATA_OUTBOUND.map((entry) => entry.id));
+  });
+
+  it("lists the readable sources with their terms folded, and names the ones without permission", async () => {
+    await using _viewport = await viewport(1440, 900);
     await using _screen = await render(
       <InWizard>
         <DataConsentView {...props()} />
       </InWizard>,
     );
-    await expect.element(page.getByRole("heading", { name: "Datos y permisos" })).toBeVisible();
-
-    const ready = page.getByRole("list", { name: "Fuentes que puedes capturar" });
+    await expect.element(page.getByRole("heading", { name: "Tus datos" })).toBeVisible();
+    const ready = page.getByRole("list", { name: "Fuentes que se leerán" });
     expect(
       ready
         .getByRole("listitem")
@@ -208,77 +204,51 @@ describe("DataConsentStep", () => {
       "consent-source-huggingface",
       "consent-source-rss",
     ]);
-    const locked = page.getByRole("list", { name: "Fuentes sin permiso para capturar" });
-    expect(
-      locked
-        .getByRole("listitem")
-        .elements()
-        .map((item) => item.dataset.testid),
-    ).toEqual([
-      "consent-source-stackexchange",
-      "consent-source-bluesky",
-      "consent-source-lobsters",
-    ]);
+    expect(page.getByTestId("consent-locked").element().textContent).toBe(
+      "Sin permiso confirmado, no se leen: Stack Exchange, Bluesky y Lobsters.",
+    );
+    await expect.element(page.getByRole("switch", { name: "Leer Hacker News" })).toBeChecked();
+    await expect.element(page.getByRole("switch", { name: "Leer GitHub" })).toBeChecked();
+    await expect.element(page.getByRole("switch", { name: "Leer arXiv" })).not.toBeChecked();
+    expect(page.getByRole("switch", { name: "Leer Lobsters" }).elements()).toHaveLength(0);
 
     const hn = page.getByTestId("consent-source-hn");
+    expect(
+      hn.getByText("Hasta la revisión del 27 nov 2026.", { exact: false }).elements(),
+    ).toHaveLength(0);
+    await userEvent.click(hn.getByRole("button", { expanded: false }));
     await expect
-      .element(hn.getByText("Términos leídos el 26 de octubre de 2026", { exact: false }))
+      .element(hn.getByText("leídos el 26 de octubre de 2026", { exact: false }))
       .toBeVisible();
     await expect
-      .element(hn.getByRole("link", { name: "Leer términos" }))
+      .element(hn.getByRole("link", { name: "abrir" }))
       .toHaveAttribute("href", "https://www.ycombinator.com/legal");
     await expect
       .element(hn.getByText(/^Título; enlace a la discusión; usuario que la envió/))
       .toBeVisible();
-    const common = page.getByTestId("consent-common-stored");
-    await expect.element(common).toBeVisible();
-    expect(common.element().textContent).toBe(COMMON_STORED_LINE);
-    await expect
-      .element(page.getByTestId("consent-source-rss").getByText(/URL del feed\.$/))
-      .toBeVisible();
-    await expect.element(hn.getByText("Hasta la revisión del 27 nov 2026.")).toBeVisible();
-    await expect.element(page.getByRole("switch", { name: "Capturar Hacker News" })).toBeChecked();
-    await expect.element(page.getByRole("switch", { name: "Capturar GitHub" })).toBeChecked();
-    await expect.element(page.getByRole("switch", { name: "Capturar arXiv" })).not.toBeChecked();
-    await expect
-      .element(page.getByTestId("consent-source-rss").getByText(/^14 feeds curados/))
-      .toBeVisible();
-    // Ranking is decided after a backtest, in Settings: the step never offers it.
-    expect(page.getByRole("switch", { name: /en el motor/ }).elements()).toHaveLength(0);
+    await expect.element(hn.getByText(/Hasta la revisión del 27 nov 2026\.$/)).toBeVisible();
+    // The terms link opens apart: the row stays unfolded.
+    await expect.element(hn.getByRole("button", { expanded: true })).toBeVisible();
 
-    const lobsters = page.getByRole("switch", { name: "Capturar Lobsters" });
-    await expect.element(lobsters).toBeDisabled();
-    await expect.element(lobsters).toHaveAccessibleDescription(/^Bloqueada: Su robots\.txt/);
-    const stack = page.getByRole("switch", { name: "Capturar Stack Exchange" });
-    await expect.element(stack).toBeDisabled();
-    await expect.element(stack).toHaveAccessibleDescription(/^Pendiente de leer sus términos/);
+    const rss = page.getByTestId("consent-source-rss");
+    await userEvent.click(rss.getByRole("button", { expanded: false }));
+    await expect.element(rss.getByText(/^14 feeds curados/)).toBeVisible();
 
+    await openDetail();
+    await expect
+      .element(page.getByTestId("consent-locked-lobsters").getByText(/Bloqueada: Su robots\.txt/))
+      .toBeVisible();
     await expect
       .element(
-        page.getByText(
-          "engine purge --corpus /home/operador/earlyscript-data/live --source <fuente>",
-          { exact: false },
-        ),
+        page
+          .getByTestId("consent-locked-stackexchange")
+          .getByText(/Pendiente de leer sus términos/),
       )
-      .toBeInTheDocument();
-    await expect.element(page.getByText(/^Aún no hay capturas\./)).toBeInTheDocument();
-
-    // One scroll for the whole dialog: the list does not scroll on its own.
-    const listParents: string[] = [];
-    for (let node = ready.element().parentElement; node; node = node.parentElement) {
-      const overflow = getComputedStyle(node).overflowY;
-      if (overflow === "auto" || overflow === "scroll") listParents.push(node.dataset.slot ?? "");
-    }
-    expect(listParents).toEqual(["scroll-area-viewport"]);
-
-    await shot("01-escritorio-claro-arriba");
-    await scrollDialogTo("middle");
-    await shot("02-escritorio-claro-medio");
-    await scrollDialogTo("bottom");
-    await shot("03-escritorio-claro-abajo");
+      .toBeVisible();
+    await shot("03-fuente-desplegada");
   });
 
-  it("saves the switches only on Continuar, after the acceptance", async () => {
+  it("saves the switches only on «Aceptar y continuar», with the same policy hash", async () => {
     await using _viewport = await viewport(1280, 800);
     const save = vi.fn(async () => null);
     const onContinue = vi.fn();
@@ -287,9 +257,9 @@ describe("DataConsentStep", () => {
         <DataConsentView {...props({ save, onContinue })} />
       </InWizard>,
     );
-    await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
-    await userEvent.click(page.getByRole("switch", { name: "Capturar GitHub" }));
-    await expect.element(page.getByRole("switch", { name: "Capturar arXiv" })).toBeChecked();
+    await userEvent.click(page.getByRole("switch", { name: "Leer arXiv" }));
+    await userEvent.click(page.getByRole("switch", { name: "Leer GitHub" }));
+    await expect.element(page.getByRole("switch", { name: "Leer arXiv" })).toBeChecked();
     expect(save).not.toHaveBeenCalled();
 
     await expect.element(continueButton()).toBeDisabled();
@@ -305,7 +275,7 @@ describe("DataConsentStep", () => {
       sources: ["hn", "arxiv"],
       acknowledgedTerms: true,
       catalogHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      policyHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      policyHash: await policyHash(),
       acceptedTermsDates: { hn: "2026-10-26", arxiv: "2026-10-31" },
     });
   });
@@ -319,44 +289,35 @@ describe("DataConsentStep", () => {
         }),
     );
     const onContinue = vi.fn();
-    await using _viewport = await viewport(390, 844);
+    await using _viewport = await viewport(1280, 800);
     await using _screen = await render(
       <InWizard>
-        <DataConsentView {...props({ save, onContinue, onBack: vi.fn() })} />
+        <DataConsentView {...props({ save, onContinue })} />
       </InWizard>,
     );
-    await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
+    await userEvent.click(page.getByRole("switch", { name: "Leer arXiv" }));
     await userEvent.click(acceptBox());
     await userEvent.click(continueButton());
-    const saving = page.getByRole("button", { name: "Guardando…" });
-    await expect.element(saving).toBeDisabled();
-    await expect.element(page.getByRole("switch", { name: "Capturar arXiv" })).toBeDisabled();
-    await scrollDialogTo("bottom");
-    await shot("10-movil-claro-guardando");
+    await expect.element(page.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    await expect.element(page.getByRole("switch", { name: "Leer arXiv" })).toBeDisabled();
 
-    resolveSave(
-      "No se guardó «Capturar» de arXiv. La base editorial no respondió. Vuelve a intentarlo.",
-    );
-    // Filtered: the page also holds an empty live region of its own.
+    const message =
+      "No se guardó la lectura de arXiv. La base editorial no respondió. Vuelve a intentarlo.";
+    resolveSave(message);
     const alert = page.getByRole("alert").filter({ hasText: "No se guardó" });
     await expect.element(alert).toBeVisible();
-    expect(alert.element().textContent).toBe(
-      "No se guardó «Capturar» de arXiv. La base editorial no respondió. Vuelve a intentarlo.",
-    );
-    await expect
-      .element(continueButton())
-      .toHaveAccessibleDescription(/No se guardó «Capturar» de arXiv/);
+    expect(alert.element().textContent).toBe(message);
+    await expect.element(continueButton()).toHaveAccessibleDescription(message);
     expect(onContinue).not.toHaveBeenCalled();
-    await scrollDialogTo("bottom");
-    await shot("11-movil-claro-error-al-guardar");
+    await shot("04-error-al-guardar");
 
     // Changing a switch clears the stale error.
-    await userEvent.click(page.getByRole("switch", { name: "Capturar arXiv" }));
+    await userEvent.click(page.getByRole("switch", { name: "Leer arXiv" }));
     expect(alert.elements()).toHaveLength(0);
   });
 
-  it("says when the server locks a source this client's catalog thinks is ready", async () => {
-    await using _viewport = await viewport(390, 844);
+  it("names a source the server locks though this client's catalog thinks it is ready", async () => {
+    await using _viewport = await viewport(1280, 800);
     const locked: EditorialSourcesView = {
       ...FIRST_RUN,
       sources: FIRST_RUN.sources.map((source) =>
@@ -368,15 +329,16 @@ describe("DataConsentStep", () => {
         <DataConsentView {...props({ view: locked })} />
       </InWizard>,
     );
-    const arxiv = page
-      .getByRole("list", { name: "Fuentes sin permiso para capturar" })
-      .getByTestId("consent-source-arxiv");
+    expect(page.getByRole("switch", { name: "Leer arXiv" }).elements()).toHaveLength(0);
+    expect(page.getByTestId("consent-locked").element().textContent).toContain("arXiv");
+    await openDetail();
     await expect
-      .element(arxiv.getByText("Bloqueada en esta instalación", { exact: false }))
+      .element(
+        page
+          .getByTestId("consent-locked-arxiv")
+          .getByText("Bloqueada en esta instalación", { exact: false }),
+      )
       .toBeVisible();
-    await expect.element(page.getByRole("switch", { name: "Capturar arXiv" })).toBeDisabled();
-    arxiv.element().scrollIntoView({ block: "center" });
-    await shot("12-movil-claro-bloqueada-por-el-servidor");
   });
 
   it("shows loading, then an RPC error in Spanish with a retry", async () => {
@@ -388,7 +350,6 @@ describe("DataConsentStep", () => {
       </InWizard>,
     );
     await expect.element(page.getByText("Cargando fuentes…")).toBeVisible();
-    await shot("04-escritorio-claro-cargando");
     await userEvent.click(acceptBox());
     await expect.element(continueButton()).toBeDisabled();
 
@@ -404,49 +365,20 @@ describe("DataConsentStep", () => {
       </InWizard>,
     );
     await expect.element(page.getByText("No se pudieron leer las fuentes")).toBeVisible();
-    await scrollDialogTo("top");
-    await shot("05-escritorio-claro-error-al-leer");
     await userEvent.click(page.getByRole("button", { name: "Reintentar" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["claro", "oscuro"] as const)(
-    "fits a phone without horizontal scroll (%s)",
-    async (theme) => {
-      using _theme = theme === "oscuro" ? darkTheme() : null;
-      await using _viewport = await viewport(390, 844);
-      await using _screen = await render(
-        <InWizard>
-          <DataConsentView {...props({ onBack: vi.fn() })} />
-        </InWizard>,
-      );
-      await expect
-        .element(page.getByRole("switch", { name: "Capturar Hacker News" }))
-        .toBeVisible();
-      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
-      expect(dialogScroll().scrollWidth).toBeLessThanOrEqual(dialogScroll().clientWidth);
-      const prefix = theme === "claro" ? "2" : "3";
-      await shot(`${prefix}0-movil-${theme}-arriba`);
-      page.getByTestId("consent-source-rss").element().scrollIntoView({ block: "center" });
-      await shot(`${prefix}1-movil-${theme}-lista`);
-      page.getByTestId("consent-source-lobsters").element().scrollIntoView({ block: "center" });
-      await shot(`${prefix}2-movil-${theme}-sin-permiso`);
-      await scrollDialogTo("bottom");
-      await shot(`${prefix}3-movil-${theme}-abajo`);
-    },
-  );
-
-  it("renders in the dark theme on a desktop", async () => {
+  it("fits a phone without horizontal scroll", async () => {
     using _theme = darkTheme();
-    await using _viewport = await viewport(1280, 800);
+    await using _viewport = await viewport(390, 844);
     await using _screen = await render(
       <InWizard>
         <DataConsentView {...props()} />
       </InWizard>,
     );
-    await expect.element(page.getByRole("heading", { name: "Datos y permisos" })).toBeVisible();
-    await shot("06-escritorio-oscuro-arriba");
-    await scrollDialogTo("bottom");
-    await shot("07-escritorio-oscuro-abajo");
+    await expect.element(page.getByRole("switch", { name: "Leer Hacker News" })).toBeVisible();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+    await shot("05-movil-oscuro");
   });
 });

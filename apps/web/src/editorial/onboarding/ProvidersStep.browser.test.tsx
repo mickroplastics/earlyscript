@@ -1,9 +1,11 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
 import {
   notInstalled,
   providerFixture,
@@ -27,23 +29,51 @@ const renderStep = (props: Partial<ProvidersStepViewProps>) => {
     onRecheck,
     onRetryBudget,
     screen: render(
-      <ProvidersStepView
-        providers={[providerFixture("claudeAgent"), providerFixture("codex", signedOut)]}
-        settings={SETTINGS_FIXTURE}
-        os="linux"
-        budget={{ monthlyLimit: 600, usedThisMonth: 12, month: "2026-11" }}
-        budgetError={null}
-        onRetryBudget={onRetryBudget}
-        checking={false}
-        saving={false}
-        error={null}
-        onRecheck={onRecheck}
-        onBack={null}
-        onContinue={onContinue}
-        {...props}
-      />,
+      <InDialog>
+        <ProvidersStepView
+          providers={[providerFixture("claudeAgent"), providerFixture("codex", signedOut)]}
+          settings={SETTINGS_FIXTURE}
+          os="linux"
+          budget={{ monthlyLimit: 600, usedThisMonth: 12, month: "2026-11" }}
+          budgetError={null}
+          onRetryBudget={onRetryBudget}
+          checking={false}
+          saving={false}
+          error={null}
+          onRecheck={onRecheck}
+          onBack={null}
+          onContinue={onContinue}
+          {...props}
+        />
+      </InDialog>,
     ),
   };
+};
+
+/** A dialog of the wizard's size, as `EarlyscriptWizardView` mounts the steps. */
+function InDialog({ children }: { readonly children: ReactNode }) {
+  return (
+    <Dialog open disablePointerDismissal>
+      <DialogPopup
+        showCloseButton={false}
+        bottomStickOnMobile={false}
+        className="h-[min(48.25rem,calc(100dvh-2rem))] w-[min(62.5rem,calc(100vw-2rem))] max-w-none overflow-hidden"
+      >
+        <DialogTitle className="sr-only">Configurar Earlyscript</DialogTitle>
+        {children}
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/** Screenshots only when asked: `VITE_EARLYSCRIPT_CAPTURE=1`. Ignored by Git. */
+const capture = async (name: string) => {
+  if ((import.meta.env as Record<string, unknown>)["VITE_EARLYSCRIPT_CAPTURE"] !== "1") return;
+  document.documentElement.classList.add("dark");
+  await page.viewport(1440, 900);
+  await page.screenshot({ path: `__screenshots__/${name}.png` });
+  await page.viewport(1280, 800);
+  document.documentElement.classList.remove("dark");
 };
 
 describe("ProvidersStepView", () => {
@@ -52,9 +82,8 @@ describe("ProvidersStepView", () => {
     await using screen = await rendered;
     await expect.element(screen.getByText("Claude Haiku 5.5 · Claude")).toBeVisible();
     await expect.element(screen.getByText(/^Este mes: 12 de 600 redacciones/)).toBeVisible();
-    // No zeros where the provider reports nothing.
     await expect
-      .element(screen.getByText("Tokens: el proveedor no informa el consumo."))
+      .element(screen.getByText("Si llegas al tope, las tendencias siguen llegando, sin título."))
       .toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Continuar", exact: true }));
     expect(onContinue).toHaveBeenCalledWith(
@@ -84,22 +113,41 @@ describe("ProvidersStepView", () => {
     expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ draftingModel: HAIKU }));
   });
 
-  it("lets the operator go on without a provider, saying what still works", async () => {
-    const { screen: rendered, onContinue } = renderStep({
+  it("lets the operator go on without an assistant, saying what still works", async () => {
+    const {
+      screen: rendered,
+      onContinue,
+      onRecheck,
+    } = renderStep({
       providers: [
         providerFixture("claudeAgent", signedOut),
         providerFixture("codex", notInstalled),
       ],
     });
     await using screen = await rendered;
-    await expect.element(screen.getByText("Ningún proveedor tiene sesión iniciada")).toBeVisible();
     await expect
-      .element(screen.getByRole("combobox", { name: "Modelo de redacción" }))
-      .toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Continuar sin proveedor" }));
+      .element(
+        screen.getByText(
+          "Puedes seguir sin asistente: las tendencias llegarán como la de arriba, sin título.",
+        ),
+      )
+      .toBeVisible();
+    // The model and the cap wait for a session.
+    await expect
+      .element(
+        screen.getByText("El modelo que redacta y el tope al mes aparecen al iniciar sesión."),
+      )
+      .toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Modelo de redacción" }).elements()).toHaveLength(
+      0,
+    );
+    await capture("3b-sin-asistente");
+    await userEvent.click(screen.getByRole("button", { name: "Volver a comprobar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Continuar sin asistente" }));
     expect(onContinue).toHaveBeenCalledWith(
       expect.objectContaining({ draftingModel: null, monthlyDraftLimit: 600 }),
     );
+    expect(onRecheck).toHaveBeenCalledOnce();
   });
 
   it("shows the exact sign-in command instead of a terminal, and checks again", async () => {
@@ -115,7 +163,7 @@ describe("ProvidersStepView", () => {
   it("decides nothing while the server has not listed its providers", async () => {
     const { screen: rendered } = renderStep({ providers: null });
     await using screen = await rendered;
-    await expect.element(screen.getByText("Comprobando proveedores…")).toBeVisible();
+    expect(screen.getByText("Comprobando…").elements()).toHaveLength(2);
     await expect
       .element(screen.getByRole("button", { name: "Continuar", exact: true }))
       .toBeDisabled();
@@ -162,7 +210,7 @@ describe("ProvidersStepView", () => {
   it("refuses a cap that is not a whole number and accepts 0 as no cap", async () => {
     const { screen: rendered, onContinue } = renderStep({});
     await using screen = await rendered;
-    const input = screen.getByRole("spinbutton", { name: "Tope mensual de redacciones" });
+    const input = screen.getByRole("spinbutton", { name: "Tope al mes" });
     await userEvent.fill(input, "-3");
     await expect
       .element(screen.getByText("Escribe un número entero; 0 quita el tope."))

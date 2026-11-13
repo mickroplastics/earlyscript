@@ -4,16 +4,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EditorialSourcesView } from "@t3tools/contracts";
 import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  CircleCheckIcon,
-  CircleSlashIcon,
-  ClockIcon,
-  RotateCwIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  PRESENTATION_EVIDENCE_LIMIT,
+  PRESENTATION_EXCERPT_CHARS,
+  type EditorialSourcesView,
+} from "@t3tools/contracts";
+import { ArrowLeftIcon, ChevronRightIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { Fragment, useId, useState, type ReactNode } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
@@ -26,6 +22,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { editorialSourcesEnvironment } from "../settings/sourcesState";
 import { failureText } from "../settings/sourcesText";
+import { namesList, SOURCE_DIGEST } from "./consentSummary";
 import {
   buildAcceptance,
   COMMON_STORED_LINE,
@@ -47,9 +44,13 @@ import {
   otherOutboundItem,
 } from "./dataOutbound";
 import type { OnboardingStepProps } from "./steps";
+import { SectionLabel, StepLayout } from "./wizardLayout";
 
-// The step grows inside the wizard's own ScrollArea (WizardPopup): one scroll for the whole
-// dialog, no nested one. Sources that cannot be captured get a compact row.
+// What the operator accepts is DATA_CONSENT_POLICY and the texts `policyHash` covers. The step
+// shows a three-line summary and folds that wording into each source row and into «Ver cada
+// conexión, conservación y borrado»; opening them is never taken as accepting.
+
+const formatCount = (count: number) => count.toLocaleString("es");
 
 function ExternalLink({ href, children }: { readonly href: string; readonly children: ReactNode }) {
   return (
@@ -64,43 +65,10 @@ function ExternalLink({ href, children }: { readonly href: string; readonly chil
   );
 }
 
-function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
-  return (
-    <div className="grid gap-x-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 break-words text-foreground">{children}</dd>
-    </div>
-  );
-}
+const digestOf = (row: ConsentSourceRow) =>
+  SOURCE_DIGEST[row.id] ?? { name: row.name, stored: row.storedText };
 
-function CaptureSwitch({
-  row,
-  checked,
-  disabled,
-  describedBy,
-  onChange,
-}: {
-  readonly row: ConsentSourceRow;
-  readonly checked: boolean;
-  readonly disabled: boolean;
-  readonly describedBy: string;
-  readonly onChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-      <span aria-hidden>Capturar</span>
-      <Switch
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={(value) => onChange(Boolean(value))}
-        aria-label={`Capturar ${row.name}`}
-        aria-describedby={describedBy}
-      />
-    </div>
-  );
-}
-
-function ReadySourceRow({
+function SourceRow({
   row,
   checked,
   disabled,
@@ -113,118 +81,74 @@ function ReadySourceRow({
   readonly feedCount: number | null;
   readonly onChange: (checked: boolean) => void;
 }) {
-  const termsId = useId();
+  const [open, setOpen] = useState(false);
+  const detailId = useId();
+  const digest = digestOf(row);
   return (
-    <li data-testid={`consent-source-${row.id}`} className="space-y-2 px-3 py-3 sm:px-4">
-      <div>
-        <div className="flex items-center justify-between gap-3">
-          <p className="min-w-0 text-sm font-medium text-foreground">{row.name}</p>
-          <CaptureSwitch
-            row={row}
-            checked={checked}
-            disabled={disabled}
-            describedBy={termsId}
-            onChange={onChange}
+    <li data-testid={`consent-source-${row.id}`} className="min-w-0">
+      <div className="flex min-h-11 items-center gap-3 px-3.5">
+        <Switch
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(value) => onChange(Boolean(value))}
+          aria-label={`Leer ${digest.name}`}
+        />
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={detailId}
+          onClick={() => setOpen(!open)}
+          className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <span className="w-28 shrink-0 truncate text-sm text-foreground">{digest.name}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {digest.stored}
+          </span>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
           />
-        </div>
-        <p id={termsId} className="mt-0.5 flex items-start gap-1.5 text-xs text-muted-foreground">
-          <CircleCheckIcon aria-hidden className="mt-px size-3.5 shrink-0 text-success" />
-          <span>
-            {row.termsLine}
+        </button>
+      </div>
+      {open ? (
+        <dl
+          id={detailId}
+          className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 px-3.5 pb-3 pl-17 text-xs leading-relaxed"
+        >
+          <dt className="text-muted-foreground">Términos</dt>
+          <dd className="text-foreground">
+            {row.licenseUrl ? (
+              <ExternalLink href={row.licenseUrl}>{row.licenseText}</ExternalLink>
+            ) : (
+              row.licenseText
+            )}{" "}
+            · {row.termsLine.replace(/^Términos leídos/u, "leídos")}
             {row.termsUrl ? (
               <>
                 {" · "}
-                <ExternalLink href={row.termsUrl}>Leer términos</ExternalLink>
+                <ExternalLink href={row.termsUrl}>abrir</ExternalLink>
               </>
             ) : null}
-          </span>
-        </p>
-      </div>
-      <dl className="space-y-1.5 text-xs leading-normal">
-        <Field label="Licencia">
-          {row.licenseUrl ? (
-            <ExternalLink href={row.licenseUrl}>{row.licenseText}</ExternalLink>
-          ) : (
-            row.licenseText
-          )}
-        </Field>
-        <Field label="Guarda">{row.storedText}</Field>
-        <Field label="Conserva">{row.retentionText}</Field>
-        {feedCount !== null ? (
-          <Field label="Feeds">
-            {feedCount} {feedCount === 1 ? "feed curado" : "feeds curados"}; los tuyos se agregan
-            después en Ajustes › Editorial › Fuentes.
-          </Field>
-        ) : null}
-      </dl>
-    </li>
-  );
-}
-
-function LockedSourceRow({ row }: { readonly row: ConsentSourceRow }) {
-  const termsId = useId();
-  const Icon = row.status === "blocked" ? CircleSlashIcon : ClockIcon;
-  return (
-    <li data-testid={`consent-source-${row.id}`} className="px-3 py-2.5 sm:px-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="min-w-0 text-sm font-medium text-foreground">{row.name}</p>
-        <CaptureSwitch
-          row={row}
-          checked={false}
-          disabled
-          describedBy={termsId}
-          onChange={() => {}}
-        />
-      </div>
-      <p
-        id={termsId}
-        className={cn(
-          "mt-0.5 flex items-start gap-1.5 text-xs",
-          row.status === "blocked" ? "text-destructive-foreground" : "text-warning-foreground",
-        )}
-      >
-        <Icon aria-hidden className="mt-px size-3.5 shrink-0" />
-        <span>
-          {row.termsLine}
-          {row.termsUrl ? (
+          </dd>
+          <dt className="text-muted-foreground">Se guarda</dt>
+          <dd className="text-foreground">
+            {row.storedText} {row.retentionText}
+          </dd>
+          {feedCount !== null ? (
             <>
-              {" · "}
-              <ExternalLink href={row.termsUrl}>Ver términos</ExternalLink>
+              <dt className="text-muted-foreground">Feeds</dt>
+              <dd className="text-foreground">
+                {feedCount} {feedCount === 1 ? "feed curado" : "feeds curados"}; los tuyos se
+                agregan después en Ajustes.
+              </dd>
             </>
           ) : null}
-        </span>
-      </p>
+        </dl>
+      ) : null}
     </li>
-  );
-}
-
-function Block({ title, children }: { readonly title: string; readonly children: ReactNode }) {
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId} className="space-y-2">
-      <h2 id={headingId} className="text-sm font-semibold text-foreground">
-        {title}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-const TEXT = "text-xs leading-relaxed text-muted-foreground";
-
-/** A shell command that wraps between words only; a long path may still break inside. */
-function CommandText({ text }: { readonly text: string }) {
-  const words = text.split(" ");
-  return (
-    <pre className="rounded-md bg-muted px-2.5 py-2 font-mono text-2xs leading-relaxed break-words whitespace-pre-wrap text-foreground">
-      {words.map((word, index) => (
-        // oxlint-disable-next-line no-array-index-key -- a fixed command; words repeat ("|").
-        <Fragment key={index}>
-          {index > 0 ? " " : null}
-          <span className={word.length > 24 ? "break-all" : "whitespace-nowrap"}>{word}</span>
-        </Fragment>
-      ))}
-    </pre>
   );
 }
 
@@ -245,19 +169,12 @@ function SourcesList({
   const feeds = view.rssFeeds.filter((feed) => feed.origin === "default" && !feed.excluded).length;
   return (
     <>
-      <p className={TEXT}>
-        Solo se capturan las fuentes cuyos términos se leyeron. Que una fuente pese en el ranking se
-        decide después, en Ajustes, tras un backtest.
-      </p>
-      <p className={TEXT} data-testid="consent-common-stored">
-        {COMMON_STORED_LINE}
-      </p>
       <ul
-        aria-label="Fuentes que puedes capturar"
-        className="divide-y rounded-lg border bg-background"
+        aria-label="Fuentes que se leerán"
+        className="divide-y overflow-hidden rounded-lg border bg-background"
       >
         {ready.map((row) => (
-          <ReadySourceRow
+          <SourceRow
             key={row.id}
             row={row}
             checked={shownCollect(row, draft)}
@@ -268,21 +185,189 @@ function SourcesList({
         ))}
       </ul>
       {locked.length > 0 ? (
-        <>
-          <h3 className="pt-2 text-xs font-medium text-muted-foreground">
-            Sin permiso para capturar todavía
-          </h3>
-          <ul
-            aria-label="Fuentes sin permiso para capturar"
-            className="divide-y rounded-lg border bg-background"
-          >
-            {locked.map((row) => (
-              <LockedSourceRow key={row.id} row={row} />
-            ))}
-          </ul>
-        </>
+        <p className="text-xs text-muted-foreground" data-testid="consent-locked">
+          Sin permiso confirmado, no se leen: {namesList(locked.map((row) => digestOf(row).name))}.
+        </p>
       ) : null}
     </>
+  );
+}
+
+/** One of the three lines of «Qué sale de tu equipo». */
+function OutboundLine({
+  tone,
+  title,
+  children,
+}: {
+  readonly tone: "muted" | "accent" | "success";
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <li className="grid grid-cols-[1rem_minmax(0,1fr)] gap-x-2.5 border-t border-dashed py-3.5 first:border-t-0">
+      <span
+        aria-hidden
+        className={cn(
+          "mt-1.5 size-1.5 rounded-full",
+          tone === "muted" && "bg-muted-foreground",
+          tone === "accent" && "bg-primary",
+          tone === "success" && "bg-success",
+        )}
+      />
+      <div className="min-w-0">
+        <p className="text-sm text-foreground">{title}</p>
+        <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+function OutboundSummary({ onDetail }: { readonly onDetail: () => void }) {
+  return (
+    <div data-testid="consent-summary">
+      <SectionLabel tone="accent">Qué sale de tu equipo</SectionLabel>
+      <ul className="mt-2 border-t border-dashed">
+        <OutboundLine tone="muted" title="A cada fuente activada">
+          Solo peticiones de lectura, con pausas y respetando sus límites.
+        </OutboundLine>
+        <OutboundLine tone="accent" title="A tu asistente de IA, con tu cuenta">
+          <p>Cuando redacta los títulos de cada noche, por ejemplo:</p>
+          <dl className="my-2.5 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1.5 rounded-lg border bg-background px-3 py-2.5">
+            <dt>Tu perfil del canal</dt>
+            <dd className="text-end">nombre, audiencia, temas</dd>
+            <dt>Cifras de la tendencia</dt>
+            <dd className="text-end">publicaciones por semana</dd>
+            <dt>Hasta {formatCount(PRESENTATION_EVIDENCE_LIMIT)} publicaciones</dt>
+            <dd className="text-end">
+              {formatCount(PRESENTATION_EXCERPT_CHARS)} caracteres cada una
+            </dd>
+          </dl>
+          <p>Y en un guion, lo que le escribas y lo que lea por ti.</p>
+        </OutboundLine>
+        <OutboundLine tone="success" title="Lo demás, sin tus textos">
+          Descarga del modelo y consultas de versiones y precios. Sin telemetría.
+        </OutboundLine>
+      </ul>
+      <button
+        type="button"
+        onClick={onDetail}
+        className="mt-1 rounded-sm text-sm text-muted-foreground underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        Ver cada conexión, conservación y borrado
+      </button>
+    </div>
+  );
+}
+
+/** A shell command that wraps between words only; a long path may still break inside. */
+function CommandText({ text }: { readonly text: string }) {
+  const words = text.split(" ");
+  return (
+    <pre className="rounded-md bg-muted px-2.5 py-2 font-mono text-2xs leading-relaxed break-words whitespace-pre-wrap text-foreground">
+      {words.map((word, index) => (
+        // oxlint-disable-next-line no-array-index-key -- a fixed command; words repeat ("|").
+        <Fragment key={index}>
+          {index > 0 ? " " : null}
+          <span className={word.length > 24 ? "break-all" : "whitespace-nowrap"}>{word}</span>
+        </Fragment>
+      ))}
+    </pre>
+  );
+}
+
+/**
+ * The full wording the operator accepts, as `policyHash` covers it: every connection, how long
+ * the data stays, how it is deleted, and the sources that may not be read.
+ */
+function OutboundDetail({
+  view,
+  onBack,
+}: {
+  readonly view: EditorialSourcesView | null;
+  readonly onBack: () => void;
+}) {
+  const policy = DATA_CONSENT_POLICY;
+  const locked =
+    view === null ? [] : consentSourceRows(view.sources).filter((row) => !row.capturable);
+  return (
+    <div data-testid="consent-detail" className="flex flex-col gap-5 text-xs leading-relaxed">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex w-fit items-center gap-1.5 rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        <ArrowLeftIcon aria-hidden className="size-3.5" />
+        Qué sale de tu equipo
+      </button>
+      <p className="text-muted-foreground">{policy.intro}</p>
+      <section className="flex flex-col gap-2">
+        <SectionLabel tone="accent">Todas las conexiones</SectionLabel>
+        <p className="text-muted-foreground">{policy.outbound[0]}</p>
+        <ul className="flex flex-col divide-y divide-dashed">
+          {HIGHLIGHTED_OUTBOUND.map((entry) => (
+            <li key={entry.id} data-outbound-id={entry.id} className="py-2 text-muted-foreground">
+              <span className="text-foreground">{entry.where}</span> · {entry.detail}
+            </li>
+          ))}
+        </ul>
+        {/* Same text as otherOutboundLine(), which policyHash covers; one row per entry. */}
+        <div data-testid="consent-other-outbound" className="text-muted-foreground">
+          <p>{OTHER_OUTBOUND_PREFIX.trim()}</p>
+          <ul className="mt-1 flex flex-col divide-y divide-dashed">
+            {OTHER_OUTBOUND.map((entry, index) => (
+              <li key={entry.id} data-outbound-id={entry.id} className="py-1.5">
+                {otherOutboundItem(entry)}
+                {index === OTHER_OUTBOUND.length - 1 ? "." : ";"}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <p className="text-muted-foreground">{policy.outbound[1]}</p>
+        <p className="text-muted-foreground">{policy.outbound[2]}</p>
+      </section>
+      <section className="flex flex-col gap-2 text-muted-foreground">
+        <SectionLabel tone="accent">Conservación y borrado</SectionLabel>
+        {view !== null ? <p data-testid="consent-corpus">{corpusText(view.corpus)}</p> : null}
+        {policy.retention.map((text) => (
+          <p key={text}>{text}</p>
+        ))}
+        <p data-testid="consent-common-stored">{COMMON_STORED_LINE}</p>
+        <p>{policy.deletion[0]}</p>
+        <details className="group/command">
+          <summary className="w-fit cursor-pointer text-foreground">
+            Orden para borrar desde la terminal
+          </summary>
+          <div className="mt-2 flex flex-col gap-2">
+            <CommandText
+              text={view !== null ? deletionCommand(view.corpus.directory) : policy.deletionCommand}
+            />
+            <p>{policy.deletion[1]}</p>
+          </div>
+        </details>
+      </section>
+      {locked.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <SectionLabel tone="accent">Sin permiso confirmado</SectionLabel>
+          <ul className="flex flex-col gap-1.5">
+            {locked.map((row) => (
+              <li key={row.id} data-testid={`consent-locked-${row.id}`}>
+                <span className="text-foreground">{digestOf(row).name}</span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {row.termsLine}
+                  {row.termsUrl ? (
+                    <>
+                      {" · "}
+                      <ExternalLink href={row.termsUrl}>ver términos</ExternalLink>
+                    </>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -317,9 +402,9 @@ export function DataConsentView({
   const [accepted, setAccepted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [detail, setDetail] = useState(false);
   const errorId = useId();
   const hintId = useId();
-  const policy = DATA_CONSENT_POLICY;
   const canContinue = view !== null && accepted && !saving;
 
   // A promise chain, not try/finally: React Compiler does not compile try without catch.
@@ -337,20 +422,77 @@ export function DataConsentView({
         return buildAcceptance(selectedSources(rows, draft)).then(onContinue);
       })
       .catch((cause: unknown) => {
-        console.error("Datos y permisos: no se pudo continuar", cause);
+        console.error("Tus datos: no se pudo continuar", cause);
         setSaveError(UNEXPECTED_SAVE_ERROR);
       })
       .finally(() => setSaving(false));
   };
 
   return (
-    <div className="flex flex-col gap-6" data-testid="data-consent-step">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Datos y permisos</h1>
-        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{policy.intro}</p>
-      </div>
-
-      <Block title="Fuentes">
+    <StepLayout
+      testId="data-consent-step"
+      title="Tus datos"
+      description="Antes de leer nada, eliges qué fuentes se leen y ves qué sale de tu equipo."
+      aside={
+        detail ? (
+          <OutboundDetail view={view} onBack={() => setDetail(false)} />
+        ) : (
+          <OutboundSummary onDetail={() => setDetail(true)} />
+        )
+      }
+      footer={
+        <>
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            {onBack ? (
+              <Button variant="ghost" onClick={onBack} disabled={saving}>
+                <ArrowLeftIcon className="size-3.5" />
+                Atrás
+              </Button>
+            ) : null}
+            <label className="flex max-w-xl cursor-pointer items-start gap-2.5 text-sm text-foreground">
+              <Checkbox
+                className="mt-0.5"
+                checked={accepted}
+                disabled={saving}
+                onCheckedChange={(checked) => setAccepted(checked === true)}
+              />
+              <span>{DATA_CONSENT_POLICY.accept}</span>
+            </label>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {saveError !== null ? (
+              <p
+                id={errorId}
+                role="alert"
+                className="flex max-w-xs items-start gap-1.5 text-xs text-destructive-foreground"
+              >
+                <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                <span>{saveError}</span>
+              </p>
+            ) : null}
+            {view !== null && !accepted ? (
+              <span id={hintId} className="sr-only">
+                Marca la casilla para continuar.
+              </span>
+            ) : null}
+            <Button
+              disabled={!canContinue}
+              onClick={submit}
+              {...(saveError !== null
+                ? { "aria-describedby": errorId }
+                : view !== null && !accepted
+                  ? { "aria-describedby": hintId }
+                  : {})}
+            >
+              {saving ? <Spinner size="sm" aria-hidden role="presentation" /> : null}
+              {saving ? "Guardando…" : "Aceptar y continuar"}
+            </Button>
+          </div>
+        </>
+      }
+    >
+      <section className="flex flex-col gap-2.5" aria-label="Fuentes">
+        <SectionLabel>Fuentes que se leerán</SectionLabel>
         {view !== null ? (
           <SourcesList
             view={view}
@@ -379,103 +521,8 @@ export function DataConsentView({
             </AlertDescription>
           </Alert>
         )}
-      </Block>
-
-      <Block title="Qué sale de esta máquina">
-        <div className={cn(TEXT, "space-y-1.5")}>
-          <p>{policy.outbound[0]}</p>
-          <ol className="space-y-1.5">
-            {HIGHLIGHTED_OUTBOUND.map((entry, index) => (
-              <li
-                key={entry.id}
-                data-outbound-id={entry.id}
-                className="grid grid-cols-[1.25rem_minmax(0,1fr)]"
-              >
-                <span aria-hidden>{String.fromCharCode(97 + index)})</span>
-                <span>{entry.detail}</span>
-              </li>
-            ))}
-          </ol>
-          {/* Same text as otherOutboundLine(), which policyHash covers; one span per entry. */}
-          <p data-testid="consent-other-outbound">
-            {OTHER_OUTBOUND_PREFIX}
-            {OTHER_OUTBOUND.map((entry, index) => (
-              <Fragment key={entry.id}>
-                {index > 0 ? "; " : null}
-                <span data-outbound-id={entry.id}>{otherOutboundItem(entry)}</span>
-              </Fragment>
-            ))}
-            .
-          </p>
-          <p>{policy.outbound[1]}</p>
-          <p>{policy.outbound[2]}</p>
-        </div>
-      </Block>
-
-      <Block title="Conservación y borrado">
-        <div className={cn(TEXT, "space-y-1.5")}>
-          {view !== null ? <p data-testid="consent-corpus">{corpusText(view.corpus)}</p> : null}
-          {policy.retention.map((text) => (
-            <p key={text}>{text}</p>
-          ))}
-          <p>{policy.deletion[0]}</p>
-          <CommandText
-            text={view !== null ? deletionCommand(view.corpus.directory) : policy.deletionCommand}
-          />
-          <p>{policy.deletion[1]}</p>
-        </div>
-      </Block>
-
-      <div className="space-y-4 border-t pt-4">
-        <label className="flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
-          <Checkbox
-            className="mt-0.5"
-            checked={accepted}
-            disabled={saving}
-            onCheckedChange={(checked) => setAccepted(checked === true)}
-          />
-          <span>{policy.accept}</span>
-        </label>
-        {view !== null && !accepted ? (
-          <p id={hintId} className="-mt-2 pl-6.5 text-xs text-muted-foreground">
-            Marca la casilla para continuar.
-          </p>
-        ) : null}
-        {saveError !== null ? (
-          <p
-            id={errorId}
-            role="alert"
-            className="flex items-start gap-1.5 text-sm text-destructive-foreground"
-          >
-            <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            <span>{saveError}</span>
-          </p>
-        ) : null}
-        <div className="flex items-center justify-between gap-3">
-          {onBack ? (
-            <Button variant="ghost" onClick={onBack} disabled={saving}>
-              <ArrowLeftIcon className="size-3.5" />
-              Atrás
-            </Button>
-          ) : (
-            <span />
-          )}
-          <Button
-            disabled={!canContinue}
-            onClick={submit}
-            {...(saveError !== null
-              ? { "aria-describedby": errorId }
-              : view !== null && !accepted
-                ? { "aria-describedby": hintId }
-                : {})}
-          >
-            {saving ? <Spinner size="sm" aria-hidden role="presentation" /> : null}
-            {saving ? "Guardando…" : "Continuar"}
-            {saving ? null : <ArrowRightIcon className="size-3.5" />}
-          </Button>
-        </div>
-      </div>
-    </div>
+      </section>
+    </StepLayout>
   );
 }
 
@@ -492,7 +539,7 @@ export function DataConsentStep({ environmentId, onContinue, onBack }: Onboardin
       const reason = isAtomCommandInterrupted(result)
         ? "Se canceló."
         : failureText(squashAtomCommandFailure(result));
-      return `No se guardó «Capturar» de ${SOURCE_CATALOG[write.source].name}. ${reason} Vuelve a intentarlo.`;
+      return `No se guardó la lectura de ${SOURCE_CATALOG[write.source].name}. ${reason} Vuelve a intentarlo.`;
     }
     return null;
   };

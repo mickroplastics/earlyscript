@@ -28,6 +28,7 @@ import {
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
+import { EDITORIAL_DEVICE_ONLY_PATHS } from "../../editorial/settings/settingsEntry";
 import {
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
@@ -53,7 +54,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/access",
   "/settings/about",
   // Earlyscript: editorial settings belong to the primary environment, like access.
-  "/settings/editorial",
+  ...EDITORIAL_DEVICE_ONLY_PATHS,
 ]);
 
 interface SettingsScopeMenuProps {

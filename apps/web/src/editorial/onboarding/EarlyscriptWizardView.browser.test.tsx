@@ -5,7 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { PrivacyNote } from "./DataHandlingDialog";
+import { DataHandlingDialog } from "./DataHandlingDialog";
 import {
   EarlyscriptWizardView,
   type EarlyscriptWizardViewProps,
@@ -55,7 +55,8 @@ const setup = (props: Partial<EarlyscriptWizardViewProps> = {}) => {
   const element = (
     <EarlyscriptWizardView
       environmentId={ENVIRONMENT_ID}
-      dismissible={false}
+      entry={{ _tag: "resume", position: { index: 0, reached: 0 } }}
+      finishedBefore={false}
       onRecord={onRecord}
       onFinish={onFinish}
       onLeave={onLeave}
@@ -69,22 +70,26 @@ const setup = (props: Partial<EarlyscriptWizardViewProps> = {}) => {
 const continueButton = () => page.getByRole("button", { name: "Continuar" });
 const caption = () => page.getByTestId("wizard-step-caption");
 const stepTitle = () => page.getByTestId("wizard-step-title");
-const privacyLink = () => page.getByRole("button", { name: "Cómo se tratan tus datos" });
+const later = () => page.getByRole("button", { name: "Seguir más tarde" });
 
 describe("EarlyscriptWizardView", () => {
-  it("records each step before advancing and finishes after the fourth", async () => {
-    const { element, onRecord, onFinish } = setup();
+  it("opens on the welcome, then records each step before advancing and finishes after the fourth", async () => {
+    const { element, onRecord, onFinish } = setup({ entry: { _tag: "welcome" } });
     await using _screen = await render(element);
+    await expect
+      .element(
+        page.getByRole("heading", { name: "Cada mañana, los temas que se mueven en tu nicho" }),
+      )
+      .toBeVisible();
+    await expect.element(later()).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Empezar" }));
     await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
-    await expect.element(caption()).toHaveTextContent("Paso 1 de 4: Datos y permisos");
+    await expect.element(caption()).toHaveTextContent("Paso 1 de 4");
+    await expect.element(stepTitle()).toHaveTextContent("Paso 1 de 4: Tus datos");
     await expect.element(stepTitle()).toHaveFocus();
-    // The data step explains how data is handled in full; the shell's line starts at step 2.
-    await expect.element(privacyLink()).not.toBeInTheDocument();
     await userEvent.click(continueButton());
     await expect.element(page.getByText("Paso «proveedores» en construcción.")).toBeVisible();
-    await expect.element(privacyLink()).toBeVisible();
-    await expect.element(caption()).toHaveTextContent("Paso 2 de 4: Proveedores");
-    await expect.element(stepTitle()).toHaveTextContent("Paso 2 de 4: Proveedores");
+    await expect.element(stepTitle()).toHaveTextContent("Paso 2 de 4: Asistente de IA");
     await expect.element(stepTitle()).toHaveFocus();
     await userEvent.click(continueButton());
     await userEvent.click(continueButton());
@@ -113,9 +118,9 @@ describe("EarlyscriptWizardView", () => {
     await userEvent.click(continueButton());
     await expect.element(page.getByText("Paso «estudio» en construcción.")).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: "Motor y nocturna, paso 4" }))
+      .element(page.getByRole("button", { name: "Revisión nocturna, paso 4" }))
       .toBeDisabled();
-    await userEvent.click(page.getByRole("button", { name: /^Datos y permisos, paso 1/ }));
+    await userEvent.click(page.getByRole("button", { name: "Tus datos, paso 1, hecho" }));
     await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
     await userEvent.click(continueButton());
     await expect.element(page.getByText("Paso «proveedores» en construcción.")).toBeVisible();
@@ -126,31 +131,17 @@ describe("EarlyscriptWizardView", () => {
     await expect.element(page.getByRole("button", { name: "Atrás" })).not.toBeInTheDocument();
   });
 
-  it("opens the previous step at its top, title focused, when going back", async () => {
-    const TallStep = ({ onBack }: OnboardingStepProps) => (
-      <div className="flex flex-col gap-4">
-        <p style={{ height: 3000 }}>Paso «proveedores» largo.</p>
-        <button type="button" onClick={onBack ?? undefined}>
-          Atrás
-        </button>
-      </div>
-    );
-    const { element } = setup({ steps: { ...STUB_STEPS, proveedores: TallStep } });
-    await using _screen = await render(element);
-    await userEvent.click(continueButton());
-    await expect.element(page.getByText("Paso «proveedores» largo.")).toBeVisible();
-    const viewport = stepTitle()
-      .element()
-      .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    // The panel animates its height after a step change; scroll once there is room to.
-    await vi.waitFor(() => {
-      viewport.scrollTo({ top: viewport.scrollHeight });
-      expect(viewport.scrollTop).toBeGreaterThan(0);
+  it("opens a step reached before where it was left, and says so until the operator moves", async () => {
+    const { element, onRecord } = setup({
+      entry: { _tag: "resume", position: { index: 2, reached: 2 } },
     });
-    await userEvent.click(page.getByRole("button", { name: "Atrás" }));
-    await expect.element(stepTitle()).toHaveTextContent("Paso 1 de 4: Datos y permisos");
-    await expect.element(stepTitle()).toHaveFocus();
-    expect(viewport.scrollTop).toBe(0);
+    await using _screen = await render(element);
+    await expect.element(page.getByText("Paso «estudio» en construcción.")).toBeVisible();
+    await expect.element(page.getByText("Seguimos donde lo dejaste.")).toBeVisible();
+    await userEvent.click(continueButton());
+    await expect.element(page.getByText("Paso «motor» en construcción.")).toBeVisible();
+    await expect.element(page.getByText("Seguimos donde lo dejaste.")).not.toBeInTheDocument();
+    expect(onRecord.mock.calls.map(([step]) => step)).toEqual(["estudio"]);
   });
 
   it("stays on the step and says so when the decision is not recorded", async () => {
@@ -168,18 +159,38 @@ describe("EarlyscriptWizardView", () => {
     await capture("wizard-error");
   });
 
-  it("has no close button on the first run and one that leaves when reopened", async () => {
+  it("leaves from the first run with «Seguir más tarde», and only closes once finished before", async () => {
     const first = setup();
     {
       await using _screen = await render(first.element);
-      await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
-      await expect.element(page.getByRole("button", { name: "Cerrar" })).not.toBeInTheDocument();
+      await expect.element(later()).toBeVisible();
+      // A wizard never finished ignores Escape: only the visible link leaves.
+      await userEvent.keyboard("{Escape}");
+      expect(first.onLeave).not.toHaveBeenCalled();
+      await userEvent.click(later());
+      expect(first.onLeave).toHaveBeenCalledOnce();
+      expect(first.onRecord).not.toHaveBeenCalled();
     }
-    const reopened = setup({ dismissible: true });
+    const reopened = setup({ finishedBefore: true });
     await using _screen = await render(reopened.element);
-    await userEvent.click(page.getByRole("button", { name: "Cerrar" }));
+    await expect.element(later()).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     expect(reopened.onLeave).toHaveBeenCalledOnce();
-    expect(reopened.onRecord).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Cerrar" }));
+    expect(reopened.onLeave).toHaveBeenCalledTimes(2);
+  });
+
+  it("hides «Seguir más tarde» when the step says only forward is left", async () => {
+    const Done = ({ onLeaveHidden }: OnboardingStepProps) => (
+      <button type="button" onClick={() => onLeaveHidden?.(true)}>
+        Terminada
+      </button>
+    );
+    const { element } = setup({ steps: { ...STUB_STEPS, datos: Done } });
+    await using _screen = await render(element);
+    await expect.element(later()).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Terminada" }));
+    await expect.element(later()).not.toBeInTheDocument();
   });
 
   it("lets the operator in without a local server", async () => {
@@ -194,7 +205,7 @@ describe("EarlyscriptWizardView", () => {
   });
 
   it("names every close button of the data dialog in Spanish", async () => {
-    await using _screen = await render(<PrivacyNote />);
+    await using _screen = await render(<DataHandlingDialog trigger={<button type="button" />} />);
     await userEvent.click(page.getByRole("button", { name: "Cómo se tratan tus datos" }));
     const dialog = page.getByRole("dialog", { name: "Cómo se tratan tus datos" });
     await expect.element(dialog).toBeVisible();
@@ -206,35 +217,3 @@ describe("EarlyscriptWizardView", () => {
     await expect.element(dialog).not.toBeInTheDocument();
   });
 });
-
-// The capture matrix renders sixteen screens; it runs only when asked, apart from the checks above.
-if (CAPTURE) {
-  describe("EarlyscriptWizardView captures", () => {
-    it("captures the four steps in both themes and two sizes", async () => {
-      for (const theme of ["light", "dark"] as const) {
-        document.documentElement.classList.toggle("dark", theme === "dark");
-        for (const [width, height] of [
-          [1280, 800],
-          [390, 844],
-        ] as const) {
-          await page.viewport(width, height);
-          const { element } = setup();
-          await using _screen = await render(element);
-          for (const [step, label] of [
-            [1, "Datos y permisos"],
-            [2, "Proveedores"],
-            [3, "Estudio"],
-            [4, "Motor y nocturna"],
-          ] as const) {
-            await expect.element(caption()).toHaveTextContent(`Paso ${step} de 4: ${label}`);
-            await page.screenshot({
-              path: `__screenshots__/wizard-${theme}-${width}-paso${step}.png`,
-            });
-            if (step < 4) await userEvent.click(continueButton());
-          }
-        }
-      }
-      document.documentElement.classList.remove("dark");
-    });
-  });
-}

@@ -15,10 +15,10 @@ export interface OnboardingStage {
 
 /** In order. */
 export const ONBOARDING_STAGES: ReadonlyArray<OnboardingStage> = [
-  { id: "datos", label: "Datos y permisos" },
-  { id: "proveedores", label: "Proveedores" },
-  { id: "estudio", label: "Estudio" },
-  { id: "motor", label: "Motor y nocturna" },
+  { id: "datos", label: "Tus datos" },
+  { id: "proveedores", label: "Asistente de IA" },
+  { id: "estudio", label: "Tu canal" },
+  { id: "motor", label: "Revisión nocturna" },
 ];
 
 /** What the shell hands to every step. */
@@ -32,4 +32,9 @@ export interface OnboardingStepProps {
   readonly onContinue: (acceptance: Readonly<Record<string, unknown>>) => void;
   /** Null on the first step. */
   readonly onBack: (() => void) | null;
+  /**
+   * The step says whether «Seguir más tarde» still makes sense: hidden once the first review
+   * finished, when the only way left is forward. Absent in tests of a single step.
+   */
+  readonly onLeaveHidden?: (hidden: boolean) => void;
 }

@@ -107,21 +107,3 @@ export function DataHandlingDialog({
     </Dialog>
   );
 }
-
-/** The wizard's privacy line: short, true, and a way to read the details. */
-export function PrivacyNote() {
-  return (
-    <p className="text-muted-foreground text-xs leading-relaxed">
-      Tus datos quedan en esta máquina, sin telemetría ni analítica. Los textos de las tendencias
-      solo van al proveedor de modelos que elijas al redactar.{" "}
-      <DataHandlingDialog
-        trigger={
-          <button
-            type="button"
-            className="underline underline-offset-2 hover:text-foreground focus-visible:text-foreground"
-          />
-        }
-      />
-    </p>
-  );
-}

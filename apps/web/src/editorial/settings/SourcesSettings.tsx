@@ -1,14 +1,11 @@
 import type { SourceId } from "@earlyscript/editorial-contracts/source";
 import {
-  DELETION_NONE_DOCUMENTED,
   isCatalogSourceId,
   SOURCE_CATALOG,
   type SourceAccess,
   type SourceCost,
-  type SourceCoveragePolicy,
   type SourceGovernance,
   type SourceRetention,
-  type SourceReviewStatus,
 } from "@earlyscript/editorial-contracts/sourceCatalog";
 import {
   isAtomCommandInterrupted,
@@ -17,73 +14,91 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   EditorialSourceBacktest,
-  EditorialSourceCaptureStatus,
   EditorialSourceEntry,
-  EditorialSourceGap,
-  EditorialSourcesCorpus,
-  EditorialRssFeed,
   EditorialSourcesView,
   EnvironmentId,
 } from "@t3tools/contracts";
-import { ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { ChevronRightIcon, LockIcon } from "lucide-react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 
-import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
-import { Badge } from "../../components/ui/badge";
+import {
+  SettingsPageContainer,
+  useSettingsSearchTarget,
+  useSettingsSearchTargetId,
+} from "../../components/settings/settingsLayout";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
+import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
-import { useEnvironmentQuery } from "../../state/query";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { RssFeedsSettings, type FeedOutcome, type RssFeedControls } from "./RssFeedsSettings";
-import { EDITORIAL_SOURCES_SECTION_ID } from "./settingsEntry";
+import { capitalize, localDay, relativeDay, type Tone } from "./editorialStatus.logic";
+import {
+  DefaultFeeds,
+  Fold,
+  UserFeeds,
+  type FeedOutcome,
+  type RssFeedControls,
+} from "./RssFeedsSettings";
+import { EDITORIAL_RSS_SECTION_ID, EDITORIAL_SOURCES_SECTION_ID } from "./settingsEntry";
+import { NoEnvironment, SettingsPageHeader } from "./SettingsPageHeader";
+import {
+  dayCells,
+  deletionOf,
+  firstSentence,
+  namesList,
+  rankBlockText,
+  sourceStatus,
+  type DayState,
+} from "./sources.logic";
 import { editorialSourcesEnvironment } from "./sourcesState";
 import { failureText } from "./sourcesText";
 
-const STATUS_LABEL: Readonly<Record<SourceReviewStatus, string>> = {
-  ready: "Revisada",
-  "pending-review": "Revisión pendiente",
-  blocked: "Bloqueada",
+const TONE_CLASS: Readonly<Record<Tone | "ready", string>> = {
+  ok: "text-foreground",
+  ready: "text-success-foreground",
+  running: "text-info-foreground",
+  warning: "text-warning-foreground",
+  error: "text-destructive-foreground",
+  idle: "text-muted-foreground",
 };
-const STATUS_BADGE: Readonly<Record<SourceReviewStatus, "success" | "warning" | "error">> = {
-  ready: "success",
-  "pending-review": "warning",
-  blocked: "error",
+
+const DAY_CLASS: Readonly<Record<DayState, string>> = {
+  ok: "bg-success/80",
+  failed: "bg-destructive/80",
+  limited: "bg-warning/80",
+  partial: "bg-warning/80",
+  missing: "bg-muted",
 };
-const CAPTURE_LABEL: Readonly<Record<EditorialSourceCaptureStatus, string>> = {
-  complete: "completa",
-  partial: "parcial",
-  unavailable: "no disponible",
-  rate_limited: "limitada por cuota",
+
+const ACCESS_TEXT: Readonly<Record<SourceAccess, string>> = {
+  public: "sin clave",
+  token: "con token",
+  approval: "requiere aprobación",
 };
-const GAP_LABEL: Readonly<Record<EditorialSourceGap["reason"], string>> = {
-  not_collected: "sin capturar",
-  fetch_failed: "falló",
-  rate_limited: "cuota",
-  partial: "parcial",
+const COST_TEXT: Readonly<Record<SourceCost, string>> = {
+  none: "sin costo",
+  metered: "pago por uso",
+  subscription: "por suscripción",
 };
-const ACCESS_LABEL: Readonly<Record<SourceAccess, string>> = {
-  public: "Pública, sin clave",
-  token: "Con token",
-  approval: "Requiere aprobación",
-};
-const RETENTION_LABEL: Readonly<Record<SourceRetention, string>> = {
-  "frozen-corpus": "Corpus congelado, sin plazo de conservación fijado",
+const RETENTION_TEXT: Readonly<Record<SourceRetention, string>> = {
+  "frozen-corpus": "Todo lo capturado, sin plazo fijado",
   "30-days": "Máximo 30 días",
-  ephemeral: "Efímera, fuera del corpus congelado",
+  ephemeral: "No se guarda: se usa y se descarta",
 };
-const COST_LABEL: Readonly<Record<SourceCost, string>> = {
-  none: "Sin costo",
-  metered: "Pago por uso",
-  subscription: "Suscripción",
-};
-const COVERAGE_LABEL: Readonly<Record<SourceCoveragePolicy, string>> = {
-  census: "Censo: un día completo trae todos los ítems",
-  sample: "Muestra declarada: un día parcial es su colección completa",
-};
-const LANGUAGE_LABEL: Readonly<Record<string, string>> = { en: "Inglés" };
 
 const dayFormat = new Intl.DateTimeFormat("es", {
   timeZone: "UTC",
@@ -91,266 +106,533 @@ const dayFormat = new Intl.DateTimeFormat("es", {
   month: "short",
   year: "numeric",
 });
-const shortDayFormat = new Intl.DateTimeFormat("es", {
-  timeZone: "UTC",
-  day: "numeric",
-  month: "short",
-});
-const formatDay = (day: string) => dayFormat.format(new Date(`${day}T00:00:00Z`));
-const formatShortDay = (day: string) => shortDayFormat.format(new Date(`${day}T00:00:00Z`));
-const formatCount = (count: number) => count.toLocaleString("es");
+const formatDate = (day: string) => dayFormat.format(new Date(`${day.slice(0, 10)}T00:00:00Z`));
+const formatMetric = (value: number | null) =>
+  value === null ? "sin dato" : value.toLocaleString("es", { maximumFractionDigits: 2 });
 
 export type SourcePatch = { readonly collect?: boolean; readonly rank?: boolean };
 
-const VERDICT_LABEL: Readonly<Record<EditorialSourceBacktest["verdict"], string>> = {
-  "not-worse": "no empeora",
-  worse: "empeora",
-};
+/** A change that asks first: what it does to the trends and that it is recorded. */
+type PendingChange =
+  | { readonly _tag: "stop-counting"; readonly source: SourceId }
+  | { readonly _tag: "start-counting"; readonly source: SourceId }
+  | { readonly _tag: "stop-capturing"; readonly source: SourceId };
 
-const formatMetric = (value: number | null) =>
-  value === null ? "sin dato" : value.toLocaleString("es", { maximumFractionDigits: 2 });
-const formatLead = (value: number | null) =>
-  value === null ? "sin dato" : `${value.toLocaleString("es", { maximumFractionDigits: 1 })} d`;
-const plural = (count: number, one: string, many: string) =>
-  `${formatCount(count)} ${count === 1 ? one : many}`;
+const sourceRowId = (id: string) =>
+  id === "rss" ? EDITORIAL_RSS_SECTION_ID : `editorial-source-${id}`;
 
-function engineNote(entry: EditorialSourceEntry, governance: SourceGovernance): string {
-  if (entry.rankBlocked === "no-backtest") {
-    if (entry.backtest?.verdict === "worse")
-      return "No entra al motor: su backtest empeora P@5 o la anticipación.";
-    if (entry.backtest?.status === "provisional")
-      return "No entra al motor: su backtest es provisional y no se registró con --allow-provisional.";
-    return "Pendiente de backtest: entra al motor solo tras un backtest que no empeore P@5.";
-  }
-  if (entry.rankBlocked === "not-ready") {
-    return governance.status === "blocked"
-      ? "Bloqueada por sus condiciones de uso: no entra al motor."
-      : "Pendiente de leer sus términos: no se captura ni entra al motor.";
-  }
-  if (governance.engineBaseline) return "Línea base del motor.";
-  return entry.backtest
-    ? "Puede entrar al motor: su backtest no empeora la línea base."
-    : `Backtest registrado: ${entry.backtestRunId}.`;
-}
+/** "Ayer", "Hoy" or "El 30 oct": the start of a sentence about a day. */
+const dayLead = (day: string) => (day === "hoy" || day === "ayer" ? capitalize(day) : `El ${day}`);
 
-/** The recorded backtest: when it ran, over which cutoffs, P@5 and lead, and its verdict. */
-function BacktestSummary({ backtest }: { readonly backtest: EditorialSourceBacktest }) {
-  return (
-    <span className="block space-y-0.5" data-testid="source-backtest">
-      <span className="block">
-        Backtest del {formatDay(backtest.experimentAt.slice(0, 10))}, cortes del{" "}
-        {formatShortDay(backtest.cutoffFrom)} al {formatShortDay(backtest.cutoffTo)}:{" "}
-        <span className="font-medium text-foreground">{VERDICT_LABEL[backtest.verdict]}</span>.
-      </span>
-      <span className="block">
-        P@5 {formatMetric(backtest.p5Baseline)} sin la fuente y {formatMetric(backtest.p5Candidate)}{" "}
-        con ella; anticipación mediana {formatLead(backtest.leadBaseline)} y{" "}
-        {formatLead(backtest.leadCandidate)}. Sobre{" "}
-        {plural(backtest.completeCutoffs, "corte completo", "cortes completos")}; aparte,{" "}
-        {plural(backtest.partialCutoffs, "corte parcial", "cortes parciales")} con P@5{" "}
-        {formatMetric(backtest.partialP5Baseline)} y {formatMetric(backtest.partialP5Candidate)}.
-      </span>
-      {backtest.status === "provisional" ? (
-        <span className="flex items-start gap-1 text-warning-foreground">
-          <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-          <span>
-            Resultado provisional: seguimiento incompleto.
-            {backtest.allowProvisional
-              ? " Registrado a sabiendas por el operador."
-              : " No habilita el motor."}
-          </span>
-        </span>
-      ) : null}
-    </span>
-  );
-}
+/** "Wikipedia" for "Wikipedia (páginas más vistas)": the record keeps the full name. */
+const shortName = (name: string) => name.replace(/\s*\(.*\)$/, "");
 
-function captureText(entry: EditorialSourceEntry): string {
-  const capture = entry.lastCapture;
-  if (capture === null) return "Sin capturas.";
-  return `Última captura: ${formatDay(capture.day)}, ${CAPTURE_LABEL[capture.status]}, ${formatCount(capture.items)} ítems.`;
-}
-
-function gapsText(entry: EditorialSourceEntry): string | null {
-  if (entry.lastCapture === null) return null;
-  if (entry.recentGaps.length === 0) return "Sin huecos en la última semana del corpus.";
-  const gaps = entry.recentGaps.map(
-    (gap) => `${formatShortDay(gap.day)} (${GAP_LABEL[gap.reason]})`,
-  );
-  return `Huecos en la última semana: ${gaps.join(", ")}.`;
-}
-
-function corpusText(corpus: EditorialSourcesCorpus): string {
-  switch (corpus.status) {
-    case "missing":
-      return `Sin capturas: no hay corpus en ${corpus.directory}.`;
-    case "unreadable":
-      return `No se pudo leer el corpus en ${corpus.directory}: ${corpus.message ?? "error desconocido"}.`;
-    case "ready":
-      return `Corpus en ${corpus.directory}, días ${corpus.fromDay} a ${corpus.toDay} (exclusivo).`;
-  }
-}
+const originText = (origin: string) => origin.replace(/^https?:\/\//, "");
 
 function ExternalLink({ href, children }: { readonly href: string; readonly children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="text-info-foreground underline-offset-2 hover:underline"
+    >
       {children}
     </a>
   );
 }
 
-function GovernanceField({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
+function Field({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
-    <div className="grid gap-0.5 @min-[32rem]/settings-row:grid-cols-[10rem_minmax(0,1fr)] @min-[32rem]/settings-row:gap-4">
+    <div className="grid gap-0.5 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4">
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-words text-foreground">{children}</dd>
     </div>
   );
 }
 
-/** The governance record of one source, as it goes into the thesis annex. */
-function SourceGovernanceCard({ governance }: { readonly governance: SourceGovernance }) {
-  const [open, setOpen] = useState(false);
+/** A link-styled action inside a sentence of the record. */
+function InlineAction({ children, ...props }: ComponentProps<"button">) {
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex min-h-8 items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-            open && "rotate-90",
-          )}
-        />
-        Ficha de la fuente
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <dl className="space-y-2 pt-1 pb-3 text-xs leading-normal">
-          <GovernanceField label="Origen">{governance.origin}</GovernanceField>
-          <GovernanceField label="Licencia">
-            {governance.license.url ? (
-              <ExternalLink href={governance.license.url}>{governance.license.text}</ExternalLink>
-            ) : (
-              governance.license.text
-            )}
-          </GovernanceField>
-          <GovernanceField label="Términos revisados">
-            {governance.termsReviewedAt ? formatDay(governance.termsReviewedAt) : "Sin revisar"}
-            {governance.termsUrl ? (
-              <>
-                {" · "}
-                <ExternalLink href={governance.termsUrl}>Leer términos</ExternalLink>
-              </>
-            ) : null}
-          </GovernanceField>
-          <GovernanceField label="Acceso">{ACCESS_LABEL[governance.access]}</GovernanceField>
-          <GovernanceField label="Retención">
-            {RETENTION_LABEL[governance.retention]}
-          </GovernanceField>
-          <GovernanceField label="Borrado">
-            {governance.deletion === DELETION_NONE_DOCUMENTED
-              ? "Sin método documentado"
-              : governance.deletion}
-          </GovernanceField>
-          <GovernanceField label="Idioma">
-            {LANGUAGE_LABEL[governance.language] ?? governance.language}
-          </GovernanceField>
-          <GovernanceField label="Costo">{COST_LABEL[governance.cost]}</GovernanceField>
-          <GovernanceField label="Cobertura">{COVERAGE_LABEL[governance.coverage]}</GovernanceField>
-          {governance.robotsOverride ? (
-            <GovernanceField label="Excepción a robots.txt">
-              {governance.robotsOverride.reason} «{governance.robotsOverride.quote}»{" "}
-              <ExternalLink href={governance.robotsOverride.termsUrl}>
-                Términos de la API
-              </ExternalLink>
-            </GovernanceField>
+    <button
+      type="button"
+      {...props}
+      className="rounded-sm text-info-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CopyCommand({ command }: { readonly command: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <InlineAction
+      onClick={() =>
+        void navigator.clipboard.writeText(command).then(
+          () => setCopied(true),
+          () => toastManager.add({ type: "error", title: "No se pudo copiar el comando" }),
+        )
+      }
+    >
+      {copied ? "Copiado" : "Copiar comando"}
+    </InlineAction>
+  );
+}
+
+/** The recorded backtest, for the thesis annex: when, over which days, and what it found. */
+function BacktestText({ backtest }: { readonly backtest: EditorialSourceBacktest }) {
+  return (
+    <p data-testid="source-backtest">
+      Prueba del {formatDate(backtest.experimentAt)}, días del {formatDate(backtest.cutoffFrom)} al{" "}
+      {formatDate(backtest.cutoffTo)}: {backtest.verdict === "not-worse" ? "no empeora" : "empeora"}{" "}
+      los resultados. P@5 {formatMetric(backtest.p5Baseline)} sin la fuente y{" "}
+      {formatMetric(backtest.p5Candidate)} con ella, sobre {backtest.completeCutoffs} días con
+      seguimiento completo ({backtest.partialCutoffs} parciales aparte).
+      {backtest.status === "provisional"
+        ? backtest.allowProvisional
+          ? " Provisional, registrada a sabiendas."
+          : " Provisional: no la habilita."
+        : ""}
+    </p>
+  );
+}
+
+/** Origin, conditions, intended use, access, retention and deletion of one source. */
+function GovernanceList({
+  governance,
+  entry,
+  rss,
+}: {
+  readonly governance: SourceGovernance;
+  readonly entry: EditorialSourceEntry;
+  readonly rss: boolean;
+}) {
+  const [noteOpen, setNoteOpen] = useState(false);
+  const deletion = deletionOf(governance);
+  return (
+    <div>
+      <dl className="space-y-2 text-sm leading-normal">
+        {rss ? (
+          <Field label="Qué se guarda">
+            Título, enlace, autor y un extracto de hasta 500 caracteres
+          </Field>
+        ) : (
+          <Field label="De dónde">
+            {originText(governance.origin)}{" "}
+            <span className="text-muted-foreground">
+              · {ACCESS_TEXT[governance.access]}, {COST_TEXT[governance.cost]}
+            </span>
+          </Field>
+        )}
+        <Field label="Condiciones">
+          {governance.license.url && governance.license.url !== governance.termsUrl ? (
+            <ExternalLink href={governance.license.url}>{governance.license.text}</ExternalLink>
+          ) : (
+            governance.license.text
+          )}{" "}
+          <span className="text-muted-foreground">
+            {governance.termsReviewedAt
+              ? `Revisados el ${formatDate(governance.termsReviewedAt)}`
+              : "Términos sin revisar"}
+          </span>
+          {governance.termsUrl ? (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <ExternalLink href={governance.termsUrl}>Leer términos</ExternalLink>
+            </>
           ) : null}
-          <GovernanceField label="Notas">{governance.notes}</GovernanceField>
-        </dl>
-      </CollapsiblePanel>
-    </Collapsible>
+        </Field>
+        <Field label="Uso previsto">Análisis privado, sin republicar el texto</Field>
+        {governance.robotsOverride ? (
+          <Field label="Acceso">
+            Su robots.txt lo prohíbe; los términos de la API lo permiten{" "}
+            <span className="text-muted-foreground">· excepción anotada cada día · </span>
+            <ExternalLink href={governance.robotsOverride.termsUrl}>
+              Términos de la API
+            </ExternalLink>
+          </Field>
+        ) : null}
+        <Field label="Cuánto se guarda">{RETENTION_TEXT[governance.retention]}</Field>
+        <Field label="Borrar">
+          {deletion.text}{" "}
+          {deletion.command === null ? null : <CopyCommand command={deletion.command} />}
+        </Field>
+        <Field label="Notas">
+          {firstSentence(governance.notes)}{" "}
+          <InlineAction aria-expanded={noteOpen} onClick={() => setNoteOpen(!noteOpen)}>
+            {noteOpen ? "Ocultar nota" : "Nota completa"}
+          </InlineAction>
+          {noteOpen ? (
+            <div className="mt-1.5 space-y-1.5 text-muted-foreground">
+              <p>{governance.notes}</p>
+              {governance.robotsOverride ? (
+                <p>
+                  {governance.robotsOverride.reason} «{governance.robotsOverride.quote}»
+                </p>
+              ) : null}
+              {deletion.command === null ? null : <p>{governance.deletion}</p>}
+              {entry.backtest && !governance.engineBaseline ? (
+                <BacktestText backtest={entry.backtest} />
+              ) : null}
+            </div>
+          ) : null}
+        </Field>
+      </dl>
+    </div>
+  );
+}
+
+function DayStrip({
+  entry,
+  view,
+  name,
+}: {
+  readonly entry: EditorialSourceEntry;
+  readonly view: EditorialSourcesView;
+  readonly name: string;
+}) {
+  const cells = dayCells(entry, view);
+  if (cells.length === 0) return <span className="w-[5.25rem]" />;
+  const label = `${name}, últimos 7 días: ${cells.map((cell) => cell.label).join("; ")}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            tabIndex={0}
+            aria-label={label}
+            className="flex w-[5.25rem] shrink-0 gap-0.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
+        }
+      >
+        {cells.map((cell) => (
+          <span key={cell.day} className={cn("h-3.5 flex-1 rounded-xs", DAY_CLASS[cell.state])} />
+        ))}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        <ul className="space-y-0.5 text-xs">
+          {cells.map((cell) => (
+            <li key={cell.day} className="flex items-center gap-2">
+              <span aria-hidden className={cn("size-2 rounded-xs", DAY_CLASS[cell.state])} />
+              {cell.label}
+            </li>
+          ))}
+        </ul>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
 function SourceRow({
   entry,
   governance,
+  view,
   pending,
-  onChange,
-  rss,
+  onCapture,
+  onAsk,
+  feeds,
 }: {
   readonly entry: EditorialSourceEntry;
   readonly governance: SourceGovernance;
+  readonly view: EditorialSourcesView;
   readonly pending: boolean;
-  readonly onChange: (patch: SourcePatch) => void;
-  readonly rss: {
-    readonly feeds: ReadonlyArray<EditorialRssFeed>;
-    readonly controls: RssFeedControls;
-  } | null;
+  readonly onCapture: (collect: boolean) => void;
+  readonly onAsk: (change: PendingChange) => void;
+  readonly feeds: RssFeedControls;
 }) {
-  const engineNoteId = useId();
-  const gaps = gapsText(entry);
+  const rss = governance.id === "rss";
+  const rowId = sourceRowId(governance.id);
+  const [open, setOpen] = useState(false);
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowId);
+  // A search jump lands on the row: open its record before the scroll runs.
+  const targetId = useSettingsSearchTargetId();
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
+  if (targetId === rowId && openedFor !== rowId) {
+    setOpenedFor(rowId);
+    if (!open) setOpen(true);
+  }
+  const status = sourceStatus(entry, governance, view);
+  const capture = entry.lastCapture;
+  const blockText = entry.rank ? null : rankBlockText(entry, governance);
+  const failing = entry.collect && capture !== null && capture.status === "unavailable";
   return (
-    <SettingsRow
-      id={`editorial-source-${governance.id}`}
-      title={
-        <span className="flex items-center gap-2">
-          {governance.name}
-          <Badge size="sm" variant={STATUS_BADGE[governance.status]}>
-            {STATUS_LABEL[governance.status]}
-          </Badge>
-        </span>
-      }
-      description={captureText(entry)}
-      status={
-        <span className="block space-y-0.5">
-          {gaps ? <span className="block">{gaps}</span> : null}
-          <span id={engineNoteId} className="block">
-            {engineNote(entry, governance)}
+    <div id={rowId} ref={targetRef} tabIndex={-1} className="outline-none">
+      <Collapsible open={open} onOpenChange={setOpen} data-testid={`source-${governance.id}`}>
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <CollapsibleTrigger className="grid min-w-0 flex-1 grid-cols-[minmax(0,11rem)_minmax(0,1fr)] items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+            <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                  open && "rotate-90",
+                )}
+              />
+              <span className="truncate">
+                {rss ? "Blogs y newsletters" : shortName(governance.name)}
+              </span>
+            </span>
+            <span className="min-w-0 truncate text-xs">
+              {status.map((part, index) => (
+                <span key={part.text} className={TONE_CLASS[part.tone]}>
+                  {index > 0 ? <span className="text-muted-foreground"> · </span> : null}
+                  {part.text}
+                </span>
+              ))}
+            </span>
+          </CollapsibleTrigger>
+          <DayStrip entry={entry} view={view} name={governance.name} />
+          <span className="flex w-10 shrink-0 justify-end">
+            {entry.rank ? (
+              <span className="flex size-8 items-center justify-center text-muted-foreground">
+                <LockIcon aria-hidden className="size-3.5" />
+                <span className="sr-only">
+                  {governance.name} cuenta para tus tendencias; se cambia en su ficha
+                </span>
+              </span>
+            ) : (
+              <Switch
+                checked={entry.collect}
+                disabled={pending || entry.collectBlocked !== null}
+                onCheckedChange={(checked) => {
+                  if (checked) onCapture(true);
+                  else onAsk({ _tag: "stop-capturing", source: governance.id });
+                }}
+                aria-label={`Capturar ${governance.name}`}
+              />
+            )}
           </span>
-          {entry.backtest && !governance.engineBaseline ? (
-            <BacktestSummary backtest={entry.backtest} />
-          ) : null}
-          {entry.collectBlocked === "blocked" ? (
-            <span className="block">Captura bloqueada mientras la fuente esté bloqueada.</span>
-          ) : null}
-        </span>
-      }
-      control={
-        <div className="flex flex-col items-end gap-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <span aria-hidden>Capturar</span>
-            <Switch
-              checked={entry.collect}
-              disabled={pending || entry.collectBlocked !== null}
-              {...(entry.collectBlocked === null ? {} : { "aria-describedby": engineNoteId })}
-              onCheckedChange={(checked) => onChange({ collect: Boolean(checked) })}
-              aria-label={`Capturar ${governance.name}`}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <span aria-hidden>Usar en el motor</span>
-            <Switch
-              checked={entry.rank}
-              disabled={pending || entry.rankBlocked !== null}
-              onCheckedChange={(checked) => onChange({ rank: Boolean(checked) })}
-              aria-label={`Usar ${governance.name} en el motor`}
-              aria-describedby={engineNoteId}
-            />
-          </div>
         </div>
-      }
-    >
-      {rss ? <RssFeedsSettings feeds={rss.feeds} controls={rss.controls} /> : null}
-      <SourceGovernanceCard governance={governance} />
-    </SettingsRow>
+        <CollapsiblePanel>
+          <div className="space-y-3 border-t border-dashed border-border/60 px-4 pt-3 pb-4 sm:pl-9">
+            {failing ? (
+              <p className="rounded-lg bg-destructive/8 px-3 py-2 text-sm dark:bg-destructive/12">
+                {dayLead(relativeDay(capture.day, localDay(view.asOf, undefined)))} no respondió. La
+                próxima revisión lo vuelve a intentar;{" "}
+                {entry.rank
+                  ? "mientras tanto, tus tendencias salen de las demás fuentes."
+                  : "como aún no cuenta, tus tendencias no cambian."}
+              </p>
+            ) : null}
+            {rss ? (
+              <>
+                <DefaultFeeds
+                  feeds={view.rssFeeds.filter((feed) => feed.origin === "default")}
+                  onExclude={feeds.onExcludeDefault}
+                />
+                <Fold title="Condiciones y borrado">
+                  <GovernanceList governance={governance} entry={entry} rss />
+                </Fold>
+                <UserFeeds
+                  feeds={view.rssFeeds.filter((feed) => feed.origin === "user")}
+                  controls={feeds}
+                />
+              </>
+            ) : (
+              <GovernanceList governance={governance} entry={entry} rss={false} />
+            )}
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {entry.rank ? (
+                <>
+                  {governance.engineBaseline ? (
+                    <span className="flex items-center gap-1">
+                      <LockIcon aria-hidden className="size-3" />
+                      Parte del método evaluado
+                    </span>
+                  ) : null}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => onAsk({ _tag: "stop-counting", source: governance.id })}
+                  >
+                    Dejar de contar o de capturar…
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className={blockText === null ? "text-success-foreground" : undefined}>
+                    {blockText ?? "La prueba no empeoró los resultados"}
+                  </span>
+                  {entry.rankBlocked === "not-ready" ? null : (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={pending || blockText !== null}
+                      onClick={() => onAsk({ _tag: "start-counting", source: governance.id })}
+                    >
+                      Contar para tendencias…
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
   );
 }
+
+function ConfirmDialog({
+  change,
+  view,
+  onClose,
+  onConfirm,
+}: {
+  readonly change: PendingChange | null;
+  readonly view: EditorialSourcesView;
+  readonly onClose: () => void;
+  readonly onConfirm: (source: SourceId, patch: SourcePatch) => void;
+}) {
+  const [alsoCapture, setAlsoCapture] = useState<"keep" | "stop">("keep");
+  const governance = change === null ? null : SOURCE_CATALOG[change.source];
+  const entry =
+    change === null ? null : view.sources.find((candidate) => candidate.source === change.source);
+  const name = governance?.name ?? "";
+  const evaluated = governance?.engineBaseline === true;
+  const content = ((): {
+    readonly title: string;
+    readonly body: string;
+    readonly action: string;
+    readonly destructive: boolean;
+  } | null => {
+    if (change === null) return null;
+    switch (change._tag) {
+      case "stop-counting":
+        return {
+          title: `¿Dejar de contar ${name}?`,
+          body: `${evaluated ? "Es parte del método evaluado. " : ""}Lo ya encontrado no cambia; las revisiones siguientes buscarán tendencias sin ${name}. Queda registrado con su hora y se puede volver atrás.`,
+          action: alsoCapture === "stop" ? "Dejar de contar y de capturar" : "Dejar de contar",
+          destructive: true,
+        };
+      case "start-counting":
+        return {
+          title: `¿Contar ${name} para tus tendencias?`,
+          body: `${evaluated ? "" : "Tus tendencias dejarán de salir del método evaluado. "}Lo ya encontrado no cambia; desde la próxima revisión se busca también en ${name}. Queda registrado con su hora y se puede volver atrás.`,
+          action: `Contar ${name}`,
+          destructive: false,
+        };
+      case "stop-capturing":
+        return {
+          title: `¿Dejar de capturar ${name}?`,
+          body: "Lo ya capturado se conserva; los días sin captura no se recuperan. Queda registrado con su hora y se puede volver a encender.",
+          action: "Dejar de capturar",
+          destructive: true,
+        };
+    }
+  })();
+  return (
+    <AlertDialog
+      open={change !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+          setAlsoCapture("keep");
+        }
+      }}
+    >
+      <AlertDialogPopup>
+        {content === null || change === null ? null : (
+          <>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{content.title}</AlertDialogTitle>
+              <AlertDialogDescription>{content.body}</AlertDialogDescription>
+            </AlertDialogHeader>
+            {change._tag === "stop-counting" ? (
+              <div className="px-6">
+                <RadioGroup
+                  aria-label="Qué hacer con la captura"
+                  value={alsoCapture}
+                  onValueChange={(value) => {
+                    if (value === "keep" || value === "stop") setAlsoCapture(value);
+                  }}
+                >
+                  {(
+                    [
+                      [
+                        "keep",
+                        "Dejar de contar, seguir capturando",
+                        "Se sigue guardando para probarla",
+                      ],
+                      [
+                        "stop",
+                        "Dejar de contar y de capturar",
+                        "Los días sin captura no se recuperan",
+                      ],
+                    ] as const
+                  ).map(([value, label, hint]) => (
+                    <label
+                      key={value}
+                      className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 has-data-checked:border-primary/60 has-data-checked:bg-primary/6"
+                    >
+                      <Radio value={value} className="mt-0.5" />
+                      <span>
+                        <span className="block text-sm text-foreground">{label}</span>
+                        <span className="block text-xs text-muted-foreground">{hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+              </div>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogClose render={<Button size="sm" variant="ghost" />}>
+                Cancelar
+              </AlertDialogClose>
+              <Button
+                size="sm"
+                variant={content.destructive ? "destructive" : "default"}
+                onClick={() => {
+                  const patch: SourcePatch =
+                    change._tag === "stop-counting"
+                      ? alsoCapture === "stop"
+                        ? { rank: false, collect: false }
+                        : { rank: false }
+                      : change._tag === "start-counting"
+                        ? entry?.collect === false
+                          ? { rank: true, collect: true }
+                          : { rank: true }
+                        : { collect: false };
+                  onConfirm(change.source, patch);
+                  onClose();
+                  setAlsoCapture("keep");
+                }}
+              >
+                {content.action}
+              </Button>
+            </AlertDialogFooter>
+          </>
+        )}
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+function GroupHeader({ title, count }: { readonly title: string; readonly count: number }) {
+  return (
+    <>
+      <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {title}
+      </span>
+      <span className="text-xs text-muted-foreground"> · {count}</span>
+    </>
+  );
+}
+
+function ColumnLabels() {
+  return (
+    <span aria-hidden className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+      <span className="w-[5.25rem] text-center">7 días</span>
+      <span className="w-10 text-right">Captura</span>
+    </span>
+  );
+}
+
+const sourceCard =
+  "rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50";
 
 export function SourcesSettingsView({
   view,
@@ -363,28 +645,93 @@ export function SourcesSettingsView({
   readonly onChange: (source: SourceId, patch: SourcePatch) => void;
   readonly feeds: RssFeedControls;
 }) {
+  const [asking, setAsking] = useState<PendingChange | null>(null);
+  const [laterOpen, setLaterOpen] = useState(false);
+  const entries = view.sources.flatMap((entry) =>
+    isCatalogSourceId(entry.source) ? [{ entry, governance: SOURCE_CATALOG[entry.source] }] : [],
+  );
+  const counting = entries.filter(({ entry }) => entry.rank);
+  const later = entries.filter(({ entry }) => !entry.rank);
+  // A search jump to a source that does not count yet opens its group first.
+  const targetId = useSettingsSearchTargetId();
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
+  const targetInLater = later.some(({ governance }) => sourceRowId(governance.id) === targetId);
+  if (targetInLater && targetId !== null && openedFor !== targetId) {
+    setOpenedFor(targetId);
+    if (!laterOpen) setLaterOpen(true);
+  }
+  const row = ({ entry, governance }: (typeof entries)[number]) => (
+    <SourceRow
+      key={governance.id}
+      entry={entry}
+      governance={governance}
+      view={view}
+      pending={pending.has(governance.id)}
+      onCapture={(collect) => onChange(governance.id, { collect })}
+      onAsk={setAsking}
+      feeds={feeds}
+    />
+  );
   return (
-    <SettingsSection id={EDITORIAL_SOURCES_SECTION_ID} title="Fuentes">
-      <SettingsRow
-        title="Corpus"
-        description={corpusText(view.corpus)}
-        status="Las fuentes nuevas se capturan y muestran cobertura; solo pesan en el motor tras un backtest."
+    <section id={EDITORIAL_SOURCES_SECTION_ID} tabIndex={-1} className="space-y-5 outline-none">
+      <SettingsPageHeader
+        title="Fuentes"
+        description={
+          counting.length === 0
+            ? "Ninguna fuente cuenta para tus tendencias: la revisión no tiene dónde buscar."
+            : `Tus tendencias salen de ${namesList(counting.map(({ governance }) => governance.name))}.`
+        }
       />
-      {view.sources.map((entry) => {
-        if (!isCatalogSourceId(entry.source)) return null;
-        const source = entry.source;
-        return (
-          <SourceRow
-            key={source}
-            entry={entry}
-            governance={SOURCE_CATALOG[source]}
-            pending={pending.has(source)}
-            onChange={(patch) => onChange(source, patch)}
-            rss={source === "rss" ? { feeds: view.rssFeeds, controls: feeds } : null}
-          />
-        );
-      })}
-    </SettingsSection>
+      {view.corpus.status === "ready" ? null : (
+        <p
+          className={cn(
+            "text-sm",
+            view.corpus.status === "unreadable"
+              ? "text-destructive-foreground"
+              : "text-muted-foreground",
+          )}
+        >
+          {view.corpus.status === "missing"
+            ? "Todavía no hay capturas en este equipo; la primera revisión las trae."
+            : `No se pudo leer lo capturado: ${view.corpus.message ?? "error desconocido"}.`}
+        </p>
+      )}
+      <div className="space-y-2">
+        <div className="flex items-center px-1">
+          <h3>
+            <GroupHeader title="Cuentan para tus tendencias" count={counting.length} />
+          </h3>
+          <ColumnLabels />
+        </div>
+        {counting.length === 0 ? null : <div className={sourceCard}>{counting.map(row)}</div>}
+      </div>
+      <Collapsible open={laterOpen} onOpenChange={setLaterOpen}>
+        <div className="flex items-center px-1">
+          <h3>
+            <CollapsibleTrigger className="flex items-center gap-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                  laterOpen && "rotate-90",
+                )}
+              />
+              <GroupHeader title="Todavía no cuentan" count={later.length} />
+            </CollapsibleTrigger>
+          </h3>
+          {laterOpen ? <ColumnLabels /> : null}
+        </div>
+        <CollapsiblePanel>
+          <div className={cn(sourceCard, "mt-2")}>{later.map(row)}</div>
+        </CollapsiblePanel>
+      </Collapsible>
+      <ConfirmDialog
+        change={asking}
+        view={view}
+        onClose={() => setAsking(null)}
+        onConfirm={onChange}
+      />
+    </section>
   );
 }
 
@@ -449,38 +796,28 @@ function SourcesSettingsForEnvironment({
     });
     toastOnFailure("No se guardó el ajuste de la fuente", result);
   };
-  if (data === null) {
-    return (
-      <SettingsSection id={EDITORIAL_SOURCES_SECTION_ID} title="Fuentes">
-        <SettingsRow
-          title={error ? "No se pudieron leer las fuentes" : "Cargando fuentes"}
-          description={error ?? undefined}
-        />
-      </SettingsSection>
-    );
-  }
   return (
-    <SourcesSettingsView
-      view={data}
-      pending={pending}
-      onChange={(source, patch) => void onChange(source, patch)}
-      feeds={feeds}
-    />
+    <SettingsPageContainer>
+      {data === null ? (
+        <SettingsPageHeader
+          title="Fuentes"
+          description={error ? `No se pudieron leer las fuentes: ${error}` : "Cargando…"}
+        />
+      ) : (
+        <SourcesSettingsView
+          view={data}
+          pending={pending}
+          onChange={(source, patch) => void onChange(source, patch)}
+          feeds={feeds}
+        />
+      )}
+    </SettingsPageContainer>
   );
 }
 
 /** Settings › Editorial › Fuentes, on the primary environment, which runs the captures. */
-export function SourcesSettings() {
+export function SourcesSettingsPage() {
   const environmentId = usePrimaryEnvironmentId();
-  if (environmentId === null) {
-    return (
-      <SettingsSection id={EDITORIAL_SOURCES_SECTION_ID} title="Fuentes">
-        <SettingsRow
-          title="Sin entorno"
-          description="Conecta el entorno principal para ver y cambiar sus fuentes."
-        />
-      </SettingsSection>
-    );
-  }
+  if (environmentId === null) return <NoEnvironment />;
   return <SourcesSettingsForEnvironment environmentId={environmentId} />;
 }

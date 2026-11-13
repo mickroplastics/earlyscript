@@ -1,14 +1,6 @@
 import type { EditorialNightlySettings } from "@t3tools/contracts";
 
-/** "03:00, hora de America/Guayaquil"; "03:00 UTC" for the UTC zones. */
-export function scheduleText(timeOfDay: string, timezone: string): string {
-  if (timezone === "UTC" || timezone === "Etc/UTC" || timezone === "Etc/GMT") {
-    return `${timeOfDay} UTC`;
-  }
-  return `${timeOfDay}, hora de ${timezone.replaceAll("_", " ")}`;
-}
-
-/** What the wizard stores as the dated decision of the «Motor y nocturna» step. */
+/** What the wizard stores as the dated decision of the «Revisión nocturna» step. */
 export interface EngineStepAcceptance {
   readonly nightlyEnabled: boolean;
   readonly timeOfDay: string;
@@ -30,7 +22,3 @@ export function engineStepAcceptance(
     modelReady: state.modelReady,
   };
 }
-
-/** Under the first-run button while the local model is missing. */
-export const MODEL_MISSING_TEXT =
-  "Primero descarga el modelo local de arriba: el motor lo usa para agrupar las publicaciones.";

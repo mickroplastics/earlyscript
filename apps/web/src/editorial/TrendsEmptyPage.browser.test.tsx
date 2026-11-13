@@ -9,12 +9,10 @@ import {
 } from "@t3tools/contracts";
 import { Atom, AsyncResult, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../test/render";
 import { SidebarProvider } from "../components/ui/sidebar";
-import { RUNNING_JOB } from "./firstRun.fixture";
 import type { EditorialInboxView } from "./state";
 import { TrendsEmptyPage } from "./TrendDossierPage";
 
@@ -36,6 +34,13 @@ vi.mock("./state", async () => {
     refreshEditorialInbox: () => {},
   };
 });
+vi.mock("./FirstRunCard", async () => ({
+  ...(await vi.importActual<typeof import("./FirstRunCard")>("./FirstRunCard")),
+  FirstRunPage: ({ emptyRun }: { readonly emptyRun: boolean }) => (
+    <p>{emptyRun ? "Revisión sin tendencias" : "Primera revisión"}</p>
+  ),
+  FirstTrendsIntro: () => null,
+}));
 vi.mock("./jobsState", async () => {
   const actual = await vi.importActual<typeof import("./jobsState")>("./jobsState");
   const Effect = await vi.importActual<typeof import("effect/Effect")>("effect/Effect");
@@ -75,25 +80,10 @@ const renderPage = (inbox: EditorialInbox, sidebarOpen: boolean) => {
 };
 
 describe("TrendsEmptyPage", () => {
-  it("points to the first run in the inbox and opens a hidden sidebar", async () => {
-    const { registry, screen: pending } = renderPage(NO_RUN, false);
-    await using screen = await pending;
-    await expect.element(screen.getByText("Todavía no hay corridas")).toBeVisible();
-    await expect.element(screen.getByRole("button", { name: "Abrir la bandeja" })).toBeVisible();
-
-    registry.set(activityAtom, AsyncResult.success({ active: RUNNING_JOB }));
-    await expect.element(screen.getByText("Corrida en curso")).toBeVisible();
-    registry.set(activityAtom, AsyncResult.success({ active: null }));
-  });
-
-  it("offers no button while the inbox is already on screen", async () => {
-    await page.viewport(1280, 900);
+  it("hands an inbox without trends to the first-run page", async () => {
     const { screen: pending } = renderPage(NO_RUN, true);
     await using screen = await pending;
-    await expect.element(screen.getByText("Todavía no hay corridas")).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "Abrir la bandeja" }))
-      .not.toBeInTheDocument();
+    await expect.element(screen.getByText("Primera revisión")).toBeVisible();
   });
 
   it("lists the run's cards once it has trends", async () => {

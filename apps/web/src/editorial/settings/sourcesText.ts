@@ -15,7 +15,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   "duplicate-feed": "Ese feed ya está en la lista.",
   "unknown-feed": "Ese feed ya no está en la lista.",
   "not-acknowledged": "Falta aceptar el uso para análisis privado, sin republicar.",
-  "rank-blocked": "La fuente todavía no puede entrar al motor.",
+  "rank-blocked": "La fuente todavía no puede contar para tus tendencias.",
   "collect-blocked": "La fuente no se puede capturar: sus términos están sin leer o la bloquean.",
   "unknown-source": "Este servidor no conoce la fuente.",
   unavailable: "Los servicios editoriales no están montados en este servidor.",

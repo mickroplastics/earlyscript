@@ -185,17 +185,6 @@ export function draftUsageText(budget: EditorialDraftBudget): string {
 export const budgetReachedLabel = (budget: EditorialDraftBudget): string =>
   `Tope mensual alcanzado (${budget.usedThisMonth}/${budget.monthlyLimit})`;
 
-/** What the cap means, in one line: a count of drafts, not money. */
-export const DRAFT_BUDGET_EXPLANATION =
-  "Claude y Codex se pagan por suscripción, no por llamada, así que el tope cuenta tendencias redactadas al mes. Una corrida nocturna redacta hasta 40. 0 quita el tope.";
-
-/** Why the recommended model is the cheap one. */
-export const DRAFTING_MODEL_EXPLANATION =
-  "Las corridas nocturnas redactan todas las tendencias; un modelo barato basta.";
-
-/** The providers' text generation reports no tokens; say so instead of showing zeros. */
-export const DRAFT_USAGE_NO_TOKENS = "Tokens: el proveedor no informa el consumo.";
-
 /** A whole number between 0 and the server's maximum, or null. */
 export function parseMonthlyLimit(text: string): number | null {
   const trimmed = text.trim();

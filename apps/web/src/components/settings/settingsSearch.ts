@@ -41,7 +41,7 @@ export type SettingsPath =
   | "/settings/labs"
   | "/settings/about"
   | "/settings/archived"
-  | typeof EditorialSettings.EDITORIAL_SETTINGS_PATH;
+  | EditorialSettings.EditorialSettingsPath;
 
 export type SettingsSearchScope =
   | "environment"
@@ -112,7 +112,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": "Labs",
   "/settings/about": "About",
   "/settings/archived": "Archive",
-  [EditorialSettings.EDITORIAL_SETTINGS_PATH]: EditorialSettings.EDITORIAL_SETTINGS_LABEL,
+  ...EditorialSettings.EDITORIAL_SETTINGS_LABELS,
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -1209,13 +1209,14 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/labs": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",
-  [EditorialSettings.EDITORIAL_SETTINGS_PATH]: null,
+  ...EditorialSettings.EDITORIAL_SETTINGS_SCOPES,
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
   "/settings/integrations": "/settings/browser",
   "/settings/storage": "/settings/maintenance",
   "/settings/beta": "/settings/labs",
+  ...EditorialSettings.EDITORIAL_RENAMED_SETTINGS_PATHS,
 };
 const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",

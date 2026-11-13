@@ -4,10 +4,10 @@ import {
   type EditorialJobNotice,
   type EditorialJobPhaseName,
   type EditorialJobPhaseStatus,
+  type EditorialNightlySettings,
 } from "@t3tools/contracts";
 
-import { PHASE_LABEL, durationText, jobMessages } from "./jobsState";
-import { EDITORIAL_DRAFTING_SECTION_ID } from "./settings/settingsEntry";
+import { durationText, jobMessages } from "./jobsState";
 
 /**
  * What the first-run card shows, from the job in flight, the newest job and the read of the
@@ -52,7 +52,7 @@ export interface FirstRunInput {
 
 /** An empty run in the inbox that no job of this server ran. */
 export const IMPORTED_EMPTY_TEXT =
-  "La última corrida no produjo tendencias y no hay registro de su ejecución (fue importada o anterior a la nocturna). Puedes ejecutar una corrida nueva.";
+  "La última revisión no trajo tendencias y no hay registro de cómo se hizo (fue importada o anterior a la revisión nocturna). Puedes buscar de nuevo.";
 
 export function firstRunView({
   active,
@@ -107,11 +107,11 @@ function emptyReasons(job: EditorialJob): ReadonlyArray<string> {
   } else if (job.artifacts.dossiers === 0) {
     reasons.push(
       collect === null
-        ? "El motor no formó ninguna tendencia con el corpus actual."
-        : `El motor no formó ninguna tendencia con ${countFormat(collect.items)} publicaciones capturadas.`,
+        ? "La revisión no encontró ninguna tendencia en lo leído hasta ahora."
+        : `La revisión no encontró ninguna tendencia en ${countFormat(collect.items)} publicaciones leídas.`,
     );
   } else if (job.status === "skipped") {
-    reasons.push("La corrida se omitió.");
+    reasons.push("La revisión se omitió.");
   }
   return [...reasons, ...firstRunMessages(job)];
 }
@@ -146,7 +146,7 @@ export interface DraftingProblem {
   /** Where the operator fixes it. */
   readonly link: {
     readonly label: string;
-    readonly to: "/settings/providers" | "/settings/editorial";
+    readonly to: "/settings/providers" | "/settings/editorial/drafting";
     readonly hash?: string;
   };
 }
@@ -158,8 +158,7 @@ const PROVIDERS_LINK = {
 
 const DRAFTING_LINK = {
   label: "Abrir Ajustes › Editorial › Redacción",
-  to: "/settings/editorial",
-  hash: EDITORIAL_DRAFTING_SECTION_ID,
+  to: "/settings/editorial/drafting",
 } as const satisfies DraftingProblem["link"];
 
 /**
@@ -224,7 +223,14 @@ export interface FirstRunPhaseRow {
   readonly warning: boolean;
 }
 
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+/** The five phases in the operator's words, as the wizard first explains them. */
+const REVIEW_PHASE_LABEL: Readonly<Record<EditorialJobPhaseName, string>> = {
+  collect: "Lee las fuentes",
+  run: "Encuentra tendencias",
+  check: "Comprueba el resultado",
+  import: "Las guarda en tu bandeja",
+  presentations: "Redacta los títulos",
+};
 
 const STATUS_WORD: Readonly<Record<FirstRunPhaseStatus, string>> = {
   pending: "pendiente",
@@ -234,7 +240,7 @@ const STATUS_WORD: Readonly<Record<FirstRunPhaseStatus, string>> = {
   failed: "falló",
 };
 
-/** Accessible name of a phase row: "Motor: en curso, 3.072 de 11.913 textos". */
+/** Accessible name of a phase row: "Encuentra tendencias: en curso, 3.072 de 11.913 textos". */
 export function phaseRowName(row: FirstRunPhaseRow): string {
   const status = row.warning ? "incompleta" : STATUS_WORD[row.status];
   return `${row.label}: ${status}${row.detail === null ? "" : `, ${row.detail}`}`;
@@ -283,7 +289,7 @@ export function firstRunPhaseRows(
   return EDITORIAL_JOB_PHASES.map((phase) => {
     const recorded = job?.artifacts.phases.find((entry) => entry.phase === phase);
     const status = recorded?.status ?? "pending";
-    const label = capitalize(PHASE_LABEL[phase]);
+    const label = REVIEW_PHASE_LABEL[phase];
     if (job === null || recorded === undefined) {
       return { phase, label, status, detail: null, compactDetail: null, warning: false };
     }
@@ -326,4 +332,79 @@ export function firstRunPhaseRows(
       warning: status === "skipped" && phase === "presentations" && draftingProblem(job) !== null,
     };
   });
+}
+
+/** What stopped the review, in one sentence, by the phase it stopped in. */
+const PHASE_FAILED_TEXT: Readonly<Record<EditorialJobPhaseName, string>> = {
+  collect: "No se pudieron leer las fuentes.",
+  run: "No se pudieron agrupar las publicaciones.",
+  check: "No se pudo comprobar el resultado.",
+  import: "No se pudieron guardar las tendencias en tu bandeja.",
+  presentations: "No se pudieron redactar los títulos.",
+};
+
+const FAILURE_TEXT: Partial<Record<EditorialJobNotice["code"], string>> = {
+  engine_missing: "Falta en esta instalación la parte que busca tendencias. Reinstala Earlyscript.",
+  no_sources: "No hay ninguna fuente activada. Actívalas en Ajustes › Editorial › Fuentes.",
+  check_failed: "La comprobación no reprodujo el resultado.",
+  import_failed: "No se pudieron guardar las tendencias en tu bandeja.",
+  collect_locked: "Otra lectura de las fuentes estaba en curso.",
+  storage: "La base editorial no respondió.",
+  too_many_attempts: "Se agotaron los intentos.",
+};
+
+export interface ReviewFailure {
+  /** «No se pudieron agrupar las publicaciones.» */
+  readonly headline: string;
+  /** What a retry keeps; null when nothing was read yet. */
+  readonly kept: string | null;
+  /** The technical account folded under «Detalle técnico»: the job's error and its notes. */
+  readonly technical: ReadonlyArray<string>;
+}
+
+/** The failure of a review in the operator's words, with the technical detail apart. */
+export function reviewFailure(job: EditorialJob): ReviewFailure {
+  const failed = job.artifacts.phases.find((phase) => phase.status === "failed")?.phase;
+  const failure = job.artifacts.failure;
+  const phase = failure?.phase ?? failed ?? null;
+  const headline =
+    (failure !== null ? FAILURE_TEXT[failure.code] : undefined) ??
+    (phase !== null ? PHASE_FAILED_TEXT[phase] : "La revisión no terminó.");
+  const collected = job.artifacts.phases.some(
+    (entry) => entry.phase === "collect" && entry.status === "done",
+  );
+  return {
+    headline,
+    kept:
+      collected && phase !== "collect"
+        ? "Lo leído quedó guardado; al reintentar no se vuelve a leer."
+        : null,
+    technical: [...(job.error === null ? [] : [job.error]), ...job.artifacts.notes],
+  };
+}
+
+/**
+ * «esta noche a las 03:00», or «el vie 14 nov a las 03:00» when the next review is more than a
+ * day away; null while the nightly review is off.
+ */
+export function nextReviewText(
+  settings: Pick<EditorialNightlySettings, "enabled" | "nextRunAt" | "timezone">,
+  nowMs: number,
+): string | null {
+  if (!settings.enabled || settings.nextRunAt === null) return null;
+  const at = Date.parse(settings.nextRunAt);
+  const time = new Intl.DateTimeFormat("es", {
+    timeZone: settings.timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(at);
+  if (at - nowMs <= 24 * 3_600_000) return `esta noche a las ${time}`;
+  const day = new Intl.DateTimeFormat("es", {
+    timeZone: settings.timezone,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(at);
+  return `el ${day} a las ${time}`;
 }

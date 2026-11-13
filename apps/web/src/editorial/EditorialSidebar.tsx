@@ -20,6 +20,7 @@ import {
   spaceTabTarget,
 } from "./editorial.logic";
 import { selectEnvironmentSpace, useSpaceStore, type EditorialSpace } from "./spaceStore";
+import { FinishSetupEntry } from "./FinishSetupEntry";
 import { useSidebarLocale } from "./locale/ShellLocale";
 import { NewManualThreadButton } from "./NewManualThreadButton";
 import { TrendInbox, useTrendInbox } from "./TrendInbox";
@@ -187,6 +188,7 @@ export function EditorialSidebar(props: ComponentProps<typeof ThreadSidebar>) {
       {environmentId ? (
         <SpaceTabs environmentId={environmentId} space={space} routeSpace={routeSpace} />
       ) : null}
+      {environmentId ? <FinishSetupEntry environmentId={environmentId} /> : null}
       {environmentId && space === "threads" ? (
         <NewManualThreadButton environmentId={environmentId} />
       ) : null}

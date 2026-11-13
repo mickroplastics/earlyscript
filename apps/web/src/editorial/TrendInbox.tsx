@@ -38,7 +38,7 @@ import {
   refreshEditorialInbox,
   withLiveInboxState,
 } from "./state";
-import { DraftingNotice, FirstRunCard } from "./FirstRunCard";
+import { DraftingNotice, FirstRunCard, FirstRunInboxLabel } from "./FirstRunCard";
 import { useTrendActions } from "./trendActions";
 import { TrendDismissDialog } from "./TrendDismissDialog";
 import { TrendInboxRow, type TrendRowAction } from "./TrendInboxRow";
@@ -238,7 +238,11 @@ export function TrendInbox({
         <SidebarGroup className="z-[1]">
           <div className="flex h-8 items-center gap-1 ps-2">
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-sidebar-muted-foreground">
-              {inbox?.run ? runGroupLabel(inbox.run, nowMinute) : "Tendencias"}
+              {inbox?.run ? (
+                runGroupLabel(inbox.run, nowMinute)
+              ) : (
+                <FirstRunInboxLabel environmentId={environmentId} />
+              )}
             </span>
             {/* An empty inbox shows the job's phases in its first-run card instead. */}
             {inbox !== null && inbox.trends.length > 0 ? (
@@ -288,10 +292,8 @@ export function TrendInbox({
           ) : null}
         </SidebarGroup>
       ) : inbox.run === null || inbox.trends.length === 0 ? (
-        <SidebarGroup className="flex-1 justify-center">
-          <div className="px-2 py-6">
-            <FirstRunCard environmentId={environmentId} emptyRun={inbox.run !== null} />
-          </div>
+        <SidebarGroup>
+          <FirstRunCard environmentId={environmentId} />
         </SidebarGroup>
       ) : (
         <SidebarGroup>

@@ -1,16 +1,23 @@
 import { EnvironmentId, type EditorialNightlySettings } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { Dialog } from "../../components/ui/dialog";
-import { WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../../components/ui/wizard";
-import { NIGHTLY_OFF, NIGHTLY_ON, RUNNING_JOB } from "../firstRun.fixture";
+import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
+import { DONE_JOB, FAILED_JOB, NIGHTLY_OFF, NIGHTLY_ON, RUNNING_JOB } from "../firstRun.fixture";
 import { firstRunView } from "../firstRun.logic";
 import { EngineStep, EngineStepView, type EngineStepViewProps } from "./EngineStep";
-import { ONBOARDING_STAGES } from "./steps";
+
+/** Screenshots only when asked: `VITE_EARLYSCRIPT_CAPTURE=1`. Ignored by Git. */
+const capture = async (name: string) => {
+  if ((import.meta.env as Record<string, unknown>)["VITE_EARLYSCRIPT_CAPTURE"] !== "1") return;
+  document.documentElement.classList.add("dark");
+  await page.screenshot({ path: `__screenshots__/${name}.png` });
+  document.documentElement.classList.remove("dark");
+};
 
 type Settled = AsyncResult.AsyncResult<EditorialNightlySettings, unknown>;
 
@@ -33,6 +40,7 @@ vi.mock("../FirstRunCard", async () => {
       active: null,
       latest: null,
       jobsKnown: true,
+      jobCount: 0,
       starting: false,
       error: null,
       start: async () => true,
@@ -42,66 +50,98 @@ vi.mock("../FirstRunCard", async () => {
 
 const answer = (index: number, result: Settled) => saves.calls[index]?.resolve(result);
 
+const NOW = Date.parse("2026-11-02T23:13:00.000Z");
+
 const renderStep = async (props: Partial<EngineStepViewProps>) => {
   const onChange = vi.fn();
   const onRun = vi.fn();
   const onContinue = vi.fn();
+  const onBack = vi.fn();
   const screen = await render(
-    <EngineStepView
-      settings={NIGHTLY_OFF}
-      loadError={null}
-      model={<p>Modelo</p>}
-      modelReady
-      run={{ kind: "idle" }}
-      starting={false}
-      runError={null}
-      firstRunStarted={false}
-      saving={false}
-      saveError={null}
-      onRetrySave={() => {}}
-      onChange={onChange}
-      onRun={onRun}
-      onRetry={() => {}}
-      onBack={() => {}}
-      onContinue={onContinue}
-      {...props}
-    />,
+    <InDialog>
+      <EngineStepView
+        settings={NIGHTLY_OFF}
+        loadError={null}
+        model={<p>Modelo</p>}
+        modelProgress="ready"
+        run={{ kind: "idle" }}
+        first
+        starting={false}
+        runError={null}
+        firstRunStarted={false}
+        saving={false}
+        saveError={null}
+        notes={{ collect: "Hacker News, GitHub" }}
+        nowMs={NOW}
+        onRetrySave={() => {}}
+        onChange={onChange}
+        onRun={onRun}
+        onRetry={() => {}}
+        onBack={onBack}
+        onContinue={onContinue}
+        {...props}
+      />
+    </InDialog>,
   );
-  return { screen, onChange, onRun, onContinue };
+  return { screen, onChange, onRun, onContinue, onBack };
 };
 
+/** A dialog of the wizard's last step, as `EarlyscriptWizardView` mounts it. */
+function InDialog({ children }: { readonly children: ReactNode }) {
+  return (
+    <Dialog open disablePointerDismissal>
+      <DialogPopup
+        showCloseButton={false}
+        bottomStickOnMobile={false}
+        className="h-[min(39rem,calc(100dvh-2rem))] w-[min(62.5rem,calc(100vw-2rem))] max-w-none overflow-hidden"
+      >
+        <DialogTitle className="sr-only">Configurar Earlyscript</DialogTitle>
+        {children}
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+const finish = (name: string | RegExp) => page.getByRole("button", { name });
+
 describe("EngineStep", () => {
-  it("names the schedule in the machine's zone and saves the switch and the time", async () => {
+  it("shows the machine's zone and saves the switch and the time", async () => {
     const { screen, onChange } = await renderStep({});
     await using _screen = screen;
     await expect
-      .element(screen.getByTestId("engine-schedule"))
-      .toHaveTextContent("03:00, hora de America/Guayaquil");
-    await userEvent.click(screen.getByRole("switch", { name: "Activar la corrida nocturna" }));
+      .element(page.getByTestId("engine-schedule"))
+      .toHaveTextContent("America/Guayaquil");
+    await userEvent.click(page.getByRole("switch", { name: "Revisión nocturna" }));
     expect(onChange).toHaveBeenCalledWith({ enabled: true });
-    await userEvent.fill(screen.getByLabelText("Hora de la corrida nocturna"), "04:30");
+    await userEvent.fill(page.getByLabelText("Revisar a las"), "04:30");
     expect(onChange).toHaveBeenCalledWith({ timeOfDay: "04:30" });
   });
 
-  it("holds the first run until the model is ready", async () => {
-    const { screen, onRun } = await renderStep({ modelReady: false });
+  it("explains each night before the first review, and finishes on the model's download", async () => {
+    const { screen, onContinue } = await renderStep({ modelProgress: "downloading" });
     await using _screen = screen;
-    await expect
-      .element(screen.getByRole("button", { name: "Ejecutar la primera corrida ahora" }))
-      .toBeDisabled();
-    await expect.element(screen.getByText(/^Primero descarga el modelo local/)).toBeVisible();
-    expect(onRun).not.toHaveBeenCalled();
+    await expect.element(page.getByText("Qué pasa cada noche")).toBeVisible();
+    const phases = page.getByRole("list", { name: "Fases de la revisión" });
+    await expect.element(phases.getByText("Hacker News, GitHub")).toBeVisible();
+    await userEvent.click(finish("Terminar y buscar al acabar la descarga"));
+    expect(onContinue).toHaveBeenCalledWith(
+      expect.objectContaining({ firstRunStarted: false, modelReady: false }),
+    );
   });
 
-  it("lets the operator continue while the first run is in flight", async () => {
+  it("follows the review in flight and lets the operator finish", async () => {
     const { screen, onContinue } = await renderStep({
       settings: NIGHTLY_ON,
       run: firstRunView({ active: RUNNING_JOB, latest: null, emptyRun: false }),
       firstRunStarted: true,
     });
     await using _screen = screen;
-    await expect.element(screen.getByRole("list", { name: "Fases de la corrida" })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await expect.element(page.getByText("Ahora mismo")).toBeVisible();
+    await expect.element(page.getByText(/^En marcha · \d+ min$/)).toBeVisible();
+    await expect
+      .element(page.getByRole("listitem", { name: /^Encuentra tendencias: en curso/ }))
+      .toBeVisible();
+    await userEvent.click(finish("Terminar y ver el progreso"));
     expect(onContinue).toHaveBeenCalledWith({
       nightlyEnabled: true,
       timeOfDay: "03:00",
@@ -111,36 +151,71 @@ describe("EngineStep", () => {
     });
   });
 
-  it("waits for the settings before continuing", async () => {
+  it("offers only the way forward once the first review is done", async () => {
+    const { screen, onContinue } = await renderStep({
+      settings: NIGHTLY_ON,
+      run: firstRunView({ active: null, latest: DONE_JOB, emptyRun: false }),
+      firstRunStarted: true,
+    });
+    await using _screen = screen;
+    await expect.element(page.getByText("Terminada")).toBeVisible();
+    await expect.element(page.getByText(/^Lista · \d+ tendencias$/)).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Atrás" })).not.toBeInTheDocument();
+    await userEvent.click(finish("Ver mis tendencias"));
+    expect(onContinue).toHaveBeenCalledOnce();
+  });
+
+  it("says where the review stopped, retries it, and lets the operator finish anyway", async () => {
+    const { screen, onRun, onContinue } = await renderStep({
+      settings: NIGHTLY_ON,
+      run: firstRunView({ active: null, latest: FAILED_JOB, emptyRun: false }),
+      firstRunStarted: true,
+    });
+    await using _screen = screen;
+    await expect.element(page.getByText("Se detuvo aquí")).toBeVisible();
+    await expect.element(page.getByText("No se pudieron agrupar las publicaciones.")).toBeVisible();
+    await expect
+      .element(page.getByText("Lo leído quedó guardado; al reintentar no se vuelve a leer."))
+      .toBeVisible();
+    await expect.element(page.getByText("Si terminas, se reintenta esta noche.")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Detalle técnico" }));
+    await expect.element(page.getByText("engine run exited with 1")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Reintentar" }));
+    expect(onRun).toHaveBeenCalledOnce();
+    await userEvent.click(finish("Terminar igual"));
+    expect(onContinue).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the settings before finishing", async () => {
     const { screen } = await renderStep({ settings: null, loadError: "sin conexión" });
     await using _screen = screen;
     await expect
-      .element(screen.getByText("No se pudo leer la corrida nocturna: sin conexión"))
+      .element(page.getByText("No se pudo leer la revisión nocturna: sin conexión"))
       .toBeVisible();
-    await expect.element(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+    await expect.element(finish("Terminar")).toBeDisabled();
   });
 
-  it("holds Continuar while a change saves and accepts what the server confirmed", async () => {
+  it("holds «Terminar» while a change saves and accepts what the server confirmed", async () => {
     saves.calls = [];
     const onContinue = vi.fn();
-    await using screen = await render(
-      <EngineStep
-        environmentId={EnvironmentId.make("env-1")}
-        onContinue={onContinue}
-        onBack={null}
-      />,
+    await using _screen = await render(
+      <InDialog>
+        <EngineStep
+          environmentId={EnvironmentId.make("env-1")}
+          onContinue={onContinue}
+          onBack={null}
+        />
+      </InDialog>,
     );
-    await userEvent.click(screen.getByRole("switch", { name: "Activar la corrida nocturna" }));
+    await userEvent.click(page.getByRole("switch", { name: "Revisión nocturna" }));
     expect(saves.calls.map((call) => call.input)).toEqual([{ enabled: true }]);
-    await expect
-      .element(screen.getByRole("switch", { name: "Activar la corrida nocturna" }))
-      .toBeChecked();
-    await expect.element(screen.getByRole("button", { name: "Guardando…" })).toBeDisabled();
+    await expect.element(page.getByRole("switch", { name: "Revisión nocturna" })).toBeChecked();
+    await expect.element(page.getByRole("button", { name: "Guardando…" })).toBeDisabled();
     expect(onContinue).not.toHaveBeenCalled();
 
     answer(0, AsyncResult.success({ ...NIGHTLY_OFF, enabled: true, timeOfDay: "03:00" }));
-    await expect.element(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
-    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await expect.element(finish("Terminar")).toBeEnabled();
+    await userEvent.click(finish("Terminar"));
     expect(onContinue).toHaveBeenCalledWith({
       nightlyEnabled: true,
       timeOfDay: "03:00",
@@ -150,110 +225,49 @@ describe("EngineStep", () => {
     });
   });
 
-  it("shows a failed save beside the control and does not advance until it saves", async () => {
+  it("shows a failed save beside the control and does not finish until it saves", async () => {
     saves.calls = [];
     const onContinue = vi.fn();
-    await using screen = await render(
-      <EngineStep
-        environmentId={EnvironmentId.make("env-1")}
-        onContinue={onContinue}
-        onBack={null}
-      />,
+    await using _screen = await render(
+      <InDialog>
+        <EngineStep
+          environmentId={EnvironmentId.make("env-1")}
+          onContinue={onContinue}
+          onBack={null}
+        />
+      </InDialog>,
     );
-    await userEvent.click(screen.getByRole("switch", { name: "Activar la corrida nocturna" }));
+    await userEvent.click(page.getByRole("switch", { name: "Revisión nocturna" }));
     answer(0, AsyncResult.fail({ reason: "storage" }));
     await expect
-      .element(
-        screen.getByText("No se guardó la corrida nocturna: La base editorial no respondió."),
-      )
+      .element(page.getByText("No se guardó la revisión nocturna: La base editorial no respondió."))
       .toBeVisible();
-    await expect
-      .element(screen.getByRole("switch", { name: "Activar la corrida nocturna" }))
-      .not.toBeChecked();
-    await expect.element(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
+    await expect.element(page.getByRole("switch", { name: "Revisión nocturna" })).not.toBeChecked();
+    await expect.element(finish("Terminar")).toBeDisabled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await userEvent.click(page.getByRole("button", { name: "Reintentar" }));
     expect(saves.calls.map((call) => call.input)).toEqual([{ enabled: true }, { enabled: true }]);
     answer(1, AsyncResult.success({ ...NIGHTLY_OFF, enabled: true }));
-    await expect.element(screen.getByRole("button", { name: "Continuar" })).toBeEnabled();
-    await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await expect.element(finish("Terminar")).toBeEnabled();
+    await userEvent.click(finish("Terminar"));
     expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ nightlyEnabled: true }));
   });
 });
 
-/** Every scrollable ancestor of `element`, by its `data-slot`. */
-const scrollableAncestors = (element: Element): ReadonlyArray<string> => {
-  const found: Array<string> = [];
-  for (let node = element.parentElement; node; node = node.parentElement) {
-    const overflow = getComputedStyle(node).overflowY;
-    if (overflow === "auto" || overflow === "scroll") found.push(node.dataset.slot ?? node.tagName);
-  }
-  return found;
-};
-
 describe.each([
-  ["desktop", 1280, 800],
-  ["mobile", 390, 844],
-] as const)("EngineStep in the wizard dialog at %s", (_size, width, height) => {
-  it("has no scroll of its own and reaches Continuar through the dialog's scroll", async () => {
+  ["1440", 1440, 900],
+  ["1280", 1280, 800],
+] as const)("EngineStep at %s", (size, width, height) => {
+  it("keeps «Terminar» in view below the two columns", async () => {
     await page.viewport(width, height);
-    await using _screen = await render(
-      <Dialog open disablePointerDismissal>
-        <WizardPopup size="wide" bottomStickOnMobile={false}>
-          <WizardHeader title="Configurar Earlyscript">
-            <WizardSteps
-              steps={ONBOARDING_STAGES.map((stage) => stage.label)}
-              currentStep={ONBOARDING_STAGES.findIndex((stage) => stage.id === "motor")}
-            />
-          </WizardHeader>
-          <WizardPanel>
-            <EngineStepView
-              settings={NIGHTLY_ON}
-              loadError={null}
-              model={<div className="h-40 rounded-md border">Modelo</div>}
-              modelReady
-              run={firstRunView({ active: RUNNING_JOB, latest: null, emptyRun: false })}
-              starting={false}
-              runError={null}
-              firstRunStarted
-              saving={false}
-              saveError={null}
-              onRetrySave={() => {}}
-              onChange={() => {}}
-              onRun={() => {}}
-              onRetry={() => {}}
-              onBack={() => {}}
-              onContinue={() => {}}
-            />
-          </WizardPanel>
-        </WizardPopup>
-      </Dialog>,
-      { router: false },
-    );
-    await expect.element(page.getByTestId("engine-step")).toBeVisible();
-    expect(
-      page
-        .getByTestId("engine-step")
-        .element()
-        .querySelectorAll("[data-slot=scroll-area-viewport]"),
-    ).toHaveLength(0);
-    const phases = page.getByRole("list", { name: "Fases de la corrida" }).element();
-    expect(scrollableAncestors(phases)).toEqual(["scroll-area-viewport"]);
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
-
-    const viewport = document.querySelector<HTMLElement>(
-      "[role=dialog] [data-slot=scroll-area-viewport]",
-    );
-    if (!viewport) throw new Error("wizard scroll area not found");
-    const button = page.getByRole("button", { name: "Continuar" }).element();
-    expect(scrollableAncestors(button)).toEqual(["scroll-area-viewport"]);
-    // WizardPanel animates its height, so this retries until the last control is inside.
-    await vi.waitFor(() => {
-      viewport.scrollTop = viewport.scrollHeight;
-      expect(button.getBoundingClientRect().bottom).toBeLessThanOrEqual(
-        viewport.getBoundingClientRect().bottom,
-      );
+    const { screen } = await renderStep({
+      settings: NIGHTLY_ON,
+      run: firstRunView({ active: null, latest: FAILED_JOB, emptyRun: false }),
     });
+    await using _screen = screen;
+    const button = finish("Terminar igual").element();
+    expect(button.getBoundingClientRect().bottom).toBeLessThanOrEqual(height);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    await capture(`engine-fallida-${size}`);
   });
 });
