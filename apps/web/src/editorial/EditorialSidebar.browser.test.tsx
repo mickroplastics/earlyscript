@@ -49,6 +49,7 @@ vi.mock(import("./TrendInbox"), async () => {
 });
 
 vi.mock(import("./NewManualThreadButton"), () => ({ NewManualThreadButton: () => <></> }));
+vi.mock(import("./FinishSetupEntry"), () => ({ FinishSetupEntry: () => <></> }) as never);
 vi.mock(import("./locale/ShellLocale"), () => ({ useSidebarLocale: () => {} }) as never);
 vi.mock(
   import("../state/environments"),
