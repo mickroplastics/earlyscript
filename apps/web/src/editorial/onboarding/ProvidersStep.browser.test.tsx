@@ -1,9 +1,11 @@
 import { ProviderInstanceId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../../components/ui/dialog";
 import {
   notInstalled,
   providerFixture,
@@ -27,23 +29,51 @@ const renderStep = (props: Partial<ProvidersStepViewProps>) => {
     onRecheck,
     onRetryBudget,
     screen: render(
-      <ProvidersStepView
-        providers={[providerFixture("claudeAgent"), providerFixture("codex", signedOut)]}
-        settings={SETTINGS_FIXTURE}
-        os="linux"
-        budget={{ monthlyLimit: 600, usedThisMonth: 12, month: "2026-11" }}
-        budgetError={null}
-        onRetryBudget={onRetryBudget}
-        checking={false}
-        saving={false}
-        error={null}
-        onRecheck={onRecheck}
-        onBack={null}
-        onContinue={onContinue}
-        {...props}
-      />,
+      <InDialog>
+        <ProvidersStepView
+          providers={[providerFixture("claudeAgent"), providerFixture("codex", signedOut)]}
+          settings={SETTINGS_FIXTURE}
+          os="linux"
+          budget={{ monthlyLimit: 600, usedThisMonth: 12, month: "2026-11" }}
+          budgetError={null}
+          onRetryBudget={onRetryBudget}
+          checking={false}
+          saving={false}
+          error={null}
+          onRecheck={onRecheck}
+          onBack={null}
+          onContinue={onContinue}
+          {...props}
+        />
+      </InDialog>,
     ),
   };
+};
+
+/** A dialog of the wizard's size, as `EarlyscriptWizardView` mounts the steps. */
+function InDialog({ children }: { readonly children: ReactNode }) {
+  return (
+    <Dialog open disablePointerDismissal>
+      <DialogPopup
+        showCloseButton={false}
+        bottomStickOnMobile={false}
+        className="h-[min(48.25rem,calc(100dvh-2rem))] w-[min(62.5rem,calc(100vw-2rem))] max-w-none overflow-hidden"
+      >
+        <DialogTitle className="sr-only">Configurar Earlyscript</DialogTitle>
+        {children}
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/** Screenshots only when asked: `VITE_EARLYSCRIPT_CAPTURE=1`. Ignored by Git. */
+const capture = async (name: string) => {
+  if ((import.meta.env as Record<string, unknown>)["VITE_EARLYSCRIPT_CAPTURE"] !== "1") return;
+  document.documentElement.classList.add("dark");
+  await page.viewport(1440, 900);
+  await page.screenshot({ path: `__screenshots__/${name}.png` });
+  await page.viewport(1280, 800);
+  document.documentElement.classList.remove("dark");
 };
 
 describe("ProvidersStepView", () => {
@@ -111,6 +141,7 @@ describe("ProvidersStepView", () => {
     expect(screen.getByRole("combobox", { name: "Modelo de redacción" }).elements()).toHaveLength(
       0,
     );
+    await capture("3b-sin-asistente");
     await userEvent.click(screen.getByRole("button", { name: "Volver a comprobar" }));
     await userEvent.click(screen.getByRole("button", { name: "Continuar sin asistente" }));
     expect(onContinue).toHaveBeenCalledWith(
