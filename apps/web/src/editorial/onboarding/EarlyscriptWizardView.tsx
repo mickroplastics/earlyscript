@@ -138,7 +138,8 @@ export function EarlyscriptWizardView({
       disablePointerDismissal
       onOpenChange={(_, event) => {
         event.cancel();
-        if (event.reason === "escape-key" && !leaveHidden) onLeave();
+        // Never finished: only «Seguir más tarde» leaves, so a stray Escape cannot.
+        if (event.reason === "escape-key" && finishedBefore && !leaveHidden) onLeave();
       }}
     >
       <DialogPopup
@@ -157,6 +158,8 @@ export function EarlyscriptWizardView({
         <span ref={setLocaleAnchor} hidden data-earlyscript-locale="wizard" />
         {welcome ? (
           <WelcomeScreen
+            leaveLabel={leaveLabel}
+            onLeave={onLeave}
             onStart={() => {
               setWelcome(false);
               shownIndex.current = -1;
@@ -312,9 +315,24 @@ function GrowthBars() {
   );
 }
 
-function WelcomeScreen({ onStart }: { readonly onStart: () => void }) {
+function WelcomeScreen({
+  leaveLabel,
+  onLeave,
+  onStart,
+}: {
+  readonly leaveLabel: string;
+  readonly onLeave: () => void;
+  readonly onStart: () => void;
+}) {
   return (
-    <div className="flex flex-col" data-testid="wizard-welcome">
+    <div className="relative flex flex-col" data-testid="wizard-welcome">
+      <button
+        type="button"
+        onClick={onLeave}
+        className="absolute end-6 top-4 rounded-sm text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        {leaveLabel}
+      </button>
       <div className="flex flex-col items-center px-8 pt-11 pb-12 text-center">
         <img src={EarlyscriptBrand.webIconPath} alt="" aria-hidden className="size-10 rounded-lg" />
         <DialogPrimitive.Title className="mt-6 max-w-xl text-3xl leading-tight font-bold tracking-tight text-foreground">

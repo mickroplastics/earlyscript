@@ -24,7 +24,8 @@ export function nextRunText(settings: EditorialNightlySettings): string {
 }
 
 const ERROR_TEXT: Readonly<Record<string, string>> = {
-  "no-sources": "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).",
+  "no-sources":
+    "Ninguna fuente está activada para buscar tendencias (Ajustes › Editorial › Fuentes).",
   unavailable: "Los servicios editoriales no están montados en este servidor.",
   storage: "La base editorial no respondió.",
   "invalid-settings": "El ajuste no es válido.",

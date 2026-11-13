@@ -81,6 +81,7 @@ describe("EarlyscriptWizardView", () => {
         page.getByRole("heading", { name: "Cada mañana, los temas que se mueven en tu nicho" }),
       )
       .toBeVisible();
+    await expect.element(later()).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Empezar" }));
     await expect.element(page.getByText("Paso «datos» en construcción.")).toBeVisible();
     await expect.element(caption()).toHaveTextContent("Paso 1 de 4");
@@ -162,6 +163,10 @@ describe("EarlyscriptWizardView", () => {
     const first = setup();
     {
       await using _screen = await render(first.element);
+      await expect.element(later()).toBeVisible();
+      // A wizard never finished ignores Escape: only the visible link leaves.
+      await userEvent.keyboard("{Escape}");
+      expect(first.onLeave).not.toHaveBeenCalled();
       await userEvent.click(later());
       expect(first.onLeave).toHaveBeenCalledOnce();
       expect(first.onRecord).not.toHaveBeenCalled();
@@ -169,8 +174,10 @@ describe("EarlyscriptWizardView", () => {
     const reopened = setup({ finishedBefore: true });
     await using _screen = await render(reopened.element);
     await expect.element(later()).not.toBeInTheDocument();
-    await userEvent.click(page.getByRole("button", { name: "Cerrar" }));
+    await userEvent.keyboard("{Escape}");
     expect(reopened.onLeave).toHaveBeenCalledOnce();
+    await userEvent.click(page.getByRole("button", { name: "Cerrar" }));
+    expect(reopened.onLeave).toHaveBeenCalledTimes(2);
   });
 
   it("hides «Seguir más tarde» when the step says only forward is left", async () => {

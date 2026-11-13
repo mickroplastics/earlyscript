@@ -114,7 +114,7 @@ describe("NightlyRunSettings", () => {
     expect(onRunNow).toHaveBeenCalledOnce();
   });
 
-  it("says the review is current and hides «Revisar ahora» while it would do nothing", async () => {
+  it("says the review is current and still offers «Revisar ahora»", async () => {
     const { screen } = await renderView({ settings: ENABLED, jobs: [job({})] });
     await using _screen = screen;
     await expect.element(screen.getByText("Al día")).toBeVisible();
@@ -124,9 +124,8 @@ describe("NightlyRunSettings", () => {
     await expect
       .element(screen.getByRole("link", { name: "Ver tendencias" }))
       .toHaveAttribute("href", "/editorial/env-1/trends");
-    await expect
-      .element(screen.getByRole("button", { name: "Revisar ahora" }))
-      .not.toBeInTheDocument();
+    // A new method or profile makes `runNow` start another job, so the button stays.
+    await expect.element(screen.getByRole("button", { name: "Revisar ahora" })).toBeVisible();
     await expect
       .element(
         screen.getByText("Próxima: mañana a las 03:00, hora de Guayaquil.", { exact: false }),

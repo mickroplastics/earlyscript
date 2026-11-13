@@ -263,7 +263,8 @@ function StatusCard({
           line: `${/^\d/.test(at) ? `El ${at}` : at.replace(" ", " a las ")} ${found}${duration === null ? "" : ` · tardó ${duration}`}.${changed ? " Las fuentes cambiaron desde entonces." : ""}`,
           action: (
             <div className="flex flex-wrap items-center gap-2">
-              {changed ? runButton("Revisar ahora") : null}
+              {/* Always offered: a new method or profile also makes `runNow` start another job. */}
+              {runButton("Revisar ahora")}
               {trendsLink}
             </div>
           ),
