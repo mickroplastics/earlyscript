@@ -619,7 +619,8 @@ describe("EditorialJobsService", () => {
           const jobs = yield* EditorialJobsService.EditorialJobsService;
           const sql = yield* EditorialSql;
           const before = yield* jobs.getSettings;
-          assert.strictEqual(before.engineConfig, "engine.v1.json");
+          // Settings name the method the first run will use, before it is recorded.
+          assert.strictEqual(before.engineConfig, "engine.v3-sel.json");
           assert.isNull(before.engineConfigChosenAt);
           assert.includeMembers(
             [...before.engineConfigs],
