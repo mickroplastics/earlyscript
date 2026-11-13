@@ -111,7 +111,7 @@ function stepLabel(mode: EditorialVideoState["thread"]["mode"], stage: Editorial
 
 function versionText(video: EditorialVideoState, plainVersion: boolean): string {
   const head = video.script.head;
-  if (head === null) return "sin versión guardada";
+  if (head === null) return "versión actual del guion";
   return `versión ${plainVersion ? video.script.versionCount : shortHash(head.contentHash)}`;
 }
 
@@ -413,7 +413,7 @@ export function VideoDecisionPanel({
         </Button>
         <span className="min-w-0 flex-1 text-muted-foreground text-xs leading-snug">
           {block.problem ??
-            `Se guarda con el guion (${versionText(video, plainVersion)}) y tu tiempo por paso. No se modifica después.`}
+            `Se guarda con la ${versionText(video, plainVersion)} y tu tiempo por paso; no se modifica después.`}
         </span>
       </div>
     </form>

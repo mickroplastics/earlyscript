@@ -804,7 +804,7 @@ function WorkspaceView({
                 ) : (
                   <>
                     {drafted || decided ? (
-                      <div className="sticky top-0 z-10 -mx-7 -mt-5 mb-2 flex flex-col gap-2 bg-background/95 px-7 pt-4 pb-3 backdrop-blur-sm">
+                      <div className="sticky top-0 z-10 -mx-7 -mt-5 mb-2 flex flex-col gap-2 bg-background px-7 pt-4 pb-3 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-12 after:bg-linear-to-b after:from-background after:from-40% after:to-transparent">
                         <div className="flex min-h-7 items-center gap-2 text-muted-foreground text-xs">
                           {decided || model.current === "decide" ? (
                             <LockIcon aria-hidden className="size-3.5" />
@@ -937,7 +937,8 @@ function WorkspaceView({
             ) : null}
 
             {rightTab === "decision" && phase !== "work" ? (
-              <div className="min-h-0 flex-1 overflow-y-auto" data-thread-map-script>
+              // The bottom scroll padding keeps a focused field above the sticky submit row.
+              <div className="min-h-0 flex-1 scroll-pb-24 overflow-y-auto" data-thread-map-script>
                 <div className="flex flex-col gap-5 p-5">
                   <VideoDecisionPanel
                     plainVersion

@@ -176,8 +176,11 @@ function SourceRow({
   source,
   onOpen,
   compact = false,
+  scripted = false,
 }: {
   readonly source: NumberedSource;
+  /** The script cites sources: a row it does not cite says so. */
+  readonly scripted?: boolean;
   readonly onOpen: (id: string) => void;
   readonly compact?: boolean;
 }) {
@@ -210,7 +213,9 @@ function SourceRow({
             ? ""
             : source.uses > 0
               ? ` · citada ${source.uses === 1 ? "1 vez" : `${source.uses} veces`} en ${source.sections.join(", ")}`
-              : " · no se cita en el guion"}
+              : scripted
+                ? " · no se cita en el guion"
+                : ""}
         </p>
       </div>
       {compact || url === null ? null : (
@@ -250,7 +255,7 @@ export function SourcesPanel({
       </p>
       <ul className="flex flex-col divide-y rounded-lg border">
         {sources.map((source) => (
-          <SourceRow key={source.id} source={source} onOpen={onOpenSource} />
+          <SourceRow key={source.id} source={source} onOpen={onOpenSource} scripted={cited > 0} />
         ))}
       </ul>
     </div>

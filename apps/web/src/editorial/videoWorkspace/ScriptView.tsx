@@ -215,7 +215,7 @@ export function ScriptView({
                 key={paragraph.line}
                 data-line={paragraph.line}
                 className={cn(
-                  "-mx-3 scroll-mt-24 whitespace-pre-wrap rounded-md border-s-2 border-transparent px-3 py-0.5",
+                  "-ms-3 scroll-mt-24 whitespace-pre-wrap rounded-md border-s-2 border-transparent ps-3 pe-3 py-0.5",
                   noticeLines.has(paragraph.line) && "border-warning/70",
                   highlighted && "border-primary bg-primary/8",
                   active && "bg-warning/10 ring-1 ring-warning/50",

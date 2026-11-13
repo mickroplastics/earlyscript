@@ -118,7 +118,9 @@ export function SourceBrowser({
             : "No está en el expediente"}
           {source.uses > 0
             ? ` · citada ${source.uses === 1 ? "1 vez" : `${source.uses} veces`} en ${source.sections.join(", ")}`
-            : " · no se cita en el guion"}
+            : sources.some((entry) => entry.uses > 0)
+              ? " · no se cita en el guion"
+              : ""}
         </p>
       </div>
       {url === null ? (
