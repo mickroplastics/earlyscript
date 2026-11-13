@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   EditorialDossierId,
   EditorialRunId,
+  type EditorialEvidenceItem,
   type EditorialResultsStage,
   type EditorialTrendDossier,
   type EditorialVideoState,
@@ -35,7 +36,7 @@ import {
 import { formatSavedAt, restartStage } from "../videoThread.logic";
 import { SourceBrowser } from "./SourceBrowser";
 import { SourcesPanel, TopicPanel, sourceDay } from "./ReadingPanels";
-import { NoticeBar, ScriptEmpty, ScriptView } from "./ScriptView";
+import { NoticeBar, ScriptEmpty, ScriptView, VerifierCount } from "./ScriptView";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { VideoComposerContext, type VideoComposerOffer } from "./VideoComposerAccessory";
 import { ClockPill, NowLine, ResolveIntervalForm, VideoSteps } from "./VideoStepper";
@@ -48,6 +49,7 @@ import {
   uncitedSentences,
   type ScriptNotice,
   scriptSource,
+  nextEvidenceOffset,
 } from "./videoWorkspace.logic";
 import "../threadMap.css";
 
@@ -107,7 +109,49 @@ function useScriptContents(
   return { status: live.error ? ("error" as const) : ("loading" as const), contents: "" };
 }
 
-/** Only the first page of evidence: a dossier selects far fewer than the page holds. */
+const EVIDENCE_PAGE = 50;
+
+const dossierInput = (runId: string, dossierId: string, offset: number) => ({
+  runId: EditorialRunId.make(runId),
+  dossierId: EditorialDossierId.make(dossierId),
+  evidenceLimit: EVIDENCE_PAGE,
+  evidenceOffset: offset,
+});
+
+/** Reads one later page of the dossier's evidence and hands it up. Renders nothing. */
+function EvidencePage({
+  threadRef,
+  runId,
+  dossierId,
+  offset,
+  onPage,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly runId: string;
+  readonly dossierId: string;
+  readonly offset: number;
+  readonly onPage: (offset: number, evidence: ReadonlyArray<EditorialEvidenceItem>) => void;
+}) {
+  const result = useAtomValue(
+    editorialEnvironment.dossier({
+      environmentId: threadRef.environmentId,
+      input: dossierInput(runId, dossierId, offset),
+    }),
+  );
+  const evidence = AsyncResult.getOrElse(result, () => null)?.evidence ?? null;
+  const report = useEffectEvent(onPage);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands a page read from the server up to the dossier that numbers every source
+  useEffect(() => {
+    if (evidence !== null) report(offset, evidence);
+  }, [evidence, offset]);
+  return null;
+}
+
+/**
+ * The dossier with every page of its evidence, so a citation to the 51st source keeps its
+ * number. Later pages load beside the view, never around it, so the conversation inside it
+ * is not remounted as they arrive; until then the pages so far are shown.
+ */
 function DossierLoader({
   threadRef,
   runId,
@@ -122,17 +166,48 @@ function DossierLoader({
   const result = useAtomValue(
     editorialEnvironment.dossier({
       environmentId: threadRef.environmentId,
-      input: {
-        runId: EditorialRunId.make(runId),
-        dossierId: EditorialDossierId.make(dossierId),
-        evidenceLimit: 50,
-        evidenceOffset: 0,
-      },
+      input: dossierInput(runId, dossierId, 0),
     }),
   );
-  return children(
-    AsyncResult.getOrElse(result, () => null),
-    AsyncResult.isFailure(result),
+  const [later, setLater] = useState<ReadonlyMap<number, ReadonlyArray<EditorialEvidenceItem>>>(
+    () => new Map(),
+  );
+  const first = AsyncResult.getOrElse(result, () => null);
+  const offsets: number[] = [];
+  if (first !== null) {
+    let offset: number | null = 0;
+    let length = first.evidence.length;
+    while (offset !== null) {
+      offset = nextEvidenceOffset(
+        { evidenceTotal: first.evidenceTotal, pageLength: length },
+        offset,
+      );
+      if (offset !== null) offsets.push(offset);
+      length = offset === null ? 0 : (later.get(offset)?.length ?? EVIDENCE_PAGE);
+    }
+  }
+  const evidence =
+    first === null
+      ? []
+      : [...first.evidence, ...offsets.flatMap((offset) => later.get(offset) ?? [])];
+  return (
+    <>
+      {offsets.map((offset) => (
+        <EvidencePage
+          key={offset}
+          threadRef={threadRef}
+          runId={runId}
+          dossierId={dossierId}
+          offset={offset}
+          onPage={(at, page) =>
+            setLater((current) =>
+              current.get(at) === page ? current : new Map(current).set(at, page),
+            )
+          }
+        />
+      ))}
+      {children(first === null ? null : { ...first, evidence }, AsyncResult.isFailure(result))}
+    </>
   );
 }
 
@@ -456,17 +531,6 @@ function WorkspaceView({
       >
         Reanudar
       </Button>
-    ) : model.now.action === "resolve" && video.clock.unresolved[0] ? (
-      <ResolveIntervalForm
-        key={video.clock.unresolved[0].intervalId}
-        interval={video.clock.unresolved[0]}
-        busy={busy}
-        onResolve={(intervalId, endedAt) =>
-          void run(() =>
-            commands.clock({ _tag: "resolve", intervalId, endedAt }, "No se guardó la hora"),
-          )
-        }
-      />
     ) : decided ? (
       <Button
         size="sm"
@@ -632,7 +696,27 @@ function WorkspaceView({
             parts={parts}
             agentWorking={agentWorking}
           />
-          <NowLine model={model} actions={nowActions} />
+          <NowLine
+            model={model}
+            actions={nowActions}
+            below={
+              model.now.action === "resolve" && video.clock.unresolved[0] ? (
+                <ResolveIntervalForm
+                  key={video.clock.unresolved[0].intervalId}
+                  interval={video.clock.unresolved[0]}
+                  busy={busy}
+                  onResolve={(intervalId, endedAt) =>
+                    void run(() =>
+                      commands.clock(
+                        { _tag: "resolve", intervalId, endedAt },
+                        "No se guardó la hora",
+                      ),
+                    )
+                  }
+                />
+              ) : null
+            }
+          />
         </header>
 
         <div
@@ -720,7 +804,7 @@ function WorkspaceView({
                 ) : (
                   <>
                     {drafted || decided ? (
-                      <div className="sticky top-0 z-10 -mx-7 -mt-5 flex flex-col gap-2 bg-background/95 px-7 pt-4 pb-3 backdrop-blur-sm">
+                      <div className="sticky top-0 z-10 -mx-7 -mt-5 mb-2 flex flex-col gap-2 bg-background/95 px-7 pt-4 pb-3 backdrop-blur-sm">
                         <div className="flex min-h-7 items-center gap-2 text-muted-foreground text-xs">
                           {decided || model.current === "decide" ? (
                             <LockIcon aria-hidden className="size-3.5" />
@@ -729,17 +813,23 @@ function WorkspaceView({
                             {decided && script.status === "unsaved"
                               ? `Decidido el ${dateAndTime(video.decision!.decidedAt)} · sin versión guardada`
                               : decided
-                                ? `Versión decidida el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
+                                ? `Decidida el ${dateAndTime(video.decision!.decidedAt)} · solo lectura`
                                 : model.current === "decide"
-                                  ? "Esta es la versión que vas a decidir · solo lectura mientras decides"
+                                  ? "La versión que vas a decidir · solo lectura"
                                   : agentWorking && drafted
                                     ? "El asistente trabaja en tu pedido · el guion se actualiza cuando termine"
                                     : video.script.head
-                                      ? `Versión ${video.script.versionCount} · guardada ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
+                                      ? `Versión ${video.script.versionCount} · ${formatSavedAt(video.script.head.savedAt)}${editing ? " · editando a mano, se guarda solo" : ""}`
                                       : drafted
                                         ? "Sin versión guardada todavía"
                                         : ""}
                           </span>
+                          {verifier && !editing && !(agentWorking && drafted) ? (
+                            <VerifierCount
+                              claims={verifier.claims}
+                              uncited={verifier.uncited.length}
+                            />
+                          ) : null}
                           {!decided &&
                           model.current !== "decide" &&
                           drafted &&
@@ -760,11 +850,6 @@ function WorkspaceView({
                             notices={notices}
                             activeIndex={noticeIndex}
                             onGo={goToNotice}
-                            verifier={
-                              verifier
-                                ? { claims: verifier.claims, uncited: verifier.uncited.length }
-                                : null
-                            }
                           />
                         ) : null}
                       </div>

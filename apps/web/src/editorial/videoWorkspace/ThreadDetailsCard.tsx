@@ -151,11 +151,13 @@ export function ThreadDetailsCard({
         <Row label="Modo">Con asistente{modelLabel ? ` · ${modelLabel}` : ""}</Row>
         <Row label="Guion">
           <span className="block">
-            {decision
-              ? `La versión que decidiste el ${dateAndTime(decision.decidedAt)}`
-              : head
-                ? `Versión ${script.versionCount}, guardada ${formatSavedAt(head.savedAt)}`
-                : "Sin versiones guardadas todavía"}
+            {decision?.scriptVersionHash === null
+              ? `Decisión sin versión guardada, del ${dateAndTime(decision.decidedAt)}`
+              : decision
+                ? `La versión que decidiste el ${dateAndTime(decision.decidedAt)}`
+                : head
+                  ? `Versión ${script.versionCount}, guardada ${formatSavedAt(head.savedAt)}`
+                  : "Sin versiones guardadas todavía"}
           </span>
           {script.path ? (
             <code className="block truncate text-muted-foreground text-xs [direction:rtl]">
@@ -166,7 +168,7 @@ export function ThreadDetailsCard({
         <Row label="Fuentes">
           {sourceCount === null
             ? "Cargando…"
-            : `${sourceCount} del expediente; el guion cita ${citedCount}`}
+            : `${sourceCount} del expediente${citedCount > 0 ? `; el guion cita ${citedCount}` : ""}`}
         </Row>
         <Row label="Revisión de referencias">
           {head?.claims != null && head.cited != null
