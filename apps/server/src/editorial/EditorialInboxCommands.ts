@@ -9,6 +9,7 @@ import {
   type EditorialTrendKeyInput,
   type EditorialTrendStateResult,
   ThreadId,
+  trendTitle,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -266,7 +267,7 @@ const make = Effect.gen(function* () {
         operationId: purged === 0 ? base : `${base}:${purged + 1}`,
         projectId: input.projectId,
         mode: "manual",
-        title: shown.trend.presentation?.title ?? shown.trend.label,
+        title: trendTitle(shown.trend),
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         creationSource: "web",
@@ -324,7 +325,7 @@ const make = Effect.gen(function* () {
       .createVideo({
         ...operation,
         projectId: input.projectId,
-        title: shown.trend.presentation?.title ?? shown.trend.label,
+        title: trendTitle(shown.trend),
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         creationSource: "web",

@@ -11,6 +11,7 @@ import dossierV2Fixture from "./fixtures/dossier-v2/01-dos_f352642c441d.json" wi
 import {
   compareTrends,
   decodeDossierJson,
+  loadRunDossiers,
   toDossiers,
   webUrlOrNull,
   windowCurve,
@@ -41,6 +42,23 @@ describe("dossier/2", () => {
       expect(card?.headlines?.map((headline) => headline.day)).toEqual(
         raw.movement.fit.headlines.map((headline) => headline.published_at.slice(0, 10)),
       );
+    }),
+  );
+
+  effectIt.effect("reads HTML-escaped evidence titles, excerpts and headlines as text", () =>
+    Effect.gen(function* () {
+      const escaped = "Flint &amp; Orca&#x27;s &quot;Zero&quot; &mdash; 1M context &middot; tools";
+      const plain = 'Flint & Orca\'s "Zero" — 1M context · tools';
+      const raw = structuredClone(dossierV2Fixture);
+      raw.evidence[0]!.title = escaped;
+      raw.evidence[0]!.excerpt = escaped;
+      raw.movement.fit.headlines[0]!.title = escaped;
+      const text = JSON.stringify(raw);
+      const file = yield* decodeDossierJson(text);
+      const [loaded] = loadRunDossiers("run_x", toDossiers([file]), [readDossierExtras(text)]);
+      const first = loaded!.evidence.find((item) => item.itemId === raw.evidence[0]!.item_id);
+      expect([first?.title, first?.excerpt]).toEqual([plain, plain]);
+      expect(loaded!.summary.card?.headlines.map((headline) => headline.title)).toContain(plain);
     }),
   );
 });

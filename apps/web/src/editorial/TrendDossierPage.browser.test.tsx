@@ -14,7 +14,13 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../test/render";
-import { TrendDossierView, type TrendPresentationActions } from "./TrendDossierPage";
+import { SidebarMenu, SidebarProvider } from "../components/ui/sidebar";
+import {
+  TrendDossierScreen,
+  TrendDossierView,
+  type TrendPresentationActions,
+} from "./TrendDossierPage";
+import { TrendInboxRow } from "./TrendInboxRow";
 import { NO_MODEL_DESCRIPTION } from "./videoThreadTarget";
 
 const STUDIO_TARGET = {
@@ -145,81 +151,138 @@ const DOSSIER: EditorialTrendDossier = {
   evidenceRange: { from: "2026-09-09T08:27:14.000Z", to: "2026-10-16T18:00:18.000Z" },
 };
 
+const CARD: NonNullable<EditorialTrendDossier["trend"]["card"]> = {
+  origin: "v3",
+  section: "moving",
+  position: 1,
+  movement: "weak",
+  since: "2026-10-15",
+  perennial: false,
+  curve: [
+    { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
+    { source: "github", status: "comparable", weeks: [0, 0, null, 2] },
+    { source: "npm", status: "comparable", weeks: [0, 0, 0, 0] },
+    { source: "wikipedia", status: "unused", weeks: [] },
+  ],
+  sourceCount: 2,
+  firstSource: { source: "hn", day: "2026-09-09" },
+  secondSource: { source: "github", day: "2026-10-16" },
+  fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
+  saturated: false,
+  headlines: [
+    {
+      itemId: "itm_hn_1",
+      source: "hn",
+      title: "Quantum item 1",
+      day: "2026-10-15",
+      url: "https://example.com/1",
+    },
+  ],
+  evidence: [
+    {
+      itemId: "itm_hn_1",
+      source: "hn",
+      title: "Quantum item 1",
+      day: "2026-10-15",
+      url: "https://example.com/1",
+      alsoIn: ["rss"],
+    },
+    {
+      itemId: "itm_gh_2",
+      source: "github",
+      title: "ibm/qiskit-next",
+      day: "2026-10-16",
+      url: "https://github.com/ibm/qiskit-next",
+    },
+  ],
+  incompleteSources: ["github"],
+  decision: null,
+  priorDecision: null,
+};
+
+/** The quantum dossier with a stored story the dossier no longer draws. */
+const outdatedDossier = (stored: {
+  readonly title: string;
+  readonly titleRejected?: boolean;
+}): EditorialTrendDossier => ({
+  ...DOSSIER,
+  trend: {
+    ...DOSSIER.trend,
+    card: CARD,
+    presentation: {
+      title: stored.title,
+      summary: {
+        whatHappened: "En los últimos 7 días el motor registró 11 elementos.",
+        whyItMatters: "Importa.",
+        videoAngle: "Un video.",
+      },
+      citedItemIds: [],
+      provider: "claudeAgent",
+      model: "claude-haiku-5-5",
+      promptVersion: "trend-presentation.v3",
+      generatedAt: "2026-10-31T12:00:00.000Z",
+      status: "outdated",
+      ...(stored.titleRejected ? { titleRejected: true } : {}),
+    },
+  },
+});
+
 describe("TrendDossierView", () => {
-  it("shows the brief card in place of ranks, scores, growth and the coverage table", async () => {
+  it("shows movement with weekly values and keeps ranks and scores off screen", async () => {
     setup();
     const withCard: EditorialTrendDossier = {
       ...DOSSIER,
-      trend: {
-        ...DOSSIER.trend,
-        card: {
-          origin: "v3",
-          section: "moving",
-          position: 1,
-          movement: "weak",
-          since: "2026-10-15",
-          perennial: false,
-          curve: [
-            { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
-            { source: "github", status: "comparable", weeks: [0, 0, null, 2] },
-            { source: "wikipedia", status: "unused", weeks: [] },
-          ],
-          sourceCount: 2,
-          firstSource: { source: "hn", day: "2026-09-09" },
-          secondSource: { source: "github", day: "2026-10-16" },
-          fit: { topic: "AI coding agents and agent harnesses for developers", terms: ["agent"] },
-          saturated: false,
-          headlines: [
-            {
-              itemId: "itm_hn_1",
-              source: "hn",
-              title: "Quantum item 1",
-              day: "2026-10-15",
-              url: "https://example.com/1",
-            },
-          ],
-          evidence: [
-            {
-              itemId: "itm_hn_1",
-              source: "hn",
-              title: "Quantum item 1",
-              day: "2026-10-15",
-              url: "https://example.com/1",
-            },
-            {
-              itemId: "itm_gh_2",
-              source: "github",
-              title: "ibm/qiskit-next",
-              day: "2026-10-16",
-              url: "https://github.com/ibm/qiskit-next",
-            },
-          ],
-          incompleteSources: ["github"],
-          decision: null,
-          priorDecision: null,
-        },
-      },
+      coverage: [
+        ...DOSSIER.coverage,
+        { source: "npm", windowDays: 28, daysComplete: 7, daysPartial: 21, daysUnavailable: 0 },
+      ],
+      trend: { ...DOSSIER.trend, card: CARD },
     };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={withCard}
-        evidence={withCard}
         onEvidencePage={() => {}}
       />,
     );
-    await expect.element(screen.getByText("· señal débil, desde hace 4 días")).toBeVisible();
+    await expect.element(screen.getByText("Señal débil", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("desde hace 4 días")).toBeVisible();
+    // Without a summary, the latest headlines stand in for it.
+    await expect.element(screen.getByText("Titulares recientes")).toBeVisible();
+    const chart = screen.getByRole("img", { name: /^Publicaciones por semana/ });
+    await expect
+      .element(chart)
+      .toHaveAccessibleName(
+        "Publicaciones por semana. Hacker News: 1, 3, 0 y 5; GitHub: 0, 0, sin captura y 2, de la semana del 21 a 27 sept a la del 12 a 18 oct.",
+      );
+    // An uncaptured week is a "?", never a zero.
+    expect(chart.element().textContent).toContain("?sin captura");
+    // One sentence for a quiet source whose capture was partial, never two that contradict.
+    expect(screen.container.textContent).toContain(
+      "npm sin publicaciones registradas, pero con captura parcial.",
+    );
+    expect(screen.container.textContent).not.toContain("Sin publicaciones en npm");
+    // GitHub has bars, but its daily capture was partial: said next to the figure.
     await expect
       .element(
-        screen.getByText(
-          "hn 1→3→0→5 · github 0→0→?→2 · wikipedia no usada · 2 fuentes · apareció en hn hace 40 días",
-        ),
+        screen.getByRole("button", { name: /^Captura diaria incompleta\W+Días.*quedarse cortas/ }),
       )
       .toBeVisible();
-    await expect.element(screen.getByText("cobertura incompleta en github")).toBeVisible();
-    // The page opens the card's detail: evidence by source with its ids.
-    await expect.element(screen.getByRole("region", { name: "Evidencia de GitHub" })).toBeVisible();
-    expect(screen.container.querySelector('[data-card-evidence="itm_gh_2"]')).not.toBeNull();
+    expect(screen.container.textContent).toContain("cortas.: GitHub 0 de 28 días.");
+    expect(screen.container.textContent).not.toContain("Cobertura incompleta en GitHub");
+    // The third week has no total: GitHub did not capture it.
+    expect(screen.container.textContent).toContain("7en la última semana");
+    // The days each source captured stay one click away, with the unused source.
+    await userEvent.click(screen.getByRole("button", { name: "Semanas por fuente" }));
+    await expect.element(screen.getByText("7 de 28 · 21 parciales")).toBeVisible();
+    await expect.element(screen.getByText("se captura pero no se agrupa")).toBeVisible();
+    await expect
+      .element(screen.getByText("Tema del perfil: AI coding agents · términos: agent"))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
+    await expect
+      .element(screen.getByText("Hacker News · 9 sept 2026 (hace 40 días)"))
+      .toBeVisible();
     const text = screen.container.textContent ?? "";
     for (const removed of [
       "Por puntaje",
@@ -231,31 +294,45 @@ describe("TrendDossierView", () => {
     ]) {
       expect(text).not.toContain(removed);
     }
+    expect(text).not.toMatch(/motor/i);
   });
 
-  it("pages the evidence and opens links outside the app", async () => {
+  it("shows three evidence items, then all of them, and opens links outside the app", async () => {
     setup();
-    const onEvidencePage = vi.fn();
+    const onShowAllEvidence = vi.fn();
+    const all: EditorialTrendDossier = {
+      ...DOSSIER,
+      evidence: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(evidence),
+    };
+    const withCard: EditorialTrendDossier = { ...DOSSIER, trend: { ...DOSSIER.trend, card: CARD } };
     await using screen = await render(
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
-        dossier={DOSSIER}
-        evidence={DOSSIER}
-        onEvidencePage={onEvidencePage}
+        dossier={withCard}
+        allEvidence={all}
+        onShowAllEvidence={onShowAllEvidence}
+        onEvidencePage={() => {}}
       />,
     );
-    // The whole evidence of the dossier is one click away, under the card.
-    await userEvent.click(
-      screen.getByText("Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026"),
-    );
-    await expect.element(screen.getByText("1–6 de 10")).toBeVisible();
+    const evidenceList = screen.getByRole("region", { name: /^Lee la evidencia/ });
+    await expect.element(evidenceList.getByText("9 sept a 16 oct 2026")).toBeVisible();
+    const rows = () => evidenceList.element().querySelectorAll("[data-evidence-number]");
+    expect(rows()).toHaveLength(3);
     await expect
       .element(screen.getByText("IBM opened its quantum stack to outside researchers."))
       .toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Siguientes" }));
-    expect(onEvidencePage).toHaveBeenCalledWith(6);
+    await expect.element(evidenceList.getByText(/también en RSS/)).toBeVisible();
+    // The item id is in the row for hover and focus, without taking room.
+    expect(evidenceList.element().textContent).toContain("itm_hn_1");
 
-    await userEvent.click(screen.getByRole("link", { name: "Quantum item 1" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ver toda la evidencia (10)" }));
+    expect(onShowAllEvidence).toHaveBeenCalledOnce();
+    await expect.element(screen.getByRole("link", { name: "Quantum item 10" })).toBeVisible();
+    expect(rows()).toHaveLength(10);
+    await userEvent.click(screen.getByRole("button", { name: "Mostrar solo tres" }));
+    expect(rows()).toHaveLength(3);
+
+    await userEvent.click(evidenceList.getByRole("link", { name: "Quantum item 1" }));
     expect(state.opened).toEqual(["https://example.com/1"]);
   });
 
@@ -265,7 +342,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -302,7 +378,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -333,7 +408,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -359,7 +433,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
       />,
     );
@@ -405,7 +478,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={inProduction}
-        evidence={inProduction}
         onEvidencePage={() => {}}
       />,
     );
@@ -447,7 +519,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={snoozed}
-        evidence={snoozed}
         onEvidencePage={() => {}}
       />,
     );
@@ -461,12 +532,7 @@ describe("TrendDossierView", () => {
 
     const trial = withState({ trial: { threadId: "thread-trial", linkedAt: AT } });
     await screen.rerender(
-      <TrendDossierView
-        environmentId={ENVIRONMENT_ID}
-        dossier={trial}
-        evidence={trial}
-        onEvidencePage={() => {}}
-      />,
+      <TrendDossierView environmentId={ENVIRONMENT_ID} dossier={trial} onEvidencePage={() => {}} />,
     );
     await expect
       .element(screen.getByRole("button", { name: "Crear hilo de video", exact: true }))
@@ -483,11 +549,11 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={dismissed}
-        evidence={dismissed}
         onEvidencePage={() => {}}
       />,
     );
-    await expect.element(screen.getByText("Descartada: Fuera de tema")).toBeVisible();
+    await expect.element(screen.getByText("Descartada el 31 oct 2026")).toBeVisible();
+    await expect.element(screen.getByText("«Fuera de tema»")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Reabrir" }));
     await vi.waitFor(() =>
       expect(state.commands).toEqual([
@@ -495,13 +561,48 @@ describe("TrendDossierView", () => {
         ["environment-data:editorial:reopen", { trendKey: TREND_KEY }],
       ]),
     );
+    // Dismissing does not hide the way to a thread.
+    await expect.element(screen.getByRole("button", { name: "Crear hilo de video" })).toBeVisible();
+
+    const decided: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        card: {
+          ...CARD,
+          decision: {
+            threadId: "thread-decided",
+            action: "edit",
+            utility: 4,
+            reason: "me interesa",
+            decidedAt: AT,
+          },
+        },
+      },
+    };
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={decided}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect.element(screen.getByText("Editado · utilidad 4 de 5")).toBeVisible();
+    await expect.element(screen.getByText("Tu decisión · 31 oct 2026")).toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo de video" }))
+      .toHaveAttribute("href", "/env-1/thread-decided");
+    // The other exits stay reachable once decided.
+    for (const name of ["Seguir observando", "Descartar…", "Crear hilo manual"]) {
+      await expect.element(screen.getByRole("button", { name, exact: true })).toBeVisible();
+    }
   });
 
   it("links only http and https evidence and falls back to a valid permalink", async () => {
     setup();
     const item = (title: string, permalink: string | null, externalUrl: string | null) => ({
       ...evidence(0),
-      itemId: title,
+      itemId: `itm_${title.replaceAll(" ", "_")}`,
       title,
       permalink,
       externalUrl,
@@ -525,11 +626,11 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={unsafe}
-        evidence={unsafe}
+        allEvidence={unsafe}
         onEvidencePage={() => {}}
       />,
     );
-    await userEvent.click(screen.getByText(/^Evidencia seleccionada \(5\)/));
+    await userEvent.click(screen.getByRole("button", { name: "Ver toda la evidencia (5)" }));
     for (const name of ["Javascript external", "Data external", "File external", "Http external"]) {
       await userEvent.click(screen.getByRole("link", { name }));
     }
@@ -580,7 +681,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={drafted}
-        evidence={drafted}
         onEvidencePage={() => {}}
         citationEvidence={[1, 2, 3, 4, 5, 6, 7, 8].map(evidence)}
         presentationActions={actions}
@@ -590,16 +690,23 @@ describe("TrendDossierView", () => {
       .element(screen.getByRole("heading", { level: 1 }))
       .toHaveTextContent("IBM abre su pila de computación cuántica");
     await expect.element(screen.getByText("Redactado por el asistente")).toBeVisible();
-    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).not.toBeVisible();
+    const fit = screen.getByRole("region", { name: "Encaje con el canal" }).getByRole("paragraph");
+    await expect.element(fit).toHaveTextContent("Toca herramientas para desarrolladores1.");
+    // The last word, the citation and the period wrap as one piece.
+    expect(
+      fit.getByRole("link", { name: /^Evidencia 1:/ }).element().parentElement?.textContent,
+    ).toBe("desarrolladores1.");
+    await expect.element(screen.getByText(/^Modelo: claude-haiku-5-5/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
     await expect
-      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
-      .not.toBeVisible();
-    await userEvent.click(screen.getByText("Detalles técnicos", { exact: true }));
-    await expect.element(screen.getByText("Modelo: claude-haiku-5-5")).toBeVisible();
-    await expect
-      .element(screen.getByText("Términos del motor: quantum computing ibm open"))
+      .element(screen.getByText(/^Modelo: claude-haiku-5-5 · prompt trend-presentation\.v3/))
       .toBeVisible();
-    await expect.element(screen.getByText("Por qué importa al canal")).toBeVisible();
+    await expect.element(screen.getByText("quantum computing ibm open")).toBeVisible();
+    expect(screen.container.textContent).not.toMatch(/motor/i);
+
+    // The citation's tooltip names its item id.
+    await userEvent.hover(screen.getByRole("link", { name: "Evidencia 8: Quantum item 8" }));
+    await expect.element(page.getByText("itm_hn_8", { exact: true })).toBeVisible();
 
     // A citation past the first evidence page still resolves to its item.
     await userEvent.click(screen.getByRole("link", { name: "Evidencia 8: Quantum item 8" }));
@@ -622,7 +729,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
         presentationActions={{
           busy: null,
@@ -650,7 +756,6 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={DOSSIER}
-        evidence={DOSSIER}
         onEvidencePage={() => {}}
         presentationActions={{
           busy: "draft",
@@ -690,12 +795,10 @@ describe("TrendDossierView", () => {
       <TrendDossierView
         environmentId={ENVIRONMENT_ID}
         dossier={stale}
-        evidence={stale}
         onEvidencePage={() => {}}
         presentationActions={{ busy: null, error: null, onDraft: vi.fn(), onRegenerate }}
       />,
     );
-    await expect.element(screen.getByText("Desactualizado", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("Redacción desactualizada")).toBeVisible();
     // The previous text stays readable until it is regenerated.
     await expect
@@ -703,5 +806,255 @@ describe("TrendDossierView", () => {
       .toHaveTextContent("IBM abre su pila de computación cuántica");
     await userEvent.click(screen.getByRole("button", { name: "Regenerar" }));
     expect(onRegenerate).toHaveBeenCalledOnce();
+  });
+  it("never turns weeks nobody captured into zero publications", async () => {
+    setup();
+    const uncaptured: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        card: {
+          ...CARD,
+          curve: [
+            { source: "hn", status: "comparable", weeks: [1, 2, 3, 4] },
+            { source: "github", status: "partial", weeks: [0, null, 0, null] },
+            { source: "npm", status: "comparable", weeks: [0, 0, 0, 0] },
+          ],
+          incompleteSources: [],
+        },
+      },
+    };
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={uncaptured}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect.element(screen.getByText("Última semana sin captura completa")).toBeVisible();
+    expect(screen.container.textContent).toContain(
+      "Sin publicaciones en npm. Sin captura completa en GitHub: no se sabe si tuvo publicaciones.",
+    );
+    // Without a total next to it, the lone series still says whose bars these are.
+    await expect.element(screen.getByText("Hacker News", { exact: true })).toBeVisible();
+    const text = screen.container.textContent ?? "";
+    expect(text).not.toContain("Sin publicaciones en GitHub");
+    expect(text).not.toContain("en la última semana");
+    expect(text).not.toContain(", en Hacker News");
+  });
+
+  it("keeps earlier decisions and every thread reachable whatever the state", async () => {
+    setup();
+    const PRIOR = {
+      threadId: "thread-prior",
+      action: "accept" as const,
+      utility: 5,
+      reason: "buen tema",
+      decidedAt: "2026-09-30T10:00:00.000Z",
+    };
+    const DECISION = {
+      threadId: "thread-decided",
+      action: "edit" as const,
+      utility: 4,
+      reason: "me interesa",
+      decidedAt: AT,
+    };
+    const withDecisions = (
+      decisions: Pick<typeof CARD, "decision" | "priorDecision">,
+      patch: Partial<EditorialTrendInboxState>,
+    ): EditorialTrendDossier => ({
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        isNew: false,
+        card: { ...CARD, ...decisions },
+        inbox: {
+          isNew: false,
+          seenRunId: RUN_ID,
+          seenAt: AT,
+          snoozed: null,
+          dismissed: null,
+          production: null,
+          ...patch,
+        },
+      },
+    });
+    const decisionPanel = () => screen.getByRole("region", { name: "Decisión" });
+
+    // A topic decided in another thread, now in production in a new one.
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={withDecisions(
+          { decision: null, priorDecision: PRIOR },
+          { production: { threadId: "thread-video", linkedAt: AT } },
+        )}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect
+      .element(
+        decisionPanel().getByText("Antes lo decidiste el 30 sept 2026: aceptado · utilidad 5 de 5"),
+      )
+      .toBeVisible();
+    await expect.element(decisionPanel().getByText("· «buen tema»")).toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir ese hilo" }))
+      .toHaveAttribute("href", "/env-1/thread-prior");
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo de video" }))
+      .toHaveAttribute("href", "/env-1/thread-video");
+
+    // Decided in one thread, produced in another: both, each by its name.
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={withDecisions(
+          { decision: DECISION, priorDecision: null },
+          { production: { threadId: "thread-video", linkedAt: AT } },
+        )}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo decidido" }))
+      .toHaveAttribute("href", "/env-1/thread-decided");
+    await userEvent.click(screen.getByRole("link", { name: "Abrir hilo en producción" }));
+    expect(state.commands).toContainEqual([
+      "environment-data:editorial:video-prepare",
+      { threadId: "thread-video" },
+    ]);
+
+    // Dismissing a decided trend keeps the decision, its reason and its thread.
+    await screen.rerender(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={withDecisions(
+          { decision: DECISION, priorDecision: PRIOR },
+          { dismissed: { at: AT, reason: "Fuera de tema" } },
+        )}
+        onEvidencePage={() => {}}
+      />,
+    );
+    await expect.element(screen.getByText("Descartada el 31 oct 2026")).toBeVisible();
+    await expect
+      .element(decisionPanel().getByText("Tu decisión del 31 oct 2026: editado · utilidad 4 de 5"))
+      .toBeVisible();
+    await expect.element(decisionPanel().getByText("· «me interesa»")).toBeVisible();
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir hilo decidido" }))
+      .toHaveAttribute("href", "/env-1/thread-decided");
+    await expect
+      .element(screen.getByRole("link", { name: "Abrir ese hilo" }))
+      .toHaveAttribute("href", "/env-1/thread-prior");
+  });
+
+  it("draws no story written with an older prompt and offers to draft it again", async () => {
+    setup();
+    const onRegenerate = vi.fn();
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={outdatedDossier({ title: "Once autores hablan de computación cuántica" })}
+        onEvidencePage={() => {}}
+        presentationActions={{ busy: null, error: null, onDraft: vi.fn(), onRegenerate }}
+      />,
+    );
+    await expect
+      .element(
+        screen.getByText(
+          "El resumen guardado no cumple las reglas actuales de redacción; vuelve a redactarlo.",
+        ),
+      )
+      .toBeVisible();
+    await expect.element(screen.getByText("Resumen desactualizado")).toBeVisible();
+    await expect.element(screen.getByText("Titulares recientes")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Procedencia y detalles técnicos" }));
+    const text = screen.container.textContent ?? "";
+    expect(text).not.toMatch(/motor/i);
+    expect(text).not.toContain("trend-presentation.v3");
+    await userEvent.click(screen.getByRole("button", { name: "Redactar con el asistente" }));
+    expect(onRegenerate).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    // A title that passes today's voice rules names the trend everywhere, marked outdated.
+    ["IBM abre su pila de computación cuántica", false, "IBM abre su pila de computación cuántica"],
+    // A rejected one shows nowhere: every surface uses the engine's terms.
+    ["El motor registró once titulares", true, "quantum computing ibm open"],
+  ])(
+    "names an outdated story «%s» the same in the row, header, breadcrumb and dismiss dialog",
+    async (stored, titleRejected, expected) => {
+      setup();
+      const dossier = outdatedDossier({ title: stored, titleRejected });
+      {
+        await using inbox = await render(
+          <SidebarProvider defaultOpen>
+            <SidebarMenu>
+              <TrendInboxRow environmentId={ENVIRONMENT_ID} trend={dossier.trend} isActive />
+            </SidebarMenu>
+          </SidebarProvider>,
+        );
+        const row = inbox.getByRole("link", { name: /Redacción desactualizada/ });
+        expect(row.element().textContent).toContain(expected);
+        if (titleRejected) expect(row.element().textContent).not.toContain(stored);
+      }
+      await using screen = await render(
+        <SidebarProvider defaultOpen>
+          <TrendDossierScreen
+            environmentId={ENVIRONMENT_ID}
+            dossier={dossier}
+            onEvidencePage={() => {}}
+          />
+        </SidebarProvider>,
+      );
+      await expect.element(screen.getByRole("heading", { level: 1 })).toHaveTextContent(expected);
+      await expect
+        .element(screen.getByRole("navigation", { name: "Ruta en Tendencias" }))
+        .toHaveTextContent(`Tendencias/${expected}`);
+      await userEvent.click(screen.getByRole("button", { name: "Descartar…" }));
+      const dialog = page.getByRole("dialog", { name: "Descartar tendencia" });
+      await expect.element(dialog).toBeVisible();
+      expect(dialog.element().textContent).toContain(`«${expected}» pasa a Descartadas`);
+      if (titleRejected) expect(document.body.textContent).not.toContain(stored);
+    },
+  );
+
+  it("explains the partial history and the recurring topic from the keyboard", async () => {
+    setup();
+    const marked: EditorialTrendDossier = {
+      ...DOSSIER,
+      trend: {
+        ...DOSSIER.trend,
+        card: {
+          ...CARD,
+          perennial: true,
+          curve: [
+            { source: "hn", status: "comparable", weeks: [1, 3, 0, 5] },
+            { source: "rss", status: "partial", weeks: [0, 1, 2, 2] },
+          ],
+        },
+      },
+    };
+    await using screen = await render(
+      <TrendDossierView
+        environmentId={ENVIRONMENT_ID}
+        dossier={marked}
+        onEvidencePage={() => {}}
+      />,
+    );
+    const recurring = screen.getByRole("button", {
+      name: /^tema recurrente\W+Tuvo actividad varias semanas antes de este movimiento\.$/,
+    });
+    await expect.element(recurring).toBeVisible();
+    const partial = screen.getByRole("button", {
+      name: /^parcial\W+Esta fuente aún no tiene las 5 semanas de historia/,
+    });
+    await expect.element(partial).toBeVisible();
+    // Tab reaches them: native buttons in the focus order, not pointer-only spans.
+    for (const mark of [recurring, partial]) {
+      expect(mark.element().tagName).toBe("BUTTON");
+      expect((mark.element() as HTMLButtonElement).tabIndex).toBe(0);
+    }
   });
 });

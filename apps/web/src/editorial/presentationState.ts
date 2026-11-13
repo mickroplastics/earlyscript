@@ -13,6 +13,8 @@ import { bumpInbox } from "./state";
 export const DOSSIER_EVIDENCE_PAGE_SIZE = 6;
 /** The assistant reads at most twelve evidence items, so citations resolve within them. */
 export const CITATION_EVIDENCE_LIMIT = 12;
+/** "Ver toda la evidencia" asks for this many, the server's cap; more items page by it. */
+export const DOSSIER_EVIDENCE_ALL_LIMIT = 50;
 const RUN_PROGRESS_POLL_MS = 2_000;
 
 const lastReadyByRun = new Map<string, number>();

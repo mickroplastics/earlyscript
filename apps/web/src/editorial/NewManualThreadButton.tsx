@@ -2,7 +2,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EditorialTrendKey, EnvironmentId } from "@t3tools/contracts";
+import { type EditorialTrendKey, type EnvironmentId, trendTitle } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/reactivity";
 import { NotebookPenIcon } from "lucide-react";
@@ -138,9 +138,10 @@ export function NewManualThreadButton({
                   {(value: string) =>
                     value === NO_TREND
                       ? "Ninguno: exploración libre"
-                      : (trends.find((trend) => trend.trendKey === value)?.presentation?.title ??
-                        trends.find((trend) => trend.trendKey === value)?.label ??
-                        value)
+                      : (() => {
+                          const trend = trends.find((candidate) => candidate.trendKey === value);
+                          return trend === undefined ? value : trendTitle(trend);
+                        })()
                   }
                 </SelectValue>
               </SelectTrigger>
@@ -148,7 +149,7 @@ export function NewManualThreadButton({
                 <SelectItem value={NO_TREND}>Ninguno: exploración libre</SelectItem>
                 {trends.map((trend) => (
                   <SelectItem key={trend.trendKey} value={trend.trendKey}>
-                    {trend.presentation?.title ?? trend.label}
+                    {trendTitle(trend)}
                   </SelectItem>
                 ))}
               </SelectPopup>

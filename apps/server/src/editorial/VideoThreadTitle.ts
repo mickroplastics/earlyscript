@@ -1,4 +1,10 @@
-import { CommandId, EditorialDossierId, EditorialRunId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EditorialDossierId,
+  EditorialRunId,
+  ThreadId,
+  trendTitle,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -129,7 +135,7 @@ export const readTrendTitle = (
           evidenceLimit: 1,
         })
         .pipe(
-          Effect.map((dossier) => dossier.trend.presentation?.title ?? dossier.trend.label),
+          Effect.map((dossier) => trendTitle(dossier.trend)),
           Effect.orElseSucceed(() => null),
         );
 

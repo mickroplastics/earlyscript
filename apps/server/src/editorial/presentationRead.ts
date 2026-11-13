@@ -1,11 +1,13 @@
 import type { EditorialTrendPresentation, EditorialTrendSummary } from "@t3tools/contracts";
+import { hashTrendPresentationInput } from "@t3tools/provider-core/server/textGeneration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import type { EditorialReadServiceShape } from "./EditorialReadService.ts";
-import { loadPresentationDossiers } from "./presentationDossierSource.ts";
+import { loadPresentationDossiers, type PresentationDossier } from "./presentationDossierSource.ts";
+import { trendPresentationVoiceProblems, VOICE_TITLE_PART } from "./presentationVoice.ts";
 import type { EditorialRunDirectoryShape } from "./RunDirectory.ts";
 
 /** A row of `editorial_presentations` (migration 005). */
@@ -73,15 +75,39 @@ export function presentationOfRow(row: PresentationRow): EditorialTrendPresentat
 
 const NO_PRESENTATIONS: ReadonlyMap<string, EditorialTrendPresentation> = new Map();
 
+type VoiceChecked = Pick<EditorialTrendPresentation, "title" | "summary">;
+
 /**
- * The presentation each dossier of the run shows: the latest ready revision written for its
- * current input (`current`), else the latest ready one written for an earlier input
- * (`stale`), which stays visible until someone regenerates it. Earlier revisions are history.
+ * A stored text that `ensure` may reuse and the run's progress counts as drafted: it passes
+ * today's voice check. The read side marks the others `outdated`, so all three agree.
+ */
+export const passesVoice = (presentation: VoiceChecked, dossier: PresentationDossier) =>
+  trendPresentationVoiceProblems(presentation, dossier.input.evidence).length === 0;
+
+/**
+ * `outdated`: written with another prompt version, or failing today's voice check. Hashing
+ * the current input with the row's version gives the current hash only when that version is
+ * the current one. `titleRejected`: the title itself fails, so no surface shows it.
+ */
+function review(presentation: EditorialTrendPresentation, dossier: PresentationDossier) {
+  const problems = trendPresentationVoiceProblems(presentation, dossier.input.evidence);
+  return {
+    outdated:
+      problems.length > 0 ||
+      hashTrendPresentationInput(dossier.input, presentation.promptVersion) !== dossier.inputHash,
+    titleRejected: problems.some((problem) => problem.part === VOICE_TITLE_PART),
+  };
+}
+
+/**
+ * Each dossier's latest ready presentation: `current` when written for its current input,
+ * `stale` for an earlier input (shown until regenerated), `outdated` for another prompt
+ * version or a failed voice check (kept, never drawn as the story).
  */
 export const presentationsForRun = Effect.fn("EditorialPresentationRead.presentationsForRun")(
   function* (sql: SqlClient.SqlClient, directory: EditorialRunDirectoryShape, runId: string) {
     const dossiers = yield* loadPresentationDossiers(directory, sql, runId);
-    const currentHash = new Map(dossiers.map((dossier) => [dossier.dossierId, dossier.inputHash]));
+    const byId = new Map(dossiers.map((dossier) => [dossier.dossierId, dossier]));
     const rows = yield* sql<PresentationRow>`
       SELECT ${sql.literal(PRESENTATION_COLUMNS)} FROM editorial_presentations
       WHERE run_id = ${runId} AND status = 'ready'
@@ -93,17 +119,21 @@ export const presentationsForRun = Effect.fn("EditorialPresentationRead.presenta
       const presentation = presentationOfRow(row);
       if (presentation === null) continue;
       latest.set(row.dossier_id, presentation);
-      if (currentHash.get(row.dossier_id) === row.input_hash) {
+      if (byId.get(row.dossier_id)?.inputHash === row.input_hash) {
         current.set(row.dossier_id, presentation);
       }
     }
     const shown = new Map<string, EditorialTrendPresentation>();
     for (const [dossierId, presentation] of latest) {
       const own = current.get(dossierId);
-      shown.set(
-        dossierId,
-        own === undefined ? { ...presentation, status: "stale" } : { ...own, status: "current" },
-      );
+      const dossier = byId.get(dossierId);
+      const candidate = own ?? presentation;
+      const checked = dossier === undefined ? null : review(candidate, dossier);
+      shown.set(dossierId, {
+        ...candidate,
+        status: checked?.outdated ? "outdated" : own === undefined ? "stale" : "current",
+        ...(checked?.titleRejected ? { titleRejected: true } : {}),
+      });
     }
     return shown as ReadonlyMap<string, EditorialTrendPresentation>;
   },

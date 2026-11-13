@@ -10,6 +10,7 @@ import {
   saturatedText,
   scriptLanguageInstruction,
   sourceCountText,
+  trendTitle,
   type EditorialTrendDossier,
 } from "@t3tools/contracts";
 
@@ -69,7 +70,7 @@ function cardLines(dossier: EditorialTrendDossier): ReadonlyArray<string> {
   const { trend, run } = dossier;
   const card = trend.card;
   const cutoff = run.cutoffAt;
-  const title = oneLine(trend.presentation?.title ?? trend.label);
+  const title = oneLine(trendTitle(trend));
   const lines: Array<string> = [];
   if (card === undefined) {
     lines.push(title);
@@ -120,7 +121,7 @@ export function renderDossierMarkdown(input: {
   const { dossier } = input;
   const { trend, run } = dossier;
   const presentation = trend.presentation;
-  const title = oneLine(presentation?.title ?? trend.label);
+  const title = oneLine(trendTitle(trend));
   const lines: Array<string> = [
     "---",
     `schema: ${DOSSIER_FILE_SCHEMA}`,
@@ -138,7 +139,14 @@ export function renderDossierMarkdown(input: {
     "",
   ];
 
-  if (presentation !== undefined) {
+  // A summary the dossier no longer shows (older prompt or failing the voice rules) stays out:
+  // the terms, the card and the evidence below are the whole brief.
+  if (presentation?.status === "outdated") {
+    lines.push(
+      "El resumen guardado no cumple las reglas actuales de redacción y no se incluye.",
+      "",
+    );
+  } else if (presentation !== undefined) {
     lines.push(
       "## Resumen redactado",
       "",

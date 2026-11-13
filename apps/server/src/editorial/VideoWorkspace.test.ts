@@ -224,6 +224,32 @@ describe("renderDossierMarkdown", () => {
     assert.notInclude(bare, "Resumen redactado");
   });
 
+  it("leaves out a summary the dossier no longer shows and its title when that fails too", () => {
+    const presentation = DOSSIER.trend.presentation!;
+    const render = (outdated: typeof presentation) =>
+      renderDossierMarkdown({
+        dossier: { ...DOSSIER, trend: { ...DOSSIER.trend, presentation: outdated } },
+        dossierHash: "sha256:one",
+        trendKey: "trend-terra",
+      });
+    const olderPrompt = render({ ...presentation, status: "outdated" });
+    assert.include(olderPrompt, "\n# GPT-6.1 Terra appears in testing\n");
+    assert.notInclude(olderPrompt, "Resumen redactado");
+    assert.notInclude(olderPrompt, "A new model showed up.");
+    assert.include(olderPrompt, "El resumen guardado no cumple las reglas actuales");
+    assert.include(olderPrompt, "- Términos del motor: gpt, terra");
+    assert.include(olderPrompt, "### [itm_hn_1] Item 1 title");
+
+    const rejected = render({
+      ...presentation,
+      title: "El motor registró actividad",
+      status: "outdated",
+      titleRejected: true,
+    });
+    assert.include(rejected, "\n# gpt terra release\n");
+    assert.notInclude(rejected, "El motor registró");
+  });
+
   it("gives script_check the evidence ids of its own dossier and hash only", () => {
     const own = { dossierId: "dos_terra", dossierHash: "sha256:one" };
     assert.deepStrictEqual(dossierEvidenceOf(markdown, own), {

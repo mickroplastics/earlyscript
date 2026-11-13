@@ -147,8 +147,14 @@ export const EditorialTrendPresentation = Schema.Struct({
   model: Schema.String,
   promptVersion: Schema.String,
   generatedAt: IsoDateTime,
-  /** `stale`: written for an earlier input (evidence, profile or prompt); kept until regenerated. */
-  status: Schema.optionalKey(Schema.Literals(["current", "stale"])),
+  /**
+   * `stale`: written for an earlier input (evidence or profile); kept until regenerated.
+   * `outdated`: written with an earlier prompt version or failing today's voice check; the
+   * dossier shows no story for it, only a line asking to draft again.
+   */
+  status: Schema.optionalKey(Schema.Literals(["current", "stale", "outdated"])),
+  /** An `outdated` text whose title fails today's voice check: the engine's terms name it. */
+  titleRejected: Schema.optionalKey(Schema.Boolean),
 });
 export type EditorialTrendPresentation = typeof EditorialTrendPresentation.Type;
 
@@ -187,6 +193,16 @@ export const EditorialTrendSummary = Schema.Struct({
   card: Schema.optionalKey(EditorialTrendCard),
 });
 export type EditorialTrendSummary = typeof EditorialTrendSummary.Type;
+
+/**
+ * The trend's name wherever it shows (inbox row, dossier, breadcrumb, dismiss dialog, thread):
+ * the stored title, an outdated one too, unless its title failed the voice check; then the
+ * engine's terms.
+ */
+export const trendTitle = (trend: Pick<EditorialTrendSummary, "label" | "presentation">): string =>
+  trend.presentation === undefined || trend.presentation.titleRejected === true
+    ? trend.label
+    : trend.presentation.title;
 
 export const EditorialRankComponent = Schema.Struct({
   name: Schema.String,

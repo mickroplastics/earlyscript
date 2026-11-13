@@ -209,6 +209,25 @@ export function snoozePresetLabel(label: string): string {
   return ownValue(SNOOZE_LABELS_ES, label) ?? label;
 }
 
+const TIME_ES = new Intl.DateTimeFormat("es", { hour: "numeric", minute: "2-digit" });
+const WEEKDAY_ES = new Intl.DateTimeFormat("es", { weekday: "short" });
+
+/**
+ * The wake time of a snooze choice in Spanish, "17:04" or "lun 9:00", whatever the browser's
+ * locale. The day shows only where the shared label shows one.
+ */
+export function snoozeWhenLabel(preset: {
+  readonly whenLabel: string;
+  readonly snoozedUntil: string;
+}): string {
+  const wake = new Date(preset.snoozedUntil);
+  if (Number.isNaN(wake.getTime())) return preset.whenLabel;
+  const time = TIME_ES.format(wake);
+  return /^\p{L}+\.?\s/u.test(preset.whenLabel)
+    ? `${WEEKDAY_ES.format(wake).replace(/\.$/, "")} ${time}`
+    : time;
+}
+
 /** A table's own entry: `constructor` or `toString` are not labels. */
 function ownValue<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined;
@@ -234,6 +253,7 @@ export function trendMenuItems(
     readonly id: string;
     readonly label: string;
     readonly whenLabel: string;
+    readonly snoozedUntil: string;
   }>,
 ): ReadonlyArray<ContextMenuItem<TrendMenuAction>> {
   const items: Array<ContextMenuItem<TrendMenuAction>> = [
@@ -252,7 +272,7 @@ export function trendMenuItems(
         { id: "keep-watching", label: "Hasta que crezca" },
         ...snoozePresets.map((preset, index) => ({
           id: `snooze:${preset.id}` as const,
-          label: `${snoozePresetLabel(preset.label)} (${preset.whenLabel})`,
+          label: `${snoozePresetLabel(preset.label)} (${snoozeWhenLabel(preset)})`,
           separatorBefore: index === 0,
         })),
         { id: "snooze:custom", label: "Personalizado…", separatorBefore: true },
@@ -312,16 +332,27 @@ export function evidenceLinks(item: Pick<EditorialEvidenceItem, "permalink" | "e
   };
 }
 
-/** "Evidencia seleccionada (10) · 9 sept 2026 – 16 oct 2026": the selection, not the window. */
-export function evidenceHeading(
-  total: number,
+/** "4 a 10 nov 2026", "28 oct a 3 nov 2026", "10 nov 2026": the selection's dates, in UTC. */
+export function evidenceRangeText(
   range: { readonly from: string; readonly to: string } | null,
-): string {
-  const heading = `Evidencia seleccionada (${total})`;
-  if (range === null) return heading;
-  const from = formatDate(range.from);
-  const to = formatDate(range.to);
-  return `${heading} · ${from === to ? from : `${from} – ${to}`}`;
+): string | null {
+  if (range === null) return null;
+  return dayRangeText(new Date(range.from), new Date(range.to), true);
+}
+
+const dayFormat = new Intl.DateTimeFormat("es", { day: "numeric", timeZone: "UTC" });
+const monthFormat = new Intl.DateTimeFormat("es", { month: "short", timeZone: "UTC" });
+
+/** "4 a 10 nov", "28 oct a 3 nov"; with the year, "4 a 10 nov 2026", "28 dic 2025 a 3 ene 2026". */
+export function dayRangeText(from: Date, to: Date, withYear = false): string {
+  const month = (date: Date) => monthFormat.format(date).replace(".", "");
+  const day = (date: Date) => dayFormat.format(date);
+  const sameYear = from.getUTCFullYear() === to.getUTCFullYear();
+  const end = `${day(to)} ${month(to)}${withYear ? ` ${to.getUTCFullYear()}` : ""}`;
+  if (from.toISOString().slice(0, 10) === to.toISOString().slice(0, 10)) return end;
+  if (sameYear && from.getUTCMonth() === to.getUTCMonth()) return `${day(from)} a ${end}`;
+  const fromYear = withYear && !sameYear ? ` ${from.getUTCFullYear()}` : "";
+  return `${day(from)} ${month(from)}${fromYear} a ${end}`;
 }
 
 function formatDecimal(value: number): string {
@@ -348,10 +379,20 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   npm: "npm",
   stackexchange: "Stack Exchange",
   wikipedia: "Wikipedia",
+  huggingface: "Hugging Face",
+  rss: "RSS",
+  lobsters: "Lobsters",
 };
 
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+  return ownValue(SOURCE_LABELS, source) ?? source;
+}
+
+/** A source's full public name, for prose: "Hacker News" where a chip says "HN". */
+export function sourceName(source: string): string {
+  if (source === "hn") return "Hacker News";
+  if (source === "total") return "Total";
+  return sourceLabel(source);
 }
 
 /**
@@ -449,51 +490,79 @@ export function whyHereReasons(input: {
   return reasons;
 }
 
+export interface CitationRef {
+  readonly itemId: string;
+  /** 1-based position in the dossier's evidence, as the evidence list numbers it. */
+  readonly number: number;
+  readonly item: EditorialEvidenceItem;
+}
+
 export type CitationSegment =
   | { readonly kind: "text"; readonly text: string }
   | {
-      readonly kind: "citation";
-      readonly itemId: string;
-      /** 1-based position in the dossier's evidence, as the evidence list numbers it. */
-      readonly number: number;
-      readonly item: EditorialEvidenceItem;
+      /**
+       * Citations with the word before them and the punctuation after them, drawn as one
+       * unbreakable piece so a line never starts with a citation number or a comma.
+       */
+      readonly kind: "cited";
+      readonly word: string;
+      readonly citations: ReadonlyArray<CitationRef>;
+      readonly after: string;
     };
 
 /** Same marker the server validates: `[itemId]`, without spaces or nested brackets. */
 const INLINE_CITATION = /\[([^[\]\s]+)\]/g;
+const CLOSING_PUNCTUATION = /^[.,;:!?…)\]»”"']*/;
+const PERCENT_SPACE = /(\d)[ \u2009\u202f]%/g;
 
 /**
  * Splits an assistant summary into text and `[itemId]` citations of known evidence. A marker
  * for an id the dossier does not list stays as written; the server already warned about it.
- * The space before a citation is dropped so the number sits against its claim.
+ * The space before a citation is dropped so the number sits against its claim, and markers
+ * separated only by spaces form one group. A percent sign stays with its figure.
  */
 export function citationSegments(
-  text: string,
+  written: string,
   evidence: ReadonlyArray<EditorialEvidenceItem>,
 ): ReadonlyArray<CitationSegment> {
+  const text = written.replace(PERCENT_SPACE, "$1\u00a0%");
   const known = new Map(evidence.map((item, index) => [item.itemId, { item, number: index + 1 }]));
-  const segments: CitationSegment[] = [];
+  // texts[i] comes before groups[i]; the last text follows the last group.
+  const texts: string[] = [];
+  const groups: CitationRef[][] = [];
   let cursor = 0;
-  const pushText = (value: string) => {
-    if (value.length === 0) return;
-    const last = segments.at(-1);
-    if (last?.kind === "text")
-      segments[segments.length - 1] = { kind: "text", text: last.text + value };
-    else segments.push({ kind: "text", text: value });
-  };
   for (const match of text.matchAll(INLINE_CITATION)) {
     const itemId = match[1] ?? "";
     const entry = known.get(itemId);
-    const start = match.index;
-    if (entry === undefined) {
-      pushText(text.slice(cursor, start + match[0].length));
+    if (entry === undefined) continue;
+    const between = text.slice(cursor, match.index);
+    const citation = { itemId, number: entry.number, item: entry.item };
+    const open = groups.at(-1);
+    if (open !== undefined && between.trim() === "") {
+      open.push(citation);
     } else {
-      pushText(text.slice(cursor, start).replace(/\s+$/, ""));
-      segments.push({ kind: "citation", itemId, number: entry.number, item: entry.item });
+      texts.push(between);
+      groups.push([citation]);
     }
-    cursor = start + match[0].length;
+    cursor = match.index + match[0].length;
   }
-  pushText(text.slice(cursor));
+  texts.push(text.slice(cursor));
+
+  const segments: CitationSegment[] = [];
+  const pushText = (value: string) => {
+    if (value.length > 0) segments.push({ kind: "text", text: value });
+  };
+  let rest = texts[0] ?? "";
+  for (const [index, citations] of groups.entries()) {
+    const before = rest.replace(/\s+$/, "");
+    const word = /\S*(?:\u00a0\S+)*$/.exec(before)?.[0] ?? "";
+    const next = texts[index + 1] ?? "";
+    const after = CLOSING_PUNCTUATION.exec(next)?.[0] ?? "";
+    pushText(before.slice(0, before.length - word.length));
+    segments.push({ kind: "cited", word, citations, after });
+    rest = next.slice(after.length);
+  }
+  pushText(rest);
   return segments;
 }
 

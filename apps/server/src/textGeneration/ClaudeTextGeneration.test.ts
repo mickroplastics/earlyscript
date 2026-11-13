@@ -349,7 +349,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
               warnings: ['Dropped a citation to unknown evidence id "itm_unknown".'],
               provider: "claudeAgent",
               model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
-              promptVersion: "trend-presentation.v3",
+              promptVersion: "trend-presentation.v9",
             });
             expect(generated.inputHash).toMatch(/^sha256:[0-9a-f]{64}$/);
           }),

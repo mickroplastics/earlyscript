@@ -211,7 +211,7 @@ const TOPIC_BREAKS = [", ", " and ", " for ", " with ", " running ", " on "];
  * An include topic in a few words: cut at the first break that leaves at least two words.
  * "AI coding agents and agent harnesses for developers" → "AI coding agents".
  */
-function shortTopic(topic: string): string {
+export function shortTopic(topic: string): string {
   const trimmed = topic.trim();
   const cuts = TOPIC_BREAKS.map((separator) => trimmed.indexOf(separator))
     .filter((index) => index > 0 && trimmed.slice(0, index).trim().split(/\s+/).length >= 2)

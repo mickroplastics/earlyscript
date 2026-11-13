@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { sourceLabel, whyHereReasons } from "../editorial.logic";
 import { cardMovementLine } from "../trendCard.logic";
+import { storyPresentation } from "../trendDossier.logic";
 import { sourceUrl, summarySegments, type NumberedSource } from "./videoWorkspace.logic";
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -88,8 +89,9 @@ export function TopicPanel({
 }) {
   const { trend, run } = dossier;
   const numbers = new Map(sources.map((source) => [source.id, source.number]));
-  const summary = trend.presentation?.summary;
-  const cited = new Set(trend.presentation?.citedItemIds ?? []);
+  const presentation = storyPresentation(trend);
+  const summary = presentation?.summary;
+  const cited = new Set(presentation?.citedItemIds ?? []);
   const citedSources = sources.filter((source) => cited.has(source.id));
   const chips = [
     trend.card ? cardMovementLine(trend.card, run.cutoffAt) : null,
@@ -161,7 +163,7 @@ export function TopicPanel({
           </ul>
         </section>
       ) : null}
-      {trend.presentation ? (
+      {presentation ? (
         <p className="text-muted-foreground text-xs">
           Resumen redactado por un modelo; la evidencia manda. {trendLink}
         </p>
