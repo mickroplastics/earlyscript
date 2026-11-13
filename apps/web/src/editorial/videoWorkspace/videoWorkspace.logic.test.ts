@@ -287,6 +287,13 @@ describe("stopTimeIso", () => {
       "2026-11-10",
       "2026-11-11",
     ]);
+    // A segment longer than a month offers every day, its last one included.
+    const offered = stopDays(
+      { startedAt: new Date(2026, 9, 1, 9, 0).toISOString(), recoveredAt: at(12, 9, 0) },
+      new Date(2026, 10, 13),
+    );
+    expect(offered).toHaveLength(43);
+    expect(offered.at(-1)?.value).toBe("2026-11-12");
     expect(stopDays(interval, new Date(2026, 10, 12)).map((day) => day.label)).toEqual([
       "lunes 9 de nov",
       "martes 10 de nov",

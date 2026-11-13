@@ -64,7 +64,13 @@ function WorkTimeChart({
             ? decision.clockDefinitive
               ? "reloj definitivo"
               : "con un tramo sin resolver"
-            : "sigue contando"}
+            : video.clock.unresolved.length > 0
+              ? "con un tramo abierto"
+              : video.clock.state._tag === "running"
+                ? "en marcha"
+                : video.clock.state._tag === "paused"
+                  ? "en pausa: no cuenta"
+                  : "detenido: no cuenta"}
         </span>
       </h3>
       <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted">

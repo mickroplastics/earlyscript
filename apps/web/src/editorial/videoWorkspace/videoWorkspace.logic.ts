@@ -466,7 +466,7 @@ export function stopDays(
   const end = interval.recoveredAt === null ? now : new Date(interval.recoveredAt);
   const days: Array<{ value: string; label: string }> = [];
   const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  while (cursor <= end && days.length < 31) {
+  while (cursor <= end) {
     days.push({
       value: dayKey(cursor),
       label: `${WEEKDAYS[cursor.getDay()]} ${cursor.getDate()} de ${MONTHS[cursor.getMonth()]}`,
