@@ -125,6 +125,17 @@ describe("trendPresentationVoiceProblems", () => {
       "Qué pasó: «el engine agrupo»",
     ],
     ["Un motor ordena estas noticias.", "Presentan un motor de búsqueda.", "Qué pasó: «motor»"],
+    // Round 6: an outlet inferred from the URL, and a source counting its pieces.
+    [
+      "TechCrunch reporta que Anthropic fija el rango de su IPO [itm_1].",
+      "Anthropic sets IPO price range",
+      "Qué pasó: «TechCrunch»",
+    ],
+    [
+      "Hacker News suma once publicaciones esta semana [itm_1].",
+      "Anthropic sets IPO price range",
+      "Qué pasó: «suma once publicaciones»",
+    ],
   ])("rejects %s despite the evidence «%s»", (whatHappened, title, problems) => {
     expect(problemsText(whatHappened, [{ title, excerpt: "" }])).toBe(problems);
   });
@@ -201,6 +212,11 @@ describe("trendPresentationVoiceProblems", () => {
       "El clúster de Kubernetes de GitHub cayó dos horas [itm_1].",
       "Caída del clúster de Kubernetes de GitHub",
     ],
+    [
+      "TechCrunch reporta que Anthropic fija el rango de su IPO [itm_1].",
+      "Anthropic sets IPO price range, TechCrunch reports",
+    ],
+    ["Anthropic suma tres millones de usuarios [itm_1].", "Anthropic adds three million users"],
   ])("accepts %s when the news is about it", (whatHappened, title) => {
     expect(problemsText(whatHappened, [{ title, excerpt: "" }])).toBe("");
   });

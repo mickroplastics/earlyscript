@@ -69,7 +69,7 @@ const answer = (
     warnings: call === 1 ? [] : ["regenerated"],
     provider: "claudeAgent",
     model: "claude-haiku-5-5",
-    promptVersion: "trend-presentation.v8",
+    promptVersion: "trend-presentation.v9",
     generatedAt: `2026-10-31T12:00:0${call % 10}.000Z`,
     inputHash: "provider-hash",
   };
@@ -217,7 +217,7 @@ describe("EditorialPresentationService", () => {
         assert.isTrue(second.reused);
         assert.deepStrictEqual(second.presentation, first.presentation);
         assert.strictEqual(first.presentation.model, "claude-haiku-5-5");
-        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v8");
+        assert.strictEqual(first.presentation.promptVersion, "trend-presentation.v9");
 
         const calls = yield* Ref.get(generator.calls);
         assert.strictEqual(calls.length, 1);

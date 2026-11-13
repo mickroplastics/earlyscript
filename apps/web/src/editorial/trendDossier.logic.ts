@@ -294,7 +294,7 @@ export interface DecisionPanelState {
   /** The operator's reason, shown between quotes. */
   readonly reason: string | null;
   readonly meta: string | null;
-  /** Snooze state, below the decision. */
+  /** Snooze and production states, below the decision. */
   readonly stateLine: string | null;
   /** The dismissed trend's own decision and the topic's decision from another thread. */
   readonly records: ReadonlyArray<DecisionRecord>;
@@ -401,7 +401,16 @@ export function decisionPanelState(trend: PanelTrend): DecisionPanelState {
       ? [{ threadId: production.threadId, label: OPEN_PRODUCTION, prepare: true }]
       : [];
 
-  const stateLine = snoozed && !dismissed ? snoozeStateText(snoozed) : null;
+  // Production reaches the screen through the headline or its own link; otherwise, as when the
+  // decision is the production thread, the state line says it.
+  const productionLine =
+    production !== null && (dismissed !== null || decision !== null) && links.length === 0
+      ? `En producción desde el ${formatDate(production.linkedAt)}.`
+      : null;
+  const stateLine =
+    [snoozed && !dismissed ? snoozeStateText(snoozed) : null, productionLine]
+      .filter((line) => line !== null)
+      .join(" ") || null;
   const base = { stateLine, records, links, primary, badge };
 
   if (dismissed) {

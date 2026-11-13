@@ -110,9 +110,11 @@ describe("buildTrendPresentationPrompt", () => {
     // Round 4: a demonstration of a tool known only by its headline, a requirement for one
     // platform read as the product's, one item read as several, and mixed decimal separators.
     expect(prompt).toContain(
-      '<item id="itm_hn_1" source="hn" published_at="2026-10-15T18:26:30.000Z" url="https://news.ycombinator.com/item?id=1" headline_only="true">',
+      '<item id="itm_hn_1" source="hn" published_at="2026-10-15T18:26:30.000Z" headline_only="true">',
     );
-    expect(prompt).toContain('url="https://news.ycombinator.com/item?id=2">');
+    // Round 6: the model named the outlet a URL belongs to; the prompt carries no URL.
+    expect(prompt).not.toContain("https://");
+    expect(prompt).toContain("never turned into an effect the evidence does not state");
     expect(prompt).toContain("Do not attribute to it features, inputs, uses or results.");
     expect(prompt).toContain("videoAngle does not propose using, trying, testing or comparing it");
     expect(prompt).toContain("in the words of its headline");

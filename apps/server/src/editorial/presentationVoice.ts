@@ -17,7 +17,7 @@ export interface VoiceProblem {
   readonly part: string;
   /** The matched words, for the log and the retry; never shown to the operator. */
   readonly words: string;
-  readonly kind: "collection" | "self" | "note";
+  readonly kind: "collection" | "self" | "note" | "outlet";
 }
 
 /** Same marker the prompt asks for: `[itemId]`, without spaces or nested brackets. */
@@ -85,8 +85,12 @@ const PHRASE_RULES: ReadonlyArray<{
       /\b(?:la|esta) (?:recopilacion|recogida|captura|seleccion|muestra) (?:registr|reun|incluy|agrup|contien|sum|junt)\w*/,
     kind: "collection",
   },
-  // A source or anything else counting pieces: "Hacker News registró 11 publicaciones".
-  { pattern: new RegExp(`\\bregistr\\w* ${NUMBER} ${PIECES}\\b`), kind: "collection" },
+  // A source or anything else counting pieces: "Hacker News registró 11 publicaciones",
+  // "Hacker News suma once publicaciones"; "la empresa suma tres millones de usuarios" is news.
+  {
+    pattern: new RegExp(`\\b(?:registr|sum)\\w* ${NUMBER} ${PIECES}\\b`),
+    kind: "collection",
+  },
   {
     pattern: new RegExp(
       `\\b${NUMBER} ${PIECES} en (?:(?:una|la|esta|las|los|${NUMBER}) )?(?:ultim\\w+ )?(?:semanas?|dias?|meses?)\\b`,
@@ -181,6 +185,39 @@ function jargonOutsideEvidence(text: string, evidence: string): string | null {
   return null;
 }
 
+// Outlets a model tends to infer from a URL or prior knowledge; named only when a title or an
+// excerpt names them. Matched without accents, case or spaces.
+const OUTLETS: ReadonlyArray<string> = [
+  "TechCrunch",
+  "Bloomberg",
+  "Reuters",
+  "BleepingComputer",
+  "The Verge",
+  "CNBC",
+  "Wired",
+  "Ars Technica",
+  "The Information",
+  "Financial Times",
+  "Wall Street Journal",
+  "New York Times",
+  "Axios",
+  "Business Insider",
+  "Engadget",
+  "ZDNet",
+  "The Register",
+  "VentureBeat",
+];
+
+const outletKey = (text: string) => voiceText(text).replace(/[^\p{L}\p{N}]+/gu, " ");
+
+function outletsOutsideEvidence(text: string, evidence: string): string[] {
+  const words = ` ${outletKey(text)} `;
+  return OUTLETS.filter((outlet) => {
+    const key = ` ${outletKey(outlet)} `;
+    return words.includes(key) && !evidence.includes(key);
+  });
+}
+
 // Labels as the dossier page names each part; the operator reads them in the error.
 export const VOICE_TITLE_PART = "título";
 
@@ -211,6 +248,9 @@ export function trendPresentationVoiceProblems(
   const evidenceWords = ` ${wordsOf(
     voiceText(evidence.map((item) => `${item.title} ${item.excerpt}`).join(" ")),
   ).join(" ")} `;
+  const outletEvidence = ` ${outletKey(
+    evidence.map((item) => `${item.title} ${item.excerpt}`).join(" "),
+  )} `;
   const note = trendPresentationEvidenceNote(evidence);
   const problems: VoiceProblem[] = [];
   for (const [part, read] of VOICE_PARTS) {
@@ -234,6 +274,9 @@ export function trendPresentationVoiceProblems(
     if (jargon !== null && !found.some((other) => other.words.includes(jargon))) {
       found.push({ part, words: jargon, kind: "collection" });
     }
+    for (const outlet of outletsOutsideEvidence(raw, outletEvidence)) {
+      found.push({ part, words: outlet, kind: "outlet" });
+    }
     problems.push(...found);
   }
   return problems;
@@ -254,6 +297,9 @@ export function voiceRetryReason(problems: ReadonlyArray<VoiceProblem>): string 
       : null,
     problems.some((problem) => problem.kind === "note")
       ? "it wrote a note about the evidence (headlines, excerpts, articles not read), which the application adds"
+      : null,
+    problems.some((problem) => problem.kind === "outlet")
+      ? "it named a publication that no evidence title or excerpt names"
       : null,
   ].filter((reason) => reason !== null);
   return `${reasons.join(", and ")} (${voiceProblemsText(problems)})`;
@@ -286,6 +332,11 @@ export function voiceFailureMessage(problems: ReadonlyArray<VoiceProblem>): stri
       "note",
       "añadía su propia nota sobre la evidencia",
       "añadían su propia nota sobre la evidencia",
+    ),
+    sentence(
+      "outlet",
+      "nombraba un medio que la evidencia no nombra",
+      "nombraban un medio que la evidencia no nombra",
     ),
     "Regenera o elige otro modelo en Ajustes › Editorial › Redacción.",
   ]

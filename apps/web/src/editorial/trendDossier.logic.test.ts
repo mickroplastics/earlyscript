@@ -392,9 +392,16 @@ describe("decisionPanelState", () => {
       {
         trendKey: KEY,
         card: card({ decision: DECISION }),
-        inbox: inbox({ production: { threadId: "thread-decided", linkedAt: AT } }),
+        inbox: inbox({
+          production: { threadId: "thread-decided", linkedAt: AT },
+          snoozed: SNOOZED,
+        }),
       },
       {
+        headline: "Editado · utilidad 4 de 5",
+        reason: "me interesa",
+        stateLine: "En observación. En producción desde el 10 nov 2026.",
+        badge: { label: "Decidida", variant: "success" },
         links: [],
         primary: {
           kind: "open",

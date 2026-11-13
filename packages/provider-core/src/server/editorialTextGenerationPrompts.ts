@@ -8,7 +8,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v8";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v9";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
@@ -175,7 +175,7 @@ function formatEvidence(evidence: ReadonlyArray<TrendPresentationEvidence>): str
   return evidence.flatMap((item) => {
     const excerpt = item.excerpt.trim();
     return [
-      `<item id=${JSON.stringify(item.itemId)} source=${JSON.stringify(item.source)} published_at=${JSON.stringify(item.publishedAt)} url=${JSON.stringify(item.url)}${isReadableExcerpt(excerpt) ? "" : ' headline_only="true"'}>`,
+      `<item id=${JSON.stringify(item.itemId)} source=${JSON.stringify(item.source)} published_at=${JSON.stringify(item.publishedAt)}${isReadableExcerpt(excerpt) ? "" : ' headline_only="true"'}>`,
       `Title: ${limitSection(item.title.trim(), MAX_EVIDENCE_TITLE_CHARS)}`,
       ...(excerpt ? [`Excerpt: ${limitSection(excerpt, MAX_EVIDENCE_EXCERPT_CHARS)}`] : []),
       "</item>",
@@ -210,11 +210,12 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- Every factual claim about an event, including claims in the title, must be explicitly supported by the title or excerpt of at least one cited evidence item. Do not fill gaps with background knowledge.",
     "- In summary, place [itemId] immediately after each evidence-based factual claim. Include every such id in citedItemIds. Keep the title free of citation markers, but include its supporting ids in citedItemIds.",
     "- Name sources by their public names (Hacker News, GitHub, Hugging Face) and only when the source matters to the news; never expose internal source codes such as hn.",
-    "- Name a publication (Bloomberg, BleepingComputer…), a person or an organization only when the item's title or excerpt names it, and attribute to it only what that title or excerpt says. Do not infer authorship, publisher, affiliation, or product ownership from a product name, a URL, or prior knowledge. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
+    "- Name a publication (Bloomberg, BleepingComputer…), a person or an organization only when the item's title or excerpt names it, and attribute to it only what that title or excerpt says. Do not infer authorship, publisher, affiliation, or product ownership from a product name, an id, or prior knowledge. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
     "- Describe a product only with what its title or excerpt says: do not add that it is open source, free, local, or that it runs or replaces another product unless the evidence states it; prefer the item's own wording.",
     "- Each product or tool named carries only what its own item says, with that item's [itemId] next to its name. Never merge the capabilities of two products in one sentence or one shared purpose. A product that offers the features of another is not that other product and does not run it.",
     '- An item marked headline_only="true" has no readable excerpt: say only what its headline says. Do not attribute to it features, inputs, uses or results. videoAngle does not propose using, trying, testing or comparing it; it may propose discussing the question or the stance its headline states, in the words of its headline.',
     "- Do not extend to several items what only one of them says, and do not give several items a goal or trait in common unless each of them states it. A plural (“versiones”, “herramientas”) cites every item it covers; with one cited item, write the singular (“una versión”).",
+    "- Technical terms in the evidence (abliterated, uncensored, quantized, distilled, fine-tuned…) are named as they are or explained with what the excerpt says, never turned into an effect the evidence does not state: an abliterated model is not a model “sin rechazos”.",
     "- When the evidence gives a figure with a condition, a basis or a contrast (“if shares list at the top of the range”, “fully diluted”, “according to X”, “up to”, “estimated”, another figure it is compared with, “still falls short”), keep it next to the figure, in the same sentence, every time the figure appears. A requirement given for one case, under a condition or a heading (“Run on X: requires … at least Y”), is written for that case (“para ejecutarlo en X pide al menos Y”), never as what the product or running it requires (“requiere X”, “hace falta X”); “primarily intended for X” stays “pensado sobre todo para X”. Figures the evidence gives together (results of several systems on one benchmark, a before and an after) go together. whyItMatters and videoAngle do not repeat a figure whatHappened already gives. When an excerpt adds a condition to a figure in its title, the condition applies.",
     "- Keep each excerpt's meaning: a problem an announcement says it addresses is not a trait of the announced product.",
     "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”.",
