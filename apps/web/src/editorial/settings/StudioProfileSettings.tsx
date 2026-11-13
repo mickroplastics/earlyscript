@@ -1,16 +1,10 @@
-import type { EditorialProfileVersion, EnvironmentId } from "@t3tools/contracts";
-import { useId } from "react";
+import type { EditorialProfileVersion } from "@t3tools/contracts";
 
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Spinner } from "../../components/ui/spinner";
-import { toastManager } from "../../components/ui/toast";
-import { useEnvironmentQuery } from "../../state/query";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { profileVersionLabel } from "../profile/profileForm.logic";
 import { EngineScoringPanel, ProfileForm, ProfileHistoryList } from "../profile/ProfileForm";
-import { editorialProfileEnvironment } from "../profile/profileState";
-import { useProfileEditor, type ProfileEditor } from "../profile/useProfileEditor";
+import type { ProfileEditor } from "../profile/useProfileEditor";
 import { EDITORIAL_PROFILE_SECTION_ID } from "./settingsEntry";
 
 const TITLE = "Perfil del estudio";
@@ -22,6 +16,11 @@ export interface StudioProfileSettingsViewProps {
   readonly onSave: () => void;
 }
 
+/**
+ * The single-page profile section from before Settings › Editorial split into pages. Not mounted:
+ * «Mi canal» (ChannelSettings.tsx) replaced it. Kept only because the wizard's tests in
+ * onboarding/StudioStep.browser.test.tsx render it; delete both together.
+ */
 export function StudioProfileSettingsView({
   editor,
   formId,
@@ -101,37 +100,4 @@ export function StudioProfileSettingsView({
       </SettingsRow>
     </SettingsSection>
   );
-}
-
-function StudioProfileSettingsForEnvironment({
-  environmentId,
-}: {
-  readonly environmentId: EnvironmentId;
-}) {
-  const formId = useId();
-  const editor = useProfileEditor(environmentId, formId);
-  const history = useEnvironmentQuery(
-    editorialProfileEnvironment.history({ environmentId, input: {} }),
-  );
-  const onSave = () =>
-    void editor.save().then((outcome) => {
-      if (outcome._tag === "saved") {
-        toastManager.add({ type: "success", title: `${profileVersionLabel(outcome.active)}.` });
-      }
-    });
-  return (
-    <StudioProfileSettingsView
-      editor={editor}
-      formId={formId}
-      history={history.data?.versions ?? []}
-      onSave={onSave}
-    />
-  );
-}
-
-/** Settings › Editorial › Perfil del estudio, on the primary environment, which runs the engine. */
-export function StudioProfileSettings() {
-  const environmentId = usePrimaryEnvironmentId();
-  if (environmentId === null) return null;
-  return <StudioProfileSettingsForEnvironment environmentId={environmentId} />;
 }

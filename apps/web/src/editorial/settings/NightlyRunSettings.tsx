@@ -1,20 +1,23 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import {
+  EDITORIAL_JOB_PHASES,
   EDITORIAL_NIGHTLY_MAX_WORKERS,
   type EditorialJob,
   type EditorialJobPhase,
+  type EditorialModelState,
   type EditorialNightlySettings,
   type EditorialNightlySettingsUpdateInput,
+  type EditorialSourcesView,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { AsyncResult } from "effect/reactivity";
+import { CheckIcon, LockIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
+import { FoldedSettingsSection } from "../../components/settings/FoldedSettingsSection";
+import { SettingsGroup } from "../../components/settings/SettingsGroup";
+import { SettingsPageContainer, SettingsRow } from "../../components/settings/settingsLayout";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -27,6 +30,7 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import {
   Select,
   SelectItem,
@@ -37,163 +41,528 @@ import {
 import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
 import { toastManager } from "../../components/ui/toast";
-import { useEnvironmentQuery } from "../../state/query";
+import { cn } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  JOB_STATUS_LABEL,
-  PHASE_LABEL,
-  durationText,
-  editorialJobsEnvironment,
-  jobMessages,
-  jobProgressText,
-} from "../jobsState";
+import { editorialEngineEnvironment, formatMiB, MODEL_NAME, modelIsReady } from "../engineState";
+import { durationText, editorialJobsEnvironment, JOB_STATUS_LABEL } from "../jobsState";
 import { ModelDownloadCard } from "../onboarding/ModelDownloadCard";
-import { useEditorialJobActivity } from "../TrendJobIndicator";
-import { EDITORIAL_NIGHTLY_SECTION_ID } from "./settingsEntry";
+import { usePairsModeStore } from "../pairsMode";
+import {
+  capitalize,
+  failureDetail,
+  finishedLabel,
+  formatCount,
+  formatDay,
+  localDay,
+  relativeDay,
+  sameSources,
+  STEP_LABEL,
+  timeOf,
+  trendsText,
+  type NightlyState,
+} from "./editorialStatus.logic";
+import { useNightlyStatus, useRunNow } from "./editorialStatus";
+import { TONE_DOT } from "./EditorialStatusStrip";
+import {
+  EVALUATED_METHOD,
+  initialMethod,
+  methodChoices,
+  methodName,
+  methodTag,
+  nextNightText,
+  nightRows,
+  usualDuration,
+  type NightRow,
+} from "./nightly.logic";
+import { settingsFailureText } from "./nightlyText";
+import {
+  EDITORIAL_METHOD_SECTION_ID,
+  EDITORIAL_NIGHTLY_SECTION_ID,
+  EDITORIAL_PAIRS_SECTION_ID,
+} from "./settingsEntry";
+import { NoEnvironment, SettingsPageHeader } from "./SettingsPageHeader";
+import { editorialSourcesEnvironment } from "./sourcesState";
+
+export { failureText, nextRunText } from "./nightlyText";
 
 const WORKER_CHOICES = [1, 2, 4, 6, 8, 12, EDITORIAL_NIGHTLY_MAX_WORKERS] as const;
+const RECENT_NIGHTS = 5;
 
-const STATUS_BADGE: Readonly<
-  Record<EditorialJob["status"], "success" | "warning" | "error" | "info" | "outline">
-> = {
-  pending: "outline",
-  running: "info",
-  done: "success",
-  failed: "error",
-  skipped: "warning",
-};
-
-const PHASE_MARK: Readonly<Record<EditorialJobPhase["status"], string>> = {
-  pending: "pendiente",
-  running: "en curso",
-  done: "",
-  skipped: "omitida",
-  failed: "falló",
-};
-
-const cutoffFormat = new Intl.DateTimeFormat("es", {
-  timeZone: "UTC",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
-export function nextRunText(settings: EditorialNightlySettings): string {
-  if (!settings.enabled || settings.nextRunAt === null) {
-    return "Desactivada. «Ejecutar ahora» sigue disponible.";
-  }
-  const when = new Intl.DateTimeFormat("es", {
-    timeZone: settings.timezone,
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(settings.nextRunAt));
-  return `Próxima: ${when} (${settings.timezone}).`;
+/** The five steps of a review as bars: done green, running blue, failed red, the rest empty. */
+function StepBar({ job }: { readonly job: EditorialJob }) {
+  const byPhase = new Map(job.artifacts.phases.map((phase) => [phase.phase, phase] as const));
+  const progress = job.artifacts.progress;
+  return (
+    <ol aria-label="Pasos de la revisión" className="grid grid-cols-5 gap-2">
+      {EDITORIAL_JOB_PHASES.map((name) => {
+        const phase: EditorialJobPhase | undefined = byPhase.get(name);
+        const status = phase?.status ?? "pending";
+        const share =
+          status === "running" &&
+          progress?.phase === name &&
+          progress.done !== null &&
+          progress.total !== null &&
+          progress.total > 0
+            ? progress.done / progress.total
+            : 0.5;
+        const mark =
+          status === "done"
+            ? durationText(phase?.startedAt ?? null, phase?.finishedAt ?? null)
+            : status === "failed"
+              ? "falló"
+              : status === "running"
+                ? progress?.phase === name && progress.done !== null && progress.total !== null
+                  ? `${formatCount(progress.done)} de ${formatCount(progress.total)}`
+                  : "en curso"
+                : status === "skipped"
+                  ? "omitido"
+                  : null;
+        return (
+          <li key={name} className="min-w-0 space-y-1.5">
+            <p
+              className={cn(
+                "flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-xs",
+                status === "failed"
+                  ? "text-destructive-foreground"
+                  : status === "running"
+                    ? "text-info-foreground"
+                    : status === "done"
+                      ? "text-foreground"
+                      : "text-muted-foreground",
+              )}
+            >
+              <span>{STEP_LABEL[name]}</span>
+              {mark === null ? null : <span className="text-muted-foreground">{mark}</span>}
+            </p>
+            <span aria-hidden className="block h-1 overflow-hidden rounded-full bg-muted">
+              <span
+                className={cn(
+                  "block h-full rounded-full",
+                  status === "done"
+                    ? "w-full bg-success"
+                    : status === "failed"
+                      ? "w-full bg-destructive"
+                      : status === "running"
+                        ? "bg-info"
+                        : "w-0",
+                )}
+                style={status === "running" ? { width: `${Math.round(share * 100)}%` } : undefined}
+              />
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
-const DEFAULT_ENGINE_CONFIG = "engine.v1.json";
-
-/** What a configuration file is, for the files whose name alone does not say it. */
-const ENGINE_CONFIG_LABELS: Readonly<Record<string, string>> = {
-  "engine.v3-sel.json": "v3, variante V3 elegida",
-};
-
-/** The file name, followed by what it is when the name alone does not say it. */
-function engineConfigLabel(file: string): string {
-  const label = ENGINE_CONFIG_LABELS[file];
-  return label === undefined ? file : `${file} (${label})`;
+function StatusCard({
+  environmentId,
+  state,
+  jobs,
+  sources,
+  timeZone,
+  now,
+  starting,
+  onRunNow,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly state: NightlyState;
+  readonly jobs: ReadonlyArray<EditorialJob>;
+  readonly sources: EditorialSourcesView | null;
+  readonly timeZone: string | undefined;
+  readonly now: number;
+  readonly starting: boolean;
+  readonly onRunNow: () => void;
+}) {
+  const today = localDay(now, timeZone);
+  const runButton = (label: string, primary = false) => (
+    <Button
+      size="sm"
+      variant={primary ? "default" : "outline"}
+      disabled={starting}
+      onClick={onRunNow}
+    >
+      {starting ? <Spinner size="sm" /> : null}
+      {label}
+    </Button>
+  );
+  const trendsLink = (
+    <Button
+      size="sm"
+      render={<Link to="/editorial/$environmentId/trends" params={{ environmentId }} />}
+    >
+      Ver tendencias
+    </Button>
+  );
+  const lastText = (job: EditorialJob | null) =>
+    job === null
+      ? "Todavía no hay tendencias."
+      : `La última fue ${finishedLabel(job, timeZone, now).toLowerCase()}.`;
+  const content = ((): {
+    readonly tone: keyof typeof TONE_DOT;
+    readonly title: string;
+    readonly line: string;
+    readonly action: ReactNode;
+    readonly job: EditorialJob | null;
+    readonly detail: string | null;
+  } => {
+    switch (state._tag) {
+      case "loading":
+        return {
+          tone: "idle",
+          title: "Cargando…",
+          line: "",
+          action: null,
+          job: null,
+          detail: null,
+        };
+      case "running": {
+        const started = state.job.startedAt ?? state.job.scheduledFor;
+        const usual = usualDuration(jobs);
+        return {
+          tone: "running",
+          title: "Revisando…",
+          line: `Empezó a las ${timeOf(started, timeZone)}${usual === null ? "" : ` · suele tardar ${usual}`}`,
+          action: null,
+          job: state.job,
+          detail: null,
+        };
+      }
+      case "failed": {
+        const day = relativeDay(localDay(state.job.cutoffAt, "UTC"), today);
+        const last = state.lastDone;
+        const lastDay = last === null ? null : relativeDay(localDay(last.cutoffAt, "UTC"), today);
+        return {
+          tone: "error",
+          title: day === "hoy" ? "La revisión de hoy falló" : `La revisión del ${day} falló`,
+          line:
+            last === null || last.artifacts.dossiers === null
+              ? "Todavía no hay tendencias."
+              : `Siguen disponibles las ${trendsText(last.artifacts.dossiers)} ${lastDay === "hoy" || lastDay === "ayer" ? `de ${lastDay}` : `del ${lastDay}`}.`,
+          action: runButton("Reintentar", true),
+          job: state.job,
+          detail: failureDetail(state.job),
+        };
+      }
+      case "current": {
+        const job = state.job;
+        const duration = durationText(job.startedAt, job.finishedAt);
+        const found =
+          job.artifacts.dossiers === null
+            ? "terminó"
+            : `encontró ${trendsText(job.artifacts.dossiers)}`;
+        const at = finishedLabel(job, timeZone, now);
+        const changed = !sameSources(job, sources);
+        return {
+          tone: "ok",
+          title: "Al día",
+          line: `${/^\d/.test(at) ? `El ${at}` : at.replace(" ", " a las ")} ${found}${duration === null ? "" : ` · tardó ${duration}`}.${changed ? " Las fuentes cambiaron desde entonces." : ""}`,
+          action: (
+            <div className="flex flex-wrap items-center gap-2">
+              {changed ? runButton("Revisar ahora") : null}
+              {trendsLink}
+            </div>
+          ),
+          job: null,
+          detail: null,
+        };
+      }
+      case "due":
+        return {
+          tone: "warning",
+          title: "Pendiente",
+          line: `La revisión de esta noche todavía no corrió. ${lastText(state.lastDone)}`,
+          action: runButton("Revisar ahora", true),
+          job: null,
+          detail: null,
+        };
+      case "disabled":
+        return {
+          tone: "idle",
+          title: "Revisión desactivada",
+          line: lastText(state.lastDone),
+          action: runButton("Revisar ahora"),
+          job: null,
+          detail: null,
+        };
+      case "none":
+        return {
+          tone: "idle",
+          title: "Todavía no hay revisiones",
+          line: "La primera corre a la hora de abajo, o ahora mismo.",
+          action: runButton("Revisar ahora", true),
+          job: null,
+          detail: null,
+        };
+    }
+  })();
+  return (
+    <div
+      role="status"
+      className={cn(
+        "space-y-4 rounded-xl border bg-card/40 px-4 py-4 shadow-xs/5",
+        content.tone === "error"
+          ? "border-destructive/40"
+          : content.tone === "running"
+            ? "border-info/40"
+            : "border-border/60",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className={cn("mt-1.5 size-2 shrink-0 rounded-full", TONE_DOT[content.tone])}
+        />
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="font-semibold text-foreground">{content.title}</p>
+          {content.line ? <p className="text-sm text-muted-foreground">{content.line}</p> : null}
+        </div>
+        {content.action}
+      </div>
+      {content.job === null ? null : <StepBar job={content.job} />}
+      {content.detail === null ? null : (
+        <p className="rounded-lg bg-destructive/8 px-3 py-2 text-sm text-foreground dark:bg-destructive/12">
+          {content.detail}
+        </p>
+      )}
+    </div>
+  );
 }
 
-function engineConfigStatus(settings: EditorialNightlySettings): string {
-  if (settings.engineConfigChosenAt === null) {
-    return `${engineConfigLabel(settings.engineConfig)}, la predeterminada; nunca se cambió.`;
-  }
-  const when = new Intl.DateTimeFormat("es", {
-    timeZone: settings.timezone,
+const NIGHT_MARK: Readonly<Record<NightRow["status"], ReactNode>> = {
+  done: (
+    <span className="text-success-foreground">
+      <CheckIcon aria-hidden className="size-3.5" />
+      <span className="sr-only">Hecha</span>
+    </span>
+  ),
+  running: (
+    <Badge size="sm" variant="info">
+      En curso
+    </Badge>
+  ),
+  failed: (
+    <Badge size="sm" variant="error">
+      {JOB_STATUS_LABEL.failed}
+    </Badge>
+  ),
+  retrying: (
+    <Badge size="sm" variant="error">
+      Falló, se reintentará
+    </Badge>
+  ),
+  pending: (
+    <Badge size="sm" variant="outline">
+      {JOB_STATUS_LABEL.pending}
+    </Badge>
+  ),
+  skipped: (
+    <Badge size="sm" variant="outline">
+      {JOB_STATUS_LABEL.skipped}
+    </Badge>
+  ),
+};
+
+function NightList({ rows }: { readonly rows: ReadonlyArray<NightRow> }) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? rows : rows.slice(0, RECENT_NIGHTS);
+  return (
+    <section aria-labelledby="editorial-nights-title" className="space-y-2">
+      <h3
+        id="editorial-nights-title"
+        className="px-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+      >
+        Últimas noches
+      </h3>
+      <SettingsGroup>
+        {rows.length === 0 ? (
+          <p className="px-4 py-3 text-sm text-muted-foreground">Todavía no hay revisiones.</p>
+        ) : (
+          <ol aria-label="Últimas noches" className="divide-y divide-border/50">
+            {shown.map((row) => (
+              <li
+                key={row.key}
+                className="grid grid-cols-[6.5rem_9rem_minmax(0,1fr)] items-center gap-3 px-4 py-2.5 text-sm"
+              >
+                <span className="text-foreground">
+                  {row.day}
+                  {row.time === null ? null : (
+                    <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                      {row.time}
+                    </span>
+                  )}
+                </span>
+                <span className="flex">{NIGHT_MARK[row.status]}</span>
+                <span className="min-w-0 truncate text-muted-foreground">{row.detail}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+        {rows.length > RECENT_NIGHTS ? (
+          <div className="px-2 py-1.5">
+            <Button size="xs" variant="ghost-muted" onClick={() => setShowAll(!showAll)}>
+              {showAll
+                ? "Mostrar solo las recientes"
+                : `Mostrar las ${rows.length - RECENT_NIGHTS} anteriores`}
+            </Button>
+          </div>
+        ) : null}
+      </SettingsGroup>
+    </section>
+  );
+}
+
+const chosenFormat = (timeZone: string) =>
+  new Intl.DateTimeFormat("es", {
+    timeZone,
     day: "numeric",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(settings.engineConfigChosenAt));
-  return `${engineConfigLabel(settings.engineConfig)}, elegida el ${when} (${settings.timezone}).`;
+  });
+
+function methodSentence(settings: EditorialNightlySettings): string {
+  const name = `${capitalize(methodName(settings.engineConfig))} (${methodTag(settings.engineConfig)})`;
+  if (settings.engineConfigChosenAt === null) {
+    return `${name}, el que venía por omisión. Cambiarlo solo afecta a las revisiones siguientes y queda registrado.`;
+  }
+  const when = chosenFormat(settings.timezone).format(new Date(settings.engineConfigChosenAt));
+  return `${name}, fijado el ${when}. Cambiarlo solo afecta a las revisiones siguientes y queda registrado.`;
+}
+
+function MethodOption({
+  file,
+  settings,
+}: {
+  readonly file: string;
+  readonly settings: EditorialNightlySettings;
+}) {
+  const current = file === settings.engineConfig;
+  const since =
+    current && settings.engineConfigChosenAt !== null
+      ? `En uso desde el ${formatDay(localDay(settings.engineConfigChosenAt, settings.timezone))}`
+      : current
+        ? "En uso"
+        : file === EVALUATED_METHOD
+          ? "El que se evaluó con revisores"
+          : "El que venía por omisión";
+  const named = methodTag(file) !== file;
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 has-data-checked:border-primary/60 has-data-checked:bg-primary/6",
+      )}
+    >
+      <Radio value={file} className="mt-0.5" />
+      <span className="min-w-0">
+        <span className="block text-sm text-foreground">
+          {named ? (
+            capitalize(methodName(file).replace(/^el /, ""))
+          ) : (
+            <code className="font-mono text-xs">{file}</code>
+          )}{" "}
+          {named ? <span className="text-xs text-muted-foreground">{methodTag(file)}</span> : null}
+        </span>
+        {named || current ? (
+          <span className="block text-xs text-muted-foreground">{since}</span>
+        ) : null}
+      </span>
+    </label>
+  );
 }
 
 /**
- * The configuration file the nightly run starts from. Choosing one only opens a confirmation;
- * the setting changes when the operator confirms it.
+ * How trends are chosen: the evaluated method, pinned. «Cambiar…» opens a dialog on the
+ * evaluated method; the setting changes only when the operator confirms another one.
  */
-function EngineConfigRow({
+function MethodRow({
   settings,
   onChange,
 }: {
   readonly settings: EditorialNightlySettings;
   readonly onChange: (patch: EditorialNightlySettingsUpdateInput) => void;
 }) {
-  const [pending, setPending] = useState<string | null>(null);
-  const choices = settings.engineConfigs.includes(settings.engineConfig)
-    ? settings.engineConfigs
-    : [settings.engineConfig, ...settings.engineConfigs];
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(() => initialMethod(settings));
+  const [showOthers, setShowOthers] = useState(false);
+  const { named, others } = methodChoices(settings);
+  const openDialog = () => {
+    setSelected(initialMethod(settings));
+    setShowOthers(false);
+    setOpen(true);
+  };
   return (
     <>
       <SettingsRow
-        title="Configuración del motor"
-        description={`El archivo de configuración con que corre el motor cada noche. Sin una elección explícita es ${DEFAULT_ENGINE_CONFIG}. Cambiarla cambia las tendencias de las corridas siguientes, no las anteriores, y queda registrada con su hora.`}
-        status={engineConfigStatus(settings)}
+        title="Cómo se eligen las tendencias"
+        description={methodSentence(settings)}
         control={
-          <Select
-            value={settings.engineConfig}
-            onValueChange={(value) => {
-              if (typeof value === "string" && value !== settings.engineConfig) setPending(value);
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Configuración del motor">
-              <SelectValue>
-                {(value: string | null) => engineConfigLabel(value ?? settings.engineConfig)}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {choices.map((choice) => (
-                <SelectItem key={choice} value={choice}>
-                  {engineConfigLabel(choice)}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+          <div className="flex items-center gap-3">
+            {settings.engineConfig === EVALUATED_METHOD ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <LockIcon aria-hidden className="size-3" />
+                Fijado
+              </span>
+            ) : null}
+            <Button size="xs" variant="outline" onClick={openDialog}>
+              Cambiar…
+            </Button>
+          </div>
         }
       />
-      <AlertDialog
-        open={pending !== null}
-        onOpenChange={(open) => {
-          if (!open) setPending(null);
-        }}
-      >
+      <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              ¿Correr el motor con {pending === null ? null : engineConfigLabel(pending)}?
-            </AlertDialogTitle>
+            <AlertDialogTitle>¿Cambiar el método que elige tus tendencias?</AlertDialogTitle>
             <AlertDialogDescription>
-              La próxima corrida nocturna y «Ejecutar ahora» usarán{" "}
-              {pending === null ? null : engineConfigLabel(pending)} en lugar de{" "}
-              {engineConfigLabel(settings.engineConfig)}. Un trabajo pendiente de hoy se reemplaza
-              por uno con la configuración nueva. El cambio queda registrado con su hora y se puede
-              deshacer eligiendo otra vez la anterior.
+              Lo ya encontrado no cambia. Las revisiones siguientes y «Revisar ahora» usarán el
+              nuevo; si hoy queda una revisión pendiente, se rehace con él. Queda registrado con su
+              hora y se puede volver atrás.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancelar</AlertDialogClose>
-            <Button
-              onClick={() => {
-                if (pending !== null) onChange({ engineConfig: pending });
-                setPending(null);
+          <div className="px-6">
+            <RadioGroup
+              aria-label="Método"
+              value={selected}
+              onValueChange={(value) => {
+                if (typeof value === "string") setSelected(value);
               }}
             >
-              Sí, usar {pending}
-            </Button>
+              {named.map((file) => (
+                <MethodOption key={file} file={file} settings={settings} />
+              ))}
+              {showOthers
+                ? others.map((file) => <MethodOption key={file} file={file} settings={settings} />)
+                : null}
+            </RadioGroup>
+          </div>
+          <AlertDialogFooter className="sm:justify-between">
+            {others.length > 0 && !showOthers ? (
+              <Button size="sm" variant="ghost-muted" onClick={() => setShowOthers(true)}>
+                Otras instaladas ({others.length})
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <AlertDialogClose render={<Button size="sm" variant="ghost" />}>
+                Cancelar
+              </AlertDialogClose>
+              <Button
+                size="sm"
+                disabled={selected === settings.engineConfig}
+                onClick={() => {
+                  onChange({ engineConfig: selected });
+                  setOpen(false);
+                }}
+              >
+                Cambiar
+              </Button>
+            </div>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
@@ -201,58 +570,29 @@ function EngineConfigRow({
   );
 }
 
-function phaseText(phase: EditorialJobPhase): string {
-  const mark = PHASE_MARK[phase.status];
-  const duration = durationText(phase.startedAt, phase.finishedAt);
-  return [PHASE_LABEL[phase.phase], mark, duration].filter(Boolean).join(" ");
-}
-
-function JobRow({
-  job,
-  environmentId,
-}: {
-  readonly job: EditorialJob;
-  readonly environmentId: EnvironmentId;
-}) {
-  const duration = durationText(job.startedAt, job.finishedAt);
-  const phases = job.artifacts.phases.map(phaseText).join(" · ");
-  const details = [
-    ...(job.status === "running" ? [`Corriendo: ${jobProgressText(job)}.`] : []),
-    ...jobMessages(job),
-  ];
+function PairsModeRow() {
+  const enabled = usePairsModeStore((state) => state.enabled);
+  const setEnabled = usePairsModeStore((state) => state.setEnabled);
   return (
-    <SettingsRow
-      title={
-        <span className="flex items-center gap-2">
-          <span>Corte {cutoffFormat.format(new Date(job.cutoffAt))}</span>
-          <Badge size="sm" variant={STATUS_BADGE[job.status]}>
-            {JOB_STATUS_LABEL[job.status]}
-          </Badge>
-        </span>
-      }
-      description={
-        <span className="flex flex-col gap-0.5">
-          <span>{phases}</span>
-          {details.map((line) => (
-            <span key={line} className="text-muted-foreground">
-              {line}
-            </span>
-          ))}
-        </span>
-      }
-      status={duration === null ? undefined : `Duración: ${duration}, intento ${job.attempt}.`}
-      control={
-        job.artifacts.runId !== null && job.status === "done" ? (
-          <Button
-            size="xs"
-            variant="outline"
-            render={<Link to="/editorial/$environmentId/trends" params={{ environmentId }} />}
-          >
-            Ver en Tendencias
-          </Button>
-        ) : null
-      }
-    />
+    <SettingsGroup>
+      <SettingsRow
+        id={EDITORIAL_PAIRS_SECTION_ID}
+        title="Evaluación a ciegas"
+        description="Oculta la opinión de los jueces y de dónde sale cada tendencia, para decidir sin sesgo."
+        status={
+          enabled
+            ? "Activada en esta app (modo pares). Tus decisiones se registran con su hora, como siempre; al apagarla, la opinión de los jueces vuelve solo en las tendencias ya decididas."
+            : undefined
+        }
+        control={
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked) => setEnabled(Boolean(checked))}
+            aria-label="Evaluación a ciegas (modo pares)"
+          />
+        }
+      />
+    </SettingsGroup>
   );
 }
 
@@ -261,10 +601,14 @@ export interface NightlyRunSettingsViewProps {
   readonly settings: EditorialNightlySettings;
   readonly jobs: ReadonlyArray<EditorialJob>;
   readonly active: EditorialJob | null;
+  readonly state: NightlyState;
+  readonly sources: EditorialSourcesView | null;
+  readonly model: EditorialModelState | null;
+  readonly now: number;
   readonly starting: boolean;
   readonly onChange: (patch: EditorialNightlySettingsUpdateInput) => void;
   readonly onRunNow: () => void;
-  /** The model card, for machines that went through the first-run wizard already. */
+  /** The download card, shown while the model is not on disk. */
   readonly modelCard?: ReactNode;
 }
 
@@ -273,155 +617,152 @@ export function NightlyRunSettingsView({
   settings,
   jobs,
   active,
+  state,
+  sources,
+  model,
+  now,
   starting,
   onChange,
   onRunNow,
   modelCard,
 }: NightlyRunSettingsViewProps) {
-  const busy = starting || active !== null;
+  const ready = modelIsReady(model);
+  const summary = `${capitalize(methodName(settings.engineConfig).replace(/^el /, ""))} · ${ready ? "modelo local listo" : "falta el modelo local"}`;
   return (
-    <SettingsSection id={EDITORIAL_NIGHTLY_SECTION_ID} title="Corrida nocturna">
-      <SettingsRow
-        title="Corrida nocturna"
-        description="Cada día, a la hora indicada, captura las fuentes activas hasta ayer, corre el motor con corte a las 00:00 UTC de hoy, comprueba e importa la corrida y redacta sus tendencias. Corre solo mientras el servidor está encendido; si faltó algún día, captura lo que falta y corre una sola vez."
-        status={nextRunText(settings)}
-        control={
-          <Switch
-            checked={settings.enabled}
-            onCheckedChange={(checked) => onChange({ enabled: Boolean(checked) })}
-            aria-label="Corrida nocturna"
+    <>
+      <section id={EDITORIAL_NIGHTLY_SECTION_ID} tabIndex={-1} className="space-y-4 outline-none">
+        <SettingsPageHeader title="Revisión nocturna" />
+        <StatusCard
+          environmentId={environmentId}
+          state={state}
+          jobs={jobs}
+          sources={sources}
+          timeZone={settings.timezone}
+          now={now}
+          starting={starting}
+          onRunNow={onRunNow}
+        />
+        <SettingsGroup>
+          <SettingsRow
+            title="Revisar cada noche"
+            description={`${nextNightText(settings, now)} Solo con el equipo encendido; si una noche se pierde, la siguiente captura lo que faltó.`}
+            control={
+              <div className="flex items-center gap-3">
+                <Input
+                  nativeInput
+                  size="sm"
+                  type="time"
+                  className="w-28"
+                  aria-label="Hora de la revisión nocturna"
+                  value={settings.timeOfDay}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (/^\d{2}:\d{2}$/.test(value) && value !== settings.timeOfDay) {
+                      onChange({ timeOfDay: value });
+                    }
+                  }}
+                />
+                <Switch
+                  checked={settings.enabled}
+                  onCheckedChange={(checked) => onChange({ enabled: Boolean(checked) })}
+                  aria-label="Revisar cada noche"
+                />
+              </div>
+            }
           />
-        }
-      />
-      <SettingsRow
-        title="Hora"
-        description={`Hora local de ${settings.timezone}.`}
+        </SettingsGroup>
+      </section>
+      <NightList rows={nightRows(jobs, active, settings.timezone)} />
+      <PairsModeRow />
+      <FoldedSettingsSection
+        id={EDITORIAL_METHOD_SECTION_ID}
+        title="Avanzado"
         control={
-          <Input
-            nativeInput
-            size="sm"
-            type="time"
-            className="w-32"
-            aria-label="Hora de la corrida nocturna"
-            value={settings.timeOfDay}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (/^\d{2}:\d{2}$/.test(value) && value !== settings.timeOfDay) {
-                onChange({ timeOfDay: value });
-              }
-            }}
-          />
-        }
-      />
-      <SettingsRow
-        title="Procesos del motor"
-        description="Procesos de embeddings en paralelo. Más procesos terminan antes y usan más CPU y memoria."
-        control={
-          <Select
-            value={String(settings.workers)}
-            onValueChange={(value) => {
-              const workers = Number(value);
-              if (Number.isInteger(workers) && workers !== settings.workers) onChange({ workers });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Procesos del motor">
-              <SelectValue>
-                {(value: string | null) => value ?? String(settings.workers)}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {WORKER_CHOICES.map((choice) => (
-                <SelectItem key={choice} value={String(choice)}>
-                  {choice}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
-      <EngineConfigRow settings={settings} onChange={onChange} />
-      {modelCard === undefined ? null : (
-        <SettingsRow
-          title="Modelo del motor"
-          description="La corrida nocturna lo necesita; se descarga una sola vez en esta máquina."
-        >
-          {modelCard}
-        </SettingsRow>
-      )}
-      <SettingsRow
-        title="Ejecutar ahora"
-        description={
-          active === null
-            ? "Corre la de hoy sin esperar a la hora. Si ya corrió con estas fuentes, no la repite; si falló, sigue desde la fase que falta."
-            : `Corriendo: ${jobProgressText(active)}.`
-        }
-        control={
-          <Button size="xs" variant="outline" disabled={busy} onClick={onRunNow}>
-            {busy ? (
-              <span aria-hidden>
-                <Spinner size="sm" />
-              </span>
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            {settings.engineConfig === EVALUATED_METHOD ? (
+              <LockIcon aria-hidden className="size-3" />
             ) : null}
-            Ejecutar ahora
-          </Button>
+            {summary}
+          </span>
         }
-      />
-      {jobs.length === 0 ? (
-        <SettingsRow title="Últimas corridas" description="Todavía no hay corridas programadas." />
-      ) : (
-        jobs.map((job) => (
-          <JobRow
-            key={job.jobId}
-            job={active?.jobId === job.jobId ? active : job}
-            environmentId={environmentId}
+      >
+        <MethodRow settings={settings} onChange={onChange} />
+        {ready && model !== null ? (
+          <SettingsRow
+            title="Modelo local"
+            description={`Agrupa las publicaciones en este equipo; no envía textos a nadie. ${MODEL_NAME}, ${formatMiB(model.bytesExpected)} MiB.`}
+            control={
+              <Badge size="sm" variant="success">
+                Listo
+              </Badge>
+            }
           />
-        ))
-      )}
-    </SettingsSection>
+        ) : (
+          <SettingsRow title="Modelo local">{modelCard}</SettingsRow>
+        )}
+        <SettingsRow
+          title="Procesos en paralelo"
+          description="Más procesos terminan antes y usan más memoria."
+          control={
+            <Select
+              value={String(settings.workers)}
+              onValueChange={(value) => {
+                const workers = Number(value);
+                if (Number.isInteger(workers) && workers !== settings.workers)
+                  onChange({ workers });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Procesos en paralelo">
+                <SelectValue>
+                  {(value: string | null) => value ?? String(settings.workers)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {WORKER_CHOICES.map((choice) => (
+                  <SelectItem key={choice} value={String(choice)}>
+                    {choice}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </FoldedSettingsSection>
+    </>
   );
-}
-
-const ERROR_TEXT: Readonly<Record<string, string>> = {
-  "no-sources": "Ninguna fuente está activada para el motor (Ajustes › Editorial › Fuentes).",
-  unavailable: "Los servicios editoriales no están montados en este servidor.",
-  storage: "La base editorial no respondió.",
-  "invalid-settings": "El ajuste no es válido.",
-};
-
-export function failureText(result: AtomCommandResult<unknown, unknown>): string {
-  if (result._tag === "Success") return "";
-  if (isAtomCommandInterrupted(result)) return "Se canceló.";
-  const error = squashAtomCommandFailure(result);
-  if (typeof error === "object" && error !== null && "reason" in error) {
-    const text = ERROR_TEXT[String(error.reason)];
-    if (text) return text;
-  }
-  return error instanceof Error ? error.message : "Error desconocido.";
 }
 
 const ignoreReady = () => {};
 
-function NightlyRunSettingsForEnvironment({
+function NightlySettingsForEnvironment({
   environmentId,
 }: {
   readonly environmentId: EnvironmentId;
 }) {
   const target = { environmentId, input: {} };
-  const settings = useEnvironmentQuery(editorialJobsEnvironment.settings(target));
-  const list = useEnvironmentQuery(editorialJobsEnvironment.list(target));
-  const active = useEditorialJobActivity(environmentId);
-  const quiet = { reportFailure: false } as const;
-  const update = useAtomCommand(editorialJobsEnvironment.updateSettings, quiet);
-  const runNow = useAtomCommand(editorialJobsEnvironment.runNow, quiet);
-  const [starting, setStarting] = useState(false);
-  if (settings.data === null) {
+  const status = useNightlyStatus(environmentId);
+  const sources = useEnvironmentQuery(editorialSourcesEnvironment.list(target));
+  const model = AsyncResult.getOrElse(
+    useAtomValue(editorialEngineEnvironment.model(target)),
+    () => null,
+  );
+  const update = useAtomCommand(editorialJobsEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const runNow = useRunNow(environmentId);
+  const settings = status.settings.data;
+  if (settings === null) {
     return (
-      <SettingsSection id={EDITORIAL_NIGHTLY_SECTION_ID} title="Corrida nocturna">
-        <SettingsRow
-          title={settings.error ? "No se pudo leer la corrida nocturna" : "Cargando"}
-          description={settings.error ?? undefined}
+      <SettingsPageContainer>
+        <SettingsPageHeader
+          title="Revisión nocturna"
+          description={
+            status.settings.error
+              ? `No se pudo leer la revisión nocturna: ${status.settings.error}`
+              : "Cargando…"
+          }
         />
-      </SettingsSection>
+      </SettingsPageContainer>
     );
   }
   const onChange = (patch: EditorialNightlySettingsUpdateInput) =>
@@ -429,41 +770,34 @@ function NightlyRunSettingsForEnvironment({
       if (result._tag === "Failure") {
         toastManager.add({
           type: "error",
-          title: "No se guardó la corrida nocturna",
-          description: failureText(result),
+          title: "No se guardó la revisión nocturna",
+          description: settingsFailureText(result),
         });
       }
     });
-  const onRunNow = () => {
-    setStarting(true);
-    void runNow({ environmentId, input: {} }).then((result) => {
-      setStarting(false);
-      if (result._tag === "Failure") {
-        toastManager.add({
-          type: "error",
-          title: "No se pudo ejecutar",
-          description: failureText(result),
-        });
-      }
-    });
-  };
   return (
-    <NightlyRunSettingsView
-      environmentId={environmentId}
-      settings={settings.data}
-      jobs={list.data?.jobs ?? []}
-      active={active}
-      starting={starting}
-      onChange={onChange}
-      onRunNow={onRunNow}
-      modelCard={<ModelDownloadCard environmentId={environmentId} onReady={ignoreReady} bare />}
-    />
+    <SettingsPageContainer className="gap-6">
+      <NightlyRunSettingsView
+        environmentId={environmentId}
+        settings={settings}
+        jobs={status.jobs ?? []}
+        active={status.active}
+        state={status.state}
+        sources={sources.data}
+        model={model}
+        now={status.now}
+        starting={runNow.starting}
+        onChange={onChange}
+        onRunNow={runNow.run}
+        modelCard={<ModelDownloadCard environmentId={environmentId} onReady={ignoreReady} bare />}
+      />
+    </SettingsPageContainer>
   );
 }
 
-/** Settings › Editorial › Corrida nocturna, on the primary environment, which runs the jobs. */
-export function NightlyRunSettings() {
+/** Settings › Editorial › Revisión nocturna, on the primary environment, which runs the jobs. */
+export function NightlySettingsPage() {
   const environmentId = usePrimaryEnvironmentId();
-  if (environmentId === null) return null;
-  return <NightlyRunSettingsForEnvironment environmentId={environmentId} />;
+  if (environmentId === null) return <NoEnvironment />;
+  return <NightlySettingsForEnvironment environmentId={environmentId} />;
 }

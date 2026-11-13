@@ -9,6 +9,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import { nightlyState } from "./editorialStatus.logic";
 import { NightlyRunSettingsView, type NightlyRunSettingsViewProps } from "./NightlyRunSettings";
 
 const ENVIRONMENT_ID = EnvironmentId.make("env-1");
@@ -70,15 +71,25 @@ const job = (overrides: Partial<EditorialJob>): EditorialJob => ({
   },
 });
 
+/** 31 oct 2026, 18:00 in Guayaquil: after the night of the 31st ran. */
+const NOW = Date.parse("2026-10-31T23:00:00.000Z");
+
 const renderView = (props: Partial<NightlyRunSettingsViewProps>) => {
   const onChange = vi.fn();
   const onRunNow = vi.fn();
+  const settings = props.settings ?? SETTINGS;
+  const jobs = props.jobs ?? [];
+  const active = props.active ?? null;
   return render(
     <NightlyRunSettingsView
       environmentId={ENVIRONMENT_ID}
-      settings={SETTINGS}
-      jobs={[]}
-      active={null}
+      settings={settings}
+      jobs={jobs}
+      active={active}
+      state={nightlyState({ settings, jobs, active, now: NOW })}
+      sources={null}
+      model={null}
+      now={NOW}
       starting={false}
       onChange={onChange}
       onRunNow={onRunNow}
@@ -87,73 +98,83 @@ const renderView = (props: Partial<NightlyRunSettingsViewProps>) => {
   ).then((screen) => ({ screen, onChange, onRunNow }));
 };
 
+const ENABLED: EditorialNightlySettings = {
+  ...SETTINGS,
+  enabled: true,
+  nextRunAt: "2026-11-01T08:00:00.000Z",
+};
+
 describe("NightlyRunSettings", () => {
-  it("turns the nightly run on and runs today's job on demand", async () => {
+  it("turns the nightly review on, and offers to review now while none has run", async () => {
     const { screen, onChange, onRunNow } = await renderView({});
     await using _screen = screen;
-    await userEvent.click(screen.getByRole("switch", { name: "Corrida nocturna" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Revisar cada noche" }));
     expect(onChange).toHaveBeenCalledWith({ enabled: true });
-    await userEvent.click(screen.getByRole("button", { name: "Ejecutar ahora" }));
+    await userEvent.click(screen.getByRole("button", { name: "Revisar ahora" }));
     expect(onRunNow).toHaveBeenCalledOnce();
   });
 
-  it("changes the engine configuration only after the operator confirms it (B1)", async () => {
-    const { screen, onChange } = await renderView({});
+  it("says the review is current and hides «Revisar ahora» while it would do nothing", async () => {
+    const { screen } = await renderView({ settings: ENABLED, jobs: [job({})] });
     await using _screen = screen;
+    await expect.element(screen.getByText("Al día")).toBeVisible();
     await expect
-      .element(screen.getByText("engine.v1.json, la predeterminada; nunca se cambió."))
+      .element(screen.getByText(/^Hoy a las 03:10 encontró 15 tendencias · tardó 10 min/))
       .toBeVisible();
-    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
-    await userEvent.click(screen.getByRole("option", { name: "engine.v3.json" }));
-    // Choosing opens the confirmation; nothing is saved yet.
-    expect(onChange).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    expect(onChange).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
-    await userEvent.click(screen.getByRole("option", { name: "engine.v3.json" }));
-    await userEvent.click(screen.getByRole("button", { name: "Sí, usar engine.v3.json" }));
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v3.json" });
-  });
-
-  it("offers engine.v3-sel.json as the chosen V3 variant, beside v1, v2 and v3 (B01)", async () => {
-    const { screen, onChange } = await renderView({});
-    await using _screen = screen;
-    await userEvent.click(screen.getByRole("combobox", { name: "Configuración del motor" }));
-    for (const name of ["engine.v1.json", "engine.v2.json", "engine.v3.json"]) {
-      await expect.element(screen.getByRole("option", { name, exact: true })).toBeVisible();
-    }
-    await userEvent.click(
-      screen.getByRole("option", {
-        name: "engine.v3-sel.json (v3, variante V3 elegida)",
-        exact: true,
-      }),
-    );
+    await expect
+      .element(screen.getByRole("link", { name: "Ver tendencias" }))
+      .toHaveAttribute("href", "/editorial/env-1/trends");
+    await expect
+      .element(screen.getByRole("button", { name: "Revisar ahora" }))
+      .not.toBeInTheDocument();
     await expect
       .element(
-        screen.getByText("¿Correr el motor con engine.v3-sel.json (v3, variante V3 elegida)?"),
+        screen.getByText("Próxima: mañana a las 03:00, hora de Guayaquil.", { exact: false }),
       )
       .toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Sí, usar engine.v3-sel.json" }));
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v3-sel.json" });
   });
 
-  it("shows when the operator chose the configuration", async () => {
-    const { screen } = await renderView({
-      settings: {
-        ...SETTINGS,
-        engineConfig: "engine.v3.json",
-        engineConfigChosenAt: "2026-11-09T05:00:00.000Z",
+  it("offers «Reintentar» after a failure and says from which step it goes on", async () => {
+    const failed = job({
+      jobId: "job-2",
+      cutoffAt: "2026-10-31T00:00:00.000Z",
+      status: "failed",
+      attempt: 3,
+      error: "engine run exited with 1: ENOENT /home/mick/.t3/userdata/run.log",
+      artifacts: {
+        ...job({}).artifacts,
+        runId: null,
+        phases: phases((index) => (index === 0 ? "done" : index === 1 ? "failed" : "pending")),
+        failure: { code: "engine_failed", phase: "run" },
       },
     });
+    const yesterday = job({
+      jobId: "job-1",
+      cutoffAt: "2026-10-30T00:00:00.000Z",
+      artifacts: { ...job({}).artifacts, dossiers: 11 },
+    });
+    const { screen, onRunNow } = await renderView({ settings: ENABLED, jobs: [failed, yesterday] });
     await using _screen = screen;
+    await expect.element(screen.getByText("La revisión de hoy falló")).toBeVisible();
+    await expect
+      .element(screen.getByText("Siguen disponibles las 11 tendencias de ayer."))
+      .toBeVisible();
     await expect
       .element(
-        screen.getByText("engine.v3.json, elegida el 9 nov 2026, 00:00 (America/Guayaquil)."),
+        screen.getByText(
+          "Falló al agrupar las publicaciones. «Reintentar» sigue desde ahí; lo capturado no se repite.",
+        ),
       )
       .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(onRunNow).toHaveBeenCalledOnce();
+    const shown = screen.container.textContent ?? "";
+    for (const raw of ["ENOENT", "/home/", "motor", "corrida", "corte"]) {
+      expect(shown).not.toContain(raw);
+    }
   });
 
-  it("holds Ejecutar ahora while a job runs and lists phases, errors and the run", async () => {
+  it("shows the review in flight step by step, with no way to start another", async () => {
     const running = job({
       jobId: "job-2",
       status: "running",
@@ -165,87 +186,48 @@ describe("NightlyRunSettings", () => {
         progress: { phase: "run", done: 1024, total: 11913 },
       },
     });
-    const failed = job({
-      jobId: "job-0",
-      cutoffAt: "2026-10-29T00:00:00.000Z",
-      status: "failed",
-      attempt: 3,
-      error: "engine check did not reproduce run_x",
-      artifacts: {
-        ...job({}).artifacts,
-        phases: phases((index) => (index < 2 ? "done" : index === 2 ? "failed" : "pending")),
-        failure: { code: "check_failed" },
-      },
-    });
-    const { screen, onRunNow } = await renderView({
-      jobs: [running, job({}), failed],
-      active: running,
-    });
+    const { screen } = await renderView({ settings: ENABLED, jobs: [running], active: running });
     await using _screen = screen;
-    const runNow = screen.getByRole("button", { name: "Ejecutar ahora" });
-    await expect.element(runNow).toBeDisabled();
-    expect(onRunNow).not.toHaveBeenCalled();
+    await expect.element(screen.getByText("Revisando…")).toBeVisible();
+    await expect.element(screen.getByText("1.024 de 11.913")).toBeVisible();
+    await expect.element(screen.getByText("En curso")).toBeVisible();
     await expect
-      .element(screen.getByText("Corriendo: motor 2/5 · 1024 de 11.913 textos.").first())
-      .toBeVisible();
-    await expect
-      .element(screen.getByText("La comprobación no reprodujo la corrida."))
-      .toBeVisible();
-    // Only the finished job links to its run in Tendencias.
-    const links = screen.getByRole("link", { name: "Ver en Tendencias" });
-    await expect.element(links).toHaveAttribute("href", "/editorial/env-1/trends");
-    expect(links.elements()).toHaveLength(1);
+      .element(screen.getByRole("button", { name: /Revisar ahora|Reintentar/ }))
+      .not.toBeInTheDocument();
   });
 
-  it("words failures and notices in Spanish and never shows the engine's own error", async () => {
-    const engineError =
-      "engine run exited with 1: ENOENT /home/mick/.t3/userdata/editorial-jobs/x/run.g2.log";
-    const { screen } = await renderView({
-      jobs: [
-        job({
-          jobId: "job-failed",
-          status: "pending",
-          error: engineError,
-          artifacts: {
-            ...job({}).artifacts,
-            runId: null,
-            notes: ["Backfill: 2026-10-28, 2026-10-29 had no run; captured now."],
-            notices: [{ code: "missed_days", days: ["2026-10-28", "2026-10-29"] }],
-            failure: { code: "engine_failed", phase: "run" },
-          },
-        }),
-        job({
-          jobId: "job-replaced",
-          status: "skipped",
-          artifacts: {
-            ...job({}).artifacts,
-            runId: null,
-            notes: ["The engine configuration changed; replaced."],
-            notices: [{ code: "config_changed" }],
-          },
-        }),
-        job({
-          jobId: "job-undrafted",
-          artifacts: {
-            ...job({}).artifacts,
-            notes: ["Presentations pending: the run could not be drafted."],
-            notices: [{ code: "presentations_unavailable" }],
-          },
-        }),
-      ],
+  it("opens the method dialog on the evaluated method and changes it only when confirmed", async () => {
+    const { screen, onChange } = await renderView({
+      settings: {
+        ...ENABLED,
+        engineConfig: "engine.v3-sel.json",
+        engineConfigChosenAt: "2026-11-09T08:13:00.000Z",
+      },
     });
     await using _screen = screen;
-    for (const text of [
-      "El motor de tendencias terminó con error al agrupar las publicaciones. Se reintentará más tarde.",
-      "Sin corrida los días 28 oct, 29 oct: se capturaron ahora y cuentan desde este corte.",
-      "Las fuentes del motor cambiaron antes de correr; la reemplaza una corrida con la configuración nueva.",
-      "Redacción pendiente: no hay un modelo de texto disponible. Las tendencias se ven con sus términos.",
-    ]) {
-      await expect.element(screen.getByText(text)).toBeVisible();
-    }
-    const shown = screen.container.textContent ?? "";
-    for (const raw of [engineError, "Backfill:", "replaced.", "Presentations pending", "/home/"]) {
-      expect(shown).not.toContain(raw);
-    }
+    await userEvent.click(screen.getByRole("button", { name: /Avanzado/ }));
+    await expect
+      .element(screen.getByText(/^El método evaluado \(v3\), fijado el 9 nov 2026, 03:13\./))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Cambiar…" }));
+    await expect.element(screen.getByRole("radio", { name: /Método evaluado/ })).toBeChecked();
+    const confirm = screen.getByRole("button", { name: "Cambiar", exact: true });
+    await expect.element(confirm).toBeDisabled();
+    // Only v3 and v1 by name; the rest of the installed files wait behind «Otras instaladas».
+    await expect
+      .element(screen.getByRole("radio", { name: /engine\.v2\.json/ }))
+      .not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Otras instaladas (2)" }));
+    await expect.element(screen.getByRole("radio", { name: /engine\.v2\.json/ })).toBeVisible();
+    await userEvent.click(screen.getByRole("radio", { name: /Método original/ }));
+    await expect
+      .element(screen.getByRole("alertdialog"))
+      .toMatchTextContent("si hoy queda una revisión pendiente, se rehace con él");
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(confirm);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ engineConfig: "engine.v1.json" });
+    // Opening it again starts on the evaluated method, whatever was picked before.
+    await userEvent.click(screen.getByRole("button", { name: "Cambiar…" }));
+    await expect.element(screen.getByRole("radio", { name: /Método evaluado/ })).toBeChecked();
   });
 });

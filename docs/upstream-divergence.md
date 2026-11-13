@@ -1202,9 +1202,12 @@ Archivos de upstream modificados (enganches de una línea, salvo donde se dice):
 
 - `packages/contracts/src/index.ts` y `rpc.ts`: exportación y `.merge(EditorialSourcesRpcGroup)`.
 - `apps/server/src/ws.ts`, `server.ts`, `auth/RpcAuthorization.ts` y `observability/RpcInstrumentation.ts`: handlers, capa, ámbitos y agregados del grupo, como §13.
-- `apps/web/src/components/settings/settingsSearch.ts`: la ruta en `SettingsPath`, su etiqueta, el grupo «Editorial» de la navegación, sus entradas de búsqueda y su ámbito (cinco líneas y el import); los valores viven en `apps/web/src/editorial/settings/settingsEntry.ts`.
-- `apps/web/src/components/settings/SettingsSidebarNav.tsx`: el icono.
-- `apps/web/src/components/settings/SettingsScopeSentence.tsx`: `/settings/editorial` en `SETTINGS_DEVICE_ONLY_PATHS`, para no ofrecer el selector de proyecto y entorno: la página es del entorno principal, como «Sharing & access».
+- `apps/web/src/components/settings/settingsSearch.ts`: las rutas en `SettingsPath`, sus etiquetas, el grupo «Editorial» de la navegación, sus entradas de búsqueda, su ámbito y la redirección de `/settings/editorial` en `RENAMED_SETTINGS_PATHS` (seis líneas y el import); los valores viven en `apps/web/src/editorial/settings/settingsEntry.ts`.
+- `apps/web/src/components/settings/SettingsSidebarNav.tsx`: los iconos (`settingsNavIcons.ts`; el de «Revisión nocturna» lleva el punto de estado).
+- `apps/web/src/components/settings/SettingsScopeSentence.tsx`: las rutas editoriales en `SETTINGS_DEVICE_ONLY_PATHS` (import y una línea), para no ofrecer el selector de proyecto y entorno: las páginas son del entorno principal, como «Sharing & access».
+
+Ajustes v2 (rama `es/arranque-ajustes-v2-ajustes`, 13 de noviembre de 2026): la página única se reparte en cinco (`/settings/editorial/{channel,sources,nightly,drafting,data}`: Mi canal, Fuentes, Revisión nocturna, Redacción y Mis datos). `/settings/editorial` y sus anclas antiguas redirigen con el mecanismo de upstream (`RENAMED_SETTINGS_PATHS` y `movedSettingsPath`), así que los enlaces de la bandeja y del primer arranque siguen valiendo. `_chat.settings.editorial.tsx` queda como ruta padre sin componente; `routeTree.gen.ts`, regenerado.
+
 - `apps/web/package.json` y `apps/server/package.json`: `@earlyscript/editorial-contracts` en la web y `@earlyscript/trend-engine` en el servidor (solo su subruta `./sources`), como dependencias de desarrollo; `pnpm-lock.yaml`.
 - `apps/web/src/routeTree.gen.ts`: regenerado con la ruta nueva.
 

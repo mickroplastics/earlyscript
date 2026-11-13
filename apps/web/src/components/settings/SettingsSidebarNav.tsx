@@ -59,10 +59,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
-import {
-  EDITORIAL_SETTINGS_PATH,
-  EditorialSettingsIcon,
-} from "../../editorial/settings/settingsEntry";
+import { EDITORIAL_SETTINGS_ICONS } from "../../editorial/settings/settingsNavIcons";
 import { SettingsLocale } from "../../editorial/locale/ShellLocale";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -113,7 +110,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,
   "/settings/archived": ArchiveIcon,
-  [EDITORIAL_SETTINGS_PATH]: EditorialSettingsIcon,
+  ...EDITORIAL_SETTINGS_ICONS,
 };
 
 // Detail pages without a nav entry highlight the page that links to them.

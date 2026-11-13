@@ -50,6 +50,11 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatSettingsEditorialSourcesRouteImport } from './routes/_chat.settings.editorial.sources'
+import { Route as ChatSettingsEditorialNightlyRouteImport } from './routes/_chat.settings.editorial.nightly'
+import { Route as ChatSettingsEditorialDraftingRouteImport } from './routes/_chat.settings.editorial.drafting'
+import { Route as ChatSettingsEditorialDataRouteImport } from './routes/_chat.settings.editorial.data'
+import { Route as ChatSettingsEditorialChannelRouteImport } from './routes/_chat.settings.editorial.channel'
 import { Route as ChatEditorialEnvironmentIdTrendsRouteImport } from './routes/_chat.editorial.$environmentId.trends'
 import { Route as ChatEditorialEnvironmentIdResultsRouteImport } from './routes/_chat.editorial.$environmentId.results'
 import { Route as ChatEditorialEnvironmentIdTrendsDossierIdRouteImport } from './routes/_chat.editorial.$environmentId.trends.$dossierId'
@@ -263,6 +268,36 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatSettingsEditorialSourcesRoute =
+  ChatSettingsEditorialSourcesRouteImport.update({
+    id: '/sources',
+    path: '/sources',
+    getParentRoute: () => ChatSettingsEditorialRoute,
+  } as any)
+const ChatSettingsEditorialNightlyRoute =
+  ChatSettingsEditorialNightlyRouteImport.update({
+    id: '/nightly',
+    path: '/nightly',
+    getParentRoute: () => ChatSettingsEditorialRoute,
+  } as any)
+const ChatSettingsEditorialDraftingRoute =
+  ChatSettingsEditorialDraftingRouteImport.update({
+    id: '/drafting',
+    path: '/drafting',
+    getParentRoute: () => ChatSettingsEditorialRoute,
+  } as any)
+const ChatSettingsEditorialDataRoute =
+  ChatSettingsEditorialDataRouteImport.update({
+    id: '/data',
+    path: '/data',
+    getParentRoute: () => ChatSettingsEditorialRoute,
+  } as any)
+const ChatSettingsEditorialChannelRoute =
+  ChatSettingsEditorialChannelRouteImport.update({
+    id: '/channel',
+    path: '/channel',
+    getParentRoute: () => ChatSettingsEditorialRoute,
+  } as any)
 const ChatEditorialEnvironmentIdTrendsRoute =
   ChatEditorialEnvironmentIdTrendsRouteImport.update({
     id: '/editorial/$environmentId/trends',
@@ -307,7 +342,7 @@ export interface FileRoutesByFullPath {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
-  '/settings/editorial': typeof ChatSettingsEditorialRoute
+  '/settings/editorial': typeof ChatSettingsEditorialRouteWithChildren
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -325,6 +360,11 @@ export interface FileRoutesByFullPath {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
   '/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/settings/editorial/channel': typeof ChatSettingsEditorialChannelRoute
+  '/settings/editorial/data': typeof ChatSettingsEditorialDataRoute
+  '/settings/editorial/drafting': typeof ChatSettingsEditorialDraftingRoute
+  '/settings/editorial/nightly': typeof ChatSettingsEditorialNightlyRoute
+  '/settings/editorial/sources': typeof ChatSettingsEditorialSourcesRoute
   '/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRoutesByTo {
@@ -352,7 +392,7 @@ export interface FileRoutesByTo {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
-  '/settings/editorial': typeof ChatSettingsEditorialRoute
+  '/settings/editorial': typeof ChatSettingsEditorialRouteWithChildren
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -370,6 +410,11 @@ export interface FileRoutesByTo {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
   '/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/settings/editorial/channel': typeof ChatSettingsEditorialChannelRoute
+  '/settings/editorial/data': typeof ChatSettingsEditorialDataRoute
+  '/settings/editorial/drafting': typeof ChatSettingsEditorialDraftingRoute
+  '/settings/editorial/nightly': typeof ChatSettingsEditorialNightlyRoute
+  '/settings/editorial/sources': typeof ChatSettingsEditorialSourcesRoute
   '/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRoutesById {
@@ -399,7 +444,7 @@ export interface FileRoutesById {
   '/_chat/settings/devices': typeof ChatSettingsDevicesRoute
   '/_chat/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/_chat/settings/diffs': typeof ChatSettingsDiffsRoute
-  '/_chat/settings/editorial': typeof ChatSettingsEditorialRoute
+  '/_chat/settings/editorial': typeof ChatSettingsEditorialRouteWithChildren
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -417,6 +462,11 @@ export interface FileRoutesById {
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/_chat/editorial/$environmentId/results': typeof ChatEditorialEnvironmentIdResultsRoute
   '/_chat/editorial/$environmentId/trends': typeof ChatEditorialEnvironmentIdTrendsRouteWithChildren
+  '/_chat/settings/editorial/channel': typeof ChatSettingsEditorialChannelRoute
+  '/_chat/settings/editorial/data': typeof ChatSettingsEditorialDataRoute
+  '/_chat/settings/editorial/drafting': typeof ChatSettingsEditorialDraftingRoute
+  '/_chat/settings/editorial/nightly': typeof ChatSettingsEditorialNightlyRoute
+  '/_chat/settings/editorial/sources': typeof ChatSettingsEditorialSourcesRoute
   '/_chat/editorial/$environmentId/trends/$dossierId': typeof ChatEditorialEnvironmentIdTrendsDossierIdRoute
 }
 export interface FileRouteTypes {
@@ -464,6 +514,11 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/editorial/$environmentId/results'
     | '/editorial/$environmentId/trends'
+    | '/settings/editorial/channel'
+    | '/settings/editorial/data'
+    | '/settings/editorial/drafting'
+    | '/settings/editorial/nightly'
+    | '/settings/editorial/sources'
     | '/editorial/$environmentId/trends/$dossierId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -509,6 +564,11 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/editorial/$environmentId/results'
     | '/editorial/$environmentId/trends'
+    | '/settings/editorial/channel'
+    | '/settings/editorial/data'
+    | '/settings/editorial/drafting'
+    | '/settings/editorial/nightly'
+    | '/settings/editorial/sources'
     | '/editorial/$environmentId/trends/$dossierId'
   id:
     | '__root__'
@@ -555,6 +615,11 @@ export interface FileRouteTypes {
     | '/_chat/settings/worktrees'
     | '/_chat/editorial/$environmentId/results'
     | '/_chat/editorial/$environmentId/trends'
+    | '/_chat/settings/editorial/channel'
+    | '/_chat/settings/editorial/data'
+    | '/_chat/settings/editorial/drafting'
+    | '/_chat/settings/editorial/nightly'
+    | '/_chat/settings/editorial/sources'
     | '/_chat/editorial/$environmentId/trends/$dossierId'
   fileRoutesById: FileRoutesById
 }
@@ -857,6 +922,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/settings/editorial/sources': {
+      id: '/_chat/settings/editorial/sources'
+      path: '/sources'
+      fullPath: '/settings/editorial/sources'
+      preLoaderRoute: typeof ChatSettingsEditorialSourcesRouteImport
+      parentRoute: typeof ChatSettingsEditorialRoute
+    }
+    '/_chat/settings/editorial/nightly': {
+      id: '/_chat/settings/editorial/nightly'
+      path: '/nightly'
+      fullPath: '/settings/editorial/nightly'
+      preLoaderRoute: typeof ChatSettingsEditorialNightlyRouteImport
+      parentRoute: typeof ChatSettingsEditorialRoute
+    }
+    '/_chat/settings/editorial/drafting': {
+      id: '/_chat/settings/editorial/drafting'
+      path: '/drafting'
+      fullPath: '/settings/editorial/drafting'
+      preLoaderRoute: typeof ChatSettingsEditorialDraftingRouteImport
+      parentRoute: typeof ChatSettingsEditorialRoute
+    }
+    '/_chat/settings/editorial/data': {
+      id: '/_chat/settings/editorial/data'
+      path: '/data'
+      fullPath: '/settings/editorial/data'
+      preLoaderRoute: typeof ChatSettingsEditorialDataRouteImport
+      parentRoute: typeof ChatSettingsEditorialRoute
+    }
+    '/_chat/settings/editorial/channel': {
+      id: '/_chat/settings/editorial/channel'
+      path: '/channel'
+      fullPath: '/settings/editorial/channel'
+      preLoaderRoute: typeof ChatSettingsEditorialChannelRouteImport
+      parentRoute: typeof ChatSettingsEditorialRoute
+    }
     '/_chat/editorial/$environmentId/trends': {
       id: '/_chat/editorial/$environmentId/trends'
       path: '/editorial/$environmentId/trends'
@@ -881,6 +981,27 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ChatSettingsEditorialRouteChildren {
+  ChatSettingsEditorialChannelRoute: typeof ChatSettingsEditorialChannelRoute
+  ChatSettingsEditorialDataRoute: typeof ChatSettingsEditorialDataRoute
+  ChatSettingsEditorialDraftingRoute: typeof ChatSettingsEditorialDraftingRoute
+  ChatSettingsEditorialNightlyRoute: typeof ChatSettingsEditorialNightlyRoute
+  ChatSettingsEditorialSourcesRoute: typeof ChatSettingsEditorialSourcesRoute
+}
+
+const ChatSettingsEditorialRouteChildren: ChatSettingsEditorialRouteChildren = {
+  ChatSettingsEditorialChannelRoute: ChatSettingsEditorialChannelRoute,
+  ChatSettingsEditorialDataRoute: ChatSettingsEditorialDataRoute,
+  ChatSettingsEditorialDraftingRoute: ChatSettingsEditorialDraftingRoute,
+  ChatSettingsEditorialNightlyRoute: ChatSettingsEditorialNightlyRoute,
+  ChatSettingsEditorialSourcesRoute: ChatSettingsEditorialSourcesRoute,
+}
+
+const ChatSettingsEditorialRouteWithChildren =
+  ChatSettingsEditorialRoute._addFileChildren(
+    ChatSettingsEditorialRouteChildren,
+  )
+
 interface ChatSettingsRouteChildren {
   ChatSettingsAboutRoute: typeof ChatSettingsAboutRoute
   ChatSettingsAccessRoute: typeof ChatSettingsAccessRoute
@@ -893,7 +1014,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsDevicesRoute: typeof ChatSettingsDevicesRoute
   ChatSettingsDiagnosticsRoute: typeof ChatSettingsDiagnosticsRoute
   ChatSettingsDiffsRoute: typeof ChatSettingsDiffsRoute
-  ChatSettingsEditorialRoute: typeof ChatSettingsEditorialRoute
+  ChatSettingsEditorialRoute: typeof ChatSettingsEditorialRouteWithChildren
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
@@ -923,7 +1044,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,
   ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
   ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
-  ChatSettingsEditorialRoute: ChatSettingsEditorialRoute,
+  ChatSettingsEditorialRoute: ChatSettingsEditorialRouteWithChildren,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
