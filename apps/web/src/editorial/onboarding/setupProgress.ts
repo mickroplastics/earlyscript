@@ -51,3 +51,20 @@ export function firstReviewWaitsForModel(
   if (last === undefined) return false;
   return last.payload.modelReady === false && last.payload.firstRunStarted === false;
 }
+
+/**
+ * Whether the app outside the wizard follows an unfinished setup («Terminar de configurar», the
+ * first review on the model): when this installation recorded a step of the wizard, or is new
+ * (no review, no job). One in use from before the wizard was recorded is left alone; Settings
+ * still reopens the wizard.
+ */
+export function followsUnfinishedSetup(input: {
+  readonly progress: SetupProgress | null;
+  /** Steps of the wizard recorded on this server; null while unknown. */
+  readonly recorded: number | null;
+  readonly jobCount: number | null;
+  readonly hasRun: boolean | null;
+}): boolean {
+  if (input.progress === null || !input.progress.pending || input.recorded === null) return false;
+  return input.recorded > 0 || (input.jobCount === 0 && input.hasRun === false);
+}

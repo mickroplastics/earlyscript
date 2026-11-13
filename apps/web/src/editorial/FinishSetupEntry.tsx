@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link, useLocation } from "@tanstack/react-router";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -10,8 +11,14 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { editorialJobsEnvironment } from "./jobsState";
 import { useModelDownload } from "./onboarding/ModelDownloadCard";
 import { editorialOnboardingEnvironment } from "./onboarding/onboardingState";
-import { firstReviewWaitsForModel, setupProgress, stepCaption } from "./onboarding/setupProgress";
+import {
+  firstReviewWaitsForModel,
+  followsUnfinishedSetup,
+  setupProgress,
+  stepCaption,
+} from "./onboarding/setupProgress";
 import { failureText } from "./settings/NightlyRunSettings";
+import { useTrendInbox } from "./TrendInbox";
 
 /**
  * Starts the first review once the local model is on disk: mounted only while the operator
@@ -68,20 +75,30 @@ export function FinishSetupEntry({ environmentId }: { readonly environmentId: En
   const progress = status.data === null ? null : setupProgress(status.data);
   // Behind the open wizard the entry would only repeat it.
   const wizardOpen = useLocation({ select: (location) => location.pathname === "/welcome" });
+  const inbox = AsyncResult.getOrElse(useTrendInbox(environmentId, "new-first-growth"), () => null);
+  const jobCount = jobs.data === null ? null : jobs.data.jobs.length;
+  // An installation already in use (reviews or jobs from before the wizard was recorded) is
+  // not taken back to the setup.
+  const followsSetup = followsUnfinishedSetup({
+    progress,
+    recorded: decisions.data === null ? null : decisions.data.acceptances.length,
+    jobCount,
+    hasRun: inbox === null ? null : inbox.run !== null,
+  });
   // Finished waiting for the model, or left with «Seguir más tarde» on the nightly step: the
   // operator consented and reached the review, which then starts once the model is there.
   const waitsForModel =
     progress !== null &&
-    jobs.data !== null &&
-    jobs.data.jobs.length === 0 &&
+    jobCount === 0 &&
+    inbox?.run === null &&
     (progress.pending
-      ? progress.reached === 3
+      ? followsSetup && progress.reached === 3
       : firstReviewWaitsForModel(decisions.data?.acceptances ?? []));
   return (
     <>
       {/* The open wizard's nightly step starts it itself. */}
       {waitsForModel && !wizardOpen ? <FirstReviewAutoStart environmentId={environmentId} /> : null}
-      {progress !== null && progress.pending && !wizardOpen ? (
+      {progress !== null && followsSetup && !wizardOpen ? (
         <SidebarGroup className="order-1 shrink-0">
           <Link
             to="/welcome"
