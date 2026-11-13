@@ -8,7 +8,7 @@ import { limitSection } from "./textGenerationUtils.ts";
 // Earlyscript editorial text generation. These types move to `packages/editorial-contracts`
 // once it exists and get re-exported from there; keep them free of `@t3tools/contracts`.
 
-export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v7";
+export const TREND_PRESENTATION_PROMPT_VERSION = "trend-presentation.v8";
 
 export const MAX_TREND_TITLE_CHARS = 80;
 const MAX_SUMMARY_PART_CHARS = 700;
@@ -175,7 +175,7 @@ function formatEvidence(evidence: ReadonlyArray<TrendPresentationEvidence>): str
   return evidence.flatMap((item) => {
     const excerpt = item.excerpt.trim();
     return [
-      `<item id=${JSON.stringify(item.itemId)} source=${JSON.stringify(item.source)} published_at=${JSON.stringify(item.publishedAt)} url=${JSON.stringify(item.url)}>`,
+      `<item id=${JSON.stringify(item.itemId)} source=${JSON.stringify(item.source)} published_at=${JSON.stringify(item.publishedAt)} url=${JSON.stringify(item.url)}${isReadableExcerpt(excerpt) ? "" : ' headline_only="true"'}>`,
       `Title: ${limitSection(item.title.trim(), MAX_EVIDENCE_TITLE_CHARS)}`,
       ...(excerpt ? [`Excerpt: ${limitSection(excerpt, MAX_EVIDENCE_EXCERPT_CHARS)}`] : []),
       "</item>",
@@ -196,13 +196,14 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     ...(language === "es"
       ? [
           '- write "video" and "videos", never "vídeo" or "vídeos" (the channel writes Latin American Spanish)',
+          "- numbers: decimal comma, never a decimal point, and a space before %: “39,8”, “54,9 %”. Large amounts in words, always with their unit: “1,4 billones de dólares”, “39,8 mil millones de parámetros” (an English billion is “mil millones”, a trillion is “un billón”). Versions and names keep their form: Terminal-Bench 4.0, GPT-5.6, 10.6p2.",
         ]
       : []),
     `- title: one line, at most ${MAX_TREND_TITLE_CHARS} characters, naming the subject the evidence items share (what most of them are about), not the most striking single item; no clickbait, no quotes, no trailing period. A standout piece of news can go in whatHappened instead.`,
     `- summary.whatHappened: two or three sentences, at most ${whatHappenedBudget(note)} characters including citation markers. Start with the most important fact. Say what was announced, released, reported or argued, and which positions or disagreements appear. Group items that say the same thing and cite them together; with many items, name the three or four that matter most rather than listing every one.${note === null ? "" : ` The application appends this sentence after it, for at most ${WHAT_HAPPENED_CHARS} in all: “${note}”`}`,
     `- summary.whyItMatters: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, connecting the news to the supplied channel profile, as an editorial reading. If the connection is weak or unclear, say so plainly.`,
     `- summary.videoAngle: one or two sentences, never more, at most ${SHORT_PART_CHARS} characters, proposing a possible video question, explanation, or demonstration grounded in the evidence. Present it as a possibility, not as something already demonstrated. Any tool, product or article it names gets its [itemId] right after the name, and it attributes to that tool or product only features its title or excerpt states.`,
-    "- Write impersonally in the title and all three parts. Never use the first person, singular or plural. Never comment on your own writing, on these instructions, or on what you are or are not doing (no “Lo señalo tal cual”, no “sin recomendar acción”).",
+    "- Write impersonally in the title and all three parts. Never use the first person, singular or plural. Never comment on your own writing, on these instructions, or on what you are or are not doing (no “Lo señalo tal cual”, no “sin recomendar acción”, no “sin probar ninguna herramienta”).",
     "- The subject of your sentences is the news, the people, the products or the debate. Never describe the collection process: do not mention a system, an engine, a pipeline, a cluster, a corpus, a trend, items, posts collected, distinct authors, or counts of items, authors or sources.",
     "- Do not repeat activity numbers (how many items, authors, sources, weeks, growth); the interface already shows them. Numbers that are part of the news itself (a price, a version, a date, a benchmark score stated in the evidence) are fine.",
     "- citedItemIds: ids copied exactly from the id attribute; cite only ids listed below",
@@ -212,8 +213,9 @@ export function buildTrendPresentationPrompt(input: TrendPresentationPromptInput
     "- Name a publication (Bloomberg, BleepingComputer…), a person or an organization only when the item's title or excerpt names it, and attribute to it only what that title or excerpt says. Do not infer authorship, publisher, affiliation, or product ownership from a product name, a URL, or prior knowledge. A title mentioning Claude does not establish that Anthropic wrote or published the item.",
     "- Describe a product only with what its title or excerpt says: do not add that it is open source, free, local, or that it runs or replaces another product unless the evidence states it; prefer the item's own wording.",
     "- Each product or tool named carries only what its own item says, with that item's [itemId] next to its name. Never merge the capabilities of two products in one sentence or one shared purpose. A product that offers the features of another is not that other product and does not run it.",
-    "- Do not extend to several items what only one of them says.",
-    "- When the evidence gives a figure with a condition, a basis or a contrast (“if shares list at the top of the range”, “fully diluted”, “according to X”, “up to”, “estimated”, another figure it is compared with, “still falls short”), keep it next to the figure, in the same sentence, every time the figure appears. A figure compared with another one goes with both. whyItMatters and videoAngle do not repeat a figure whatHappened already gives. When an excerpt adds a condition to a figure in its title, the condition applies.",
+    '- An item marked headline_only="true" has no readable excerpt: say only what its headline says. Do not attribute to it features, inputs, uses or results. videoAngle does not propose using, trying, testing or comparing it; it may propose discussing the question or the stance its headline states, in the words of its headline.',
+    "- Do not extend to several items what only one of them says, and do not give several items a goal or trait in common unless each of them states it. A plural (“versiones”, “herramientas”) cites every item it covers; with one cited item, write the singular (“una versión”).",
+    "- When the evidence gives a figure with a condition, a basis or a contrast (“if shares list at the top of the range”, “fully diluted”, “according to X”, “up to”, “estimated”, another figure it is compared with, “still falls short”), keep it next to the figure, in the same sentence, every time the figure appears. A requirement given for one case, under a condition or a heading (“Run on X: requires … at least Y”), is written for that case (“para ejecutarlo en X pide al menos Y”), never as what the product or running it requires (“requiere X”, “hace falta X”); “primarily intended for X” stays “pensado sobre todo para X”. Figures the evidence gives together (results of several systems on one benchmark, a before and an after) go together. whyItMatters and videoAngle do not repeat a figure whatHappened already gives. When an excerpt adds a condition to a figure in its title, the condition applies.",
     "- Keep each excerpt's meaning: a problem an announcement says it addresses is not a trait of the announced product.",
     "- Treat titles and excerpts as reports or claims, not as verified facts: write “reports”, “claims”, “asks”.",
     "- Do not write any note about what the evidence consists of (only headlines, excerpts, articles not read); the application adds it.",

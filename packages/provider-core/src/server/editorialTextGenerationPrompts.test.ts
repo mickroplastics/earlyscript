@@ -94,11 +94,11 @@ describe("buildTrendPresentationPrompt", () => {
     // Round 2: Type and One Code merged into one purpose; a figure without its contrast.
     expect(prompt).toContain("Never merge the capabilities of two products");
     expect(prompt).toContain("does not run it");
-    expect(prompt).toContain("Do not extend to several items what only one of them says.");
+    expect(prompt).toContain("Do not extend to several items what only one of them says,");
     // Round 3: a valuation without its "top of the range" condition, and a headlines-only note
     // on a story drafted from excerpts.
     expect(prompt).toContain("keep it next to the figure, in the same sentence, every time");
-    expect(prompt).toContain("A figure compared with another one goes with both.");
+    expect(prompt).toContain("Figures the evidence gives together");
     expect(prompt).toContain("do not repeat a figure whatHappened already gives");
     expect(prompt).toContain("is not a trait of the announced product");
     expect(prompt).toContain("When an excerpt adds a condition to a figure in its title");
@@ -107,9 +107,24 @@ describe("buildTrendPresentationPrompt", () => {
     );
     expect(prompt).toContain(`appends this sentence after it, for at most 450 in all: “${NOTE}”`);
     expect(prompt).toContain("Do not write any note about what the evidence consists of");
-    expect(buildTrendPresentationPrompt({ ...input, language: "en" }).prompt).not.toContain(
-      "vídeo",
+    // Round 4: a demonstration of a tool known only by its headline, a requirement for one
+    // platform read as the product's, one item read as several, and mixed decimal separators.
+    expect(prompt).toContain(
+      '<item id="itm_hn_1" source="hn" published_at="2026-10-15T18:26:30.000Z" url="https://news.ycombinator.com/item?id=1" headline_only="true">',
     );
+    expect(prompt).toContain('url="https://news.ycombinator.com/item?id=2">');
+    expect(prompt).toContain("Do not attribute to it features, inputs, uses or results.");
+    expect(prompt).toContain("videoAngle does not propose using, trying, testing or comparing it");
+    expect(prompt).toContain("in the words of its headline");
+    expect(prompt).toContain("under a condition or a heading");
+    expect(prompt).toContain("never as what the product or running it requires");
+    expect(prompt).toContain("do not give several items a goal or trait in common");
+    expect(prompt).toContain("cites every item it covers; with one cited item, write the singular");
+    expect(prompt).toContain("decimal comma, never a decimal point, and a space before %");
+    expect(prompt).toContain("“1,4 billones de dólares”");
+    const english = buildTrendPresentationPrompt({ ...input, language: "en" }).prompt;
+    expect(english).not.toContain("vídeo");
+    expect(english).not.toContain("decimal comma");
   });
 
   it("names the problem of a rejected answer in the one retry", () => {

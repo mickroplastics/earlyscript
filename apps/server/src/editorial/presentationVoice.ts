@@ -114,7 +114,7 @@ const PHRASE_RULES: ReadonlyArray<{
   // The writer talking about itself or about its instructions.
   {
     pattern:
-      /\b(?:lo senalo|sin recomendar|me limito|no he (?:leido|podido)|no puedo (?:leer|acceder|abrir))\b/,
+      /\b(?:lo senalo|sin recomendar|sin probar ninguna|me limito|no he (?:leido|podido)|no puedo (?:leer|acceder|abrir))\b/,
     kind: "self",
   },
   // First person; not "veo", which is also a video model's name.

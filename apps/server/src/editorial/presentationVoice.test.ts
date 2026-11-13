@@ -51,6 +51,11 @@ describe("trendPresentationVoiceProblems", () => {
     ["Un motor de recomendaciones ordena los textos.", "Qué pasó: «motor»"],
     ["Lo señalo tal cual, sin recomendar acción.", "Qué pasó: «lo senalo»"],
     ["No he leído los artículos [itm_hn_1].", "Qué pasó: «no he leido»"],
+    // Round 5: the headline-only rule echoed back in the angle.
+    [
+      "Es la pregunta de un Show HN y podría discutirse sin probar ninguna herramienta.",
+      "Qué pasó: «sin probar ninguna»",
+    ],
     // Round 2: compound tenses, the passive, written counts and the first person.
     [
       "Se han recopilado titulares de Hacker News durante la última semana [itm_hn_1].",
