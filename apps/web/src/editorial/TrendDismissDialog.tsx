@@ -70,7 +70,7 @@ export function TrendDismissDialog({
           <DialogHeader>
             <DialogTitle>Descartar tendencia</DialogTitle>
             <DialogDescription>
-              {trendTitle} pasa a Descartadas. Puedes reabrirla después; el motivo queda grabado.
+              «{trendTitle}» pasa a Descartadas. Puedes reabrirla después; el motivo queda grabado.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>

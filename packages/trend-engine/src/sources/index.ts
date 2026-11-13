@@ -184,6 +184,7 @@ export {
   type FeedValidationError,
 } from "./rss.ts";
 export { RSS_FEEDS, readRssFeedList } from "./rss-feeds.ts";
+export { decodeEntities } from "./xml.ts";
 
 export interface LiveSourceConfig {
   /** Feeds of the `rss` source; the built-in RSS_FEEDS when absent. */

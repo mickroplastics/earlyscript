@@ -492,17 +492,19 @@ export type CitationSegment =
 /** Same marker the server validates: `[itemId]`, without spaces or nested brackets. */
 const INLINE_CITATION = /\[([^[\]\s]+)\]/g;
 const CLOSING_PUNCTUATION = /^[.,;:!?…)\]»”"']*/;
+const PERCENT_SPACE = /(\d)[ \u2009\u202f]%/g;
 
 /**
  * Splits an assistant summary into text and `[itemId]` citations of known evidence. A marker
  * for an id the dossier does not list stays as written; the server already warned about it.
  * The space before a citation is dropped so the number sits against its claim, and markers
- * separated only by spaces form one group.
+ * separated only by spaces form one group. A percent sign stays with its figure.
  */
 export function citationSegments(
-  text: string,
+  written: string,
   evidence: ReadonlyArray<EditorialEvidenceItem>,
 ): ReadonlyArray<CitationSegment> {
+  const text = written.replace(PERCENT_SPACE, "$1\u00a0%");
   const known = new Map(evidence.map((item, index) => [item.itemId, { item, number: index + 1 }]));
   // texts[i] comes before groups[i]; the last text follows the last group.
   const texts: string[] = [];
@@ -532,7 +534,7 @@ export function citationSegments(
   let rest = texts[0] ?? "";
   for (const [index, citations] of groups.entries()) {
     const before = rest.replace(/\s+$/, "");
-    const word = /\S*$/.exec(before)?.[0] ?? "";
+    const word = /\S*(?:\u00a0\S+)*$/.exec(before)?.[0] ?? "";
     const next = texts[index + 1] ?? "";
     const after = CLOSING_PUNCTUATION.exec(next)?.[0] ?? "";
     pushText(before.slice(0, before.length - word.length));

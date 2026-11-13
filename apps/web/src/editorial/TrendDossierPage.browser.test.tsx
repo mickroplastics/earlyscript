@@ -1015,7 +1015,7 @@ describe("TrendDossierView", () => {
       await userEvent.click(screen.getByRole("button", { name: "Descartar…" }));
       const dialog = page.getByRole("dialog", { name: "Descartar tendencia" });
       await expect.element(dialog).toBeVisible();
-      expect(dialog.element().textContent).toContain(`${expected} pasa a Descartadas`);
+      expect(dialog.element().textContent).toContain(`«${expected}» pasa a Descartadas`);
       if (titleRejected) expect(document.body.textContent).not.toContain(stored);
     },
   );

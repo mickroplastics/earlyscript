@@ -11,6 +11,7 @@ import {
   type EditorialTrendMovement,
 } from "@t3tools/contracts";
 import type { Dossier } from "@earlyscript/editorial-contracts/dossier";
+import { decodeEntities } from "@earlyscript/trend-engine/sources";
 
 // The brief card of a dossier (engine v3, contract §1), read field by field from the `card` and
 // `judges` blocks of the file text, so a card shows what it has and a dossier/1 still gets one.
@@ -392,7 +393,7 @@ export function cardOf(
           return {
             itemId: headline.itemId ?? (url === null ? null : (itemIdByUrl.get(url) ?? null)),
             source: headline.source,
-            title: headline.title,
+            title: decodeEntities(headline.title),
             day: headline.day,
             url,
           };

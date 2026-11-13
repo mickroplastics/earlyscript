@@ -20,6 +20,7 @@ import {
   fromEarlywindowRun,
 } from "@earlyscript/editorial-contracts/earlywindow";
 import { RUN_SCHEMA_VERSION, RunRecord } from "@earlyscript/editorial-contracts/run";
+import { decodeEntities } from "@earlyscript/trend-engine/sources";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -245,6 +246,16 @@ export function webUrlOrNull(raw: string | null | undefined): string | null {
   }
 }
 
+/** Some adapters store titles and excerpts HTML-escaped (`&amp;`, `&mdash;`); read them as text. */
+const withDecodedEvidence = (file: Dossier): Dossier => ({
+  ...file,
+  evidence: file.evidence.map((item) => ({
+    ...item,
+    title: decodeEntities(item.title),
+    excerpt: decodeEntities(item.excerpt),
+  })),
+});
+
 function evidenceItems(file: Dossier): ReadonlyArray<EditorialEvidenceItem> {
   return file.evidence.map((item) => ({
     itemId: item.item_id,
@@ -277,7 +288,8 @@ export function loadRunDossiers(
   files: ReadonlyArray<Dossier>,
   extras: ReadonlyArray<DossierExtras> = [],
 ): ReadonlyArray<LoadedDossier> {
-  return files.map((file, index) => {
+  return files.map((raw, index) => {
+    const file = withDecodedEvidence(raw);
     const extra = extras[index] ?? NO_EXTRAS;
     const { trend, rankings } = file;
     const curve = windowCurve(file, file.coverage.window_days || CURVE_WINDOW_DAYS);

@@ -459,7 +459,12 @@ describe("citationSegments", () => {
     // ", y otro" starting the next one.
     [
       "Claude Code resuelve 51.8 % en Terminal-Bench 4.0 [itm_hn_1].",
-      ["Claude Code resuelve 51.8 % en Terminal-Bench ", "<4.0#1:itm_hn_1.>"],
+      ["Claude Code resuelve 51.8\u00a0% en Terminal-Bench ", "<4.0#1:itm_hn_1.>"],
+    ],
+    // Round 4: "51,8" ending a line and "%⁹." starting the next.
+    [
+      "Pasa del 37,3 % al 51,8 % [itm_hn_1].",
+      ["Pasa del 37,3\u00a0% al ", "<51,8\u00a0%#1:itm_hn_1.>"],
     ],
     [
       "Afecta a sistemas Linux [itm_gh_3], y otro reporte [itm_hn_1] [itm_hn_2]» lo confirma.",
