@@ -26,12 +26,22 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { localResultsDate as formatDate } from "./results.logic";
 import { editorialResultsEnvironment } from "../resultsState";
 import { FigureFrame } from "./FigureFrame";
+import { ResultsDisclosure } from "./ResultsDisclosure";
+import {
+  BASELINE_BAR_COLUMNS,
+  MedianBarRow,
+  ResultsBox,
+  ResultsNote,
+  ResultsNoteList,
+  SeriesSwatch,
+} from "./resultsMarks";
+import { shortResultsDate } from "./resultsOverview.logic";
+import { formatCount } from "./results.logic";
+import { PanelLead, PanelLeadText } from "./ResultsTabs";
 import {
   BASELINE_FIGURE_TEXT,
   BASELINE_SERIES,
@@ -60,24 +70,6 @@ import {
   type BaselineSeries,
 } from "./manualBaseline.logic";
 
-const SECTION_ID = "linea-base";
-
-/** Assisted wears the primary hue; manual the neutral ink, lighter when it is an estimate. */
-const SERIES_FILL: Readonly<Record<BaselineSeries, string>> = {
-  assisted: "fill-primary",
-  cronometrado: "fill-muted-foreground/70",
-  reconstruido: "fill-muted-foreground/30",
-};
-const SERIES_SWATCH: Readonly<Record<BaselineSeries, string>> = {
-  assisted: "bg-primary",
-  cronometrado: "bg-muted-foreground/70",
-  reconstruido: "bg-muted-foreground/30",
-};
-
-function SeriesSwatch({ series }: { readonly series: BaselineSeries }) {
-  return <span aria-hidden className={cn("size-2 shrink-0 rounded-xs", SERIES_SWATCH[series])} />;
-}
-
 const medianText = (stats: EditorialDurationStats | null) =>
   stats === null || stats.medianMs === null ? "sin datos" : formatMs(stats.medianMs);
 
@@ -99,8 +91,8 @@ function ComparisonSide({
       </span>
       <span
         className={cn(
-          "font-medium tabular-nums",
-          secondary ? "text-sm text-muted-foreground" : "text-base text-foreground",
+          "text-lg leading-tight font-semibold tabular-nums",
+          secondary ? "text-foreground/70" : "text-foreground",
         )}
       >
         {medianText(stats)}
@@ -115,10 +107,7 @@ function ComparisonSide({
 
 function ComparisonCard({ comparison }: { readonly comparison: BaselineComparison }) {
   return (
-    <div
-      data-baseline-comparison={comparison.key}
-      className="flex min-w-0 flex-col gap-3 rounded-lg border border-border p-3"
-    >
+    <ResultsBox data-baseline-comparison={comparison.key} className="flex flex-col gap-3 p-3.5">
       <h3 className="text-xs font-medium text-foreground">{comparison.title} · mediana</h3>
       <div className="grid grid-cols-3 gap-3">
         <ComparisonSide series="assisted" stats={comparison.stats.assisted} label="Asistido" />
@@ -133,90 +122,10 @@ function ComparisonCard({ comparison }: { readonly comparison: BaselineCompariso
           label="Reconstruido"
         />
       </div>
-      <p className="border-t border-border pt-2 text-xs text-muted-foreground">
+      <p className="mt-auto border-t border-border pt-2 text-xs text-muted-foreground">
         {comparison.assistedLabel}. {comparison.manualLabel}.
       </p>
-    </div>
-  );
-}
-
-const BAR_HEIGHT = 10;
-const ROW_HEIGHT = 14;
-
-/** The median as the bar, the interquartile range as a thin whisker, like the stage chart. */
-function BaselineBar({
-  series,
-  stats,
-  maxMs,
-  title,
-}: {
-  readonly series: BaselineSeries;
-  readonly stats: EditorialDurationStats | null;
-  readonly maxMs: number;
-  readonly title: string;
-}) {
-  const percent = (ms: number) => `${Math.min(100, (ms / maxMs) * 100)}%`;
-  const median = stats?.medianMs ?? null;
-  const label = `${seriesLabel(series)}, ${title}: ${stats ? baselineStatsText(stats) : "sin datos"}`;
-  return (
-    <div className="grid grid-cols-[9.5rem_minmax(0,1fr)_7.5rem] items-center gap-2">
-      <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        <SeriesSwatch series={series} />
-        {seriesLabel(series)}
-      </span>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <svg
-              aria-hidden
-              data-baseline-bar={`${series}:${title}`}
-              width="100%"
-              height={ROW_HEIGHT}
-              className="overflow-visible"
-            />
-          }
-        >
-          {median === null ? (
-            <line
-              x1="0"
-              x2="100%"
-              y1={ROW_HEIGHT / 2}
-              y2={ROW_HEIGHT / 2}
-              className="stroke-border"
-              strokeDasharray="2 3"
-            />
-          ) : (
-            <>
-              <rect
-                x="0"
-                y={(ROW_HEIGHT - BAR_HEIGHT) / 2}
-                width={percent(median)}
-                height={BAR_HEIGHT}
-                rx={2}
-                className={SERIES_FILL[series]}
-              />
-              {stats?.q1Ms != null && stats.q3Ms != null && stats.n > 1 ? (
-                <line
-                  data-iqr=""
-                  x1={percent(stats.q1Ms)}
-                  x2={percent(stats.q3Ms)}
-                  y1={ROW_HEIGHT / 2}
-                  y2={ROW_HEIGHT / 2}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  className="stroke-foreground/70"
-                />
-              ) : null}
-            </>
-          )}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
-      <span className="truncate text-xs text-foreground tabular-nums">
-        {medianText(stats)}
-        <span className="text-muted-foreground"> · n = {stats?.n ?? 0}</span>
-      </span>
-    </div>
+    </ResultsBox>
   );
 }
 
@@ -227,24 +136,32 @@ function BaselineChart({
 }) {
   const maxMs = baselineChartMaxMs(comparisons);
   return (
-    <figure className="flex max-w-3xl flex-col gap-3">
+    <figure className="flex min-w-0 flex-col gap-3">
       <div
         role="img"
-        aria-label="Mediana de búsqueda y de escritura, asistido frente al registro manual cronometrado y reconstruido. Los mismos datos están en la tabla siguiente."
+        aria-label="Mediana de búsqueda y de escritura, asistido frente al registro manual cronometrado y reconstruido. Los mismos datos están en la tabla con RIC."
         className="flex flex-col gap-3"
       >
         {comparisons.map((comparison) => (
-          <div key={comparison.key} className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-foreground">{comparison.title}</span>
-            {BASELINE_SERIES.map((series) => (
-              <BaselineBar
-                key={series}
-                series={series}
-                title={comparison.title}
-                maxMs={maxMs}
-                stats={comparison.stats[series]}
-              />
-            ))}
+          <div key={comparison.key} className="flex flex-col gap-1.5">
+            {BASELINE_SERIES.map((series, index) => {
+              const stats = comparison.stats[series];
+              return (
+                <MedianBarRow
+                  key={series}
+                  columns={BASELINE_BAR_COLUMNS}
+                  group={index === 0 ? comparison.title : null}
+                  series={series}
+                  label={seriesLabel(series)}
+                  stats={stats}
+                  maxMs={maxMs}
+                  tooltip={`${seriesLabel(series)}, ${comparison.title}: ${stats ? baselineStatsText(stats) : "sin datos"}`}
+                  value={medianText(stats)}
+                  size={`n = ${stats?.n ?? 0}`}
+                  barProps={{ "data-baseline-bar": `${series}:${comparison.title}` }}
+                />
+              );
+            })}
           </div>
         ))}
       </div>
@@ -295,12 +212,17 @@ function ComparisonTable({
         </TableBody>
       </Table>
       {both ? (
-        <p className="text-xs text-muted-foreground tabular-nums">
-          Las dos semanas juntas, mezclando cronometrado y reconstruido: búsqueda{" "}
-          {baselineStatsText(both.search)}; escritura en bloques con escritura{" "}
-          {baselineStatsText(both.writingNonZero)}; escritura en todos los bloques, descartes con 0
-          min incluidos, {baselineStatsText(both.writing)}.
-        </p>
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground tabular-nums">
+          <p>Las dos semanas juntas, mezclando cronometrado y reconstruido:</p>
+          <ResultsNoteList>
+            <li>Búsqueda: {baselineStatsText(both.search)}</li>
+            <li>Escritura en bloques con escritura: {baselineStatsText(both.writingNonZero)}</li>
+            <li>
+              Escritura en todos los bloques, descartes con 0 min incluidos:{" "}
+              {baselineStatsText(both.writing)}
+            </li>
+          </ResultsNoteList>
+        </div>
       ) : null}
     </div>
   );
@@ -309,12 +231,12 @@ function ComparisonTable({
 function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord }) {
   const both = groupOf(record, "conjunto");
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid gap-4 @3xl:grid-cols-2">
       <div className="flex min-w-0 flex-col gap-2">
         <h3 className="text-xs font-medium text-foreground">Tiempo registrado por semana</h3>
         <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           {record.weeks.map((week) => (
-            <li key={week.from} className="flex flex-wrap justify-between gap-x-3 tabular-nums">
+            <li key={week.from} className="flex flex-col tabular-nums">
               <span className="text-foreground">{weekRangeText(week)}</span>
               <span>
                 {weekMinutesText(week)} · {weekDaysText(week)}
@@ -330,13 +252,16 @@ function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord
       {both ? (
         <div className="flex min-w-0 flex-col gap-2">
           <h3 className="text-xs font-medium text-foreground">En qué terminó cada bloque</h3>
-          <ul className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <ul className="grid w-fit grid-cols-[minmax(0,1fr)_auto] gap-x-8 gap-y-1.5 text-xs text-muted-foreground">
             {both.outcomes
               .filter((entry) => entry.blocks > 0)
               .map((entry) => (
-                <li key={entry.resultado} className="flex justify-between gap-3 tabular-nums">
+                <li
+                  key={entry.resultado}
+                  className="col-span-2 grid grid-cols-subgrid tabular-nums"
+                >
                   <span className="text-foreground">{outcomeLabel(entry.resultado)}</span>
-                  <span>{entry.blocks}</span>
+                  <span className="text-end">{entry.blocks}</span>
                 </li>
               ))}
           </ul>
@@ -350,8 +275,17 @@ function WeeksAndOutcomes({ record }: { readonly record: EditorialBaselineRecord
   );
 }
 
+/** The operator's note on a block or a missing day, wrapped in its own column. */
+function Observation({ text }: { readonly text: string | null | undefined }) {
+  return (
+    <span className="block max-w-80 min-w-56 text-2xs whitespace-normal text-muted-foreground">
+      {text ?? ""}
+    </span>
+  );
+}
+
 function BlocksTable({ record }: { readonly record: EditorialBaselineRecord }) {
-  const notes = baselineNotes(record);
+  const notes = new Map(baselineNotes(record).map((note) => [note.key, note.text]));
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <Table aria-label="Bloques del registro manual">
@@ -365,6 +299,7 @@ function BlocksTable({ record }: { readonly record: EditorialBaselineRecord }) {
             <TableHead>Resultado</TableHead>
             <TableHead>Fuente</TableHead>
             <TableHead className="text-end">Interr.</TableHead>
+            <TableHead>Observación</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -376,6 +311,9 @@ function BlocksTable({ record }: { readonly record: EditorialBaselineRecord }) {
                 </TableCell>
                 <TableCell colSpan={7}>
                   <span className="text-muted-foreground">Sin registro</span>
+                </TableCell>
+                <TableCell>
+                  <Observation text={notes.get(row.fecha)} />
                 </TableCell>
               </TableRow>
             ) : (
@@ -415,29 +353,18 @@ function BlocksTable({ record }: { readonly record: EditorialBaselineRecord }) {
                 <TableCell className="text-end">
                   <span className="tabular-nums">{row.block.interrupciones ?? "sin dato"}</span>
                 </TableCell>
+                <TableCell>
+                  <Observation text={notes.get(`${row.block.fecha}#${row.block.bloque}`)} />
+                </TableCell>
               </TableRow>
             ),
           )}
         </TableBody>
       </Table>
-      <p className="text-xs text-muted-foreground">
+      <ResultsNote>
         C: cronometrado en el momento. R: reconstruido después. «Sin separar»: solo se anotó el
         total del bloque, que entra en el total pero no en búsqueda ni escritura.
-      </p>
-      {notes.length > 0 ? (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer text-foreground">
-            Observaciones del operador ({notes.length})
-          </summary>
-          <ul className="mt-2 flex flex-col gap-1">
-            {notes.map((note) => (
-              <li key={note.key}>
-                <span className="text-foreground">{note.label}:</span> {note.text}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
+      </ResultsNote>
     </div>
   );
 }
@@ -531,18 +458,26 @@ export function ManualBaselineView({
     </>
   );
   const comparisons = record !== null && present ? baselineComparisons(record, summary) : [];
+  const provenance = present ? record?.provenance : null;
   return (
-    <section
-      id={SECTION_ID}
-      aria-labelledby={`${SECTION_ID}-title`}
-      className="flex min-w-0 scroll-mt-4 flex-col gap-3"
-    >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <h2 id={`${SECTION_ID}-title`} className="text-sm font-medium text-foreground">
-          Línea base manual
-        </h2>
-        {action}
-      </div>
+    <>
+      <PanelLead
+        title="Antes de la app: registro manual"
+        action={<div className="shrink-0">{action}</div>}
+      >
+        {record !== null && provenance ? (
+          <>
+            <PanelLeadText>{provenanceText(record)}</PanelLeadText>
+            <p className="text-2xs text-muted-foreground tabular-nums">
+              Importado el {shortResultsDate(provenance.importedAt, { year: true })} · sha256{" "}
+              <span className="font-mono">{provenance.sourceHash.slice(0, 12)}</span>
+              {record.excludedByDomain > 0
+                ? ` · ${record.excludedByDomain} filas guardadas quedan fuera por un valor fuera de dominio`
+                : null}
+            </p>
+          </>
+        ) : null}
+      </PanelLead>
       <ImportStatus state={importState} />
       {failure !== null ? (
         <Alert variant="error">
@@ -553,45 +488,64 @@ export function ManualBaselineView({
         <p role="status" className="text-xs text-muted-foreground">
           Cargando el registro manual…
         </p>
-      ) : !present ? (
+      ) : !present || !provenance ? (
         <p className="max-w-2xl text-sm text-muted-foreground">
           Aún no hay un registro manual importado. Importa el CSV de tu registro de carga, con un
           bloque de trabajo por fila, para verlo junto a los tiempos asistidos.
         </p>
       ) : (
         <>
-          <p className="max-w-3xl text-sm text-foreground">{provenanceText(record)}</p>
-          <p className="text-xs text-muted-foreground">
-            Importado el {formatDate(record.provenance!.importedAt)} · sha256{" "}
-            <span className="font-mono">{record.provenance!.sourceHash.slice(0, 12)}</span>
-            {record.excludedByDomain > 0
-              ? ` · ${record.excludedByDomain} filas guardadas quedan fuera por un valor fuera de dominio`
-              : null}
-          </p>
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-3 @3xl:grid-cols-2">
             {comparisons.map((comparison) => (
               <ComparisonCard key={comparison.key} comparison={comparison} />
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
-            Descriptivo: un bloque manual no equivale a un hilo asistido (un bloque puede revisar
-            varias ideas o ninguna llegar a ficha) y son semanas y temas distintos, así que las
-            medianas se muestran lado a lado, sin restarlas. La cifra principal es la cronometrada;
-            la reconstruida es una estimación.
-          </p>
-          <FigureFrame
-            id="linea-base"
-            {...BASELINE_FIGURE_TEXT}
-            figure={baselineFigure(comparisons)}
-          />
-          <BaselineChart comparisons={comparisons} />
-          <ComparisonTable comparisons={comparisons} record={record} />
-          <WeeksAndOutcomes record={record} />
-          <BlocksTable record={record} />
+          <ResultsBox className="flex flex-col gap-3">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <h3 className="text-xs font-medium text-foreground">
+                Buscar y escribir: asistido frente al registro de{" "}
+                {monthsText(provenance.from, provenance.to)}
+              </h3>
+              <FigureFrame
+                id="linea-base"
+                variant="menu"
+                {...BASELINE_FIGURE_TEXT}
+                figure={baselineFigure(comparisons)}
+              />
+            </div>
+            <BaselineChart comparisons={comparisons} />
+          </ResultsBox>
+          <ResultsNote>
+            <b>Lado a lado, sin restar:</b> un bloque manual no equivale a un hilo asistido (un
+            bloque puede revisar varias ideas o ninguna llegar a ficha) y son semanas y temas
+            distintos. La cifra principal es la cronometrada; la reconstruida es una estimación. Las
+            interrupciones anotadas no se descontaron.
+          </ResultsNote>
+          <ResultsDisclosure title="Tabla con RIC" subtitle="asistido, cronometrado y reconstruido">
+            <ComparisonTable comparisons={comparisons} record={record} />
+          </ResultsDisclosure>
+          <ResultsDisclosure
+            title="Semanas y en qué terminó cada bloque"
+            subtitle={`${formatCount(record.weeks.length, "semana", "semanas")} · ${formatCount(record.blocks.length, "bloque", "bloques")}`}
+          >
+            <WeeksAndOutcomes record={record} />
+          </ResultsDisclosure>
+          <ResultsDisclosure
+            title={`Los ${record.blocks.length} bloques del registro`}
+            subtitle="con observaciones del operador"
+          >
+            <BlocksTable record={record} />
+          </ResultsDisclosure>
         </>
       )}
-    </section>
+    </>
   );
+}
+
+/** "octubre", or "septiembre a octubre" when the record spans two months. */
+function monthsText(from: string, to: string): string {
+  const month = (day: string) => dayText(day).replace(/^\d+ de /, "");
+  return month(from) === month(to) ? month(from) : `${month(from)} a ${month(to)}`;
 }
 
 export function ManualBaselineSection({

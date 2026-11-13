@@ -15,6 +15,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { editorialResultsEnvironment } from "../resultsState";
 import {
   bytesToBase64,
+  sortFigureIds,
   type FigureBody,
   type FigureContext,
   type FigureFormat,
@@ -38,7 +39,7 @@ interface FiguresContextValue {
   /** Desktop app over its own server: files go to a folder the native dialog picks. */
   readonly toFolder: boolean;
   readonly register: (spec: FigureSpec, element: HTMLElement | null) => () => void;
-  /** The registered figures in page order. */
+  /** The registered figures in the provider's order, then in page order. */
   readonly figures: () => ReadonlyArray<FigureSpec>;
   readonly save: (files: ReadonlyArray<FigureFile>, zipName: string) => Promise<FigureSaveOutcome>;
 }
@@ -93,11 +94,14 @@ function figureSaveFailureText(error: unknown): string {
 export function FiguresProvider({
   environmentId,
   threads,
+  order = [],
   children,
 }: {
   readonly environmentId: EnvironmentId;
   /** Closed threads behind the page, for the provenance line of every image. */
   readonly threads: number;
+  /** Fixed numbering of the figures by id; ids not listed follow in page order. */
+  readonly order?: ReadonlyArray<string>;
   readonly children: ReactNode;
 }) {
   const registry = useRef(new Map<string, { spec: FigureSpec; element: HTMLElement | null }>());
@@ -121,16 +125,19 @@ export function FiguresProvider({
         if (registry.current.get(spec.id)?.spec === spec) registry.current.delete(spec.id);
       };
     },
-    figures: () =>
-      [...registry.current.values()]
-        .toSorted((a, b) =>
-          a.element && b.element
-            ? a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING
-              ? -1
-              : 1
-            : 0,
-        )
-        .map((entry) => entry.spec),
+    figures: () => {
+      const inPage = [...registry.current.values()].toSorted((a, b) =>
+        a.element && b.element
+          ? a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING
+            ? -1
+            : 1
+          : 0,
+      );
+      return sortFigureIds(
+        inPage.map((entry) => entry.spec.id),
+        order,
+      ).flatMap((id) => registry.current.get(id)?.spec ?? []);
+    },
     save: async (files, zipName) => {
       if (!toFolder) return downloadOutcome(files, zipName);
       const directory =
@@ -179,17 +186,16 @@ export function figureContext(threads: number | null): FigureContext {
 }
 
 /**
- * Wraps one chart of a page: a row with the figure's title and «Guardar imagen» (PNG or SVG),
- * then the chart as the page draws it (or nothing, when the frame sits just before the chart). The image is not a screenshot: `figure` is the data the
- * print version draws again in light colours on white (see `figureExport.logic.ts`).
- *
- * Inside a `FiguresProvider`, the frame also joins «Guardar todas las figuras».
+ * «Guardar imagen» (PNG or SVG) for one chart, beside its title (`row`) or alone (`menu`, for a
+ * header that names it). The image redraws `figure` in print colours (`figureExport.logic.ts`).
+ * Inside a `FiguresProvider` the frame also joins «Guardar todas las figuras».
  */
 export function FigureFrame({
   id,
   title,
   caption,
   figure,
+  variant = "row",
   children,
 }: {
   /** Lowercase slug, unique on the page; names the file `figura-<id>-<día>.png`. */
@@ -199,6 +205,7 @@ export function FigureFrame({
   /** Caption for the report; goes to `figuras.md`, not into the image. */
   readonly caption: string;
   readonly figure: FigureBody;
+  readonly variant?: "row" | "menu";
   /**
    * The chart as the page draws it. Optional: placed right before an existing chart without
    * children, the frame is only its title row, and the page's markup stays untouched.
@@ -244,6 +251,52 @@ export function FigureFrame({
     );
   };
 
+  const menu = (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            disabled={state._tag === "saving"}
+            aria-label={`Guardar imagen: ${title}`}
+          />
+        }
+      >
+        <ImageDownIcon />
+        {state._tag === "saving" ? "Guardando…" : "Guardar imagen"}
+        <ChevronDownIcon />
+      </MenuTrigger>
+      {/* Opens beside the button and upwards, clear of the chart and its values below. */}
+      <MenuPopup side="left" align="end">
+        <MenuItem onClick={() => void save("png")}>PNG para el informe</MenuItem>
+        <MenuItem onClick={() => void save("svg")}>SVG vectorial</MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+  const status =
+    state._tag === "saved" ? (
+      <p role="status" className="break-all text-xs text-muted-foreground">
+        {state.text}
+      </p>
+    ) : state._tag === "failed" ? (
+      <p role="alert" className="text-xs text-destructive">
+        No se guardó la imagen. {state.message}
+      </p>
+    ) : null;
+
+  if (variant === "menu") {
+    return (
+      <div
+        ref={element}
+        data-figure={id}
+        className="flex max-w-80 min-w-0 shrink-0 flex-col items-end gap-1 text-end"
+      >
+        {menu}
+        {status}
+      </div>
+    );
+  }
   const titleId = `figure-${id}-title`;
   return (
     <div
@@ -256,36 +309,9 @@ export function FigureFrame({
         <span id={titleId} className="min-w-0 text-xs text-muted-foreground">
           Figura: {title}
         </span>
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                disabled={state._tag === "saving"}
-                aria-label={`Guardar imagen: ${title}`}
-              />
-            }
-          >
-            <ImageDownIcon />
-            {state._tag === "saving" ? "Guardando…" : "Guardar imagen"}
-            <ChevronDownIcon />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem onClick={() => void save("png")}>PNG para el informe</MenuItem>
-            <MenuItem onClick={() => void save("svg")}>SVG vectorial</MenuItem>
-          </MenuPopup>
-        </Menu>
+        {menu}
       </div>
-      {state._tag === "saved" ? (
-        <p role="status" className="break-all text-xs text-muted-foreground">
-          {state.text}
-        </p>
-      ) : state._tag === "failed" ? (
-        <p role="alert" className="text-xs text-destructive">
-          No se guardó la imagen. {state.message}
-        </p>
-      ) : null}
+      {status}
       {children}
     </div>
   );

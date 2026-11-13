@@ -45,7 +45,9 @@ describe("ManualBaselineView", () => {
         onImport={() => {}}
       />,
     );
-    await expect.element(screen.getByRole("heading", { name: "Línea base manual" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("heading", { name: "Antes de la app: registro manual" }))
+      .toBeVisible();
     await expect
       .element(screen.getByRole("button", { name: "Importar registro CSV" }))
       .toBeEnabled();
@@ -83,6 +85,9 @@ describe("ManualBaselineView", () => {
       "1 h 52,5 min",
     );
     expect(screen.container.querySelectorAll("[data-baseline-bar]")).toHaveLength(6);
+    // The long tables stay folded, and unmounted, until asked for.
+    expect(screen.container.querySelector("table")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Tabla con RIC/ }));
     await expect
       .element(
         screen.getByRole("table", {
@@ -90,6 +95,8 @@ describe("ManualBaselineView", () => {
         }),
       )
       .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /^Semanas y en qué terminó/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Los 4 bloques del registro/ }));
     const blocks = screen.getByRole("table", { name: "Bloques del registro manual" });
     await expect.element(blocks).toBeVisible();
     expect(screen.container.querySelectorAll("[data-baseline-block]")).toHaveLength(4);
@@ -100,10 +107,14 @@ describe("ManualBaselineView", () => {
     await expect
       .element(screen.getByText("al menos 16 h 5 min en 9 bloques", { exact: false }))
       .toBeVisible();
-    // Notes stay folded until asked for.
-    await expect.element(screen.getByText(/Desde el historial/)).not.toBeVisible();
-    await userEvent.click(screen.getByText("Observaciones del operador (2)"));
+    // The operator's notes sit in their block's row.
     await expect.element(screen.getByText(/Desde el historial/)).toBeVisible();
+    expect(
+      screen
+        .getByText(/Desde el historial/)
+        .element()
+        .closest("tr"),
+    ).not.toBeNull();
     expect(screen.container.textContent).not.toMatch(/ahorro/i);
   });
 

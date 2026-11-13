@@ -4,7 +4,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../lib/storage";
 
-export type EditorialSpace = "threads" | "trends" | "results";
+/** The lists the sidebar switches between. Results is a page and keeps the list it found. */
+export type EditorialSpace = "threads" | "trends";
 
 export interface TrendDestination {
   /** `null` follows the latest run. */
@@ -35,6 +36,34 @@ export function selectEnvironmentSpace(
   environmentId: EnvironmentId | null,
 ): EnvironmentSpaceState {
   return (environmentId && state.byEnvironment[environmentId]) || EMPTY_ENVIRONMENT_STATE;
+}
+
+/**
+ * Version 1 could store `results`, a space until November 2026: it reopens the Threads list.
+ * Anything else unknown does the same, so a stored value never leaves the sidebar empty.
+ */
+export function migrateSpaceState(
+  persisted: unknown,
+): Pick<SpaceStoreState, "byEnvironment" | "threadsHref"> {
+  const state = (persisted ?? {}) as {
+    readonly byEnvironment?: Readonly<
+      Record<string, { readonly space?: unknown; readonly trend?: TrendDestination | null }>
+    >;
+    readonly threadsHref?: unknown;
+  };
+  const byEnvironment = Object.fromEntries(
+    Object.entries(state.byEnvironment ?? {}).map(([environmentId, entry]) => {
+      const next: EnvironmentSpaceState = {
+        space: entry.space === "trends" ? "trends" : "threads",
+        trend: entry.trend ?? null,
+      };
+      return [environmentId, next];
+    }),
+  );
+  return {
+    byEnvironment,
+    threadsHref: typeof state.threadsHref === "string" ? state.threadsHref : null,
+  };
 }
 
 /** UI preference only: the URL wins on a deep link; this decides where a space switch goes. */
@@ -73,7 +102,8 @@ export const useSpaceStore = create<SpaceStoreState>()(
     }),
     {
       name: SPACE_STORAGE_KEY,
-      version: 1,
+      version: 2,
+      migrate: migrateSpaceState,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),

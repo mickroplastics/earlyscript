@@ -35,10 +35,9 @@ export const SIDEBAR_LOCALE: ScopedLocaleOptions = {
     USER_TEXT,
     // Descriptions can carry the server's messages, which stay as sent.
     '[data-slot="toast-description"]',
-    // The trend and results lists, between upstream's sidebar header and footer, which are
-    // translated like any other sidebar (`EditorialSidebar.tsx` renders the three in order).
+    // The trend list, between upstream's sidebar header and footer, which are translated like
+    // any other sidebar (`EditorialSidebar.tsx` renders the three in order).
     '[data-editorial-space="trends"] > :not(:first-child):not(:last-child)',
-    '[data-editorial-space="results"] > :not(:first-child):not(:last-child)',
     "[data-thread-item] .sr-only",
   ].join(", "),
 };

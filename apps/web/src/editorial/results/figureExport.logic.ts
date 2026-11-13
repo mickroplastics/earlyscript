@@ -188,6 +188,21 @@ export function durationAxis(maxMs: number, format: (ms: number) => string): Fig
   return { max: end, ticks };
 }
 
+/**
+ * The figures in a fixed order, so `figuras.md` keeps its numbering whatever the layout: ids in
+ * `order` first, by their place there; the others after, in the order given (the page's).
+ */
+export function sortFigureIds(
+  ids: ReadonlyArray<string>,
+  order: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const rank = (id: string) => {
+    const index = order.indexOf(id);
+    return index === -1 ? order.length : index;
+  };
+  return ids.toSorted((a, b) => rank(a) - rank(b));
+}
+
 export function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

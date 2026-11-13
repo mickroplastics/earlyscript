@@ -18,13 +18,35 @@ const THREAD_ROUTE_IDS: ReadonlySet<string> = new Set([
   "/_chat/draft/$draftId",
 ]);
 
-/** The space a route belongs to; `null` for pages that keep the last space (Settings, Usage). */
+const RESULTS_ROUTE_ID = "/_chat/editorial/$environmentId/results";
+
+/**
+ * The space a route belongs to; `null` for pages that keep the last space's list in the
+ * sidebar (Results, Settings, Usage).
+ */
 export function resolveRouteSpace(routeId: string | undefined): EditorialSpace | null {
   if (routeId === undefined) return null;
   if (routeId.startsWith("/_chat/editorial/$environmentId/trends")) return "trends";
-  if (routeId === "/_chat/editorial/$environmentId/results") return "results";
   if (THREAD_ROUTE_IDS.has(routeId)) return "threads";
   return null;
+}
+
+export function isResultsRouteId(routeId: string | undefined): boolean {
+  return routeId === RESULTS_ROUTE_ID;
+}
+
+/**
+ * The space a tab press opens: another space, or the one shown when the page on screen is not
+ * one of its own (Results, Settings), so its tab still leads to it. `null` stays put.
+ */
+export function spaceTabTarget(input: {
+  readonly pressed: EditorialSpace | undefined;
+  readonly shown: EditorialSpace;
+  readonly routeSpace: EditorialSpace | null;
+}): EditorialSpace | null {
+  // Pressing the pressed tab of a toggle group deselects it: that press names the shown space.
+  const target = input.pressed ?? input.shown;
+  return target !== input.shown || input.routeSpace !== input.shown ? target : null;
 }
 
 export function isThreadRouteId(routeId: string | undefined): boolean {
@@ -41,9 +63,10 @@ export function compactCount(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-export type EditorialLandingTarget =
-  | { readonly space: "trends"; readonly trend: EnvironmentSpaceState["trend"] }
-  | { readonly space: "results" };
+export type EditorialLandingTarget = {
+  readonly space: "trends";
+  readonly trend: EnvironmentSpaceState["trend"];
+};
 
 /**
  * Where the root opens. Today: the space left last. Extension point for read state (U3):
@@ -55,8 +78,6 @@ export function resolveLandingTarget(state: EnvironmentSpaceState): EditorialLan
       return null;
     case "trends":
       return { space: "trends", trend: state.trend };
-    case "results":
-      return { space: "results" };
   }
 }
 

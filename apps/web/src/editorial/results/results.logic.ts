@@ -9,47 +9,6 @@ import type {
   EditorialResultsSummary,
 } from "@t3tools/contracts";
 
-/** Sections of the Results page, in order; the sidebar links to them by id. */
-const RESULTS_SECTIONS = [
-  { id: "tiempos", label: "Tiempo por ficha" },
-  { id: "etapas", label: "Etapas" },
-  { id: "linea-base", label: "Línea base manual" },
-  { id: "utilidad", label: "Utilidad y citas" },
-  { id: "bandeja", label: "Bandeja" },
-  { id: "video", label: "Métricas de video" },
-  { id: "decisiones", label: "Decisiones" },
-] as const;
-export type ResultsSectionId = (typeof RESULTS_SECTIONS)[number]["id"];
-
-/** Only the section the hash selects is the current location; the others carry nothing. */
-export function sectionAriaCurrent(
-  hash: string,
-  sectionId: ResultsSectionId,
-): "location" | undefined {
-  return hash.replace(/^#/, "") === sectionId ? "location" : undefined;
-}
-
-/**
- * Link props without the route-active marks (`aria-current="page"`, `data-status` and the
- * `active` class, the only class the anchors get from the router): the section anchors share
- * one route, so the router marks all of them.
- */
-export function withoutRouteActive<P extends object>(
-  props: P,
-): Omit<P, "aria-current" | "data-status" | "className"> {
-  const {
-    "aria-current": _current,
-    "data-status": _status,
-    className: _className,
-    ...rest
-  } = props as P & {
-    readonly "aria-current"?: unknown;
-    readonly "data-status"?: unknown;
-    readonly className?: unknown;
-  };
-  return rest;
-}
-
 export const RESULTS_MODES: ReadonlyArray<EditorialResultsMode> = ["assisted", "manual"];
 
 export const RESULTS_STAGES: ReadonlyArray<EditorialResultsStage> = [
@@ -270,14 +229,9 @@ const meanFormat = new Intl.NumberFormat("es", {
   maximumFractionDigits: 1,
 });
 
-function formatMean(value: number): string {
+/** "4,0": a utility mean with one decimal. */
+export function meanText(value: number): string {
   return meanFormat.format(value);
-}
-
-/** Under a mode's utility: n and the actions, or that the mode has no thread yet. */
-export function utilityDetail(summary: EditorialResultsModeSummary): string {
-  if (summary.threads === 0) return "ningún hilo cerrado en este modo";
-  return `${sizeText(summary.utility.n)} · ${actionsText(summary.actions)}`;
 }
 
 /** "2 de 7" threads with video metrics, or "sin hilos" before the mode has any. */
@@ -287,7 +241,7 @@ export function videoCoverageText(summary: EditorialResultsModeSummary): string 
 
 /** "4,0 de 5" or "sin datos". */
 export function utilityText(summary: EditorialResultsModeSummary): string {
-  return summary.utility.mean === null ? "sin datos" : `${formatMean(summary.utility.mean)} de 5`;
+  return summary.utility.mean === null ? "sin datos" : `${meanText(summary.utility.mean)} de 5`;
 }
 
 /** "11 de 13 afirmaciones · 3 guiones". */
@@ -295,18 +249,6 @@ export function citationDetail(summary: EditorialResultsModeSummary): string {
   const { claims, cited, threads } = summary.citations;
   if (threads === 0) return "sin versión decidida del guion";
   return `${cited} de ${claims} frases con marcador de fuente · ${formatCount(threads, "guion", "guiones")}`;
-}
-
-/** "14 decisiones entre el 20 oct 2026 y el 3 nov 2026", "2 decisiones el 3 nov 2026". */
-export function decisionRangeText(
-  summary: EditorialResultsSummary,
-  formatDate: (iso: string) => string,
-): string {
-  const count = formatCount(summary.decisionCount, "decisión", "decisiones");
-  if (summary.firstDecidedAt === null || summary.lastDecidedAt === null) return count;
-  const first = formatDate(summary.firstDecidedAt);
-  const last = formatDate(summary.lastDecidedAt);
-  return first === last ? `${count} el ${first}` : `${count} entre el ${first} y el ${last}`;
 }
 
 export function hasDecisions(summary: EditorialResultsSummary): boolean {
@@ -317,18 +259,6 @@ export function hasDecisions(summary: EditorialResultsSummary): boolean {
 export function hasInboxActivity(summary: EditorialResultsSummary): boolean {
   const { read, observing, dismissed, production } = summary.inbox;
   return read + observing + dismissed + production > 0;
-}
-
-/**
- * The page sections present: without decisions, the manual baseline (its import is there
- * before any thread) and the inbox counters once one moved.
- */
-export function visibleSections(summary: EditorialResultsSummary | null) {
-  if (summary === null || hasDecisions(summary)) return RESULTS_SECTIONS;
-  return RESULTS_SECTIONS.filter(
-    (section) =>
-      section.id === "linea-base" || (section.id === "bandeja" && hasInboxActivity(summary)),
-  );
 }
 
 export function modeSummary(
@@ -392,6 +322,15 @@ export function decisionThreadLabel(
   return decision.mode === "manual" ? "Hilo manual sin título" : "Hilo sin título";
 }
 
+/** A trial thread named by its place among the trials, as «Ensayo 2», when its title is unknown. */
+export function trialName(
+  trials: ReadonlyArray<{ readonly threadId: string }>,
+  threadId: string,
+): string {
+  const index = trials.findIndex((trial) => trial.threadId === threadId);
+  return index === -1 ? "Ensayo" : `Ensayo ${index + 1}`;
+}
+
 /** "1 h 40 min", "≥ 33 min" when a segment awaited resolution, "sin reloj" if none ran. */
 export function decisionTotalText(decision: {
   readonly clockDefinitive: boolean;
@@ -401,7 +340,7 @@ export function decisionTotalText(decision: {
   return `${decision.clockDefinitive ? "" : "≥ "}${formatDuration(decision.durations.totalMs)}`;
 }
 
-export function localResultsDate(iso: string): string {
+function localResultsDate(iso: string): string {
   return (
     new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" }).format(
       new Date(iso),
@@ -411,7 +350,13 @@ export function localResultsDate(iso: string): string {
   );
 }
 
-export function closingStrip(summary: EditorialResultsSummary) {
+/** Achievements, sample and limits in words; `formatDate` writes the dates of the sample. */
+export function closingStrip(
+  summary: EditorialResultsSummary,
+  formatDate: (iso: string) => string = localResultsDate,
+  formatDays: (first: string, last: string) => string = (first, last) =>
+    first === last ? first : `${first} al ${last}`,
+) {
   const human = summary.humanThreads ?? summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
   const closed = summary.modes.reduce((sum, mode) => sum + mode.threads, 0);
   const baseline = summary.baselineSample;
@@ -430,14 +375,14 @@ export function closingStrip(summary: EditorialResultsSummary) {
               .filter((mode) => mode.threads > 0)
               .map(
                 (mode) =>
-                  `${modeLabel(mode.mode)}: ${mode.total.medianMs === null ? "tiempo todavía sin reloj definitivo" : `mediana registrada ${formatDuration(mode.total.medianMs)}`}; ${mode.utility.mean === null ? "sin utilidad" : `utilidad ${formatMean(mode.utility.mean)} de 5`}.`,
+                  `${modeLabel(mode.mode)}: ${mode.total.medianMs === null ? "tiempo todavía sin reloj definitivo" : `mediana registrada ${formatDuration(mode.total.medianMs)}`}; ${mode.utility.mean === null ? "sin utilidad" : `utilidad ${meanText(mode.utility.mean)} de 5`}.`,
               )
               .join(" ")}`
       }`,
     },
     {
       title: "Muestra",
-      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` entre ${baseline.firstDay} y ${baseline.lastDay}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${localResultsDate(firstTrial.createdAt)} y ${localResultsDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${localResultsDate(summary.firstDecidedAt)} hasta ${localResultsDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
+      text: `${human} hilos humanos, con y sin decisión. ${baseline?.blocks ?? 0} bloques de línea base${baseline?.firstDay ? ` del ${formatDays(baseline.firstDay, baseline.lastDay ?? baseline.firstDay)}` : ", todavía sin registro importado"}. ${formatCount(trials, "ensayo excluido", "ensayos excluidos")}${firstTrial && lastTrial ? `, fechas de creación entre ${formatDate(firstTrial.createdAt)} y ${formatDate(lastTrial.createdAt)}` : ""}. ${summary.firstDecidedAt ? `Decisiones humanas desde ${formatDate(summary.firstDecidedAt)} hasta ${formatDate(summary.lastDecidedAt!)}.` : "Todavía sin fechas de decisiones humanas."}`,
     },
     {
       title: "Límites",

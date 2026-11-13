@@ -15,6 +15,7 @@ import {
   localDay,
   provenanceText,
   renderFigureSvg,
+  sortFigureIds,
   svgHeight,
   withPngDensity,
   wrapSegments,
@@ -203,6 +204,15 @@ describe("figuras.md", () => {
     expect(markdown).toContain("- Leídas: 6 (abiertas al menos una vez).");
     expect(markdown).toContain("sobre 6 hilos cerrados");
     expect(markdown).not.toMatch(/ahorr|—/i);
+  });
+
+  it("numbers the figures in a fixed order, unknown ones last in page order", () => {
+    expect(
+      sortFigureIds(
+        ["video", "otra", "etapas", "nueva", "tiempos"],
+        ["tiempos", "etapas", "video"],
+      ),
+    ).toEqual(["tiempos", "etapas", "video", "otra", "nueva"]);
   });
 });
 
