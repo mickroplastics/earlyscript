@@ -40,6 +40,7 @@ import { EditorialSourcesService, type EnabledSources } from "./EditorialSources
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import {
   appendEngineConfigChoice,
+  EVALUATED_ENGINE_CONFIG,
   availableEngineConfigs,
   chosenConfigPath,
   engineConfigFileSha256,
@@ -476,6 +477,27 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     );
   });
 
+  /** The active choice; without any, the evaluated method is recorded as the first one. */
+  const activeEngineConfig = Effect.fn("EditorialJobsService.activeEngineConfig")(function* () {
+    const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+    if (
+      choice.chosenAt !== null ||
+      !Result.isSuccess(options.engine) ||
+      !installedConfigs().includes(EVALUATED_ENGINE_CONFIG)
+    ) {
+      return choice;
+    }
+    const at = isoOf(yield* Clock.currentTimeMillis);
+    yield* appendEngineConfigChoice(sql, {
+      file: EVALUATED_ENGINE_CONFIG,
+      sha256: engineConfigFileSha256(options.engine.success, EVALUATED_ENGINE_CONFIG),
+      previous: choice.file,
+      actor: "default",
+      at,
+    }).pipe(Effect.mapError(storage));
+    return { file: EVALUATED_ENGINE_CONFIG, chosenAt: at };
+  });
+
   const getSettings = Effect.gen(function* () {
     return yield* settingsView(yield* readSettings, yield* Clock.currentTimeMillis);
   }).pipe(Effect.withSpan("EditorialJobsService.getSettings"));
@@ -531,8 +553,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     // No engine, no configuration to hash: the job still gets its row and shows why it failed.
     let base: Record<string, unknown> = {};
     if (Result.isSuccess(options.engine)) {
-      // The operator's configuration (`editorial.activeEngineConfig`), engine.v1.json without one.
-      const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+      // The operator's configuration (`editorial.activeEngineConfig`), the evaluated one without.
+      const choice = yield* activeEngineConfig();
       const configFile = chosenConfigPath(options.engine.success, choice);
       const text = yield* fs
         .readFileString(configFile)
