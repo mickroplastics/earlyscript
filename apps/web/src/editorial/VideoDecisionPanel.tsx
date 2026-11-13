@@ -3,22 +3,28 @@ import type {
   EditorialResultsStage,
   EditorialVideoState,
 } from "@t3tools/contracts";
-import { TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, TriangleAlertIcon } from "lucide-react";
+import { useId } from "react";
 
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
-import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
+import { cn } from "../lib/utils";
 import {
   ACTION_LABEL,
   STAGE_LABEL,
-  claimsLabel,
   decisionBlockState,
-  formatSavedAt,
   formatStageDuration,
   shortHash,
   stagesOf,
   type DecisionDraft,
 } from "./videoThread.logic";
+import {
+  STEP_TITLE,
+  UTILITY_ANCHOR,
+  dateAndTime,
+  stageSumNote,
+  timeOfDay,
+} from "./videoWorkspace/videoWorkspace.logic";
 
 const ACTIONS: ReadonlyArray<EditorialResultsAction> = ["accept", "edit", "reject"];
 const UTILITIES = [1, 2, 3, 4, 5] as const;
@@ -36,48 +42,110 @@ export interface VideoDecisionControls {
   readonly onGoToResolution: (intervalId: string) => void;
 }
 
+const ACTION_HINT: Readonly<Record<EditorialResultsAction, string>> = {
+  accept: "Lo uso tal como está.",
+  edit: "Lo uso con cambios míos.",
+  reject: "No lo uso.",
+};
+
+const DECIDED_TITLE: Readonly<Record<EditorialResultsAction, string>> = {
+  accept: "Aceptaste este guion",
+  edit: "Editaste este guion",
+  reject: "Rechazaste este guion",
+};
+
+/** The time each stage took, with the total and what the figures mean. */
 function StageTimes({
   mode,
   durations,
+  totalMs,
+  definitive,
 }: {
   readonly mode: EditorialVideoState["thread"]["mode"];
   readonly durations: Partial<Record<EditorialResultsStage, number | null>>;
+  readonly totalMs: number | null;
+  readonly definitive: boolean;
 }) {
+  const stages = stagesOf(mode);
+  const sumNote = stageSumNote(
+    stages.map((stage) => durations[stage] ?? null),
+    totalMs,
+  );
   return (
-    <dl className="flex flex-col gap-0.5 rounded-md bg-muted/40 px-2 py-1 text-xs">
-      {stagesOf(mode).map((stage) => (
-        <div key={stage} className="flex items-baseline justify-between gap-2">
-          <dt className="text-muted-foreground">{STAGE_LABEL[stage]}</dt>
-          <dd className="text-foreground tabular-nums">
-            {formatStageDuration(durations[stage] ?? null)}
-          </dd>
+    <section
+      aria-label="Tiempo por paso"
+      className="flex flex-col gap-2 rounded-lg border bg-card/40 p-3"
+    >
+      <h4 className="font-medium text-2xs text-muted-foreground uppercase tracking-wider">
+        Tu tiempo por paso
+      </h4>
+      <dl className="flex flex-col text-sm">
+        {stages.map((stage, index) => (
+          <div key={stage} className="flex items-baseline justify-between gap-2 py-0.5">
+            <dt className="text-muted-foreground">
+              {index + 1} · {stepLabel(mode, stage)}
+            </dt>
+            <dd className="text-foreground tabular-nums">
+              {formatStageDuration(durations[stage] ?? null)}
+            </dd>
+          </div>
+        ))}
+        <div className="mt-1 flex items-baseline justify-between gap-2 border-t pt-1.5 font-medium">
+          <dt>Total</dt>
+          <dd className="tabular-nums">{formatStageDuration(totalMs)}</dd>
         </div>
-      ))}
-    </dl>
+      </dl>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        {definitive
+          ? "Tiempo activo, sin pausas. Medición completa: cuenta en Resultados."
+          : "Un tramo quedó sin resolver al decidir: los tiempos son un mínimo."}
+        {sumNote ? ` ${sumNote}` : ""}
+      </p>
+    </section>
   );
 }
 
-function VersionLine({
-  video,
-  plainVersion,
-}: {
-  readonly video: EditorialVideoState;
-  readonly plainVersion: boolean;
-}) {
+function stepLabel(mode: EditorialVideoState["thread"]["mode"], stage: EditorialResultsStage) {
+  return mode === "assisted" ? STEP_TITLE[stage] : STAGE_LABEL[stage];
+}
+
+function versionText(video: EditorialVideoState, plainVersion: boolean): string {
   const head = video.script.head;
-  if (head === null) {
-    return <p className="text-muted-foreground text-xs">Sin versión guardada del guion.</p>;
-  }
-  const claims = claimsLabel(head.claims, head.cited);
+  if (head === null) return "versión actual del guion";
+  return `versión ${plainVersion ? video.script.versionCount : shortHash(head.contentHash)}`;
+}
+
+function DecisionChoice({
+  label,
+  hint,
+  pressed,
+  onPress,
+}: {
+  readonly label: string;
+  readonly hint: string;
+  readonly pressed: boolean;
+  readonly onPress: () => void;
+}) {
+  const hintId = useId();
   return (
-    <p className="text-muted-foreground text-xs">
-      Versión{" "}
-      <code className="text-foreground">
-        {plainVersion ? video.script.versionCount : shortHash(head.contentHash)}
-      </code>{" "}
-      · {formatSavedAt(head.savedAt)}
-      {claims ? ` · ${claims}` : ""}
-    </p>
+    <button
+      type="button"
+      aria-label={label}
+      aria-describedby={hintId}
+      aria-pressed={pressed}
+      onClick={onPress}
+      className={cn(
+        "flex min-w-0 flex-col items-start gap-0.5 rounded-lg border p-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        pressed
+          ? "border-primary bg-primary/8 text-foreground"
+          : "border-border hover:border-foreground/24 hover:bg-accent/40",
+      )}
+    >
+      <span className={cn("font-medium text-sm", pressed && "text-primary")}>{label}</span>
+      <span id={hintId} className="text-muted-foreground text-xs leading-snug">
+        {hint}
+      </span>
+    </button>
   );
 }
 
@@ -93,8 +161,11 @@ export function VideoDecisionPanel({
   notice,
   controls,
   plainVersion = false,
+  pending = [],
 }: {
   readonly plainVersion?: boolean;
+  /** What still needs attention before recording, such as blanks left in the script. */
+  readonly pending?: ReadonlyArray<string>;
   readonly video: EditorialVideoState;
   readonly draft: DecisionDraft;
   readonly refusedHash: string | null | undefined;
@@ -103,30 +174,38 @@ export function VideoDecisionPanel({
   readonly controls: VideoDecisionControls;
 }) {
   const block = decisionBlockState(video, draft, refusedHash);
+  const utilityId = useId();
+  const reasonId = useId();
 
   if (block._tag === "decided") {
     const { decision } = block;
+    const anchor = UTILITY_ANCHOR[decision.utility];
     return (
-      <div className="flex flex-col gap-2 px-2.5" data-testid="video-decision-read-only">
-        <p className="text-foreground text-sm">
-          <span className="font-medium">{ACTION_LABEL[decision.action]}</span> · utilidad{" "}
-          {decision.utility} de 5 · {formatSavedAt(decision.decidedAt)}
-        </p>
-        {decision.reason ? (
-          <p className="text-muted-foreground text-xs">Motivo: {decision.reason}</p>
-        ) : null}
-        <p className="text-muted-foreground text-xs">
-          {decision.scriptVersionHash === null ? (
-            "Sin versión del guion."
+      <div className="flex flex-col gap-3" data-testid="video-decision-read-only">
+        <section className="flex flex-col gap-2 rounded-lg border border-success/32 bg-success/6 p-3.5">
+          <h3 className="flex items-center gap-1.5 font-semibold text-base">
+            <CheckIcon aria-hidden className="size-4 text-success" />
+            {DECIDED_TITLE[decision.action]}
+          </h3>
+          <p className="text-sm">
+            Lo calificaste {decision.utility} de 5{anchor ? `: «${anchor}»` : ""}.
+          </p>
+          {decision.reason ? (
+            <blockquote className="border-success/40 border-s-2 bg-background/40 px-3 py-2 text-sm text-muted-foreground">
+              {decision.reason}
+            </blockquote>
           ) : (
-            <>
-              Versión decidida{" "}
-              <code className="text-foreground">
-                {plainVersion ? "guardada" : shortHash(decision.scriptVersionHash)}
-              </code>
-            </>
+            <p className="text-muted-foreground text-xs">Sin motivo escrito.</p>
           )}
-        </p>
+          <p className="text-muted-foreground text-xs">
+            Registrado el {dateAndTime(decision.decidedAt)}
+            {decision.scriptVersionHash === null
+              ? ", sin versión del guion."
+              : plainVersion
+                ? ", con la versión guardada del guion."
+                : `, con la versión ${shortHash(decision.scriptVersionHash)} del guion.`}
+          </p>
+        </section>
         <StageTimes
           mode={video.thread.mode}
           durations={{
@@ -135,12 +214,9 @@ export function VideoDecisionPanel({
             write: decision.durations.writeMs,
             decide: decision.durations.decideMs,
           }}
+          totalMs={decision.durations.totalMs}
+          definitive={decision.clockDefinitive}
         />
-        <p className="text-muted-foreground text-xs">
-          {decision.clockDefinitive
-            ? "Reloj definitivo."
-            : "Un tramo quedó sin resolver al decidir: los tiempos son un mínimo."}
-        </p>
       </div>
     );
   }
@@ -177,33 +253,52 @@ export function VideoDecisionPanel({
   }
 
   if (block._tag === "unresolved") {
+    const interval = video.clock.unresolved.find((entry) => entry.intervalId === block.intervalId);
     return (
-      <div className="flex flex-col gap-2 px-2.5" role="alert">
-        <p className="flex items-start gap-1.5 text-sm text-warning-foreground">
-          <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          <span>Resuelve el tramo abierto antes de decidir.</span>
+      <section
+        role="alert"
+        className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning-surface p-3.5"
+      >
+        <h3 className="font-semibold text-base">Resuelve el tramo abierto antes de decidir.</h3>
+        <p className="text-sm">
+          La app se cerró con el reloj en marcha
+          {interval ? ` en «${stepLabel(video.thread.mode, interval.stage)}»` : ""}. No se sabe
+          cuánto de ese tramo fue trabajo.
         </p>
-        <p className="text-muted-foreground text-xs">
-          La decisión guarda los tiempos por etapa tal como están; un tramo sin resolver no cuenta.
+        {interval ? (
+          <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-muted-foreground">Empezó</dt>
+            <dd className="tabular-nums">{timeOfDay(interval.startedAt)}</dd>
+            {interval.recoveredAt ? (
+              <>
+                <dt className="text-muted-foreground">Detectado</dt>
+                <dd className="tabular-nums">
+                  {timeOfDay(interval.recoveredAt)}, al volver a abrirse la app
+                </dd>
+              </>
+            ) : null}
+          </dl>
+        ) : null}
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          Hasta que indiques la hora en que dejaste de trabajar, no se puede registrar la decisión.
+          Lo ya medido no se pierde.
         </p>
         <Button
-          size="xs"
-          variant="outline"
+          size="sm"
+          variant="warning-outline"
           className="self-start"
           onClick={() => controls.onGoToResolution(block.intervalId)}
         >
           Ir a la resolución
         </Button>
-      </div>
+      </section>
     );
   }
 
-  const durations = Object.fromEntries(
-    video.clock.stages.map((entry) => [entry.stage, entry.activeMs]),
-  ) as Partial<Record<EditorialResultsStage, number>>;
+  const reasonRequired = draft.action !== null && draft.action !== "accept";
   return (
     <form
-      className="flex flex-col gap-2.5 px-2.5"
+      className="flex flex-col gap-4"
       aria-label="Decisión"
       onFocusCapture={controls.onEngage}
       onPointerDownCapture={controls.onEngage}
@@ -214,75 +309,113 @@ export function VideoDecisionPanel({
         if (block.problem === null) controls.onSubmit(block.versionHash);
       }}
     >
-      <StageTimes mode={video.thread.mode} durations={durations} />
-      <VersionLine video={video} plainVersion={plainVersion} />
-      <ToggleGroup
-        aria-label="Acción"
-        size="sm"
-        value={draft.action === null ? [] : [draft.action]}
-        onValueChange={(values) => {
-          const action = ACTIONS.find((candidate) => candidate === values[0]) ?? null;
-          controls.onDraftChange({ ...draft, action });
-        }}
-      >
-        {ACTIONS.map((action) => (
-          <Toggle key={action} value={action}>
-            {ACTION_LABEL[action]}
-          </Toggle>
-        ))}
-      </ToggleGroup>
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-xs" id="video-decision-utility">
-          Utilidad
-        </span>
-        <ToggleGroup
-          aria-labelledby="video-decision-utility"
-          size="sm"
-          value={draft.utility === null ? [] : [String(draft.utility)]}
-          onValueChange={(values) => {
-            const utility = UTILITIES.find((value) => String(value) === values[0]) ?? null;
-            controls.onDraftChange({ ...draft, utility });
-          }}
+      <h3 className="font-semibold text-base">¿Qué haces con este guion?</h3>
+      {pending.length > 0 ? (
+        <section
+          aria-label="Antes de decidir"
+          className="flex flex-col gap-1 rounded-lg border border-warning/32 bg-warning-surface px-3 py-2.5 text-sm"
         >
-          {UTILITIES.map((utility) => (
-            <Toggle key={utility} value={String(utility)} aria-label={`Utilidad ${utility}`}>
-              {utility}
-            </Toggle>
-          ))}
-        </ToggleGroup>
+          <h4 className="font-medium text-warning-foreground">Antes de decidir, ten en cuenta</h4>
+          <ul className="flex flex-col gap-0.5 text-muted-foreground">
+            {pending.map((line) => (
+              <li key={line} className="flex gap-2">
+                <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-warning" />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <div role="group" aria-label="Acción" className="grid grid-cols-3 gap-2">
+        {ACTIONS.map((action) => (
+          <DecisionChoice
+            key={action}
+            label={ACTION_LABEL[action]}
+            hint={ACTION_HINT[action]}
+            pressed={draft.action === action}
+            onPress={() => controls.onDraftChange({ ...draft, action })}
+          />
+        ))}
       </div>
-      <Textarea
-        size="sm"
-        aria-label="Motivo"
-        placeholder={
-          draft.action === "accept"
-            ? "Motivo (opcional)"
-            : "Motivo (obligatorio para editar o rechazar)"
-        }
-        maxLength={2000}
-        value={draft.reason}
-        onChange={(event) =>
-          controls.onDraftChange({ ...draft, reason: event.currentTarget.value })
-        }
-      />
-      {block.problem ? <p className="text-muted-foreground text-xs">{block.problem}</p> : null}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <h4 className="font-medium text-sm" id={utilityId}>
+            ¿Qué tan útil es este guion?
+          </h4>
+          <span className="text-muted-foreground text-xs">Califica el guion, no la idea.</span>
+        </div>
+        <div role="group" aria-labelledby={utilityId} className="grid grid-cols-5 gap-1.5">
+          {UTILITIES.map((utility) => {
+            const pressed = draft.utility === utility;
+            return (
+              <button
+                key={utility}
+                type="button"
+                aria-label={`Utilidad ${utility}`}
+                aria-pressed={pressed}
+                onClick={() => controls.onDraftChange({ ...draft, utility })}
+                className={cn(
+                  "flex min-w-0 flex-col items-center gap-0.5 rounded-lg border px-1 py-2 text-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  pressed
+                    ? "border-primary bg-primary/8 text-primary"
+                    : "border-border hover:border-foreground/24 hover:bg-accent/40",
+                )}
+              >
+                <span className="font-semibold text-base tabular-nums">{utility}</span>
+                <span
+                  className={cn(
+                    "text-2xs leading-tight",
+                    pressed ? "text-primary" : "text-muted-foreground",
+                  )}
+                >
+                  {UTILITY_ANCHOR[utility]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="flex items-baseline gap-2" htmlFor={reasonId}>
+          <span className="font-medium text-sm">¿Por qué?</span>
+          <span
+            className={cn(
+              "text-xs",
+              reasonRequired ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          >
+            {draft.action === null
+              ? "Opcional al aceptar; obligatorio para editar o rechazar"
+              : reasonRequired
+                ? "Obligatorio"
+                : "Opcional"}
+          </span>
+        </label>
+        <Textarea
+          id={reasonId}
+          aria-label="Motivo"
+          placeholder="Lo que te hizo decidir, en tus palabras."
+          maxLength={2000}
+          value={draft.reason}
+          onChange={(event) =>
+            controls.onDraftChange({ ...draft, reason: event.currentTarget.value })
+          }
+        />
+      </div>
       {notice ? (
         <p role="alert" className="text-warning-foreground text-xs">
           {notice}
         </p>
       ) : null}
-      <Button
-        type="submit"
-        size="xs"
-        className="self-start"
-        disabled={block.problem !== null || controls.busy}
-      >
-        Registrar decisión
-      </Button>
-      <p className="text-muted-foreground text-xs">
-        Queda grabado: acción, utilidad, motivo, tiempo por etapa y versión del guion. El agente no
-        puede tocar este registro.
-      </p>
+      <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-3 bg-background/95 px-1 py-3 backdrop-blur-sm">
+        <Button type="submit" disabled={block.problem !== null || controls.busy}>
+          Registrar decisión
+        </Button>
+        <span className="min-w-0 flex-1 text-muted-foreground text-xs leading-snug">
+          {block.problem ??
+            `Se guarda con la ${versionText(video, plainVersion)} y tu tiempo por paso; no se modifica después.`}
+        </span>
+      </div>
     </form>
   );
 }

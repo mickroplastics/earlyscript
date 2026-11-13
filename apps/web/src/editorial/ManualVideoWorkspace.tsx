@@ -300,13 +300,15 @@ function ManualVideoWorkspaceView({
           <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto py-3">
             <section aria-label="Decidir" className="flex flex-col gap-2">
               <h2 className="px-2.5 font-medium text-sm">Decisión</h2>
-              <VideoDecisionPanel
-                video={video}
-                draft={decisionDraft}
-                refusedHash={refusedHash}
-                notice={decisionNotice}
-                controls={controls.decision}
-              />
+              <div className="px-2.5">
+                <VideoDecisionPanel
+                  video={video}
+                  draft={decisionDraft}
+                  refusedHash={refusedHash}
+                  notice={decisionNotice}
+                  controls={controls.decision}
+                />
+              </div>
             </section>
             {decided ? (
               <section aria-label="Resultado" className="flex flex-col gap-2">

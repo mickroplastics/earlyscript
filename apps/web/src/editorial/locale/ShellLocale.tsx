@@ -96,6 +96,8 @@ const VIDEO_THREAD_LOCALE: ScopedLocaleOptions = {
     SHELL_COMMON_TABLE,
     THREAD_TABLE,
     RELATIVE_TIME_TABLE,
+    // The sources open in upstream's embedded browser, as in the manual thread.
+    MANUAL_BROWSER_TABLE,
   ]),
 };
 export function useThreadAreaLocale(anchor: Element | null, video = false): void {

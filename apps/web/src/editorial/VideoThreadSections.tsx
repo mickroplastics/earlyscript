@@ -305,13 +305,15 @@ function VideoThreadSectionsView({
       </ThreadDetailsSection>
 
       <ThreadDetailsSection headingId="video-decision-heading" title="Decisión">
-        <VideoDecisionPanel
-          video={video}
-          draft={decisionDraft}
-          refusedHash={refusedHash}
-          notice={decisionNotice}
-          controls={controls.decision}
-        />
+        <div className="px-2.5">
+          <VideoDecisionPanel
+            video={video}
+            draft={decisionDraft}
+            refusedHash={refusedHash}
+            notice={decisionNotice}
+            controls={controls.decision}
+          />
+        </div>
       </ThreadDetailsSection>
 
       {video.decision !== null ? (
