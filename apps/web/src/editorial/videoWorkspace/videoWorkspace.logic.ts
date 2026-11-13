@@ -80,15 +80,6 @@ export function timeOfDay(iso: string, now: Date = new Date()): string {
   return `${clockOf(date)} ${dayOf(date, now)}`;
 }
 
-/** «entre las 17:14 y las 17:20 de hoy», the day said once when both fall on it. */
-function spanOfDay(fromIso: string, toIso: string, now: Date = new Date()): string {
-  const from = new Date(fromIso);
-  const to = new Date(toIso);
-  return from.toDateString() === to.toDateString()
-    ? `entre las ${clockOf(from)} y las ${clockOf(to)} ${dayOf(to, now)}`
-    : `entre las ${timeOfDay(fromIso, now)} y las ${timeOfDay(toIso, now)}`;
-}
-
 /** «10 nov 2026 a las 00:11», for recorded dates. */
 export function dateAndTime(iso: string): string {
   const date = new Date(iso);
@@ -150,16 +141,16 @@ export function stepperModel(input: {
           : "read";
   const currentIndex = ASSISTED_STEPS.indexOf(current);
 
+  // The step says where things stand; the «Ahora» line alone says what to do.
   const activeDetail = (stage: AssistedStage): string => {
-    if (stage === "read") return "Ahora · lee de qué va el tema";
-    if (stage === "decide") return "Ahora · elige, califica y explica";
-    if (agentWorking && !drafted) return "Borrador · el asistente lo escribe";
-    if (agentWorking) return "Revisión · el asistente trabaja en tu pedido";
-    if (drafted) return "Borrador listo · ahora revisas y pides cambios";
-    return "Ahora · pide el borrador al asistente";
+    if (stage !== "write") return "En curso";
+    if (agentWorking && !drafted) return "En curso · el asistente escribe el borrador";
+    if (agentWorking) return "En curso · el asistente atiende tu pedido";
+    if (drafted) return "En curso · borrador listo, en revisión";
+    return "En curso · sin borrador todavía";
   };
   const laterDetail: Readonly<Record<AssistedStage, string>> = {
-    read: "Lo ya medido se queda aquí",
+    read: "Después",
     write: "Después · el asistente escribe, tú revisas",
     decide: "Después · aceptar, editar o rechazar",
   };
@@ -167,14 +158,14 @@ export function stepperModel(input: {
   const steps = ASSISTED_STEPS.map((stage, index): StepView => {
     const base = { stage, number: (index + 1) as 1 | 2 | 3, title: STEP_TITLE[stage] };
     if (openStages.has(stage)) {
-      return { ...base, status: "open", detail: "Falta un dato del reloj · tramo abierto" };
+      return { ...base, status: "open", detail: "Tramo abierto · falta la hora en que paraste" };
     }
     if (index === currentIndex) {
       if (state._tag === "paused") {
-        return { ...base, status: "paused", detail: "En pausa · el tiempo no cuenta" };
+        return { ...base, status: "paused", detail: "En pausa" };
       }
       if (state._tag === "idle") {
-        return { ...base, status: "paused", detail: "Reloj detenido · el tiempo no cuenta" };
+        return { ...base, status: "paused", detail: "Reloj detenido" };
       }
       return { ...base, status: "active", detail: activeDetail(stage) };
     }
@@ -194,10 +185,7 @@ export function stepperModel(input: {
       ? {
           tone: "open",
           label: "Falta un dato",
-          text:
-            unresolved.recoveredAt === null
-              ? `Un tramo de «${STEP_TITLE[unresolved.stage]}» quedó abierto desde las ${timeOfDay(unresolved.startedAt, input.now)}. No cuenta hasta que digas a qué hora dejaste de trabajar.`
-              : `Un tramo de «${STEP_TITLE[unresolved.stage]}» quedó abierto ${spanOfDay(unresolved.startedAt, unresolved.recoveredAt, input.now)}, cuando se cerró la app. No cuenta hasta que digas a qué hora dejaste de trabajar.`,
+          text: `Un tramo de «${STEP_TITLE[unresolved.stage]}» empezó a las ${timeOfDay(unresolved.startedAt, input.now)} y quedó abierto: la app se cerró con el reloj en marcha. No cuenta hasta que digas cuándo dejaste de trabajar.`,
           action: "resolve",
         }
       : state._tag === "paused"
@@ -320,6 +308,8 @@ export interface NumberedSource {
   readonly sections: ReadonlyArray<string>;
   /** Each marker naming it, in document order. */
   readonly occurrences: ReadonlyArray<SourceOccurrence>;
+  /** Paragraphs holding at least one of those markers. */
+  readonly paragraphs: number;
 }
 
 export const citationKey = (line: number, offset: number, id: string) => `${line}:${offset}:${id}`;
@@ -358,6 +348,7 @@ export function numberSources(
       uses: mine.length,
       sections: [...new Set(mine.map((marker) => marker.heading))],
       occurrences: mine.map(({ line, key }) => ({ line, key })),
+      paragraphs: new Set(mine.map((marker) => marker.line)).size,
     };
   });
 }
@@ -445,35 +436,85 @@ export function scriptSource(
   return hash === null ? { kind: "none" } : { kind: "decided", hash };
 }
 
+const WEEKDAYS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const MONTH_NAMES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+const dayKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 /**
- * The moment a typed time of day («23:52», «0:05», «23.55») names inside an open segment: the
- * first day, from the segment's start, on which that time falls before the cut. Null when it
- * is not a time or falls outside the segment.
+ * The local calendar days an open segment covers, from its start to its detection (or now):
+ * the days the operator can say they stopped on.
+ */
+export function stopDays(
+  interval: { readonly startedAt: string; readonly recoveredAt: string | null },
+  now: Date = new Date(),
+): ReadonlyArray<{ readonly value: string; readonly label: string }> {
+  const start = new Date(interval.startedAt);
+  const end = interval.recoveredAt === null ? now : new Date(interval.recoveredAt);
+  const days: Array<{ value: string; label: string }> = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  while (cursor <= end && days.length < 31) {
+    days.push({
+      value: dayKey(cursor),
+      label: `${WEEKDAYS[cursor.getDay()]} ${cursor.getDate()} de ${MONTHS[cursor.getMonth()]}`,
+    });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return days;
+}
+
+/**
+ * The moment the operator names for the end of an open segment: the day they picked
+ * (`YYYY-MM-DD`, local) and the time they typed («23:52», «0:05», «23.55»). Null when it is not
+ * a time or falls outside the segment. The minute the segment started counts, never before it.
  */
 export function stopTimeIso(
+  day: string,
   typed: string,
   interval: { readonly startedAt: string; readonly recoveredAt: string | null },
   now: Date = new Date(),
 ): string | null {
-  const match = /^(\d{1,2})[:.h](\d{2})$/.exec(typed.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
+  const time = /^(\d{1,2})[:.h](\d{2})$/.exec(typed.trim());
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!time || !date) return null;
+  const hours = Number(time[1]);
+  const minutes = Number(time[2]);
   if (hours > 23 || minutes > 59) return null;
+  const candidate = new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3]), hours, minutes);
   const start = new Date(interval.startedAt);
+  const floor = new Date(start);
+  floor.setSeconds(0, 0);
   const end = interval.recoveredAt === null ? now : new Date(interval.recoveredAt);
-  for (let day = 0; day <= 2; day++) {
-    const candidate = new Date(start);
-    candidate.setDate(start.getDate() + day);
-    candidate.setHours(hours, minutes, 0, 0);
-    // The minute the segment started counts: its seconds are inside the typed minute.
-    const floor = new Date(start);
-    floor.setSeconds(0, 0);
-    if (candidate < floor) continue;
-    if (candidate > end) return null;
-    return new Date(Math.max(candidate.getTime(), start.getTime())).toISOString();
-  }
-  return null;
+  if (candidate < floor || candidate > end) return null;
+  return new Date(Math.max(candidate.getTime(), start.getTime())).toISOString();
+}
+
+/** «martes 10 de noviembre de 2026 a las 00:05»: the moment that will be saved, in full. */
+export function fullDateTime(iso: string): string {
+  const date = new Date(iso);
+  return `${WEEKDAYS[date.getDay()]} ${date.getDate()} de ${MONTH_NAMES[date.getMonth()]} de ${date.getFullYear()} a las ${clockOf(date)}`;
+}
+
+/** The offset of the dossier's next page of evidence, or null once all of it is loaded. */
+export function nextEvidenceOffset(
+  page: { readonly evidenceTotal: number; readonly pageLength: number },
+  offset: number,
+): number | null {
+  const next = offset + page.pageLength;
+  return page.pageLength > 0 && next < page.evidenceTotal ? next : null;
 }
 
 /** The time of a step with an open segment: what is measured, said as a floor, never «00:00». */

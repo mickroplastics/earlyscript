@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DECIDED, JUST_CREATED, WRITING } from "../videoThread.fixture";
 import {
+  fullDateTime,
   inlineTokens,
+  nextEvidenceOffset,
+  stopDays,
   numberSources,
   openStageTime,
   scriptNotices,
@@ -189,7 +192,10 @@ describe("numberSources", () => {
     const script =
       "# Hook\n\nOne claim here, cited twice. [hn:1] Another one, same source. [itm_hn_1]\n";
     const [source] = numberSources(script, [item("itm_hn_1")]);
-    expect(source).toEqual(expect.objectContaining({ id: "itm_hn_1", number: 1, uses: 2 }));
+    // Two markers in one paragraph: two citations, one paragraph.
+    expect(source).toEqual(
+      expect.objectContaining({ id: "itm_hn_1", number: 1, uses: 2, paragraphs: 1 }),
+    );
     const keys = source?.occurrences.map((occurrence) => occurrence.key) ?? [];
     expect(keys).toHaveLength(2);
     expect(new Set(keys).size).toBe(2);
@@ -262,17 +268,41 @@ describe("stopTimeIso", () => {
     new Date(2026, 10, day, hour, minute).toISOString();
   const interval = { startedAt: at(9, 23, 41), recoveredAt: at(10, 0, 20) };
 
-  it("places a typed time of day inside the open segment, on the right day", () => {
-    expect(stopTimeIso("23:52", interval)).toBe(at(9, 23, 52));
-    expect(stopTimeIso("0:05", interval)).toBe(at(10, 0, 5));
-    expect(stopTimeIso("23.55", interval)).toBe(at(9, 23, 55));
+  it("saves exactly the day and the time the operator picked, inside the open segment", () => {
+    expect(stopTimeIso("2026-11-09", "23:52", interval)).toBe(at(9, 23, 52));
+    expect(stopTimeIso("2026-11-10", "0:05", interval)).toBe(at(10, 0, 5));
+    expect(stopTimeIso("2026-11-09", "23.55", interval)).toBe(at(9, 23, 55));
+    // The minute the segment started is allowed; the saved time is not before the start.
+    expect(stopTimeIso("2026-11-09", "23:41", interval)).toBe(interval.startedAt);
+  });
+
+  it("lets a segment of several days end on any of them", () => {
+    const long = { startedAt: at(9, 18, 0), recoveredAt: at(11, 19, 0) };
+    expect(stopTimeIso("2026-11-09", "18:30", long)).toBe(at(9, 18, 30));
+    expect(stopTimeIso("2026-11-10", "18:30", long)).toBe(at(10, 18, 30));
+    expect(stopTimeIso("2026-11-11", "18:30", long)).toBe(at(11, 18, 30));
+    expect(stopTimeIso("2026-11-11", "19:30", long)).toBeNull();
+    expect(stopDays(long, new Date(2026, 10, 12)).map((day) => day.value)).toEqual([
+      "2026-11-09",
+      "2026-11-10",
+      "2026-11-11",
+    ]);
+    expect(stopDays(interval, new Date(2026, 10, 12)).map((day) => day.label)).toEqual([
+      "lunes 9 de nov",
+      "martes 10 de nov",
+    ]);
   });
 
   it("refuses what is not a time inside the segment", () => {
-    expect(stopTimeIso("23:30", interval)).toBeNull();
-    expect(stopTimeIso("1:00", interval)).toBeNull();
-    expect(stopTimeIso("25:00", interval)).toBeNull();
-    expect(stopTimeIso("mañana", interval)).toBeNull();
+    expect(stopTimeIso("2026-11-09", "23:30", interval)).toBeNull();
+    expect(stopTimeIso("2026-11-10", "1:00", interval)).toBeNull();
+    expect(stopTimeIso("2026-11-09", "25:00", interval)).toBeNull();
+    expect(stopTimeIso("2026-11-09", "mañana", interval)).toBeNull();
+    expect(stopTimeIso("2026-11-12", "0:10", interval)).toBeNull();
+  });
+
+  it("names the moment it will save in full", () => {
+    expect(fullDateTime(at(10, 0, 5))).toBe("martes 10 de noviembre de 2026 a las 00:05");
   });
 });
 
@@ -280,5 +310,16 @@ describe("openStageTime", () => {
   it("says what was measured without a misleading zero", () => {
     expect(openStageTime(0)).toBe("sin medir");
     expect(openStageTime(666_000)).toBe("al menos 11:06");
+  });
+});
+
+describe("nextEvidenceOffset", () => {
+  it("asks for the next page until every source of the dossier is loaded", () => {
+    expect(nextEvidenceOffset({ evidenceTotal: 120, pageLength: 50 }, 0)).toBe(50);
+    expect(nextEvidenceOffset({ evidenceTotal: 120, pageLength: 50 }, 50)).toBe(100);
+    expect(nextEvidenceOffset({ evidenceTotal: 120, pageLength: 20 }, 100)).toBeNull();
+    expect(nextEvidenceOffset({ evidenceTotal: 10, pageLength: 10 }, 0)).toBeNull();
+    // An empty page never loops.
+    expect(nextEvidenceOffset({ evidenceTotal: 120, pageLength: 0 }, 50)).toBeNull();
   });
 });

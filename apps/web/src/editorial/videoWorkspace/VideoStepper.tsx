@@ -20,6 +20,13 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
 import { formatClock, stageClockMs } from "../videoThread.logic";
@@ -27,8 +34,11 @@ import {
   ASSISTED_STEPS,
   STEP_TITLE,
   type DraftParts,
+  fullDateTime,
   openStageTime,
+  stopDays,
   stopTimeIso,
+  timeOfDay,
   type StepView,
   type StepperModel,
 } from "./videoWorkspace.logic";
@@ -254,30 +264,36 @@ const NOW_TONE: Readonly<Record<StepperModel["now"]["tone"], string>> = {
 export function NowLine({
   model,
   actions,
+  below,
 }: {
   readonly model: StepperModel;
   readonly actions: ReactNode;
+  /** A form the line asks for, under it at full width. */
+  readonly below?: ReactNode;
 }) {
   return (
-    <div
-      className="flex min-h-11 items-center gap-3 border-t border-dashed pt-3"
-      data-now-tone={model.now.tone}
-    >
-      <span
-        className={cn(
-          "shrink-0 rounded border px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wider",
-          NOW_TONE[model.now.tone],
-        )}
-      >
-        {model.now.label}
-      </span>
-      <p className="min-w-0 flex-1 text-sm leading-snug">{model.now.text}</p>
-      <div className="flex shrink-0 items-center gap-2">{actions}</div>
+    <div className="flex flex-col gap-2 border-t border-dashed pt-3" data-now-tone={model.now.tone}>
+      <div className="flex min-h-8 items-center gap-3">
+        <span
+          className={cn(
+            "shrink-0 rounded border px-1.5 py-0.5 font-semibold text-2xs uppercase tracking-wider",
+            NOW_TONE[model.now.tone],
+          )}
+        >
+          {model.now.label}
+        </span>
+        <p className="min-w-0 flex-1 text-sm leading-snug">{model.now.text}</p>
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      </div>
+      {below}
     </div>
   );
 }
 
-/** Asks, inside the «Ahora» line, when a segment left open by a restart ended. */
+/**
+ * Asks, under the «Ahora» line, when work stopped in a segment left open: the day (fixed when
+ * the segment spans one day), the time, and the full moment that will be saved, before saving.
+ */
 export function ResolveIntervalForm({
   interval,
   busy,
@@ -287,20 +303,44 @@ export function ResolveIntervalForm({
   readonly busy: boolean;
   readonly onResolve: (intervalId: string, endedAt: string) => void;
 }) {
+  const days = stopDays(interval);
+  const [day, setDay] = useState(days.at(-1)?.value ?? "");
   const [value, setValue] = useState("");
-  const endedAt = value.trim() === "" ? null : stopTimeIso(value, interval);
+  const endedAt = value.trim() === "" ? null : stopTimeIso(day, value, interval);
   const invalid = value.trim() !== "" && endedAt === null;
   const inputId = `video-resolve-${interval.intervalId}`;
+  const limit = interval.recoveredAt
+    ? `Entre las ${timeOfDay(interval.startedAt)} y las ${timeOfDay(interval.recoveredAt)}, cuando la app volvió a abrirse.`
+    : `Desde las ${timeOfDay(interval.startedAt)}.`;
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-warning/32 bg-warning-surface px-3 py-2"
       onSubmit={(event) => {
         event.preventDefault();
         if (endedAt !== null) onResolve(interval.intervalId, endedAt);
       }}
     >
-      <label className="whitespace-nowrap text-sm" htmlFor={inputId}>
-        Dejé de trabajar a las
+      <span className="text-sm">Dejé de trabajar el</span>
+      {days.length > 1 ? (
+        <Select value={day} onValueChange={(next) => typeof next === "string" && setDay(next)}>
+          <SelectTrigger size="sm" aria-label="Día en que dejaste de trabajar" className="w-48">
+            <SelectValue>
+              {(selected: string) => days.find((entry) => entry.value === selected)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            {days.map((entry) => (
+              <SelectItem key={entry.value} value={entry.value}>
+                {entry.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      ) : (
+        <span className="font-medium text-sm">{days[0]?.label}</span>
+      )}
+      <label className="text-sm" htmlFor={inputId}>
+        a las
       </label>
       <Input
         id={inputId}
@@ -309,13 +349,29 @@ export function ResolveIntervalForm({
         inputMode="numeric"
         autoComplete="off"
         placeholder="hh:mm"
+        aria-label="Dejé de trabajar a las"
         aria-invalid={invalid || undefined}
         aria-describedby={`${inputId}-hint`}
         value={value}
         onChange={(event) => setValue(event.currentTarget.value)}
       />
-      <span id={`${inputId}-hint`} className="sr-only">
-        Una hora entre el inicio del tramo y el cierre de la app.
+      <span
+        id={`${inputId}-hint`}
+        className={cn(
+          "min-w-0 flex-1 text-xs",
+          invalid ? "text-destructive-foreground" : "text-muted-foreground",
+        )}
+      >
+        {endedAt !== null ? (
+          <>
+            Se guardará:{" "}
+            <span className="font-medium text-foreground">{fullDateTime(endedAt)}</span>
+          </>
+        ) : invalid ? (
+          `Esa hora no cae en el tramo. ${limit}`
+        ) : (
+          limit
+        )}
       </span>
       <Button type="submit" size="sm" disabled={endedAt === null || busy}>
         Guardar

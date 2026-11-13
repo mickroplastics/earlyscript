@@ -12,9 +12,7 @@ import { cn } from "../lib/utils";
 import {
   ACTION_LABEL,
   STAGE_LABEL,
-  claimsLabel,
   decisionBlockState,
-  formatSavedAt,
   formatStageDuration,
   shortHash,
   stagesOf,
@@ -113,9 +111,8 @@ function stepLabel(mode: EditorialVideoState["thread"]["mode"], stage: Editorial
 
 function versionText(video: EditorialVideoState, plainVersion: boolean): string {
   const head = video.script.head;
-  if (head === null) return "sin versión guardada del guion";
-  const claims = claimsLabel(head.claims, head.cited);
-  return `versión ${plainVersion ? video.script.versionCount : shortHash(head.contentHash)}, guardada ${formatSavedAt(head.savedAt)}${claims ? `, ${claims}` : ""}`;
+  if (head === null) return "sin versión guardada";
+  return `versión ${plainVersion ? video.script.versionCount : shortHash(head.contentHash)}`;
 }
 
 function DecisionChoice({
@@ -269,14 +266,14 @@ export function VideoDecisionPanel({
           cuánto de ese tramo fue trabajo.
         </p>
         {interval ? (
-          <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-sm">
+          <dl className="grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm">
             <dt className="text-muted-foreground">Empezó</dt>
             <dd className="tabular-nums">{timeOfDay(interval.startedAt)}</dd>
             {interval.recoveredAt ? (
               <>
-                <dt className="text-muted-foreground">Corte</dt>
+                <dt className="text-muted-foreground">Detectado</dt>
                 <dd className="tabular-nums">
-                  {timeOfDay(interval.recoveredAt)}, al cerrarse la app
+                  {timeOfDay(interval.recoveredAt)}, al volver a abrirse la app
                 </dd>
               </>
             ) : null}
@@ -316,12 +313,10 @@ export function VideoDecisionPanel({
       {pending.length > 0 ? (
         <section
           aria-label="Antes de decidir"
-          className="flex flex-col gap-1.5 rounded-lg border border-warning/32 bg-warning-surface p-3"
+          className="flex flex-col gap-1 rounded-lg border border-warning/32 bg-warning-surface px-3 py-2.5 text-sm"
         >
-          <h4 className="font-medium text-2xs text-warning-foreground uppercase tracking-wider">
-            Antes de decidir, ten en cuenta
-          </h4>
-          <ul className="flex flex-col gap-1 text-sm">
+          <h4 className="font-medium text-warning-foreground">Antes de decidir, ten en cuenta</h4>
+          <ul className="flex flex-col gap-0.5 text-muted-foreground">
             {pending.map((line) => (
               <li key={line} className="flex gap-2">
                 <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-warning" />
@@ -407,10 +402,6 @@ export function VideoDecisionPanel({
           }
         />
       </div>
-      <p className="rounded-lg border bg-card/40 p-3 text-muted-foreground text-xs leading-relaxed">
-        Se guardan tu decisión, el guion tal como está ({versionText(video, plainVersion)}) y tu
-        tiempo por paso. El asistente no puede cambiar este registro.
-      </p>
       {notice ? (
         <p role="alert" className="text-warning-foreground text-xs">
           {notice}
@@ -420,8 +411,9 @@ export function VideoDecisionPanel({
         <Button type="submit" disabled={block.problem !== null || controls.busy}>
           Registrar decisión
         </Button>
-        <span className="text-muted-foreground text-xs">
-          {block.problem ?? "Una vez registrada, no se modifica."}
+        <span className="min-w-0 flex-1 text-muted-foreground text-xs leading-snug">
+          {block.problem ??
+            `Se guarda con el guion (${versionText(video, plainVersion)}) y tu tiempo por paso. No se modifica después.`}
         </span>
       </div>
     </form>
