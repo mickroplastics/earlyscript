@@ -50,6 +50,19 @@ describe("FirstRunPageView", () => {
     expect(onContinueSetup).toHaveBeenCalledOnce();
   });
 
+  it("shows the download when the operator left the nightly step before the model", async () => {
+    const { screen } = await renderPage({
+      setup: { pending: true, reached: 3 },
+      modelReady: false,
+    });
+    await using _screen = screen;
+    await expect
+      .element(page.getByText("La primera revisión empieza sola al terminar la descarga."))
+      .toBeVisible();
+    await expect.element(page.getByText("Fila del modelo")).toBeVisible();
+    expect(page.getByText("Falta la revisión nocturna.").elements()).toHaveLength(0);
+  });
+
   it("waits for the model when the wizard left the first review to its download", async () => {
     const { screen, onRun } = await renderPage({ modelReady: false, waitsForModel: true });
     await using _screen = screen;
