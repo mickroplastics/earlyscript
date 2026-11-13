@@ -369,6 +369,23 @@ export function FirstRunPageView({
   onRun,
   onContinueSetup,
 }: FirstRunPageViewProps) {
+  // Left on the nightly step while the model downloads: the review starts by itself after it.
+  if (
+    setup !== null &&
+    setup.pending &&
+    setup.reached === 3 &&
+    view.kind === "idle" &&
+    !modelReady
+  ) {
+    return (
+      <CenteredMessage
+        title="Aquí llegarán tus tendencias"
+        description="La primera revisión empieza sola al terminar la descarga."
+      >
+        <div className="mt-4 w-full text-left">{model}</div>
+      </CenteredMessage>
+    );
+  }
   if (setup !== null && setup.pending && view.kind === "idle") {
     return (
       <CenteredMessage

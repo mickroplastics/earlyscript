@@ -80,7 +80,16 @@ export function EarlyscriptWizard({
   };
 
   // The entry is decided once the status is read; an unreadable status opens the welcome.
-  if (environmentId !== null && status.data === null && status.error === null) return null;
+  if (environmentId !== null && status.data === null && status.error === null) {
+    return (
+      <p
+        role="status"
+        className="fixed inset-0 grid place-items-center text-sm text-muted-foreground"
+      >
+        Cargando…
+      </p>
+    );
+  }
   const progress = status.data === null ? null : setupProgress(status.data);
   const entry: WizardEntry =
     progress !== null && progress.pending && progress.reached > 0

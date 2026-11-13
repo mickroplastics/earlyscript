@@ -50,6 +50,9 @@ export function useRunNow(environmentId: EnvironmentId) {
           title: "No se pudo revisar",
           description: settingsFailureText(result),
         });
+      } else if (result.value.status === "done" || result.value.status === "skipped") {
+        // `runNow` answers today's finished job as it is when nothing changed since.
+        toastManager.add({ type: "info", title: "Ya se revisó hoy con esta configuración" });
       }
     });
   };
