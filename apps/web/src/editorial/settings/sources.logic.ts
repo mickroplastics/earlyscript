@@ -13,6 +13,7 @@ import {
   corpusLastDay,
   formatDay,
   itemsText,
+  localDay,
   relativeDay,
   type Tone,
 } from "./editorialStatus.logic";
@@ -23,7 +24,8 @@ const DAY_MS = 86_400_000;
 
 export interface StatusPart {
   readonly text: string;
-  readonly tone: Tone;
+  /** `ready`: the source may start counting, the one good news a row can give. */
+  readonly tone: Tone | "ready";
 }
 
 /** What a source row says, in two parts: how its last day went, then what follows from it. */
@@ -32,11 +34,12 @@ export function sourceStatus(
   governance: SourceGovernance,
   view: EditorialSourcesView,
 ): ReadonlyArray<StatusPart> {
-  const today = view.asOf.slice(0, 10);
+  // Corpus days are UTC days; "ayer" is about the operator's calendar.
+  const today = localDay(view.asOf, undefined);
   const capture = entry.lastCapture;
   const ready = !entry.rank && entry.rankBlocked === null;
   const readyPart: ReadonlyArray<StatusPart> = ready
-    ? [{ text: "lista para contar", tone: "ok" }]
+    ? [{ text: "lista para contar", tone: "ready" }]
     : [];
   if (entry.collectBlocked === "blocked") {
     return [

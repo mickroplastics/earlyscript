@@ -215,6 +215,25 @@ describe("stripAlert", () => {
     });
   });
 
+  it("reads hoy and ayer from when a review ran, not from its UTC cutoff", () => {
+    // «Revisar ahora» at 19:10 in Guayaquil takes the next UTC day as its cutoff.
+    const evening = job({
+      day: "2026-11-13",
+      status: "failed",
+      startedAt: "2026-11-13T00:10:00.000Z",
+      artifacts: { ...failedToday.artifacts },
+    });
+    const nightly = nightlyState({
+      settings: SETTINGS,
+      jobs: [evening, job({ day: "2026-11-11" })],
+      active: null,
+      now: Date.parse("2026-11-13T00:30:00.000Z"),
+    });
+    expect(
+      stripAlert({ ...base, nightly, now: Date.parse("2026-11-13T00:30:00.000Z") })?.text,
+    ).toBe("Sin tendencias nuevas hoy: la bandeja muestra las de ayer.");
+  });
+
   it("then a review with nowhere to look, a missing model and a spent cap; else nothing", () => {
     const nightly = nightlyState({
       settings: SETTINGS,

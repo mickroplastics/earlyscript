@@ -54,6 +54,7 @@ import {
   failureDetail,
   finishedLabel,
   formatCount,
+  jobDay,
   formatDay,
   localDay,
   relativeDay,
@@ -232,9 +233,9 @@ function StatusCard({
         };
       }
       case "failed": {
-        const day = relativeDay(localDay(state.job.cutoffAt, "UTC"), today);
+        const day = relativeDay(jobDay(state.job, timeZone), today);
         const last = state.lastDone;
-        const lastDay = last === null ? null : relativeDay(localDay(last.cutoffAt, "UTC"), today);
+        const lastDay = last === null ? null : relativeDay(jobDay(last, timeZone), today);
         return {
           tone: "error",
           title: day === "hoy" ? "La revisión de hoy falló" : `La revisión del ${day} falló`,

@@ -45,7 +45,7 @@ import { cn } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { capitalize, relativeDay, type Tone } from "./editorialStatus.logic";
+import { capitalize, localDay, relativeDay, type Tone } from "./editorialStatus.logic";
 import {
   DefaultFeeds,
   Fold,
@@ -67,8 +67,9 @@ import {
 import { editorialSourcesEnvironment } from "./sourcesState";
 import { failureText } from "./sourcesText";
 
-const TONE_CLASS: Readonly<Record<Tone, string>> = {
+const TONE_CLASS: Readonly<Record<Tone | "ready", string>> = {
   ok: "text-foreground",
+  ready: "text-success-foreground",
   running: "text-info-foreground",
   warning: "text-warning-foreground",
   error: "text-destructive-foreground",
@@ -408,8 +409,8 @@ function SourceRow({
           <div className="space-y-3 border-t border-dashed border-border/60 px-4 pt-3 pb-4 sm:pl-9">
             {failing ? (
               <p className="rounded-lg bg-destructive/8 px-3 py-2 text-sm dark:bg-destructive/12">
-                {dayLead(relativeDay(capture.day, view.asOf.slice(0, 10)))} no respondió. La próxima
-                revisión lo vuelve a intentar;{" "}
+                {dayLead(relativeDay(capture.day, localDay(view.asOf, undefined)))} no respondió. La
+                próxima revisión lo vuelve a intentar;{" "}
                 {entry.rank
                   ? "mientras tanto, tus tendencias salen de las demás fuentes."
                   : "como aún no cuenta, tus tendencias no cambian."}

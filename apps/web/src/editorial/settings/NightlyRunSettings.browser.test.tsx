@@ -151,6 +151,8 @@ describe("NightlyRunSettings", () => {
     const yesterday = job({
       jobId: "job-1",
       cutoffAt: "2026-10-30T00:00:00.000Z",
+      startedAt: "2026-10-30T08:00:00.000Z",
+      finishedAt: "2026-10-30T08:10:00.000Z",
       artifacts: { ...job({}).artifacts, dossiers: 11 },
     });
     const { screen, onRunNow } = await renderView({ settings: ENABLED, jobs: [failed, yesterday] });

@@ -199,6 +199,10 @@ export function finishedLabel(job: EditorialJob, timeZone: string | undefined, n
   return day === "hoy" || day === "ayer" ? `${capitalize(day)} ${timeOf(at, timeZone)}` : day;
 }
 
+/** The local day a review ran (or was due): what "hoy" and "ayer" are about, unlike its UTC cutoff. */
+export const jobDay = (job: EditorialJob, timeZone: string | undefined) =>
+  localDay(job.startedAt ?? job.scheduledFor, timeZone);
+
 export const trendsText = (count: number) =>
   `${formatCount(count)} ${count === 1 ? "tendencia" : "tendencias"}`;
 
@@ -374,8 +378,8 @@ export function stripAlert(input: {
       return { _tag: "retry", text: "La revisión falló y todavía no hay tendencias." };
     }
     const today = localDay(input.now, input.timeZone);
-    const lastDay = relativeDay(localDay(last.cutoffAt, "UTC"), today);
-    const failedDay = relativeDay(localDay(nightly.job.cutoffAt, "UTC"), today);
+    const lastDay = relativeDay(jobDay(last, input.timeZone), today);
+    const failedDay = relativeDay(jobDay(nightly.job, input.timeZone), today);
     const lead = failedDay === "hoy" ? "Sin tendencias nuevas hoy" : "Sin tendencias nuevas";
     const from =
       lastDay === "hoy" || lastDay === "ayer" ? `las de ${lastDay}` : `las del ${lastDay}`;
