@@ -40,6 +40,8 @@ import { EditorialSourcesService, type EnabledSources } from "./EditorialSources
 import { EnginePromotionService, type PlannedEngine } from "./EnginePromotionService.ts";
 import {
   appendEngineConfigChoice,
+  DEFAULT_ENGINE_CONFIG,
+  EVALUATED_ENGINE_CONFIG,
   availableEngineConfigs,
   chosenConfigPath,
   engineConfigFileSha256,
@@ -430,11 +432,23 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
   const installedConfigs = () =>
     Result.isSuccess(options.engine) ? availableEngineConfigs(options.engine.success) : [];
 
+  /**
+   * The configuration the nightly run will use: the latest choice, else the evaluated method
+   * when the engine ships it (not yet recorded: `chosenAt` null), else the engine's default.
+   * Settings and the plan read it alike, so the screen names the method that runs.
+   */
+  const resolvedEngineConfig = Effect.fn("EditorialJobsService.resolvedEngineConfig")(function* () {
+    const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+    return choice.chosenAt === null && installedConfigs().includes(EVALUATED_ENGINE_CONFIG)
+      ? { file: EVALUATED_ENGINE_CONFIG, chosenAt: null }
+      : choice;
+  });
+
   const settingsView = Effect.fn("EditorialJobsService.settingsView")(function* (
     stored: StoredSettings,
     nowMs: number,
   ) {
-    const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+    const choice = yield* resolvedEngineConfig();
     return {
       enabled: stored.enabled,
       timeOfDay: stored.timeOfDay,
@@ -455,8 +469,9 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     file: string,
     at: string,
   ) {
-    const current = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
-    if (current.file === file) return;
+    const current = yield* resolvedEngineConfig();
+    // A value never recorded is recorded when confirmed, even if it is the one in use.
+    if (current.file === file && current.chosenAt !== null) return;
     if (!Result.isSuccess(options.engine) || !installedConfigs().includes(file)) {
       return yield* new EditorialJobsError({
         reason: "invalid-settings",
@@ -474,6 +489,22 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     yield* Effect.logInfo("The operator changed the nightly engine configuration.").pipe(
       Effect.annotateLogs({ from: current.file, to: file, sha256: digest }),
     );
+  });
+
+  /** The resolved choice, recorded first when it is the evaluated method nobody chose yet. */
+  const activeEngineConfig = Effect.fn("EditorialJobsService.activeEngineConfig")(function* () {
+    const choice = yield* resolvedEngineConfig();
+    if (choice.chosenAt !== null || choice.file !== EVALUATED_ENGINE_CONFIG) return choice;
+    if (!Result.isSuccess(options.engine)) return choice;
+    const at = isoOf(yield* Clock.currentTimeMillis);
+    yield* appendEngineConfigChoice(sql, {
+      file: EVALUATED_ENGINE_CONFIG,
+      sha256: engineConfigFileSha256(options.engine.success, EVALUATED_ENGINE_CONFIG),
+      previous: DEFAULT_ENGINE_CONFIG,
+      actor: "default",
+      at,
+    }).pipe(Effect.mapError(storage));
+    return { file: EVALUATED_ENGINE_CONFIG, chosenAt: at };
   });
 
   const getSettings = Effect.gen(function* () {
@@ -531,8 +562,8 @@ const makeWith = Effect.fn("EditorialJobsService.make")(function* (options: Edit
     // No engine, no configuration to hash: the job still gets its row and shows why it failed.
     let base: Record<string, unknown> = {};
     if (Result.isSuccess(options.engine)) {
-      // The operator's configuration (`editorial.activeEngineConfig`), engine.v1.json without one.
-      const choice = yield* readEngineConfigChoice(sql).pipe(Effect.mapError(storage));
+      // The operator's configuration (`editorial.activeEngineConfig`), the evaluated one without.
+      const choice = yield* activeEngineConfig();
       const configFile = chosenConfigPath(options.engine.success, choice);
       const text = yield* fs
         .readFileString(configFile)

@@ -182,6 +182,16 @@ if (command === "collect") {
 }
 `;
 
+/** These cases check other rules on the native configuration: an explicit choice keeps it. */
+const keepNativeConfig = Effect.gen(function* () {
+  const sql = yield* EditorialSql;
+  yield* sql`
+    INSERT INTO editorial_engine_config_choices
+      (config_file, config_sha256, previous_file, actor, created_at)
+    VALUES ('engine.v1.json', 'sha256:test', 'engine.v1.json', 'operator', '2026-01-01T00:00:00.000Z')
+  `;
+});
+
 const makeFixture = () => {
   const root = makeTempDir();
   const engine = NodePath.join(root, "engine.mjs");
@@ -600,7 +610,7 @@ describe("EditorialJobsService", () => {
   });
 
   it.live(
-    "keeps engine.v1.json until the operator chooses another configuration, recorded with its time (B1)",
+    "records the evaluated method as the first choice, then keeps the operator's ones (B1)",
     () => {
       const fx = makeFixture();
       return withJobs(
@@ -609,15 +619,26 @@ describe("EditorialJobsService", () => {
           const jobs = yield* EditorialJobsService.EditorialJobsService;
           const sql = yield* EditorialSql;
           const before = yield* jobs.getSettings;
-          assert.strictEqual(before.engineConfig, "engine.v1.json");
+          // Settings name the method the first run will use, before it is recorded.
+          assert.strictEqual(before.engineConfig, "engine.v3-sel.json");
           assert.isNull(before.engineConfigChosenAt);
-          assert.includeMembers([...before.engineConfigs], ["engine.v1.json", "engine.v3.json"]);
-          // Without an explicit choice the nightly run is the one before the setting existed.
-          assert.strictEqual((yield* jobs.runNow).configHash, NATIVE_CONFIG_HASH);
+          assert.includeMembers(
+            [...before.engineConfigs],
+            ["engine.v1.json", "engine.v3-sel.json"],
+          );
+          // Without any choice, the first run records and uses the evaluated method.
+          const selPath = NodePath.join(
+            NodePath.dirname(DEFAULT_CONFIG_PATH),
+            "engine.v3-sel.json",
+          );
+          const selHash = sha256(canonicalJson(JSON.parse(NodeFS.readFileSync(selPath, "utf8"))));
+          assert.strictEqual((yield* jobs.runNow).configHash, selHash);
+          const defaulted = yield* jobs.getSettings;
+          assert.strictEqual(defaulted.engineConfig, "engine.v3-sel.json");
+          assert.isNotNull(defaulted.engineConfigChosenAt);
           // Changing the schedule never touches the configuration.
           yield* jobs.updateSettings({ workers: 4 });
-          assert.strictEqual((yield* jobs.getSettings).engineConfig, "engine.v1.json");
-          assert.strictEqual((yield* jobs.runNow).configHash, NATIVE_CONFIG_HASH);
+          assert.strictEqual((yield* jobs.getSettings).engineConfig, "engine.v3-sel.json");
 
           const missing = yield* Effect.flip(
             jobs.updateSettings({ engineConfig: "engine.v9.json" }),
@@ -641,14 +662,20 @@ describe("EditorialJobsService", () => {
             rows.map(({ created_at: _at, ...row }) => row),
             [
               {
+                config_file: "engine.v3-sel.json",
+                config_sha256: `sha256:${NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(selPath)).digest("hex")}`,
+                previous_file: "engine.v1.json",
+                actor: "default",
+              },
+              {
                 config_file: "engine.v3.json",
                 config_sha256: `sha256:${NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(v3Path)).digest("hex")}`,
-                previous_file: "engine.v1.json",
+                previous_file: "engine.v3-sel.json",
                 actor: "operator",
               },
             ],
           );
-          assert.strictEqual(rows[0]?.created_at, chosen.engineConfigChosenAt);
+          assert.strictEqual(rows[1]?.created_at, chosen.engineConfigChosenAt);
 
           // Back to engine.v1.json is another explicit choice, and the hash is v1's again.
           yield* jobs.updateSettings({ engineConfig: "engine.v1.json" });
@@ -657,7 +684,7 @@ describe("EditorialJobsService", () => {
             (yield* sql<{
               readonly n: number;
             }>`SELECT COUNT(*) AS n FROM editorial_engine_config_choices`)[0]?.n,
-            2,
+            3,
           );
         }),
       );
@@ -1441,6 +1468,7 @@ describe("EditorialJobsService", () => {
     return withJobs(
       fx,
       Effect.gen(function* () {
+        yield* keepNativeConfig;
         const jobs = yield* EditorialJobsService.EditorialJobsService;
         const sql = yield* EditorialSql;
         const first = yield* jobs.runNow;
@@ -1580,6 +1608,7 @@ describe("EditorialJobsService with two owners of one job", () => {
     return withJobs(
       fx,
       Effect.gen(function* () {
+        yield* keepNativeConfig;
         const jobs = yield* EditorialJobsService.EditorialJobsService;
         const sql = yield* EditorialSql;
         const job = yield* jobs.runNow;
@@ -1779,6 +1808,7 @@ describe("EditorialJobsService with two owners of one job", () => {
       return withJobs(
         fx,
         Effect.gen(function* () {
+          yield* keepNativeConfig;
           const jobs = yield* EditorialJobsService.EditorialJobsService;
           const importer = yield* EditorialImportService.EditorialImportService;
           const sql = yield* EditorialSql;

@@ -17,6 +17,12 @@ import type { EngineLocation } from "./engineProcess.ts";
 /** The file the nightly run reads while the operator never chose another one. */
 export const DEFAULT_ENGINE_CONFIG = "engine.v1.json";
 
+/**
+ * The evaluated method. A server that never recorded a choice registers it as its first one
+ * (`actor` `default`) when its engine ships it; an existing choice is never replaced.
+ */
+export const EVALUATED_ENGINE_CONFIG = "engine.v3-sel.json";
+
 /** A configuration file of the engine's `config/` directory, never a path outside it. */
 const ENGINE_CONFIG_FILE = /^engine\.[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
 

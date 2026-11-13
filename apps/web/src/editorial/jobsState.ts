@@ -46,7 +46,12 @@ export const editorialJobsEnvironment = {
   runNow: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:jobs-run-now",
     tag: EDITORIAL_JOBS_WS_METHODS.runNow,
-    onSuccess: refreshJobsList,
+    // The first job may record the configuration it runs with; the settings show it.
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => {
+        registry.refresh(list({ environmentId, input: {} }));
+        registry.refresh(settings({ environmentId, input: {} }));
+      }),
   }),
   updateSettings: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:editorial:jobs-update-settings",
