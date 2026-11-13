@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   firstReviewWaitsForModel,
+  followsUnfinishedSetup,
   missingStepsText,
   setupProgress,
   stepCaption,
@@ -63,6 +64,26 @@ describe("firstReviewWaitsForModel", () => {
         motor({ modelReady: false, firstRunStarted: false }),
         motor({ modelReady: true, firstRunStarted: true }),
       ]),
+    ).toBe(false);
+  });
+});
+
+describe("followsUnfinishedSetup", () => {
+  it("follows an unfinished setup on a new installation or one that recorded a step", () => {
+    const pending = { pending: true, reached: 0 };
+    const fresh = { progress: pending, recorded: 0, jobCount: 0, hasRun: false };
+    expect(followsUnfinishedSetup(fresh)).toBe(true);
+    // In use from before the wizard was recorded: reviews or jobs, nothing on record.
+    expect(followsUnfinishedSetup({ ...fresh, jobCount: 4, hasRun: true })).toBe(false);
+    expect(followsUnfinishedSetup({ ...fresh, hasRun: true })).toBe(false);
+    expect(followsUnfinishedSetup({ ...fresh, jobCount: 1 })).toBe(false);
+    // Left mid-wizard, its first review already running: still followed.
+    expect(followsUnfinishedSetup({ ...fresh, recorded: 3, jobCount: 1 })).toBe(true);
+    // Unknown yet, or finished.
+    expect(followsUnfinishedSetup({ ...fresh, jobCount: null })).toBe(false);
+    expect(followsUnfinishedSetup({ ...fresh, recorded: null })).toBe(false);
+    expect(
+      followsUnfinishedSetup({ ...fresh, progress: { pending: false, reached: 3 }, recorded: 4 }),
     ).toBe(false);
   });
 });
